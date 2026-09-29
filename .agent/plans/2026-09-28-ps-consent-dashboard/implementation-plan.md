@@ -204,12 +204,12 @@ decision flows through one service. There is no user-visible change.
 
 **Definition of Done**
 
-- [ ] Dashboard endpoints are implemented, authenticated and CSRF-protected.
-- [ ] A dashboard decision resolves the agent's poll and consumes the code.
-- [ ] Pending and history lists with mission/agent grouping and deep-link
+- [x] Dashboard endpoints are implemented, authenticated and CSRF-protected.
+- [x] A dashboard decision resolves the agent's poll and consumes the code.
+- [x] Pending and history lists with mission/agent grouping and deep-link
       highlight.
-- [ ] Integration tests above are green. E2E dashboard helpers exist.
-- [ ] If Q6 `Renew()` shows side effects, a deviation is logged and resolved.
+- [x] Integration tests above are green. E2E dashboard helpers exist.
+- [x] If Q6 `Renew()` shows side effects, a deviation is logged and resolved.
 
 ## Phase 3 — Agent-side prompt: SampleApp and shared walkthroughs
 

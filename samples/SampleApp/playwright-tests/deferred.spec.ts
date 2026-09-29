@@ -4,6 +4,7 @@ import { readResponseJson, expectStatus, expectError } from '../../../tests/e2e/
 import { approveInPopup, denyInPopup, authenticateConsent } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
 import { directedSubject } from '../../../tests/e2e/helpers/consent';
+import { approveOnDashboard, denyOnDashboard } from '../../../tests/e2e/helpers/dashboard';
 
 /**
  * Deferred — three-party user-consent flow. The page revokes consent first, so
@@ -72,6 +73,39 @@ test.describe('Deferred', () => {
       link.click(),
     ]);
     await denyInPopup(popup);
+
+    await expectError(page, 'denied');
+  });
+
+  test('dashboard approval resolves the poll and retires the link', async ({ page, context }) => {
+    await page.goto('/calendar-deferred');
+    await waitForInteractive(page, 'button.btn-primary');
+    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
+    await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
+    await expect(link).toBeVisible({ timeout: 30_000 });
+    const arrival = (await link.getAttribute('href'))!;
+
+    const dashboard = await approveOnDashboard(context, { agent: Agents.sampleApp, resource: Urls.calendar });
+    await expect(dashboard.locator('#history article.card').first()).toContainText('via dashboard');
+
+    await expectStatus(page, 200);
+    expect(((await readResponseJson(page)) as Record<string, unknown>).accessMode).toBe('three-party');
+    const stale = await context.newPage();
+    await stale.goto(arrival);
+    const signIn = stale.locator('button.demo-login');
+    if (await signIn.isVisible()) await signIn.click();
+    await expect(stale.locator('body')).toContainText('invalid_code');
+    await stale.close();
+  });
+
+  test('dashboard denial surfaces an access-denied error', async ({ page, context }) => {
+    await page.goto('/calendar-deferred');
+    await waitForInteractive(page, 'button.btn-primary');
+    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
+    await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
+    await expect(link).toBeVisible({ timeout: 30_000 });
+
+    await denyOnDashboard(context, { agent: Agents.sampleApp, resource: Urls.calendar });
 
     await expectError(page, 'denied');
   });

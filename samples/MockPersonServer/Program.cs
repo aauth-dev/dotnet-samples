@@ -102,6 +102,7 @@ builder.Services.AddSingleton<IPersonPendingStore>(sp =>
 // per-request link and the dashboard share.
 builder.Services.AddSingleton<ConsentRegistry>();
 builder.Services.AddSingleton<PersonConsentDecisions>();
+builder.Services.AddSingleton<ConsentDashboardSessions>();
 
 // Mission governance (§PS Governance Endpoints). AddAAuthGovernance registers
 // the in-memory mission store + log; the PS supplies the policy/user-channel
@@ -174,7 +175,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
     PermissionEndpoint = $"{psIssuer.TrimEnd('/')}/permission",
     AuditEndpoint = $"{psIssuer.TrimEnd('/')}/audit",
     InteractionEndpoint = $"{psIssuer.TrimEnd('/')}/mission-interaction",
-    UnsignedPathPrefixes = new[] { "/admin" },
+    UnsignedPathPrefixes = new[] { "/admin", "/dashboard" },
     ResourceInteractionSessions = browserConsent,
 });
 
@@ -1100,6 +1101,10 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, IPersonPendingStore pen
             contentType: "text/html");
     });
 });
+
+// The consent dashboard: every PS consent request, decided out-of-band by the
+// signed-in person (#user-interaction). Complements the per-request link above.
+app.MapConsentDashboard();
 
 app.Run();
 

@@ -218,6 +218,36 @@ PROCEEDED.
 - The full Playwright run is deferred to the end of Phase 2. Phase 1 changes
   no UI.
 
+### [2026-09-29] [Phase 2] Dashboard implementation details
+
+PROCEEDED.
+- **Session.** The dashboard has its own sample-side session (the
+  `AAuth.Person.Dashboard` cookie: `HttpOnly`, `SameSite=Strict`,
+  `Path=/dashboard`). The SDK `BrowserConsentSessions` keeps per-code
+  decision sessions private, so it cannot be reused. Protections:
+  - the same isolated demo identity;
+  - the same loopback guard;
+  - the same enablement flag.
+- **Decisions.** Decisions are JSON POSTs carrying `X-CSRF-Token`. Outcomes:
+  - `200 applied`;
+  - `409` for `already_decided`, `expired`, and `not_decidable`;
+  - `404 unknown_request`.
+- **Page hardening.** The page sets a nonce-based CSP, `no-store`,
+  `no-referrer`, and `nosniff`. It renders only through `textContent`, never
+  `innerHTML`.
+- **Tests.** `TestConsentBrowser` routes `/dashboard` through its loopback
+  shim, as it already does for `/interaction`.
+- **Verification.**
+  - `MockPersonServerDashboardTests` (6), plus two SampleApp deferred e2e
+    specs (dashboard approve with stale link, and dashboard deny).
+  - Browser check against `make demo`: sign-in, pending card, `?code=`
+    highlight, and approve moving to history as Delivered via the dashboard.
+  - Full Playwright suite: 77 passed, 1 skipped (Keycloak), `--retries=0`.
+- **Notes for the final UX pass:**
+  - The status pill is redundant inside Pending.
+  - "Delivered" is jargon.
+  - Pending cards show no expiry.
+
 ## Open questions / inputs needed
 
 _None yet._

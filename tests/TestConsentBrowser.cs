@@ -23,7 +23,8 @@ public static class TestConsentBrowser
             {
                 context.Connection.RemoteIpAddress = IPAddress.Loopback;
                 context.Connection.LocalIpAddress = IPAddress.Loopback;
-                if (context.Request.Path.StartsWithSegments("/interaction") || context.Request.Path.StartsWithSegments("/consent"))
+                if (context.Request.Path.StartsWithSegments("/interaction") || context.Request.Path.StartsWithSegments("/consent")
+                    || context.Request.Path.StartsWithSegments("/dashboard"))
                     context.Request.Host = new Microsoft.AspNetCore.Http.HostString("localhost");
                 return continuation(context);
             });

@@ -72,8 +72,8 @@ public sealed class ConsentRecord
     /// <summary>The Access Server's interaction URL when the PS relays one; not PS-hosted.</summary>
     public string? ExternalInteractionUrl => PersonEntry is { InteractionCode: not null } entry ? entry.InteractionUrl : null;
 
-    public string? MissionS256 => PersonEntry?.MissionS256
-        ?? (string.IsNullOrEmpty(MissionEntry!.S256) ? null : MissionEntry.S256);
+    public string? MissionS256 => PersonEntry is { } entry ? entry.MissionS256
+        : string.IsNullOrEmpty(MissionEntry!.S256) ? null : MissionEntry.S256;
 
     public string? MissionDescription => MissionEntry?.Proposal?.Description
         ?? (MissionS256 is { } s256 ? _policy.Describe(s256) : null);

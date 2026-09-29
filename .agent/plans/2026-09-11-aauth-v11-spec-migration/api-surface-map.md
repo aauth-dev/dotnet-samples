@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 157 changed public-source files, 387 added/replacement declarations, 149 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 158 changed public-source files, 401 added/replacement declarations, 149 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -339,6 +339,29 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [ConsentBridgePerso
 ```
 
 Public owners: `MockPersonServer.ConsentBridgePersonPendingStore`, `MockPersonServer`.
+
+### samples/MockPersonServer/ConsentDashboard.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [ConsentDashboard.cs](../../../samples/MockPersonServer/ConsentDashboard.cs).
+
+```diff
++ MockPersonServer.ConsentDashboard: public static void MapConsentDashboard ( this WebApplication app )
++ MockPersonServer.ConsentDashboardSessions.Session: public DateTimeOffset ExpiresAt { get ; } = DateTimeOffset . UtcNow . AddHours ( 8 )
++ MockPersonServer.ConsentDashboardSessions.Session: public string ? Person { get ; set ; }
++ MockPersonServer.ConsentDashboardSessions.Session: public string Csrf { get ; } = Secret ( )
++ MockPersonServer.ConsentDashboardSessions: public IResult ? Refusal ( HttpContext context )
++ MockPersonServer.ConsentDashboardSessions: public Session Current ( HttpContext context , bool create )
++ MockPersonServer.ConsentDashboardSessions: public const string CookieName = "AAuth.Person.Dashboard" ;
++ MockPersonServer.ConsentDashboardSessions: public const string CsrfHeader = "X-CSRF-Token" ;
++ MockPersonServer.ConsentDashboardSessions: public sealed class Session
++ MockPersonServer.ConsentDashboardSessions: public static IResult Problem ( string error , string ? detail , int status )
++ MockPersonServer.ConsentDashboardSessions: public static bool CsrfMatches ( Session session , string ? supplied )
++ MockPersonServer.ConsentDashboardSessions: public string ? DemoIdentity { get ; } = configuration . GetValue < bool > ( "AAuth:EnableIsolatedDemoConsent" ) ? "isolated-person-demo" : null
++ MockPersonServer: public sealed class ConsentDashboardSessions ( IConfiguration configuration )
++ MockPersonServer: public static class ConsentDashboard
+```
+
+Public owners: `MockPersonServer.ConsentDashboardSessions.Session`, `MockPersonServer.ConsentDashboardSessions`, `MockPersonServer.ConsentDashboard`, `MockPersonServer`.
 
 ### samples/MockPersonServer/ConsentRegistry.cs
 
