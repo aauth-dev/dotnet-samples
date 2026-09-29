@@ -191,6 +191,7 @@ public sealed class ChallengeHandler : DelegatingHandler
         var response = await SendWithAdaptiveSigningAsync(request, cancellationToken)
             .ConfigureAwait(false);
 
+        var reusedMissionToken = false;
         for (var attempt = 0; attempt < maxAuthTokenChallenges; attempt++)
         {
             if (response.StatusCode != HttpStatusCode.Unauthorized)
@@ -221,9 +222,12 @@ public sealed class ChallengeHandler : DelegatingHandler
                 var resource = request.Options.TryGetValue(AAuthRequestOptions.ResourceIdentifier, out var configured)
                     ? configured : requestOrigin
                         ?? throw new InvalidOperationException("A person-token challenge requires an absolute request URI.");
-                carrier = await _exchange.RequestPersonTokenAsync(personServer, resource,
-                    ExchangeOptions(request, upstreamToken, requestedMission, presentedToken: null), cancellationToken)
-                    .ConfigureAwait(false);
+                carrier = (reusedMissionToken ? null : ReusableMissionPersonToken(request, upstreamToken, personServer, resource, requestedMission))
+                    ?? await _exchange.RequestPersonTokenAsync(personServer, resource,
+                        ExchangeOptions(request, upstreamToken, requestedMission, presentedToken: null), cancellationToken)
+                        .ConfigureAwait(false);
+                // A reused token the resource refused is not offered again.
+                reusedMissionToken = true;
             }
             else
             {
@@ -309,6 +313,39 @@ public sealed class ChallengeHandler : DelegatingHandler
         OnClarificationRequired = OnClarificationRequired,
         MaxClarificationRounds = MaxClarificationRounds,
     };
+
+    // A person token issued with the mission approval saves the /person call when it names this PS,
+    // resource and mission, binds the signing key, and is not about to expire (§Mission Approval).
+    private static string? ReusableMissionPersonToken(HttpRequestMessage request, string? upstreamToken,
+        string personServer, string resource, string? missionS256)
+    {
+        if (upstreamToken is not null || missionS256 is null
+            || !request.Options.TryGetValue(AAuthRequestOptions.MissionPersonTokens, out var tokens)
+            || !tokens.TryGetValue(resource, out var token)
+            || !request.Options.TryGetValue(AAuthSigningHandler.SigningKeyContext, out var signingKey))
+            return null;
+        try
+        {
+            var segments = token.Split('.');
+            if (segments.Length != 3
+                || (string?)TokenVerifier.DecodeJsonSegment(segments[0], "header")["typ"] != PersonTokenBuilder.TokenType)
+                return null;
+            var payload = TokenVerifier.DecodeJsonSegment(segments[1], "payload");
+            if ((string?)payload["iss"] != personServer || (string?)payload["aud"] != resource
+                || MissionReference.Read(payload) != missionS256
+                || payload["cnf"]?["jwk"] is not System.Text.Json.Nodes.JsonObject jwk
+                || AAuth.Crypto.KeyFactory.FromPublicJwk(jwk).ComputeJwkThumbprint() != signingKey.ComputeJwkThumbprint()
+                || payload["exp"] is not System.Text.Json.Nodes.JsonValue exp || !exp.TryGetValue<long>(out var expires)
+                || expires <= DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds())
+                return null;
+            return token;
+        }
+        catch (Exception exception) when (exception is TokenVerificationException or FormatException
+            or System.Text.Json.JsonException or AAuth.Crypto.JwkValidationException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
 
     // Pick the first recognised person-token or auth-token challenge from the
     // response's AAuth-Requirement header(s). The header MAY appear more than

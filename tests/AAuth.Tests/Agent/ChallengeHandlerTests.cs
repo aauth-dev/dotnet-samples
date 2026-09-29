@@ -140,6 +140,52 @@ public class ChallengeHandlerTests
         Assert.Equal(PsUrl, capturedTokenEndpoint);
     }
 
+    [Theory(DisplayName = "ChallengeHandler — a matching mission person token is reused instead of calling /person; a mismatch falls back")]
+    [InlineData("match")]
+    [InlineData("resource")]
+    [InlineData("mission")]
+    [InlineData("key")]
+    [InlineData("expiry")]
+    public async Task MissionPersonToken_ReusedOnlyWhenItMatches(string variant)
+    {
+        var mission = Base64UrlEncoder.Encode(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("mission")));
+        var token = new PersonTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy, Issuer = PsUrl, Audience = ResourceUrl, Subject = PersonSubject,
+            ConfirmationKey = variant == "key" ? AAuthKey.Generate() : SigningKey,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.Add(variant == "expiry" ? TimeSpan.FromSeconds(30) : TimeSpan.FromHours(1)),
+            Key = SigningKey, KeyId = "ps-key",
+            MissionS256 = variant == "mission"
+                ? Base64UrlEncoder.Encode(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("other"))) : mission,
+        }.Build();
+        var exchangeHandler = new CapturingExchangeHandler(_ => { });
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var challengeHandler = new ChallengeHandler(
+            new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient), new AAuthTokenHolder(AgentToken),
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
+            personServer: PsUrl, onInteractionRequired: null, pollerOptions: null)
+        {
+            InnerHandler = SignedResource(),
+        };
+        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/data");
+        request.Options.Set(AAuth.Agent.AAuthRequestOptions.MissionS256, mission);
+        request.Options.Set(AAuth.Agent.AAuthRequestOptions.MissionPersonTokens,
+            new Dictionary<string, string> { [variant == "resource" ? "https://other.example" : ResourceUrl] = token });
+
+        if (variant == "match")
+        {
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(0, exchangeHandler.PersonServerCalls);
+        }
+        else
+        {
+            await Assert.ThrowsAnyAsync<Exception>(() => client.SendAsync(request));
+            Assert.True(exchangeHandler.PersonServerCalls > 0);
+        }
+    }
+
     [Fact(DisplayName = "ChallengeHandler — upstream token takes precedence over personServer")]
     public async Task UpstreamToken_TakesPrecedenceOverPersonServer()
     {

@@ -25,7 +25,10 @@ public sealed class MissionContextHandler : DelegatingHandler
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         if (AAuthRequestOptions.GetMissionS256(request) is null)
+        {
             request.Options.Set(AAuthRequestOptions.MissionS256, _mission.S256);
+            request.Options.Set(AAuthRequestOptions.MissionPersonTokens, _mission.PersonTokens);
+        }
         return base.SendAsync(request, cancellationToken);
     }
 }

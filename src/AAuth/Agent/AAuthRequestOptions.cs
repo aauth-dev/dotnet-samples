@@ -12,6 +12,10 @@ public static class AAuthRequestOptions
     /// <summary>The mission to request person tokens under for this request (<c>mission_s256</c>).</summary>
     public static readonly HttpRequestOptionsKey<string> MissionS256 = new("AAuth.MissionS256");
 
+    /// <summary>Person tokens the PS issued with the mission approval, keyed by resource (<see cref="Mission.PersonTokens"/>).</summary>
+    public static readonly HttpRequestOptionsKey<System.Collections.Generic.IReadOnlyDictionary<string, string>> MissionPersonTokens =
+        new("AAuth.MissionPersonTokens");
+
     public static string? GetMissionS256(HttpRequestMessage request)
         => request.Options.TryGetValue(MissionS256, out var mission) ? mission : null;
 
