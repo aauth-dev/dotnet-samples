@@ -139,6 +139,37 @@ PROCEEDED (default: extract one `PersonConsentDecisions` service).
   one service used by the link path, the dashboard and the registry.
 - Its behaviour must stay byte-for-byte the same for the link path.
 
+### [2026-09-29] [Phase 0] Q3 — Build gate superseded
+
+RESOLVED. Supersedes the 2026-09-28 Q3 entry.
+- The draft-11 migration closed (`ecc71e7`).
+- `dotnet build AAuth.slnx -c Release` is green at `1045186`.
+- The full solution build is now the gate for every phase.
+- Research line citations were re-derived after the owner's `e2154a1`
+  refactor (research.md §Baseline update).
+
+### [2026-09-29] [Phase 0] Q16 — Sequencing with the SDK API surface plan
+
+RESOLVED (owner): "We will do it next."
+- This initiative lands before
+  [2026-09-29-sdk-api-surface-consistency](../2026-09-29-sdk-api-surface-consistency/implementation-plan.md),
+  which rebases onto it.
+- Forward-compatibility rules were added to Guiding principles:
+  - DI-registered sample services;
+  - no new PS-identity restatements;
+  - the prompt takes `Interaction`;
+  - no new per-request builders or manual seams;
+  - no SDK types.
+- The Phase 7 review checks them.
+
+### [2026-09-29] [Phase 0] Scope — GuidedTour capability modes
+
+PROCEEDED (default: include in Phase 4).
+- `e2154a1` added GuidedTour capability modes (Events, Wallet Protocol,
+  Documents, Catalog) in `TourSession.Capabilities.cs`. Their PS-hosted
+  waiting steps (`CapAuthority` L670-L684) get the same poll-on-arrival,
+  prompt, and "Run all" behaviour as the classic tracks.
+
 ## Deviations from plan
 
 _None yet._

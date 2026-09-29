@@ -138,6 +138,27 @@ RESOLVED.
 - New Phase 3 (signing abstraction).
 - Former Phases 3–11 renumbered to 4–12.
 
+### [2026-09-29] [Phase 0] Q19 — Async signing
+
+RESOLVED (owner): "yes make it async".
+- Phase 3 proceeds as planned: `IAAuthSigner.SignAsync`, token builders get
+  `BuildAsync`, and `AAuthSigningKeySet` handles rotation.
+- Supersedes the open-question entry below.
+
+### [2026-09-29] [Phase 0] Q16 — PS consent dashboard goes first
+
+RESOLVED (owner): "We will do it next."
+- [2026-09-28-ps-consent-dashboard](../2026-09-28-ps-consent-dashboard/implementation-plan.md)
+  lands before this initiative.
+- That plan was updated with forward-compatibility rules (Q16 there), so
+  that Phases 4, 9, and 10 here can absorb its wiring.
+- Before Phase 1: rebase onto the dashboard work, re-derive every
+  MockPersonServer, SampleApp, and GuidedTour line citation in research.md,
+  and add the dashboard's new services (`PersonConsentDecisions`,
+  `ConsentRegistry`, the `ConsentSupport` prompt) to the Phase 4 and Phase 10
+  migration inventories.
+- Supersedes the open-question entry below.
+
 ## Deviations from plan
 
 None yet.

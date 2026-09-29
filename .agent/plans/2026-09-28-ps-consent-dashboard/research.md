@@ -197,6 +197,89 @@ lowest shared Razor library.
 
 ## Baseline (branch and build)
 
+> **Update (2026-09):** the baseline is superseded. The draft-11 migration
+> closed at `ecc71e7`. On 2026-09-29, `dotnet build AAuth.slnx -c Release`
+> **succeeds** at `1045186`, with no errors.
+>
+> The owner's `e2154a1` reworked GuidedTour and the CapabilitySupport
+> walkthroughs, so the file line citations above drifted. Current values:
+>
+> **SDK**
+>
+> | Symbol | Current line |
+> |---|---|
+> | `Pending202` | AAuthPersonServerEndpoints.cs L1556 |
+> | `InteractionCode ?? Browser.Code` | L1566 |
+> | `BrowserInteraction.Consumed` | L18 (unchanged) |
+> | `Renew()` | L22 (unchanged) |
+> | `BrowserConsentSessions` | L78 (unchanged) |
+>
+> **MockPersonServer** (Program.cs)
+>
+> | Symbol | Current line |
+> |---|---|
+> | `BrowserConsentSessions` | L155 |
+> | `MapAAuthPersonServer` | L158 |
+> | `UnsignedPathPrefixes` | L172 |
+> | `/admin/reset` | L666 |
+> | `/interaction` (GET and POST) | L766 |
+> | `/interaction/approve` | L977 |
+> | `/interaction/deny` | L1061 |
+>
+> The bridge store's `Add` L32 / `Get` L40 and MissionGovernance's
+> `MissionPendingEntry` L257 / `Decision` L326 / store L330 are unchanged.
+>
+> **SampleApp** (`BuildUserUrl` capture lines)
+>
+> | Page | Current line |
+> |---|---|
+> | Deferred | L195 |
+> | CallChain | L282 |
+> | Mission | L624 |
+> | MissionCallChain | L527 |
+> | Bookings | L294; `IsPersonConsent` L190 |
+> | Federated | L209; `IsPersonConsent` L170 |
+> | SubAgent | L215 |
+>
+> **GuidedTour**
+>
+> | Symbol | Current line |
+> |---|---|
+> | Consent link | Tour.razor L135 |
+> | `MarkInteractionOpenedAsync` | Tour.razor L745 |
+> | `RunAllAsync` | Tour.razor L767 |
+> | Stop messages | Tour.razor L781/L783 |
+> | `AwaitingUserApproval` | TourSession.cs L694 |
+> | `UserInteractionUrl` | TourSession.cs L701 |
+> | `StepUserApprovesPlaceholder` | TourSession.cs L2357 |
+> | `StartPendingPollAsync` | TourSession.cs L2758 |
+> | `WorkerConsentUrl` | TourSession.cs L90 / L2688 |
+>
+> **New PS-consent surface.** GuidedTour now has **capability modes** in
+> `TourSession.Capabilities.cs`: Events, Wallet Protocol, Documents, and
+> Catalog. `CapAuthority` (L670-L684) classifies a waiting interaction as
+> PS-hosted when it is under the PS URL and not `/interaction/resource`.
+> These modes are in scope for Phase 4.
+>
+> **Shared walkthroughs** (`BuildUserUrl` lines)
+>
+> | Session | Current line |
+> |---|---|
+> | Catalog | L69 |
+> | Document | L72 |
+> | Wallet | L124, L167 |
+> | Event | L85 |
+>
+> **CLIs**
+>
+> | Symbol | Current line |
+> |---|---|
+> | MissionAgent `PromptUserAsync` | L348 (unchanged) |
+> | MissionAgent browser open | L357 (unchanged) |
+> | AgentConsole | L227 (unchanged) |
+>
+> Re-derive any line again before editing it.
+
 - The branch is `wip/aauth-draft-11`, with the draft-11 SDK cutover committed
   (`05ea90c`) plus 26 uncommitted changes.
 - `dotnet build AAuth.slnx` currently **fails** (2026-09-28): 23 errors across

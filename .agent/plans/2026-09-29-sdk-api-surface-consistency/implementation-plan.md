@@ -114,11 +114,13 @@ Resolve Q1–Q19 from [research.md](research.md#gaps-and-open-questions).
 
 ### Definition of Done
 
-- [ ] Every question Q1–Q19 has a `RESOLVED` or `PROCEEDED (default X)`
+- [x] Every question Q1–Q19 has a `RESOLVED` or `PROCEEDED (default X)`
       ruling in `implementation-log.md`.
-- [ ] Q16 sequencing is confirmed. If the dashboard lands first, this branch is
-      rebased onto it and the research line citations for MockPersonServer and
-      SampleApp are re-derived.
+- [ ] Q16 sequencing is confirmed: the dashboard lands first (owner,
+      2026-09-29). This branch is rebased onto it, and the research line
+      citations for MockPersonServer, SampleApp, and GuidedTour are
+      re-derived. The dashboard's services are added to the Phase 4 and
+      Phase 10 inventories.
 - [ ] Baseline gates are green on the starting commit; test counts are
       recorded in the log.
 - [ ] An `ApiSurface` snapshot of the starting commit is recorded for the final

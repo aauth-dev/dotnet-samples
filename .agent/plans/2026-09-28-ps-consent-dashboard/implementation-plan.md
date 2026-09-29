@@ -3,6 +3,17 @@
 Research: [research.md](research.md). Decisions and rulings:
 [implementation-log.md](implementation-log.md).
 
+> **Update (2026-09):**
+>
+> - **Sequencing.** This initiative runs **next**, before
+>   [2026-09-29-sdk-api-surface-consistency](../2026-09-29-sdk-api-surface-consistency/implementation-plan.md).
+>   That plan (its Q16) rebases onto this one afterwards.
+> - **Build.** The draft-11 migration has closed and the full solution
+>   build is green, so Q3 is superseded.
+> - **Scope.** GuidedTour capability modes are added to Phase 4.
+> - **Forward compatibility.** This plan now carries rules so the SDK
+>   refactor can absorb its wiring; see Guiding principles.
+
 ## Goal
 
 Add a complementary **dashboard mode** to the samples' Person Server (PS)
@@ -36,18 +47,39 @@ consent:
 - **One decision path.** The link and dashboard share `PersonConsentDecisions`
   (Q15), so they cannot drift.
 - **The dashboard decides only what the PS hosts** (Q9).
+- **Forward-compatible with the SDK API surface plan** (Q16). The next
+  initiative replaces MockPersonServer's hand wiring:
+  - `AddAAuthPersonServer(...)` builder, named options, `IAAuthServerIdentity`;
+  - the extensibility ladder (R0);
+  - `Interaction.Source`;
+  - `IAAuthAgentFactory`.
+
+  To keep that rebase mechanical:
+  - Register every new sample service (`PersonConsentDecisions`,
+    `ConsentRegistry`) through DI, resolved by interface or type, never
+    `new`ed inline in endpoint lambdas.
+  - Read the PS issuer and URLs from the one existing configuration value.
+    Add no new `psIssuer`/`$"{psIssuer}/..."` restatements beyond what an
+    endpoint strictly needs.
+  - The agent-side prompt takes the SDK `Interaction` record (not a URL
+    string) plus the PS URL, so a later `Source` discriminator slots in.
+  - New code adds no per-request `AAuthClientBuilder(...).Build()`, no
+    `new RevocationClient(`, and no manual seam `AddSingleton` beyond the
+    services above.
+  - Add no public SDK types. The no-SDK-change rule (Q4, Q6) still
+    applies.
 
 ## Verification strategy
 
 | Layer | Command |
 |---|---|
-| Build (touched projects) | `dotnet build samples/MockPersonServer samples/SampleApp samples/GuidedTour samples/MissionAgent samples/AgentConsole -nologo` |
+| Build (solution, gate) | `dotnet build AAuth.slnx -c Release -v q -nologo 2>&1 \| grep -E ' error \|warn'` (expect nothing) |
+| Unit + integration | `dotnet test tests/AAuth.Tests -c Release --no-build` (plus Conformance, R3, Events at phase end) |
 | PS integration | `dotnet test tests/AAuth.Tests --filter "FullyQualifiedName~MockPersonServer"` |
-| Browser E2E | `cd tests/e2e && npx playwright test <spec>` (the stack boots via `webServer`) |
+| Browser E2E | `cd tests/e2e && npx playwright test <spec>` (the stack boots via `webServer`); full suite with `--retries=0` at phase end |
 
-The full `dotnet build AAuth.slnx` is red on the branch until the draft-11
-migration lands (Q3). Treat the touched-project builds as the gate, and record
-the full-solution status at the start and end of each phase.
+> **Update (2026-09):** the solution build is green (Q3 superseded). The full
+> build is the gate for every phase.
 
 ## Phase 0 — Decision gate and baseline
 
@@ -60,8 +92,10 @@ the full-solution status at the start and end of each phase.
 - [x] Every open question (Q1–Q15) has a ruling in `implementation-log.md`.
 - [ ] Owner has reviewed the default rulings Q3–Q15 (revert any by adding a new
       dated entry).
-- [ ] MockPersonServer, SampleApp and GuidedTour compile on the branch (Q3 gate),
-      or an owner-approved deviation is logged.
+- [x] MockPersonServer, SampleApp and GuidedTour compile on the branch (Q3 gate).
+      The full solution is green at `1045186` (2026-09-29).
+- [x] Research line citations re-derived after `e2154a1` (research.md
+      §Baseline update).
 
 ## Phase 1 — PS decision service and consent registry (no UI)
 
@@ -242,11 +276,19 @@ decision flows through one service. There is no user-visible change.
 - [CodeSnippets.cs](../../../samples/GuidedTour/CodeSnippets.cs) and the step
   narratives: teach "poll immediately; the person decides on the PS dashboard
   (or via the link)".
+- [TourSession.Capabilities.cs](../../../samples/GuidedTour/TourSession.Capabilities.cs)
+  covers the capability modes: Events, Wallet Protocol, Documents, Catalog.
+  - When `CapAuthority` (L670-L684) classifies the waiting interaction as
+    PS-hosted, apply the same poll-on-arrival, prompt, and "Run all"
+    behaviour.
+  - Resource-first Documents consent (`/interaction/resource`) and AS-hosted
+    steps keep the click-driven path.
 
 **Tests (E2E)**
 
 - GuidedTour deferred, call-chain, mission, mission-call-chain and sub-agent
-  (PS rounds):
+  (PS rounds), plus the PS-hosted steps of the capability modes (events,
+  wallet protocol, documents PS step, catalog):
   - "Run all" reaches the waiting step without an error.
   - `approveOnDashboard` resolves it, and the tour completes.
 - Assert polling is live (poll count increases) before any dashboard action.
@@ -255,7 +297,8 @@ decision flows through one service. There is no user-visible change.
 
 **Definition of Done**
 
-- [ ] Polling starts on arrival at the waiting step for PS-hosted interactions.
+- [ ] Polling starts on arrival at the waiting step for PS-hosted interactions,
+      including the capability modes.
 - [ ] "Run all" runs through PS-hosted consent without stopping.
 - [ ] GuidedTour E2E specs green, including the unchanged AS/resource specs.
 
@@ -306,7 +349,12 @@ A fresh `code-review` subagent validates the diff against
 - no drift from the link path;
 - Access Server and resource consent untouched.
 
-Findings are severity-graded and recorded in the log.
+Findings are severity-graded and recorded in the log. The review also checks
+the forward-compatibility rules in Guiding principles (Q16), and records
+for the SDK API surface plan:
+
+- every new hand-wired seam or restated PS identity;
+- where it will fold into `AddAAuthPersonServer`.
 
 **Definition of Done**
 
@@ -324,4 +372,5 @@ Findings are severity-graded and recorded in the log.
 | Multi-user dashboard and agent-to-person mapping | The sample has one demo person. |
 | Real authentication (passkey, OIDC) and persistence | Deployment concern. Demo sign-in only. |
 | Push, email or other notifications | Not needed for the dashboard channel. |
-| Fixing draft-11 compile errors | Owned by the draft-11 migration plan (Q3). |
+| ~~Fixing draft-11 compile errors~~ | Resolved: the draft-11 migration closed (`ecc71e7`), and the build is green. |
+| SDK API surface refactor (PS role builder, trust/callback seams, async signing) | Owned by 2026-09-29-sdk-api-surface-consistency, which runs after this plan. |
