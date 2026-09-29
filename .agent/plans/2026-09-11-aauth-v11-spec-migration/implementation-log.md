@@ -1554,6 +1554,77 @@ The docs inventory was regenerated: 174 files, 662 blocks. `CheckSnippet`
 fails `Documentation_FrozenSurface` for any block it cannot classify, so every
 block carries a validation class. Snippet and link tests: 108 pass.
 
+### [2026-09-29] [Phase 11] Independent review, browser profiles and target language
+
+**Independent review.** Two fresh read-only reviewers were run against the
+final source and the pinned spec. Neither was given the plan's verdicts.
+
+- **Trust-critical areas** (person/auth separation, presented-token proof,
+  mission authority, expiry versus revocation, execute-once retention, Events
+  tickets). The reviewer reported one P2 and verified the other areas.
+  - The P2 claimed that upstream verification step 4 (P1824) does not reject
+    a revoked binding, because `RegisterSourcesAsync` skips the binding when
+    `upstream_token` is present (P426).
+  - Rejected as a false positive. Step 4 concerns the *calling* agent's
+    binding: "the agent it issued the upstream person token to". That binding
+    is a registered ancestor of the upstream person token, so revoking it makes
+    the upstream token revoked by ancestry, and the request fails with
+    `revoked_upstream_token`. `UpstreamFromRevokedBinding_IsRevokedUpstreamToken`
+    (three- and four-party) and
+    `UpstreamFromRevokedCallingAgent_IsRevokedUpstreamToken` cover this. The
+    intermediary's own binding is deliberately neither used nor established:
+    "A chained request neither uses nor establishes a binding" (#agent-person-binding).
+- **Cross-area synthesis** (mission stripping through clarification, chaining
+  and federation; consent after updates; expiry versus withdrawal at pending
+  completion; retained results versus side effects; error-code consistency).
+  No findings. The reviewer confirmed that `WithdrawnResourceAsync` and the AS
+  pending check cover the pending paths added today.
+
+There are no unresolved P1 or P2 findings in the claimed scope.
+
+**Browser profiles.**
+
+- **Stub, full suite, `--retries=0`, at `b302726`:** 76 passed, 1 skipped (the
+  Keycloak-gated spec).
+- **Keycloak 26.0, the local container the Makefile boots:** the federated and
+  Wallet specs ran with `KEYCLOAK_E2E=1` and the Keycloak policy settings, with
+  `--retries=0`.
+  - The first run was 12 passed, 1 failed. `federated-deferred.spec.ts` looked
+    for a link by the text `interaction|realms|access`, which predates the
+    draft-11 person-consent step, and timed out on the retry click.
+  - The spec now uses the same `a.btn[href*="/interaction"]` locator as the
+    maintained stub spec. The rerun was 13 passed, 0 failed.
+- TypeScript typecheck passes. External interop against third-party draft-11
+  deployments was not run and is not claimed.
+
+**Target language.** The migration is verified, so these now state that the
+SDK targets draft-11:
+
+- `README.md` spec compatibility (the pinned commit is `178e9e6`, and the
+  limitations list is updated);
+- the `src/AAuth` package README;
+- `aauth-spec/SPEC-VERSION.md` and `CHANGELOG.md`, per the vendoring
+  instructions, which require both tracking files to name the targeted
+  snapshot.
+
+"Four resource access modes" became five (P134, P230) in the README and two
+signing-mode docs.
+
+Left unchanged: the sample demo data path `aauth-samples/v10/home` (Makefile
+`DEMO_HOME`). It is a persistent-state location and was not renamed. Moving it
+would orphan users' existing demo keys (Q12: no destructive reset).
+
+**Q1-Q14.** The Phase 0 rulings stand:
+
+- Q1-Q5, Q7-Q11, Q13 and Q14 are resolved by the spec, and their design
+  choices are logged in their phases (Q4 in Phase 6 accepted updates; Q8 in
+  Phases 5 and 8 retained results; Q9 in Phase 7 revocation delivery).
+- Q6 and Q12 proceeded on their defaults. Q6's optional selections are now
+  itemized in the ledger.
+
+AAuth issue #199 remains the only open upstream question, under its interim
+ruling.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

@@ -633,8 +633,8 @@ Phase rule: current-format live guidance; preserve intentional generic/OIDC/hist
 
 - [x] Every discovered instructional block has a validation class and disposition.
 - [x] No unexplained old wire/API name remains in live guidance.
-- [ ] Both apps' real traces and static instructions agree for selected flows.
-- [ ] Stub/Keycloak browser results and external/unavailable limits are recorded separately.
+- [x] Both apps' real traces and static instructions agree for selected flows.
+- [x] Stub/Keycloak browser results and external/unavailable limits are recorded separately.
 - [x] No Wallet flow is labelled as a direct agent-to-AS exchange.
 
 ## Phase 11 - independent internal review and closure
@@ -657,11 +657,11 @@ Phase rule: fresh spec-grounded review; no implicit acceptance of unresolved tru
 
 ### Definition of Done
 
-- [ ] No unresolved P1/P2 findings remain in claimed supported scope.
-- [ ] Each finding is fixed with rerun evidence or explicitly excluded by approval.
-- [ ] Q1-Q14 and subsequent ambiguities have current recorded dispositions.
+- [x] No unresolved P1/P2 findings remain in claimed supported scope.
+- [x] Each finding is fixed with rerun evidence or explicitly excluded by approval.
+- [x] Q1-Q14 and subsequent ambiguities have current recorded dispositions.
 - [ ] Final maps, ledger/log and release/browser evidence match the actual source.
-- [ ] External limits and published-draft target language remain accurate.
+- [x] External limits and published-draft target language remain accurate.
 
 ## Closing out the plan
 

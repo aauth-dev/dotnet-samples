@@ -19,23 +19,23 @@ The vendored `.md` files are the upstream kramdown source; if the GitHub repo is
 unavailable, the Datatracker `.txt`/`.html` renderings are the authoritative
 substitute.
 
-The SDK now targets **draft-10** ([`v10/`](v10/)), following the separately
-verified migration on 2026-09-09. This includes all four access modes, the
-resource-managed opaque credential, accounts, AS clarification, issuer-qualified
-revocation, and real four-party parent/worker scenarios in both primary apps.
-Signature Keys draft-08, R3 draft-01 and revised Events draft-00 are included;
-Bootstrap draft-02 remains informational. No snapshot bytes changed during migration.
+The SDK now targets **draft-11** ([`v11/`](v11/)), following the separately
+verified migration on 2026-09-29. This includes person tokens and the fifth
+access mode, `presented_token` exchanges, `mission_s256` missions with updates
+and expiry, parent-mediated sub-agents and call chaining through the person's
+PS, `{jti, exp}` revocation with cascades, and `202` auth-token delivery.
+Signature Keys draft-09 and the R3 and Events editor's copies at the draft-11
+tag are included. Bootstrap draft-02 remains informational. Budgets and
+`accept_signature_algs` advertisement are not implemented. No snapshot bytes
+changed during migration.
 
-`v11/` is the latest upstream reference: published draft-11, vendored
-2026-09-28. The SDK still targets draft-10 until the separate draft-11 migration
-is complete. Earlier snapshots are
-historical, not compatibility fallbacks. X.509/cached carriers and third-party
-login hosting are unsupported; platform/native transports and production
-persistence/policy are deployment responsibilities. External whoami identity
-access passed, but scoped access returned `person-token`; external authorization
-and the full external mission/sub-agent profile remain unverified. See the
-[migration log](../.agent/plans/2026-09-08-aauth-v10-spec-migration/implementation-log.md)
-and [conformance ledger](../.agent/plans/2026-09-08-aauth-v10-spec-migration/conformance-ledger.md)
+Earlier snapshots are historical, not compatibility fallbacks. X.509/cached
+carriers and third-party login hosting are unsupported; platform/native
+transports and production persistence/policy are deployment responsibilities.
+External interop against third-party draft-11 deployments has not been run.
+See the
+[migration log](../.agent/plans/2026-09-11-aauth-v11-spec-migration/implementation-log.md)
+and [conformance ledger](../.agent/plans/2026-09-11-aauth-v11-spec-migration/conformance-ledger.md)
 for executed gates and explicit limitations. Historical snapshot entries below
 retain their original context.
 
@@ -256,8 +256,8 @@ draft-08 bundles six published protocol drafts (03 → 08). The headline deltas:
 
 ## `v11/` — protocol draft-11
 
-> This is the latest upstream reference. The SDK continues to target draft-10
-> until the separate draft-11 migration is complete.
+> This is the latest upstream reference. The SDK targets it after the draft-11
+> migration completed on 2026-09-29.
 
 | Field | Value |
 |---|---|

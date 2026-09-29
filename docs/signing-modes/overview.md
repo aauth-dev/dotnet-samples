@@ -25,7 +25,7 @@ Every conveyed key requires a fully specified `alg`: Ed25519 or ES256.
 | Pseudonymous (`hwk`) | Accountable access, rate-limiting by key | Just a keypair |
 | Key Rotation (`jkt-jwt`) | Pseudonymous access where the request-signing key must rotate without re-enrolment | A durable key + an ephemeral key (and the ability to mint naming JWTs) |
 | Server Identity (`jwks_uri`) | Server signing with role metadata discovery | Signer identifier, metadata name and published kid |
-| JWT (`jwt`) | All four AAuth resource access modes; agent/auth/subscribe token purpose depends on the endpoint | Token issuer and matching cnf key; PS only for PS-asserted/federated flows |
+| JWT (`jwt`) | All five AAuth resource access modes; agent/auth/subscribe token purpose depends on the endpoint | Token issuer and matching cnf key; PS only for PS-asserted/federated flows |
 
 ### Role and trust
 

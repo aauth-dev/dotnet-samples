@@ -22,7 +22,7 @@ The four parties are:
 
 > **Agent Provider (AP)** is a supporting role that issues `aa-agent+jwt` tokens binding an agent's signing key to its identity.
 
-The SDK supports six Signature-Key schemes (`hwk`, `jkt-jwt`, `jwks_uri`, `jwks`, `jwt`, `self-jwt`). AAuth agent requests use `jwt` across all four resource access modes; the other schemes serve server signing, AP ceremonies, Events or explicit generic demonstrations. The SDK includes challenge/exchange flows, verification middleware, token builders, admitted discovery and a Blazor `GuidedTour`. See the [SDK documentation](docs/) for usage guides.
+The SDK supports six Signature-Key schemes (`hwk`, `jkt-jwt`, `jwks_uri`, `jwks`, `jwt`, `self-jwt`). AAuth agent requests use `jwt` across all five resource access modes; the other schemes serve server signing, AP ceremonies, Events or explicit generic demonstrations. The SDK includes challenge/exchange flows, verification middleware, token builders, admitted discovery and a Blazor `GuidedTour`. See the [SDK documentation](docs/) for usage guides.
 
 The [AAuth.Events companion](src/AAuth.Events/README.md) adds subscribe tokens,
 `self-jwt` event delivery, durable provider contracts and agent verification.
@@ -283,35 +283,36 @@ dotnet test tests/AAuth.Conformance   # spec conformance suite only
 | [docs/](docs/) | SDK documentation — signing modes, workflows, server guides |
 | [samples/](samples/) | Seven focused resources including Bookings and Catalog, PS/AS/AP hosts, console agents, GuidedTour and SampleApp |
 | [tests/](tests/) | Unit, integration, and spec-conformance tests |
-| [aauth-spec/](aauth-spec/) | Immutable protocol snapshots 01, 02, 08, 09 and 10 with pinned companion drafts |
+| [aauth-spec/](aauth-spec/) | Immutable protocol snapshots 01, 02, 08, 09, 10 and 11 with pinned companion drafts |
 
 ## Spec Compatibility
 
-This SDK targets **draft-10** of the AAuth protocol specification:
+This SDK targets **draft-11** of the AAuth protocol specification:
 
 | Spec | Draft |
 |------|-------|
-| [AAuth protocol](aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md) | 10 |
-| [Bootstrap](aauth-spec/v10/draft-hardt-aauth-bootstrap.md) | 02, informational |
-| [Rich Resource Requests](aauth-spec/v10/draft-hardt-aauth-r3.md) | 01 |
-| [Events](aauth-spec/v10/draft-hardt-aauth-events.md) | 00, revised |
-| [HTTP Signature Keys](aauth-spec/v10/draft-hardt-httpbis-signature-key-08.txt) | 08 |
+| [AAuth protocol](aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md) | 11 |
+| [Bootstrap](aauth-spec/v11/draft-hardt-aauth-bootstrap.md) | 02, informational |
+| [Rich Resource Requests](aauth-spec/v11/draft-hardt-aauth-r3.md) | editor's copy at the draft-11 tag |
+| [Events](aauth-spec/v11/draft-hardt-aauth-events.md) | 00, revised |
+| [HTTP Signature Keys](aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt) | 09 |
 
-The pinned source is commit `9dee49fbf49074d1460d0a7c0670bf355aef5e1e`,
-published 2026-08-06. All four access modes, account binding, AS clarification,
-issuer-qualified revocation and parent-mediated four-party delegation are
-implemented. Optional X.509/cached carriers and third-party login hosting are
-not implemented. Platform attestation, production stores/policies and native
-push transports remain deployment responsibilities. Events uses single-shot
-sample delivery with literal issuer/eid deduplication; recurring-event ambiguity
-is not hidden by the supported-carrier claim.
+The pinned source is commit `178e9e68b6578e4d6f7d0bf30f33b4c38833e3a1`,
+published 2026-09-25. Person tokens and all five resource access modes, presented-token
+exchanges, `mission_s256` missions (with updates, resources and expiry),
+parent-mediated sub-agents, call chaining through the person's PS, `{jti, exp}`
+revocation with cascades, and `202` auth-token delivery are implemented. Optional
+`accept_signature_algs` advertisement, `aauth-resource` links, Budgets, R3
+release gating, X.509/cached carriers and third-party login hosting are not
+implemented. Platform attestation, production stores/policies and native push
+transports remain deployment responsibilities. Events delivery deduplicates on
+`(iss, jti)`.
 
-Local Release and both policy-mode browser gates pass. External whoami identity
-access succeeds, but its scoped endpoint returned `person-token` rather than the
-pinned `auth-token` challenge; full external authorization interop is not claimed.
+Local Release, stub and Keycloak policy-mode browser gates pass. External
+interop against third-party draft-11 deployments has not been run.
 See [SPEC-VERSION](aauth-spec/SPEC-VERSION.md),
 [snapshot history](aauth-spec/CHANGELOG.md), and the
-[conformance dispositions](.agent/plans/2026-09-08-aauth-v10-spec-migration/conformance-ledger.md).
+[conformance dispositions](.agent/plans/2026-09-11-aauth-v11-spec-migration/conformance-ledger.md).
 
 ## Contributing
 

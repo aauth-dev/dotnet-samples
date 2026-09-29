@@ -29,7 +29,9 @@ test.describe('Federated (interactive Keycloak)', () => {
     await expect(page.locator('h2')).toContainText('Federated');
     await waitForInteractive(page, 'button.btn-primary');
 
-    const link = page.locator('a[target="_blank"]', { hasText: /interaction|realms|access/ });
+    // The PS consent link comes first (draft-11 person token and consent), then
+    // the same element carries the AS interaction URL.
+    const link = page.locator('a.btn[target="_blank"][href*="/interaction"]');
     await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
     await expect(link).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.spinner-border')).toBeVisible();

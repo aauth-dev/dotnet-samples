@@ -32,14 +32,17 @@ are the spec's own kramdown anchors and are stable across line shifts.
 > `v11/` is the published draft-11 snapshot, vendored 2026-09-28. It replaces the
 > 2026-09-11 WIP capture of commit `55ae44c`, which remains in git history at
 > commit `e6d18a3`. It adds the Budgets companion and the upstream -10 to -11
-> upgrade guides. The SDK still targets draft-10; no SDK migration is included.
+> upgrade guides. Vendoring included no SDK migration; the separate migration
+> below followed.
 
-> The SDK code targets `v10/` (draft-10) after the separately verified 2026-09-09
-> migration. The snapshot was vendored 2026-09-08 and remains byte-unchanged.
-> All four access modes and local four-party sub-agent scenarios are implemented;
-> optional exclusions and incomplete external authorization interop remain explicit.
+> The SDK code targets `v11/` (draft-11) after the separately verified 2026-09-29
+> migration. The snapshot was vendored 2026-09-28 and remains byte-unchanged.
+> All five resource access modes, presented-token exchanges, `mission_s256` missions,
+> `{jti, exp}` revocation and R3/Events on the draft-11 wire are implemented;
+> optional exclusions (such as algorithm advertisement and Budgets) and
+> unverified external interop remain explicit.
 > See [SPEC-VERSION](SPEC-VERSION.md) and the
-> [migration evidence](../.agent/plans/2026-09-08-aauth-v10-spec-migration/implementation-log.md).
+> [migration evidence](../.agent/plans/2026-09-11-aauth-v11-spec-migration/implementation-log.md).
 > Historical per-snapshot entries below describe their original publication state.
 
 ## Contents
@@ -109,8 +112,9 @@ protocol **draft-11** with Bootstrap **draft-02**, the R3, Events and Budgets
 editor's copies at that tag, the revised Interoperability Demo Profile, HTTP
 Signature Keys **draft-09**, and the upstream -10 to -11 upgrade guides.
 
-> **The SDK continues to target draft-10.** The draft-11 migration is planned in
-> [`.agent/plans/2026-09-11-aauth-v11-spec-migration/`](../.agent/plans/2026-09-11-aauth-v11-spec-migration/).
+> **The SDK targets draft-11** after the migration in
+> [`.agent/plans/2026-09-11-aauth-v11-spec-migration/`](../.agent/plans/2026-09-11-aauth-v11-spec-migration/),
+> completed 2026-09-29.
 
 This entry replaces the 2026-09-11 WIP entry for commit `55ae44c`. Between that
 capture and the tag, [AAuth PR #162](https://github.com/dickhardt/AAuth/pull/162)

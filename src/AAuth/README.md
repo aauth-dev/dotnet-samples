@@ -74,8 +74,8 @@ resource- and Person-Server-side code, see the
 
 ## Features
 
-Targets AAuth protocol draft-10 and HTTP Signature Keys draft-08. Companion
-packages provide R3 draft-01 and revised Events draft-00. Fully specified
+Targets AAuth protocol draft-11 and HTTP Signature Keys draft-09. Companion
+packages provide R3 and revised Events draft-00 as vendored with draft-11. Fully specified
 Ed25519/ES256 keys and JWT headers are supported; old wire aliases are rejected.
 X.509/cached carriers, third-party login hosting and platform attestation are
 not implemented. Production persistence, user admission and transport policies

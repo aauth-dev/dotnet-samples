@@ -5,12 +5,12 @@
 The `jwt` Signature-Key scheme presents a token with a confirmation key.
 An agent token authenticates agent identity; an auth token carries authorization;
 the Events companion uses a subscribe token at subscription endpoints. AAuth
-agents use `jwt` for all four resource access modes. A Person Server is not
+agents use `jwt` for all five resource access modes. A Person Server is not
 required for identity-based or resource-managed access.
 
 ## When to Use
 
-- All four AAuth resource access modes, including PS-asserted and federated flows
+- All five AAuth resource access modes, including PS-asserted and federated flows
 - When the resource needs to discover the agent's Person Server (from the `ps` claim)
 - When the resource needs verified agent identity with issuer attestation
 
