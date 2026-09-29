@@ -89,7 +89,7 @@ app.MapGet("/agents/{agentId}/jwks.json", (string agentId) =>
 // - hwk: AP verifies signature against durable key, looks up agent by thumbprint.
 // - jkt-jwt: AP verifies naming JWT (signed by durable key), verifies HTTP sig
 //   against ephemeral key, issues token with ephemeral key as cnf.jwk.
-app.MapPost("/refresh", (HttpContext ctx) =>
+app.MapPost("/refresh", async (HttpContext ctx) =>
 {
     IResult SignatureFailure(AAuth.Errors.SignatureErrorCode code, string message)
     {
@@ -190,12 +190,12 @@ app.MapPost("/refresh", (HttpContext ctx) =>
     {
         // Two-key: agent token's cnf.jwk is the NEW ephemeral key
         var twoKeyRecord = record with { PublicKey = ephemeralKey };
-        newToken = IssueAgentToken(twoKeyRecord);
+        newToken = await IssueAgentTokenAsync(twoKeyRecord, ctx.RequestAborted);
         Console.WriteLine($"[REFRESH] {record.AgentId} (two-key: verified durable key, new ephemeral key)");
     }
     else
     {
-        newToken = IssueAgentToken(record);
+        newToken = await IssueAgentTokenAsync(record, ctx.RequestAborted);
         Console.WriteLine($"[REFRESH] {record.AgentId} (single-key: verified by key thumbprint)");
     }
 
@@ -225,7 +225,7 @@ app.MapGet("/agents", () =>
 app.Run();
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-string IssueAgentToken(SampleAgentRecord record)
+ValueTask<string> IssueAgentTokenAsync(SampleAgentRecord record, CancellationToken ct)
 {
     return new AgentTokenBuilder
     {
@@ -236,7 +236,7 @@ string IssueAgentToken(SampleAgentRecord record)
         Key = apKey,
         ConfirmationKey = record.PublicKey,
         PersonServer = record.PersonServer,
-    }.Build();
+    }.BuildAsync(ct);
 }
 
 namespace MockAgentProvider

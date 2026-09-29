@@ -17,7 +17,7 @@ public sealed class AAuthAccessServerMetadataOptions
     public required string AuthTokenEndpoint { get; set; }
 
     /// <summary>Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. REQUIRED.</summary>
-    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; set; }
+    public required AAuthSigningKeySet SigningKeys { get; set; }
 
     /// <summary>Optional human-readable name (<c>name</c>).</summary>
     public string? Name { get; set; }

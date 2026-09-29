@@ -92,7 +92,7 @@ var app = builder.Build();
 app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     Issuer = psIssuer,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
+    SigningKeys = new AAuthSigningKeySet(PsKid, psKey),
     Trust = { AccessServers = { Allowed = trustedAccessServers } },
 });
 ```
@@ -129,7 +129,7 @@ var app = builder.Build();
 app.MapAAuthAccessServer(new AAuthAccessServerOptions
 {
     Issuer       = asIssuer,
-    SigningKeys  = new Dictionary<string, IAAuthKey> { [AsKid] = asKey },
+    SigningKeys  = new AAuthSigningKeySet(AsKid, asKey),
     DefaultScope = "wallet.read",
     Trust        = { PersonServers = { Allowed = trustedPersonServers } },
 });

@@ -31,7 +31,7 @@ public class AgentTokenBuilderTests
     [InlineData("iss", " ", "kid")]
     [InlineData("iss", "sub", "")]
     [InlineData("iss", "sub", " ")]
-    public void Build_RejectsEmptyRequiredClaims(string iss, string sub, string kid)
+    public async Task Build_RejectsEmptyRequiredClaims(string iss, string sub, string kid)
     {
         var builder = new AgentTokenBuilder
         {
@@ -42,7 +42,7 @@ public class AgentTokenBuilderTests
             Key = NewKey(),
         };
 
-        Assert.Throws<InvalidOperationException>(() => builder.Build());
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await builder.BuildAsync());
     }
 
     [Theory]
@@ -50,7 +50,7 @@ public class AgentTokenBuilderTests
     [InlineData("ap.example")]
     [InlineData("ftp://ap.example")]
     [InlineData("/relative/path")]
-    public void Build_RejectsNonHttpsIssuer(string iss)
+    public async Task Build_RejectsNonHttpsIssuer(string iss)
     {
         var builder = new AgentTokenBuilder
         {
@@ -61,11 +61,11 @@ public class AgentTokenBuilderTests
             Key = NewKey(),
         };
 
-        Assert.Throws<InvalidOperationException>(() => builder.Build());
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await builder.BuildAsync());
     }
 
     [Fact]
-    public void Build_RejectsNonHttpsPersonServer()
+    public async Task Build_RejectsNonHttpsPersonServer()
     {
         var builder = new AgentTokenBuilder
         {
@@ -77,21 +77,21 @@ public class AgentTokenBuilderTests
             PersonServer = "http://ps.example",
         };
 
-        Assert.Throws<InvalidOperationException>(() => builder.Build());
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await builder.BuildAsync());
     }
 
     [Fact]
-    public void Build_EmitsRequiredHeaderClaims()
+    public async Task Build_EmitsRequiredHeaderClaims()
     {
         var key = NewKey();
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:alice@ap.example",
             KeyId = "k1",
             Key = key,
-        }.Build();
+        }.BuildAsync();
 
         var (header, _, _, _) = Decode(jwt);
 
@@ -101,11 +101,11 @@ public class AgentTokenBuilderTests
     }
 
     [Fact]
-    public void Build_EmitsRequiredPayloadClaims()
+    public async Task Build_EmitsRequiredPayloadClaims()
     {
         var key = NewKey();
         var iat = DateTimeOffset.FromUnixTimeSeconds(1_730_000_000);
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -115,7 +115,7 @@ public class AgentTokenBuilderTests
             IssuedAt = iat,
             Lifetime = TimeSpan.FromMinutes(30),
             TokenId = "jti-fixed",
-        }.Build();
+        }.BuildAsync();
 
         var (_, payload, _, _) = Decode(jwt);
 
@@ -133,9 +133,9 @@ public class AgentTokenBuilderTests
     }
 
     [Fact]
-    public void Build_OptionalPsClaim()
+    public async Task Build_OptionalPsClaim()
     {
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -143,16 +143,16 @@ public class AgentTokenBuilderTests
             KeyId = "k1",
             Key = NewKey(),
             PersonServer = "https://ps.example",
-        }.Build();
+        }.BuildAsync();
 
         var (_, payload, _, _) = Decode(jwt);
         Assert.Equal("https://ps.example", (string?)payload["ps"]);
     }
 
     [Fact(DisplayName = "§Sub-Agents — a sub-agent token emits parent_agent")]
-    public void Build_EmitsParentAgent()
+    public async Task Build_EmitsParentAgent()
     {
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://vendor.example",
@@ -160,14 +160,14 @@ public class AgentTokenBuilderTests
             KeyId = "k1",
             Key = NewKey(),
             ParentAgent = "aauth:planner.7f3c@vendor.example",
-        }.Build();
+        }.BuildAsync();
 
         var (_, payload, _, _) = Decode(jwt);
         Assert.Equal("aauth:planner.7f3c@vendor.example", (string?)payload["parent_agent"]);
     }
 
     [Fact(DisplayName = "§Sub-Agents — a top-level token MUST NOT contain the '+' delimiter")]
-    public void Build_RejectsPlusInTopLevelLocal()
+    public async Task Build_RejectsPlusInTopLevelLocal()
     {
         var builder = new AgentTokenBuilder
         {
@@ -179,14 +179,14 @@ public class AgentTokenBuilderTests
             // No ParentAgent → top-level → '+' is illegal.
         };
 
-        Assert.Throws<InvalidOperationException>(() => builder.Build());
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await builder.BuildAsync());
     }
 
     [Theory(DisplayName = "§Agent Identifiers — a malformed top-level Subject fails fast")]
     [InlineData("not-an-agent-id")]        // no scheme/@, but contains no '+'
     [InlineData("bob+worker@ap.example")]  // missing aauth: scheme, contains '+'
     [InlineData("aauth:@ap.example")]      // empty local part
-    public void Build_RejectsMalformedTopLevelSubject(string subject)
+    public async Task Build_RejectsMalformedTopLevelSubject(string subject)
     {
         var builder = new AgentTokenBuilder
         {
@@ -198,11 +198,11 @@ public class AgentTokenBuilderTests
             // No ParentAgent → top-level. A malformed sub must throw, not emit.
         };
 
-        Assert.Throws<InvalidOperationException>(() => builder.Build());
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await builder.BuildAsync());
     }
 
     [Fact(DisplayName = "§Sub-Agents — single-level depth: a sub-agent's parent MUST be top-level")]
-    public void Build_RejectsSubAgentOfSubAgent()
+    public async Task Build_RejectsSubAgentOfSubAgent()
     {
         var builder = new AgentTokenBuilder
         {
@@ -214,11 +214,11 @@ public class AgentTokenBuilderTests
             ParentAgent = "aauth:planner.7f3c+search1@vendor.example", // parent is itself a sub-agent
         };
 
-        Assert.Throws<InvalidOperationException>(() => builder.Build());
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await builder.BuildAsync());
     }
 
     [Fact(DisplayName = "§Sub-Agents — a sub-agent local part MUST derive from its parent_agent")]
-    public void Build_RejectsMismatchedSubAgentParent()
+    public async Task Build_RejectsMismatchedSubAgentParent()
     {
         var builder = new AgentTokenBuilder
         {
@@ -230,21 +230,21 @@ public class AgentTokenBuilderTests
             ParentAgent = "aauth:planner.7f3c@vendor.example", // local part 'other' != 'planner.7f3c'
         };
 
-        Assert.Throws<InvalidOperationException>(() => builder.Build());
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await builder.BuildAsync());
     }
 
     [Fact]
-    public void Build_SignatureVerifiesWithEmbeddedPublicKey()
+    public async Task Build_SignatureVerifiesWithEmbeddedPublicKey()
     {
         var key = NewKey();
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:alice@ap.example",
             KeyId = "k1",
             Key = key,
-        }.Build();
+        }.BuildAsync();
 
         var (_, payload, signature, signingInput) = Decode(jwt);
 
@@ -255,7 +255,7 @@ public class AgentTokenBuilderTests
     }
 
     [Fact]
-    public void Build_RejectsPublicOnlyKey()
+    public async Task Build_RejectsPublicOnlyKey()
     {
         var publicOnly = AAuthKey.FromJwk(AAuthKey.Generate().ToPublicJwk());
         var builder = new AgentTokenBuilder
@@ -267,11 +267,11 @@ public class AgentTokenBuilderTests
             Key = publicOnly,
         };
 
-        Assert.Throws<InvalidOperationException>(() => builder.Build());
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await builder.BuildAsync());
     }
 
     [Fact]
-    public void Build_AdditionalClaim_CannotCollideWithRequired()
+    public async Task Build_AdditionalClaim_CannotCollideWithRequired()
     {
         var builder = new AgentTokenBuilder
         {
@@ -283,13 +283,13 @@ public class AgentTokenBuilderTests
             AdditionalClaims = new Dictionary<string, JsonNode?> { ["iss"] = "other" },
         };
 
-        Assert.Throws<InvalidOperationException>(() => builder.Build());
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await builder.BuildAsync());
     }
 
     [Fact]
-    public void Build_AdditionalClaim_IsCopiedIntoPayload()
+    public async Task Build_AdditionalClaim_IsCopiedIntoPayload()
     {
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -297,7 +297,7 @@ public class AgentTokenBuilderTests
             KeyId = "k1",
             Key = NewKey(),
             AdditionalClaims = new Dictionary<string, JsonNode?> { ["scope"] = "data.read data.write" },
-        }.Build();
+        }.BuildAsync();
 
         var (_, payload, _, _) = Decode(jwt);
         Assert.Equal("data.read data.write", (string?)payload["scope"]);

@@ -81,7 +81,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
         // One auth token (one jti), presented on two requests with distinct
         // per-request signatures (different `created`). Both MUST pass — keying
         // replay on the token jti would have rejected the second.
-        var token = BuildAuthToken();
+        var token = await BuildAuthTokenAsync();
 
         var first = await Send(await SignRequest(token, FixedClock.AddSeconds(-2)));
         var second = await Send(await SignRequest(token, FixedClock.AddSeconds(-1)));
@@ -95,7 +95,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
     {
         // The identical signed request (same signature tuple) presented twice:
         // the first records the tuple, the second collides and is rejected.
-        var token = BuildAuthToken();
+        var token = await BuildAuthTokenAsync();
         var signed = await SignRequest(token, FixedClock.AddSeconds(-1));
 
         var first = await Send(signed);
@@ -113,7 +113,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
     {
         // Revocation is keyed on the token's own jti (not the replay tuple).
         const string Jti = "revoked-jti-1";
-        var token = BuildAuthToken(Jti);
+        var token = await BuildAuthTokenAsync(Jti);
         Assert.Equal(HttpStatusCode.OK, (await Send(await SignRequest(token, FixedClock.AddSeconds(-2)))).StatusCode);
         await _jtiStore.RevokeAsync(new TokenKey(PsIssuer, Jti), FixedClock.AddMinutes(5));
 
@@ -128,7 +128,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
     [Fact]
     public async Task Es256AlternateSignature_RejectedAsReplay()
     {
-        var signed = await SignRequest(BuildAuthToken(), FixedClock.AddSeconds(-1));
+        var signed = await SignRequest(await BuildAuthTokenAsync(), FixedClock.AddSeconds(-1));
         Assert.Equal(HttpStatusCode.OK, (await Send(signed)).StatusCode);
         var signature = Convert.FromBase64String(signed.Headers.GetValues("Signature").Single().Split(':')[1]);
         var order = Org.BouncyCastle.Asn1.X9.ECNamedCurveTable.GetByName("P-256").N;
@@ -150,7 +150,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private string BuildAuthToken(string? jti = null)
+    private ValueTask<string> BuildAuthTokenAsync(string? jti = null)
         => new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
@@ -165,7 +165,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
             Scope = "whoami",
             IssuedAt = FixedClock,
             TokenId = jti,
-        }.Build();
+        }.BuildAsync();
 
     // Produce a GET /protected signed by the agent key + auth-token carrier,
     // with the signature `created` pinned to a chosen instant.

@@ -13,11 +13,11 @@ public sealed class ClientCompositionTests
 {
     private readonly AAuthKey _key = AAuthKey.Generate();
 
-    private string Token(int seconds = 3600) => new AgentTokenBuilder
+    private ValueTask<string> TokenAsync(int seconds = 3600) => new AgentTokenBuilder
     {
         Issuer = "https://ap.example", Subject = "aauth:agent@ap.example",
         Key = _key, KeyId = "agent-key", Lifetime = TimeSpan.FromSeconds(seconds),
-    }.Build();
+    }.BuildAsync();
 
     private EnrollResult Enrollment(string token, bool hasJwks = true) => new()
     {
@@ -31,7 +31,7 @@ public sealed class ClientCompositionTests
     [InlineData(false)]
     public async Task From_UsesEnrollmentJwtRegardlessOfJwks(bool hasJwks)
     {
-        var token = Token();
+        var token = await TokenAsync();
         var transport = new CaptureTransport();
         using var client = AAuthClientBuilder.From(Enrollment(token, hasJwks))
             .WithInnerHandler(transport, AAuthTransportContract.InProcessOnly).Build();
@@ -44,10 +44,10 @@ public sealed class ClientCompositionTests
     [InlineData(true)]
     public async Task From_RefreshUpdatesJwtCarrier(bool challenge)
     {
-        var token = Token();
+        var token = await TokenAsync();
         var refresher = new TrackingRefresher(token);
         var transport = new CaptureTransport();
-        var builder = AAuthClientBuilder.From(Enrollment(Token(10)))
+        var builder = AAuthClientBuilder.From(Enrollment(await TokenAsync(10)))
             .WithTokenRefresh(refresher)
             .WithInnerHandler(transport, AAuthTransportContract.InProcessOnly);
         if (challenge) builder.WithChallengeHandling("https://ps.example");
@@ -67,7 +67,7 @@ public sealed class ClientCompositionTests
     [InlineData("provider")]
     public async Task ExplicitSchemeAfterRefreshSuppressesRefresh(string scheme)
     {
-        var token = Token();
+        var token = await TokenAsync();
         var refresher = new TrackingRefresher(token);
         var transport = new CaptureTransport();
         var builder = AAuthClientBuilder.From(Enrollment(token)).WithTokenRefresh(refresher);
@@ -77,7 +77,10 @@ public sealed class ClientCompositionTests
             case "jwt": builder.UseJwt(token); break;
             case "jwks_uri": builder.UseJwksUri("https://agent.example", "aauth-agent.json", "key"); break;
             case "jwks": builder.UseJwks("https://agent.example/keys", "key"); break;
-            case "jkt-jwt": builder.UseJktJwt(() => NamingJwtBuilder.Build(_key, _key)); break;
+            case "jkt-jwt":
+                var namingJwt = await NamingJwtBuilder.BuildAsync(_key, _key);
+                builder.UseJktJwt(() => namingJwt);
+                break;
             case "self-jwt": builder.UseSelfJwt(() => token); break;
             case "provider": builder.UseProvider(new HwkSignatureKeyProvider(_key)); break;
         }
@@ -90,7 +93,7 @@ public sealed class ClientCompositionTests
     [Fact]
     public async Task RefreshAfterExplicitSchemeSelectsJwt()
     {
-        var refresher = new TrackingRefresher(Token());
+        var refresher = new TrackingRefresher(await TokenAsync());
         var transport = new CaptureTransport();
         using var client = new AAuthClientBuilder(_key).UseHwk().WithTokenRefresh(refresher)
             .WithInnerHandler(transport, AAuthTransportContract.InProcessOnly).Build();
@@ -121,7 +124,7 @@ public sealed class ClientCompositionTests
     public async Task DefaultPolicyRejectsLoopbackBeforeTransport()
     {
         var transport = new CaptureTransport();
-        using var client = AAuthClientBuilder.From(Enrollment(Token()))
+        using var client = AAuthClientBuilder.From(Enrollment(await TokenAsync()))
             .WithInnerHandler(transport, AAuthTransportContract.InProcessOnly).Build();
         await Assert.ThrowsAnyAsync<Exception>(() => client.GetAsync("http://localhost:9999/messages"));
         Assert.Empty(transport.Targets);
@@ -134,7 +137,7 @@ public sealed class ClientCompositionTests
         using var client = AAuthClientBuilder.Enrolled(_key)
             .RefreshingFrom("https://ap.example/refresh", "local-key")
             .WithKeyStore(new InMemoryKeyStore()).ToBuilder()
-            .UseJwt(Token()).WithInnerHandler(transport, AAuthTransportContract.InProcessOnly).Build();
+            .UseJwt(await TokenAsync()).WithInnerHandler(transport, AAuthTransportContract.InProcessOnly).Build();
         Assert.Empty(transport.Targets);
         using var response = await client.GetAsync("https://resource.example/messages");
         Assert.Equal("", transport.Capabilities.Single());
@@ -142,12 +145,13 @@ public sealed class ClientCompositionTests
     }
 
     [Fact]
-    public void PipelineOwnsFactoryRefresherButNotInjectedRefresher()
+    public async Task PipelineOwnsFactoryRefresherButNotInjectedRefresher()
     {
         var created = new List<TrackingRefresher>();
+        var token = await TokenAsync();
         var builder = new AAuthClientBuilder(_key).WithOwnedTokenRefresh(_ =>
         {
-            var refresher = new TrackingRefresher(Token());
+            var refresher = new TrackingRefresher(token);
             created.Add(refresher);
             return refresher;
         });
@@ -160,16 +164,16 @@ public sealed class ClientCompositionTests
         Assert.Equal(0, created[1].Disposals);
         second.Dispose();
         Assert.Equal(1, created[1].Disposals);
-        var borrowed = new TrackingRefresher(Token());
+        var borrowed = new TrackingRefresher(await TokenAsync());
         new AAuthClientBuilder(_key).WithTokenRefresh(borrowed).Build().Dispose();
         Assert.Equal(0, borrowed.Disposals);
     }
 
     [Fact]
-    public void FailedInteractionConfigurationDisposesPartialTransport()
+    public async Task FailedInteractionConfigurationDisposesPartialTransport()
     {
         var transport = new CaptureTransport();
-        var refresher = new TrackingRefresher(Token());
+        var refresher = new TrackingRefresher(await TokenAsync());
         Assert.Throws<InvalidOperationException>(() => new AAuthClientBuilder(_key)
             .WithOwnedTokenRefresh(_ => refresher)
             .WithInnerHandler(transport, AAuthTransportContract.InProcessOnly)
@@ -191,9 +195,9 @@ public sealed class ClientCompositionTests
     }
 
     [Fact]
-    public void FailedBuildDisposesOwnedRefresher()
+    public async Task FailedBuildDisposesOwnedRefresher()
     {
-        var refresher = new TrackingRefresher(Token());
+        var refresher = new TrackingRefresher(await TokenAsync());
         Assert.Throws<InvalidOperationException>(() => new AAuthClientBuilder(_key)
             .WithOwnedTokenRefresh(_ => refresher).WithChallengeHandling().Build());
         Assert.Equal(1, refresher.Disposals);

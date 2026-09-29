@@ -131,9 +131,9 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         return app;
     }
 
-    private string BuildAgentToken()
+    private async Task<string> BuildAgentTokenAsync()
     {
-        return new AgentTokenBuilder
+        return await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -142,12 +142,12 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             KeyId = "ap-key-1",
             ConfirmationKey = _agentKey,
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
     }
 
-    private string BuildAuthToken(string? account = null)
+    private async Task<string> BuildAuthTokenAsync(string? account = null)
     {
-        return new AuthTokenBuilder
+        return await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -161,7 +161,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             Account = account,
             Scope = "whoami",
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
     }
 
     [Theory]
@@ -193,7 +193,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             accountVerified = context.GetAAuthVerification()!.AccountVerified,
         }));
         await app.StartAsync();
-        using var client = new AAuthClientBuilder(_agentKey).UseJwt(BuildAuthToken(account))
+        using var client = new AAuthClientBuilder(_agentKey).UseJwt(await BuildAuthTokenAsync(account))
             .WithEgressPolicy(TestEgress.Policy)
             .WithInnerHandler(app.GetTestServer().CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly).Build();
         using var response = await client.GetAsync(ResourceId + "/protected");
@@ -259,7 +259,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             ["exp"] = FixedClock.AddMinutes(5).ToUnixTimeSeconds(),
             ["cnf"] = new JsonObject { ["jwk"] = ephemeral.ToPublicJwk() },
         };
-        var namingJwt = JwtWriter.SignCompact(header, payload, durable);
+        var namingJwt = await JwtWriter.SignCompactAsync(header, payload, durable);
 
         var capture = new CaptureHandler();
         var provider = new JktJwtSignatureKeyProvider(() => namingJwt);
@@ -279,7 +279,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     [Fact(DisplayName = "§Verification — accepts AP-issued agent token with valid JWKS")]
     public async Task AcceptsValidAgentToken()
     {
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         var response = await SendSigned(token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -287,7 +287,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     [Fact(DisplayName = "§Verification — accepts valid auth token with PS JWKS")]
     public async Task AcceptsValidAuthToken()
     {
-        var token = BuildAuthToken();
+        var token = await BuildAuthTokenAsync();
         var response = await SendSigned(token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -315,7 +315,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     {
         // Sign the agent token with a different key than the AP's published JWKS.
         var forgerKey = AAuthKey.Generate();
-        var forgedToken = new AgentTokenBuilder
+        var forgedToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -324,7 +324,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             KeyId = "ap-key-1", // Claims to be AP's key
             ConfirmationKey = _agentKey,
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
 
         var response = await SendSigned(forgedToken);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -334,7 +334,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     public async Task RejectsAuthTokenWithUnknownKey()
     {
         var forgerKey = AAuthKey.Generate();
-        var forgedToken = new AuthTokenBuilder
+        var forgedToken = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -347,7 +347,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             Subject = "pairwise-sub",
             Scope = "whoami",
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
 
         var response = await SendSigned(forgedToken);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -356,7 +356,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     [Fact(DisplayName = "§Verification — rejects auth token with wrong audience")]
     public async Task RejectsAuthTokenWithWrongAudience()
     {
-        var wrongAudToken = new AuthTokenBuilder
+        var wrongAudToken = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -369,7 +369,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             Subject = "pairwise-sub",
             Scope = "whoami",
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
 
         var response = await SendSigned(wrongAudToken);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -398,7 +398,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         await app.StartAsync();
         _host = app;
 
-        var token = BuildAgentToken(); // Issuer = ApIssuer, NOT in allow-list
+        var token = await BuildAgentTokenAsync(); // Issuer = ApIssuer, NOT in allow-list
         var response = await SendSigned(token);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -426,7 +426,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         await app.StartAsync();
         _host = app;
 
-        var token = BuildAuthToken(); // Issuer = PsIssuer, NOT in PS allow-list
+        var token = await BuildAuthTokenAsync(); // Issuer = PsIssuer, NOT in PS allow-list
         var response = await SendSigned(token);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -462,7 +462,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             // Trust.AuthTokenIssuers intentionally unset ⇒ open.
         });
 
-        var response = await SendSigned(BuildAuthToken());
+        var response = await SendSigned(await BuildAuthTokenAsync());
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
@@ -476,7 +476,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             Trust = { AuthTokenIssuers = { Allowed = new HashSet<string>() } }, // empty ⇒ deny-all
         });
 
-        var response = await SendSigned(BuildAuthToken());
+        var response = await SendSigned(await BuildAuthTokenAsync());
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
@@ -490,7 +490,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             Trust = { AuthTokenIssuers = { Predicate = iss => iss == "https://other-ps.example" } },
         });
 
-        var response = await SendSigned(BuildAuthToken()); // iss = PsIssuer, not matched
+        var response = await SendSigned(await BuildAuthTokenAsync()); // iss = PsIssuer, not matched
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
@@ -504,7 +504,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             Trust = { AuthTokenIssuers = { Predicate = iss => iss == PsIssuer } },
         });
 
-        var response = await SendSigned(BuildAuthToken());
+        var response = await SendSigned(await BuildAuthTokenAsync());
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
@@ -530,7 +530,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             ["iat"] = FixedClock.ToUnixTimeSeconds(),
             ["exp"] = FixedClock.AddHours(1).ToUnixTimeSeconds(),
         };
-        var token = JwtWriter.SignCompact(header, payload, _psKey);
+        var token = await JwtWriter.SignCompactAsync(header, payload, _psKey);
 
         var response = await SendSigned(token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -573,7 +573,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         // Self-issued: kid == thumbprint of cnf.jwk.
         var selfKey = AAuthKey.Generate();
         var thumbprint = selfKey.ComputeJwkThumbprint();
-        var selfToken = new AgentTokenBuilder
+        var selfToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "http://localhost:8888", // Self-issued — doesn't need AP JWKS
@@ -582,7 +582,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             KeyId = thumbprint, // kid == thumbprint signals self-issued
             ConfirmationKey = selfKey,
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
 
         // For self-issued, the agent signs with its own key.
         var capture = new CaptureHandler();
@@ -637,7 +637,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         await app.StartAsync();
         _host = app;
 
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         var response = await SendSigned(token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 

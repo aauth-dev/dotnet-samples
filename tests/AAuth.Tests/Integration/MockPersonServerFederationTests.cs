@@ -43,7 +43,7 @@ public class MockPersonServerFederationTests
     {
         var agentKey = AAuthKey.Generate();
         using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read");
-        using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
 
         // Resource token audience is the ACCESS SERVER, not the PS → federate.
         using var response = await http.PostAsJsonAsync("/token",
@@ -69,7 +69,7 @@ public class MockPersonServerFederationTests
     {
         var agentKey = AAuthKey.Generate();
         using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read");
-        using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
 
         // aud is some other Access Server the PS has no federation trust with.
         using var response = await http.PostAsJsonAsync("/token",
@@ -87,7 +87,7 @@ public class MockPersonServerFederationTests
         // PS is configured for federation.
         var agentKey = AAuthKey.Generate();
         using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read");
-        using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
 
         using var response = await http.PostAsJsonAsync("/token",
             await TokenRequestAsync(http, agentKey, audience: PsIssuer, scope: "wallet.read"));
@@ -113,7 +113,7 @@ public class MockPersonServerFederationTests
         var agentKey = AAuthKey.Generate();
         var stubState = new InteractiveAsState();
         using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read", interactive: stubState);
-        using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
 
         using var post = await http.PostAsJsonAsync("/token",
             await TokenRequestAsync(http, agentKey, audience: AsIssuer, scope: "wallet.read"));
@@ -188,10 +188,10 @@ public class MockPersonServerFederationTests
         });
     }
 
-    private static HttpClient BuildSignedAgentClient(
+    private static async Task<HttpClient> BuildSignedAgentClientAsync(
         WebApplicationFactory<MockPersonServer.Entry> factory, AAuthKey agentKey, string agentId)
     {
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -199,7 +199,7 @@ public class MockPersonServerFederationTests
             KeyId = "demo",
             Key = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
         var signing = new AAuthSigningHandler(agentKey, () => agentToken)
         {
             InnerHandler = factory.Server.CreateHandler(),
@@ -212,7 +212,7 @@ public class MockPersonServerFederationTests
     {
         var personToken = await PersonTokenFlow.RequestAsync(http, ResourceUrl);
         var person = DecodePayload(personToken);
-        var resourceToken = new ResourceTokenBuilder
+        var resourceToken = await new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
             EgressPolicy = TestEgress.Policy,
@@ -225,7 +225,7 @@ public class MockPersonServerFederationTests
             Key = ResourceStub.Key,
             KeyId = ResourceStub.Kid,
             Scope = scope,
-        }.Build();
+        }.BuildAsync();
         return PersonTokenFlow.Body(resourceToken, personToken);
     }
 
@@ -308,7 +308,7 @@ public class MockPersonServerFederationTests
 
                 return Json(new JsonObject
                 {
-                    ["auth_token"] = MintAuthToken(),
+                    ["auth_token"] = await MintAuthTokenAsync(),
                     ["expires_in"] = _agentTokenExpiresAt.ToUnixTimeSeconds() - DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 });
             }
@@ -319,7 +319,7 @@ public class MockPersonServerFederationTests
                 {
                     return Json(new JsonObject
                     {
-                        ["auth_token"] = MintAuthToken(),
+                        ["auth_token"] = await MintAuthTokenAsync(),
                         ["expires_in"] = _agentTokenExpiresAt.ToUnixTimeSeconds() - DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                     });
                 }
@@ -366,7 +366,7 @@ public class MockPersonServerFederationTests
                 };
         }
 
-        private string MintAuthToken() => new AuthTokenBuilder
+        private ValueTask<string> MintAuthTokenAsync() => new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = _agentTokenExpiresAt,
@@ -380,7 +380,7 @@ public class MockPersonServerFederationTests
             Dwk = AuthTokenBuilder.AccessDwk,
             Scope = _scope,
             Subject = _subject,
-        }.Build();
+        }.BuildAsync();
 
         private static HttpResponseMessage Json(JsonObject body) =>
             new(HttpStatusCode.OK)

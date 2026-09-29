@@ -40,7 +40,7 @@ public class WellKnownMetadataTests : IAsyncLifetime
             Issuer = Issuer,
             Name = "Conformance Demo",
             DocumentationUri = $"{Issuer}/docs",
-            SigningKeys = new Dictionary<string, IAAuthKey> { [Kid] = _key },
+            SigningKeys = new AAuthSigningKeySet { [Kid] = _key },
             ScopeDescriptions = new Dictionary<string, string> { ["whoami"] = "See your basic profile." },
             SignatureWindow = 90,
             AdditionalMetadata = new Dictionary<string, JsonNode?>

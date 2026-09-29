@@ -21,8 +21,7 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | `Trust` | `AAuthTrustOptions` | `new()` (open) | Auth-token, person-token and agent-token issuer trust; see [AAuthTrustOptions](#aauthtrustoptions). Unset rules accept any *verifiable* issuer (the spec default). Endpoints can replace it with `.RequireAAuth(scope, trust: policy)`. |
 | `AccessServer` | `string?` | `null` | Resource-token audience for four-party (federated) resources: the resource's own Access Server. When `null` the audience is the PS that issued the presented person token (three-party). |
 | `ResourceIdentifier` | `string?` | DI metadata issuer | Override the resource identifier used for `aud` checks and challenges. |
-| `ResourceSigningKey` | `IAAuthKey?` | DI metadata first key | Override the challenge signing key. |
-| `ResourceKeyId` | `string?` | DI metadata first kid | Override the challenge key id. |
+| `ResourceSigningKeys` | `AAuthSigningKeySet?` | DI metadata signing keys | Override the challenge signing keys; resource tokens are signed with the set's active key. |
 
 > `AAuthVerificationOptions` and `ChallengeOptions` are the low-level building
 > blocks `UseAAuth` configures from each endpoint's `.RequireAAuth(...)` /
@@ -88,7 +87,7 @@ counterparty is trusted (the spec default).
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Issuer` | `string` | — (required) | HTTPS issuer URL for this resource |
-| `SigningKeys` | `Dictionary<string, IAAuthKey>` | `{}` | Key-id to signing key map |
+| `SigningKeys` | `AAuthSigningKeySet` | `new()` | Signing keys published at the JWKS; tokens are signed with the active key |
 | `Name` | `string?` | `null` | Human-readable resource name (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope → description map for metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
@@ -100,7 +99,7 @@ counterparty is trusted (the spec default).
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Issuer` | `string` | — (required) | HTTPS URL of this PS (`iss` of minted person and auth tokens) |
-| `SigningKeys` | `IReadOnlyDictionary<string, IAAuthKey>` | Required | Key-id to signing key map (published at the PS JWKS) |
+| `SigningKeys` | `AAuthSigningKeySet` | Required | Signing keys published at the PS JWKS; tokens are signed with the active key |
 | `TokenPath` | `string` | `/token` | Auth token endpoint path (`auth_token_endpoint`) |
 | `PersonTokenPath` | `string` | `/person` | Person token endpoint path (`person_token_endpoint`) |
 | `PendingPathPrefix` | `string` | `/pending` | Deferred-consent poll path prefix |
@@ -212,12 +211,44 @@ Methods:
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
 | `Issuer` | `string` | Yes | Resource canonical URL |
-| `SigningKeys` | `IReadOnlyDictionary<string, IAAuthKey>?` | Conditional | Key-id to signing key map; required when issuing resource tokens or making signed calls, optional for verification-only resources |
+| `SigningKeys` | `AAuthSigningKeySet?` | Conditional | Signing keys published at the JWKS (tokens are signed with the active key); required when issuing resource tokens or making signed calls, optional for verification-only resources |
 | `Name` | `string?` | No | Human-readable resource name (`name`) |
 | `ScopeDescriptions` | `IReadOnlyDictionary<string, string>?` | No | Scope → description |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
 | `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | `string?` | No | Revocation endpoint URL |
+
+## Signing Keys
+
+### Key interfaces
+
+`IAAuthKey` is a key's public identity (algorithm, public JWK, thumbprint,
+verification). `IAAuthSigner : IAAuthKey` adds
+`ValueTask<byte[]> SignAsync(ReadOnlyMemory<byte> data, CancellationToken)`;
+every signing API (token builders' `BuildAsync`, `NamingJwtBuilder.BuildAsync`,
+`AAuthSigningHandler`) takes an `IAAuthSigner` and awaits it, so a remote HSM or
+KMS signer does not block a thread. `IAAuthExportableKey : IAAuthSigner` adds
+`ToPrivateJwk()`. The built-in `AAuthKey` (Ed25519) and `EcdsaAAuthKey` (ES256)
+are local, exportable keys; the concrete types also keep a synchronous
+`Sign(byte[])`. See [Key Management](../advanced/key-management.md).
+
+### AAuthSigningKeySet
+
+An issuer's signing keys. The JWKS publishes every key in the set; new tokens
+are signed with the active key (`Active` returns its `kid` and signer together).
+Construct with `new AAuthSigningKeySet(kid, signer)` for a single key, or
+`new AAuthSigningKeySet(activeKid)` and add keys. Rotate a running server with
+`Add` (publish) → `Activate` (sign with it) → `Remove` (retire the old key after
+its tokens expire); no restart is needed.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `Count` | `int` | 0 | Number of published keys |
+| `KeyIds` | `IReadOnlyList<string>` | empty | Published key ids, in insertion order |
+| `ActiveKeyId` | `string` | First key added | Key id new tokens are signed with |
+
+The indexer (`set["kid"] = signer`) adds or replaces a key; `TryGetSigner`
+looks one up. The active key cannot be removed.
 
 ## Key Storage
 
@@ -239,8 +270,8 @@ Methods:
 
 ### AAuthSigningHandler
 
-A `DelegatingHandler` constructed with an `IAAuthKey` containing the private
-signing key and an `ISignatureKeyProvider` supplying the `Signature-Key` header
+A `DelegatingHandler` constructed with an `IAAuthSigner` that signs with the
+private key and an `ISignatureKeyProvider` supplying the `Signature-Key` header
 value. The provider does not supply the private key. The constructor also accepts
 an optional `TimeProvider` for deterministic tests.
 
@@ -271,7 +302,7 @@ the matching dictionary member across all three signature fields.
 
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
-| `Key` | `IAAuthKey` | Yes | Agent signing key (must have private component) |
+| `Key` | `IAAuthSigner` | Yes | Agent signing key (must have private component) |
 | `PersonServer` | `string?` | No | Person Server URL; with `TokenRefresher`, enables 401 challenge handling |
 | `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | No | PS interaction during token exchange (deferred consent) |
 | `OnResourceInteraction` | `Func<string, string, CancellationToken, Task>?` | No | Resource `202` + `requirement=interaction` (URL + code) |
@@ -293,7 +324,7 @@ remains `~/.aauth/ap-keys`.
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
 | `Issuer` | `string` | Yes | Resource canonical URL |
-| `SigningKeys` | `Dictionary<string, IAAuthKey>` | Conditional | Key-id to signing key map; required when issuing resource tokens or making signed calls, optional for verification-only resources |
+| `SigningKeys` | `AAuthSigningKeySet` | Conditional | Signing keys published at the JWKS (tokens are signed with the active key); required when issuing resource tokens or making signed calls, optional for verification-only resources |
 | `Name` | `string?` | No | Resource display name (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | No | Scope descriptions for metadata |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |

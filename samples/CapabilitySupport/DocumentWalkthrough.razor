@@ -95,7 +95,7 @@
         """;
     public const string ChallengeExample = """
         public static async Task<string> RequestDocumentAsync(string agentToken,
-            string resource, string person, IAAuthKey key,
+            string resource, string person, IAAuthSigner key,
             TokenVerifier verifier, MetadataClient metadata, JwksClient jwks,
             AAuthEgressPolicy policy, CancellationToken cancellationToken)
         {
@@ -122,7 +122,7 @@
         }
         """;
     public const string AuthorizeExample = """
-        public static async Task<string> AuthorizeDocumentAsync(IAAuthKey key, string agentToken,
+        public static async Task<string> AuthorizeDocumentAsync(IAAuthSigner key, string agentToken,
             MetadataClient metadata, string person, string resourceToken, string personToken,
             Func<Interaction, CancellationToken, Task> showConsent,
             AAuthEgressPolicy policy, CancellationToken cancellationToken)
@@ -140,7 +140,7 @@
             }
         """;
     public const string DownloadExample = """
-        public static async Task<string> DownloadDocumentAsync(IAAuthKey key,
+        public static async Task<string> DownloadDocumentAsync(IAAuthSigner key,
             string authToken, string resource, AAuthEgressPolicy policy,
             CancellationToken cancellationToken)
         {

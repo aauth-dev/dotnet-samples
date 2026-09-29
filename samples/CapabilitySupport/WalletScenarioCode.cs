@@ -29,7 +29,7 @@ public static class WalletScenarioCode
         """;
 
     public const string AsGrantChaining = """
-        public static async Task<string> ReadWalletAsync(IAAuthKey key, string issuer, string agent,
+        public static async Task<string> ReadWalletAsync(IAAuthSigner key, string issuer, string agent,
             string kid, string upstreamToken, string wallet, AAuthEgressPolicy egress,
             CancellationToken cancellationToken)
         {

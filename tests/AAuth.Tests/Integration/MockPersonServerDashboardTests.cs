@@ -187,12 +187,12 @@ public class MockPersonServerDashboardTests : IClassFixture<MockPersonServerCons
         Assert.True(response.IsSuccessStatusCode);
     }
 
-    private Task<HttpClient> AgentAsync() => Task.FromResult(Agent(AAuthKey.Generate(), out _).Client);
+    private async Task<HttpClient> AgentAsync() => (await CreateAgentAsync(AAuthKey.Generate())).Client;
 
-    private (HttpClient Client, string AgentId) Agent(AAuthKey agentKey, out string agentId)
+    private async Task<(HttpClient Client, string AgentId)> CreateAgentAsync(AAuthKey agentKey)
     {
-        agentId = "aauth:dashboard-" + System.Guid.NewGuid().ToString("N") + "@ap.example";
-        var agentToken = new AgentTokenBuilder
+        var agentId = "aauth:dashboard-" + System.Guid.NewGuid().ToString("N") + "@ap.example";
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -201,7 +201,7 @@ public class MockPersonServerDashboardTests : IClassFixture<MockPersonServerCons
             Key = ResourceStub.ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
         return (new InProcessHttpClient(new AAuthSigningHandler(agentKey, () => agentToken)
         {
             InnerHandler = _factory.Server.CreateHandler(),
@@ -212,7 +212,7 @@ public class MockPersonServerDashboardTests : IClassFixture<MockPersonServerCons
     private async Task<Parked> ParkAsync()
     {
         var agentKey = AAuthKey.Generate();
-        var (agent, agentId) = Agent(agentKey, out _);
+        var (agent, agentId) = await CreateAgentAsync(agentKey);
         using var initial = await agent.PostAsJsonAsync("/token", await PersonTokenFlow.TokenRequestAsync(agent, agentKey));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         var interaction = AAuth.Headers.Interaction.FromRequirement(

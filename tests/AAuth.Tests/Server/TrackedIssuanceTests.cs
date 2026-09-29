@@ -42,7 +42,7 @@ public class TrackedIssuanceTests
         Assert.False(await inventory.RegisterAsync(grandchild, expiry));
         Assert.False(await inventory.RegisterGrantAsync([grandchild], new(new("https://issuer.example", "late"), "https://last.example", expiry)));
         var result = await AuthTokenResponse.CreateTrackedAsync(
-            () => throw new InvalidOperationException("Revoked ancestry must be checked before mint."), expiry, inventory, [grandchild]);
+            _ => throw new InvalidOperationException("Revoked ancestry must be checked before mint."), expiry, inventory, [grandchild]);
         Assert.Equal(403, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
     }
 
@@ -55,7 +55,7 @@ public class TrackedIssuanceTests
         Assert.True(await inventory.RegisterAsync(upstream, ceiling));
         await inventory.RevokeAsync(upstream, ceiling);
         var result = await AuthTokenResponse.CreateTrackedAsync(
-            () => throw new InvalidOperationException("Mint must not run for an already revoked upstream."),
+            _ => throw new InvalidOperationException("Mint must not run for an already revoked upstream."),
             ceiling, inventory, [upstream]);
         Assert.Equal(403, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
     }

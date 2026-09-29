@@ -103,12 +103,12 @@ public class IssuerDiscoverySecurityTests
 
         public async Task<bool> Verify(string path)
         {
-            var jwt = new AuthTokenBuilder
+            var jwt = await new AuthTokenBuilder
             {
                 Issuer = Issuer, Audience = Audience, PersonServer = Issuer, Subject = "person", Scope = "read",
                 AgentConfirmationKey = _agent, AgentTokenExpiresAt = Start.AddHours(1),
                 Key = Handler.Key, KeyId = Handler.Kid, Dwk = AuthTokenBuilder.AccessDwk,
-            }.Build();
+            }.BuildAsync();
             switch (path)
             {
                 case "generic":

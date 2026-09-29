@@ -34,7 +34,7 @@ public sealed class AAuthAccessServerOptions
     /// The AS signing keys, keyed by <c>kid</c>. Published at the JWKS and used
     /// to sign minted auth tokens (the first entry signs).
     /// </summary>
-    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; set; }
+    public required AAuthSigningKeySet SigningKeys { get; set; }
 
     /// <summary>The token endpoint path. Default <c>/token</c>.</summary>
     public string TokenPath { get; set; } = "/token";
@@ -131,18 +131,11 @@ public static class AAuthAccessServerEndpoints
             }
         }
 
-        string signingKid = string.Empty;
-        IAAuthKey signingKey = null!;
-        foreach (var (kid, key) in options.SigningKeys)
-        {
-            signingKid = kid;
-            signingKey = key;
-            break;
-        }
+        _ = options.SigningKeys.Active;
 
         var issuer = options.Issuer;
         var inventory = app.MapAAuthIssuerRevocation(issuer, AuthTokenBuilder.AccessDwk,
-            signingKey, signingKid, options.RevocationPath, options.EgressPolicy, options.TimeProvider, options.ConfigureRevocation);
+            options.SigningKeys, options.RevocationPath, options.EgressPolicy, options.TimeProvider, options.ConfigureRevocation);
         var loginPath = "/" + options.InteractionLoginPath.Trim('/');
         var interactionPrefix = loginPath.Split('/', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } seg
             ? "/" + seg[0]
@@ -164,7 +157,7 @@ public static class AAuthAccessServerEndpoints
             EgressPolicy = options.EgressPolicy,
             Issuer = options.Issuer,
             AuthTokenEndpoint = $"{issuer}{options.TokenPath}",
-            SigningKeys = new Dictionary<string, IAAuthKey>(options.SigningKeys),
+            SigningKeys = options.SigningKeys,
             RevocationEndpoint = $"{issuer}{options.RevocationPath}",
         });
 
@@ -229,12 +222,14 @@ public static class AAuthAccessServerEndpoints
         // §Auth Token Structure: `ps`, `sub`, `tenant`, `mission_s256` and `account`
         // are copied from the verified resource token (and so from the presented
         // token); policy supplies scope and any additional identity claims.
-        string Mint(
+        ValueTask<string> Mint(CancellationToken cancellationToken,
             string resourceUrl, string scope, IAAuthKey confirmationKey, JsonObject resourceContext,
             string? tenant, IReadOnlyDictionary<string, JsonNode?>? additionalClaims,
             DateTimeOffset agentTokenExpiresAt, DateTimeOffset? authorizationExpiresAt,
-            IReadOnlyList<string>? roles = null, IReadOnlyList<string>? groups = null) =>
-            new AuthTokenBuilder
+            IReadOnlyList<string>? roles = null, IReadOnlyList<string>? groups = null)
+        {
+            var (signingKid, signingKey) = options.SigningKeys.Active;
+            return new AuthTokenBuilder
             {
                 EgressPolicy = options.EgressPolicy,
                 Issuer = options.Issuer,
@@ -257,7 +252,8 @@ public static class AAuthAccessServerEndpoints
                 Groups = groups,
                 Dwk = AuthTokenBuilder.AccessDwk,
                 AdditionalClaims = additionalClaims,
-            }.Build();
+            }.BuildAsync(cancellationToken);
+        }
 
         // -------------------------------------------------------------------
         // POST {TokenPath} — the AS token endpoint (§PS-to-AS Token Request).
@@ -442,7 +438,7 @@ public static class AAuthAccessServerEndpoints
                 case AccessDecisionKind.Allow:
                 default:
                     var (allowTenant, allowClaims) = (decision.Tenant, decision.AdditionalClaims);
-                    return await AuthTokenResponse.CreateTrackedAsync(() => Mint(
+                    return await AuthTokenResponse.CreateTrackedAsync(ct => Mint(ct,
                             audience, requestedScope, agentConfirmationKey, resourceContext,
                             allowTenant, allowClaims, agentTokenExpiresAt, ceiling), ceiling,
                             inventory, sourceRegistrations, "auth_token", options.TimeProvider, ctx.RequestAborted);
@@ -486,7 +482,7 @@ public static class AAuthAccessServerEndpoints
                             if (entry.RequiredClaims?.Any(name => !AuthTokenBuilder.IsIdentityClaimAllowed(name)) == true)
                                 return AAuthProblemDetails.Create("policy_error", "Requested claims contain protocol-owned names.", statusCode: StatusCodes.Status500InternalServerError);
                             var (tenant, roles, groups, claims) = ProjectIdentityClaims(entry.SuppliedClaims, entry.RequiredClaims);
-                            return await AuthTokenResponse.CreateTrackedAsync(() => Mint(
+                            return await AuthTokenResponse.CreateTrackedAsync(ct => Mint(ct,
                                     entry.ResourceUrl, entry.Scope, entry.AgentConfirmationKey, entry.ResourceContext!,
                                     tenant, claims, entry.AgentTokenExpiresAt,
                                     entry.AuthorizationExpiresAt, roles, groups), entry.ExpiresAt,
@@ -641,7 +637,7 @@ public static class AAuthAccessServerEndpoints
                         {
                             entry.Status = AccessPendingStatus.Allowed;
                             var (tenant, roles, groups, claims) = ProjectIdentityClaims(pushed, entry.RequiredClaims);
-                            return await AuthTokenResponse.CreateTrackedAsync(() => Mint(
+                            return await AuthTokenResponse.CreateTrackedAsync(ct => Mint(ct,
                                     entry.ResourceUrl, entry.Scope, entry.AgentConfirmationKey, entry.ResourceContext!,
                                     tenant, claims, entry.AgentTokenExpiresAt,
                                     entry.AuthorizationExpiresAt, roles, groups), entry.ExpiresAt,
@@ -729,7 +725,7 @@ public static class AAuthAccessServerEndpoints
             {
                 case AccessDecisionKind.Allow:
                     entry.Status = AccessPendingStatus.Allowed;
-                    return await AuthTokenResponse.CreateTrackedAsync(() => Mint(entry.ResourceUrl, entry.Scope,
+                    return await AuthTokenResponse.CreateTrackedAsync(ct => Mint(ct, entry.ResourceUrl, entry.Scope,
                         entry.AgentConfirmationKey, entry.ResourceContext!, decision.Tenant,
                         decision.AdditionalClaims, entry.AgentTokenExpiresAt, entry.AuthorizationExpiresAt),
                         entry.ExpiresAt, inventory, entry.SourceTokens, options.TimeProvider, ctx.RequestAborted);

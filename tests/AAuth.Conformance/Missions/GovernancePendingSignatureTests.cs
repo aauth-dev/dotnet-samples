@@ -48,26 +48,26 @@ public class GovernancePendingSignatureTests
         app.MapAAuthGovernance(options => options.PersonServer = "https://ps.example");
         await app.StartAsync();
 
-        HttpClient Client(IAAuthKey key, string issuer, string agent)
+        async Task<HttpClient> ClientAsync(IAAuthSigner key, string issuer, string agent)
         {
-            var token = new AgentTokenBuilder
+            var token = await new AgentTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy, Issuer = issuer, Subject = agent,
                 Key = issuerKey, KeyId = "key", ConfirmationKey = key,
-            }.Build();
+            }.BuildAsync();
             return new InProcessHttpClient(new AAuthSigningHandler(key, new JwtSignatureKeyProvider(() => token))
             {
                 InnerHandler = app.GetTestServer().CreateHandler(),
             });
         }
 
-        using var owner = Client(ownerKey, "https://agent.example", "aauth:owner@agent.example");
+        using var owner = await ClientAsync(ownerKey, "https://agent.example", "aauth:owner@agent.example");
         using var parked = await owner.PostAsJsonAsync("https://ps.example/mission", new { description = "Private mission" });
         Assert.Equal(HttpStatusCode.Accepted, parked.StatusCode);
         var pending = new Uri(new Uri("https://ps.example"), parked.Headers.Location!);
         await app.Services.GetRequiredService<IDeferredConsentStore>().ResolveAsync(pending.Segments.Last(), true);
         using var attacker = difference == "unsigned" ? app.GetTestServer().CreateClient()
-            : Client(difference == "key" ? AAuthKey.Generate() : ownerKey,
+            : await ClientAsync(difference == "key" ? AAuthKey.Generate() : ownerKey,
                 difference == "issuer" ? "https://foreign.example" : "https://agent.example",
                 difference == "agent" ? "aauth:other@agent.example" : difference == "issuer" ? "aauth:owner@foreign.example" : "aauth:owner@agent.example");
         using var attack = new HttpRequestMessage(new HttpMethod(method), pending);

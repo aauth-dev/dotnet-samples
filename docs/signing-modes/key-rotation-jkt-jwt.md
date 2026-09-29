@@ -44,7 +44,7 @@ var ephemeralKey = AAuthKey.Generate();  // short-lived signing key
 // The naming JWT is signed by the durable key, embeds the durable public key in
 // its header, sets iss to the durable key's thumbprint URN, and names the
 // ephemeral key via cnf.jwk.
-var namingJwt = NamingJwtBuilder.Build(durableKey, ephemeralKey);
+var namingJwt = await NamingJwtBuilder.BuildAsync(durableKey, ephemeralKey);
 
 using var client = new AAuthClientBuilder(ephemeralKey)
     .UseJktJwt(() => namingJwt)

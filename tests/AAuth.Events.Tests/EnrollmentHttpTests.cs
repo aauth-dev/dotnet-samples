@@ -38,7 +38,7 @@ public class EnrollmentHttpTests
                 var registry = new SampleAgentRegistry(database);
                 app.MapSampleAgentEnrollment(origin, AAuthKey.Generate(), "ap", policy, registry);
                 using var http = AAuthHttpTransport.CreateClient(policy);
-                async Task<HttpResponseMessage> Enrol(IAAuthKey signingKey, IAAuthKey bodyKey, string? requested = null, bool signed = true)
+                async Task<HttpResponseMessage> Enrol(IAAuthSigner signingKey, IAAuthKey bodyKey, string? requested = null, bool signed = true)
                 {
                     using var request = new HttpRequestMessage(HttpMethod.Post, origin + "/enrol")
                     { Content = JsonContent.Create(new { agent_id = requested, jwk = bodyKey.ToPublicJwk() }) };

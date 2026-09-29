@@ -15,7 +15,7 @@ public sealed class CallChainingOptions
     /// The resource's own agent signing key (must have private component).
     /// Used to sign outbound requests to downstream token endpoints.
     /// </summary>
-    public required IAAuthKey AgentKey { get; set; }
+    public required IAAuthSigner AgentKey { get; set; }
 
     /// <summary>
     /// The <see cref="ISignatureKeyProvider"/> that produces the

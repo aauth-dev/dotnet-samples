@@ -16,11 +16,11 @@ public class AuthTokenVerificationTests
     private const string Aud = "https://resource.example";
     private const string Kid = "ps-1";
 
-    private static (string Jwt, AAuthKey PsKey, AAuthKey AgentKey) GoodToken()
+    private static async Task<(string Jwt, AAuthKey PsKey, AAuthKey AgentKey)> GoodTokenAsync()
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = new AuthTokenBuilder
+        var jwt = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -32,7 +32,7 @@ public class AuthTokenVerificationTests
             KeyId = Kid,
             Subject = "pairwise-sub",
             Scope = "whoami",
-        }.Build();
+        }.BuildAsync();
         return (jwt, psKey, agentKey);
     }
 
@@ -47,13 +47,13 @@ public class AuthTokenVerificationTests
         };
     }
 
-    private static string Sign(JsonObject payload, AAuthKey psKey) => JwtWriter.SignCompact(
+    private static ValueTask<string> SignAsync(JsonObject payload, AAuthKey psKey) => JwtWriter.SignCompactAsync(
         new JsonObject { ["alg"] = "Ed25519", ["typ"] = "aa-auth+jwt", ["kid"] = Kid }, payload, psKey);
 
     [Fact(DisplayName = "§Auth Token Verification — accepts well-formed auth token")]
-    public void HappyPath_Verifies()
+    public async Task HappyPath_Verifies()
     {
-        var (jwt, psKey, agentKey) = GoodToken();
+        var (jwt, psKey, agentKey) = await GoodTokenAsync();
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var verified = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey);
         Assert.Equal(AuthTokenBuilder.TokenType, verified.TokenType);
@@ -74,12 +74,12 @@ public class AuthTokenVerificationTests
     }
 
     [Fact(DisplayName = "§Auth Token Verification — MUST reject expired tokens")]
-    public void Rejects_Expired()
+    public async Task Rejects_Expired()
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var issued = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var jwt = new AuthTokenBuilder
+        var jwt = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -93,7 +93,7 @@ public class AuthTokenVerificationTests
             IssuedAt = issued,
             TimeProvider = new IssuanceTestClock(issued),
             Lifetime = TimeSpan.FromSeconds(1),
-        }.Build();
+        }.BuildAsync();
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = new IssuanceTestClock(issued.AddHours(2)) };
         Assert.Throws<TokenVerificationException>(() =>
@@ -101,36 +101,36 @@ public class AuthTokenVerificationTests
     }
 
     [Fact(DisplayName = "§Auth Token Verification — MUST reject wrong aud")]
-    public void Rejects_WrongAudience()
+    public async Task Rejects_WrongAudience()
     {
-        var (jwt, psKey, agentKey) = GoodToken();
+        var (jwt, psKey, agentKey) = await GoodTokenAsync();
         Assert.Throws<TokenVerificationException>(() =>
             new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(jwt, psKey, "https://other.example", agentKey));
     }
 
     [Fact(DisplayName = "§Auth Token Verification — MUST reject cnf.jwk ≠ HTTP sig key (PoP mismatch)")]
-    public void Rejects_CnfMismatch()
+    public async Task Rejects_CnfMismatch()
     {
-        var (jwt, psKey, _) = GoodToken();
+        var (jwt, psKey, _) = await GoodTokenAsync();
         var differentKey = AAuthKey.Generate();
         Assert.Throws<TokenVerificationException>(() =>
             new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(jwt, psKey, Aud, differentKey));
     }
 
     [Fact(DisplayName = "§Auth Token Verification — a token naming ps and sub (no agent, no act) verifies")]
-    public void Accepts_PersonNamedToken()
+    public async Task Accepts_PersonNamedToken()
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var verified = new TokenVerifier { EgressPolicy = TestEgress.Policy }
-            .VerifyAuthToken(Sign(ManualPayload(agentKey), psKey), psKey, Aud, agentKey);
+            .VerifyAuthToken(await SignAsync(ManualPayload(agentKey), psKey), psKey, Aud, agentKey);
         Assert.Equal(AuthTokenBuilder.TokenType, verified.TokenType);
     }
 
     [Theory(DisplayName = "§Auth Token Verification — MUST reject a token missing sub or ps")]
     [InlineData("sub")]
     [InlineData("ps")]
-    public void Rejects_MissingSubOrPs(string claim)
+    public async Task Rejects_MissingSubOrPs(string claim)
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
@@ -138,16 +138,16 @@ public class AuthTokenVerificationTests
         payload["scope"] = "whoami";
         payload.Remove(claim);
 
-        Assert.Throws<TokenVerificationException>(() =>
-            new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(Sign(payload, psKey), psKey, Aud, agentKey));
+        await Assert.ThrowsAsync<TokenVerificationException>(async () =>
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(await SignAsync(payload, psKey), psKey, Aud, agentKey));
     }
 
     [Fact(DisplayName = "§Auth Token Verification — MUST reject dwk not in allowed set")]
-    public void Rejects_InvalidDwk()
+    public async Task Rejects_InvalidDwk()
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = Sign(ManualPayload(agentKey, "aauth-resource.json"), psKey);
+        var jwt = await SignAsync(ManualPayload(agentKey, "aauth-resource.json"), psKey);
 
         // Verifier in dual-dwk mode (expectedDwk=null) rejects aauth-resource.json
         Assert.Throws<TokenVerificationException>(() =>
@@ -155,11 +155,11 @@ public class AuthTokenVerificationTests
     }
 
     [Fact(DisplayName = "§Auth Token Verification — MUST reject a person token where an auth token is required")]
-    public void Rejects_PersonToken()
+    public async Task Rejects_PersonToken()
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var personToken = new PersonTokenBuilder
+        var personToken = await new PersonTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = Iss,
@@ -169,16 +169,16 @@ public class AuthTokenVerificationTests
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             Key = psKey,
             KeyId = Kid,
-        }.Build();
+        }.BuildAsync();
 
         Assert.Throws<TokenVerificationException>(() =>
             new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(personToken, psKey, Aud, agentKey));
     }
 
     [Fact(DisplayName = "§Auth Token Verification — MUST reject signature from different key")]
-    public void Rejects_WrongSignatureKey()
+    public async Task Rejects_WrongSignatureKey()
     {
-        var (jwt, _, agentKey) = GoodToken();
+        var (jwt, _, agentKey) = await GoodTokenAsync();
         var wrongPsKey = AAuthKey.Generate();
         Assert.Throws<TokenVerificationException>(() =>
             new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(jwt, wrongPsKey, Aud, agentKey));

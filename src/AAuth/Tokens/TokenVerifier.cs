@@ -40,7 +40,7 @@ public sealed class TokenVerifier
     public Func<string, string, IAAuthKey?>? LocalIssuerKeys { get; init; }
 
     /// <summary>Copy this verifier's policy, clock and skew, resolving <paramref name="issuer"/>'s keys locally.</summary>
-    public TokenVerifier WithLocalIssuer(string issuer, IReadOnlyDictionary<string, IAAuthKey> keys)
+    public TokenVerifier WithLocalIssuer(string issuer, AAuthSigningKeySet keys)
     {
         ArgumentException.ThrowIfNullOrEmpty(issuer);
         ArgumentNullException.ThrowIfNull(keys);
@@ -50,7 +50,7 @@ public sealed class TokenVerifier
             TimeProvider = TimeProvider,
             ClockSkew = ClockSkew,
             LocalIssuerKeys = (iss, kid) => string.Equals(iss, issuer, StringComparison.Ordinal)
-                && keys.TryGetValue(kid, out var key) ? key : LocalIssuerKeys?.Invoke(iss, kid),
+                && keys.TryGetSigner(kid, out var key) ? key : LocalIssuerKeys?.Invoke(iss, kid),
         };
     }
 

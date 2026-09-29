@@ -70,7 +70,7 @@ internal static class DocumentationSnippetContext
         private string scope = "read", mode = "jwt", dwk = "aauth-agent.json", headerS256 = "held-digest", proposalHash = "held-digest";
         private Uri pendingUrl = null!, subscriptionUrl = null!;
         private byte[] approvalBodyBytes = [], payloadBytes = [], subscriptionParameters = [];
-        private Dictionary<string, IAAuthKey> signingKeys = [];
+        private AAuthSigningKeySet signingKeys = new();
         private HashSet<string> trustedAccessServers = [];
         private JsonObject claims = null!, upstreamAct = null!, upstreamActNode = null!, validatedUpstreamAct = null!, parameters = null!;
         private object reservation = null!;

@@ -47,9 +47,9 @@ public class AgentTokenStructureTests
     /// "Header: alg: Signing algorithm. Ed25519 is RECOMMENDED."
     /// </summary>
     [Fact(DisplayName = "§Agent Token Structure — header.alg SHOULD be Ed25519")]
-    public void HeaderAlg_IsEd25519()
+    public async Task HeaderAlg_IsEd25519()
     {
-        var (header, _) = Decode(Builder(NewKey()).Build());
+        var (header, _) = Decode(await Builder(NewKey()).BuildAsync());
         Assert.Equal("Ed25519", (string?)header["alg"]);
     }
 
@@ -57,9 +57,9 @@ public class AgentTokenStructureTests
     /// "Header: alg: ... Implementations MUST NOT accept `none`."
     /// </summary>
     [Fact(DisplayName = "§Agent Token Structure — header.alg MUST NOT be 'none'")]
-    public void HeaderAlg_NeverNone()
+    public async Task HeaderAlg_NeverNone()
     {
-        var (header, _) = Decode(Builder(NewKey()).Build());
+        var (header, _) = Decode(await Builder(NewKey()).BuildAsync());
         Assert.NotEqual("none", ((string?)header["alg"])?.ToLowerInvariant());
     }
 
@@ -67,9 +67,9 @@ public class AgentTokenStructureTests
     /// "Header: typ: aa-agent+jwt"
     /// </summary>
     [Fact(DisplayName = "§Agent Token Structure — header.typ MUST be aa-agent+jwt")]
-    public void HeaderTyp_IsAgentTokenMediaType()
+    public async Task HeaderTyp_IsAgentTokenMediaType()
     {
-        var (header, _) = Decode(Builder(NewKey()).Build());
+        var (header, _) = Decode(await Builder(NewKey()).BuildAsync());
         Assert.Equal("aa-agent+jwt", (string?)header["typ"]);
     }
 
@@ -77,18 +77,18 @@ public class AgentTokenStructureTests
     /// "Header: kid: Key identifier"
     /// </summary>
     [Fact(DisplayName = "§Agent Token Structure — header.kid MUST be present")]
-    public void HeaderKid_IsPresent()
+    public async Task HeaderKid_IsPresent()
     {
-        var (header, _) = Decode(Builder(NewKey()).Build());
+        var (header, _) = Decode(await Builder(NewKey()).BuildAsync());
         Assert.Equal(Kid, (string?)header["kid"]);
     }
 
     // -- Required payload claims --
 
     [Fact(DisplayName = "§Agent Token Structure — payload.iss MUST be the agent provider URL")]
-    public void PayloadIss_IsAgentProviderUrl()
+    public async Task PayloadIss_IsAgentProviderUrl()
     {
-        var (_, payload) = Decode(Builder(NewKey()).Build());
+        var (_, payload) = Decode(await Builder(NewKey()).BuildAsync());
         Assert.Equal(Iss, (string?)payload["iss"]);
     }
 
@@ -97,16 +97,16 @@ public class AgentTokenStructureTests
     /// discovery"
     /// </summary>
     [Fact(DisplayName = "§Agent Token Structure — payload.dwk MUST equal 'aauth-agent.json'")]
-    public void PayloadDwk_IsAgentWellKnownName()
+    public async Task PayloadDwk_IsAgentWellKnownName()
     {
-        var (_, payload) = Decode(Builder(NewKey()).Build());
+        var (_, payload) = Decode(await Builder(NewKey()).BuildAsync());
         Assert.Equal("aauth-agent.json", (string?)payload["dwk"]);
     }
 
     [Fact(DisplayName = "§Agent Token Structure — payload.sub MUST be the agent identifier")]
-    public void PayloadSub_IsAgentIdentifier()
+    public async Task PayloadSub_IsAgentIdentifier()
     {
-        var (_, payload) = Decode(Builder(NewKey()).Build());
+        var (_, payload) = Decode(await Builder(NewKey()).BuildAsync());
         Assert.Equal(Sub, (string?)payload["sub"]);
     }
 
@@ -115,11 +115,11 @@ public class AgentTokenStructureTests
     /// revocation"
     /// </summary>
     [Fact(DisplayName = "§Agent Token Structure — payload.jti MUST be unique per token")]
-    public void PayloadJti_IsUniquePerToken()
+    public async Task PayloadJti_IsUniquePerToken()
     {
         var key = NewKey();
-        var (_, a) = Decode(Builder(key).Build());
-        var (_, b) = Decode(Builder(key).Build());
+        var (_, a) = Decode(await Builder(key).BuildAsync());
+        var (_, b) = Decode(await Builder(key).BuildAsync());
 
         var jtiA = (string?)a["jti"];
         Assert.False(string.IsNullOrEmpty(jtiA));
@@ -131,10 +131,10 @@ public class AgentTokenStructureTests
     /// public key"
     /// </summary>
     [Fact(DisplayName = "§Agent Token Structure — payload.cnf.jwk MUST embed the agent public key")]
-    public void PayloadCnfJwk_EmbedsAgentPublicKey()
+    public async Task PayloadCnfJwk_EmbedsAgentPublicKey()
     {
         var key = NewKey();
-        var (_, payload) = Decode(Builder(key).Build());
+        var (_, payload) = Decode(await Builder(key).BuildAsync());
 
         var jwk = payload["cnf"]?["jwk"]?.AsObject();
         Assert.NotNull(jwk);
@@ -145,16 +145,16 @@ public class AgentTokenStructureTests
     }
 
     [Fact(DisplayName = "§Agent Token Structure — payload.iat MUST be set")]
-    public void PayloadIat_IsSet()
+    public async Task PayloadIat_IsSet()
     {
-        var (_, payload) = Decode(Builder(NewKey()).Build());
+        var (_, payload) = Decode(await Builder(NewKey()).BuildAsync());
         Assert.NotNull((long?)payload["iat"]);
     }
 
     [Fact(DisplayName = "§Agent Token Structure — payload.exp MUST be after iat")]
-    public void PayloadExp_IsAfterIat()
+    public async Task PayloadExp_IsAfterIat()
     {
-        var (_, payload) = Decode(Builder(NewKey()).Build());
+        var (_, payload) = Decode(await Builder(NewKey()).BuildAsync());
         Assert.True((long?)payload["exp"] > (long?)payload["iat"]);
     }
 
@@ -162,9 +162,9 @@ public class AgentTokenStructureTests
     /// "Agent tokens SHOULD NOT have a lifetime exceeding 24 hours."
     /// </summary>
     [Fact(DisplayName = "§Agent Token Structure — agent token lifetime SHOULD NOT exceed 24h")]
-    public void AgentTokenLifetime_DoesNotExceedRecommendedMax()
+    public async Task AgentTokenLifetime_DoesNotExceedRecommendedMax()
     {
-        var (_, payload) = Decode(Builder(NewKey()).Build());
+        var (_, payload) = Decode(await Builder(NewKey()).BuildAsync());
         var lifetime = (long)payload["exp"]! - (long)payload["iat"]!;
         Assert.InRange(lifetime, 1, (long)TimeSpan.FromHours(24).TotalSeconds);
     }
@@ -176,9 +176,9 @@ public class AgentTokenStructureTests
     /// instance."
     /// </summary>
     [Fact(DisplayName = "§Agent Token Structure — payload.ps is included when configured")]
-    public void PayloadPs_IncludedWhenConfigured()
+    public async Task PayloadPs_IncludedWhenConfigured()
     {
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = Iss,
@@ -186,16 +186,16 @@ public class AgentTokenStructureTests
             KeyId = Kid,
             Key = NewKey(),
             PersonServer = "https://ps.example",
-        }.Build();
+        }.BuildAsync();
 
         var (_, payload) = Decode(jwt);
         Assert.Equal("https://ps.example", (string?)payload["ps"]);
     }
 
     [Fact(DisplayName = "§Agent Token Structure — payload.ps is absent when not configured")]
-    public void PayloadPs_AbsentByDefault()
+    public async Task PayloadPs_AbsentByDefault()
     {
-        var (_, payload) = Decode(Builder(NewKey()).Build());
+        var (_, payload) = Decode(await Builder(NewKey()).BuildAsync());
         Assert.Null(payload["ps"]);
     }
 
@@ -207,9 +207,9 @@ public class AgentTokenStructureTests
     /// agent (§Agent Token Verification step 5).
     /// </summary>
     [Fact(DisplayName = "§Agent Token Structure — signature verifies against cnf.jwk")]
-    public void Signature_VerifiesAgainstEmbeddedCnfJwk()
+    public async Task Signature_VerifiesAgainstEmbeddedCnfJwk()
     {
-        var jwt = Builder(NewKey()).Build();
+        var jwt = await Builder(NewKey()).BuildAsync();
         var parts = jwt.Split('.');
         var (_, payload) = Decode(jwt);
 

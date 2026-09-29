@@ -11,7 +11,7 @@ namespace AAuth.Server;
 
 public static class AuthTokenResponse
 {
-    public static async Task<IResult> CreateTrackedAsync(Func<string> mint, DateTimeOffset ceiling,
+    public static async Task<IResult> CreateTrackedAsync(Func<CancellationToken, ValueTask<string>> mint, DateTimeOffset ceiling,
         IJtiStore inventory, IReadOnlyCollection<TokenKey> sources, TimeProvider? timeProvider = null,
         CancellationToken cancellationToken = default)
         => await CreateTrackedAsync(mint, ceiling, inventory, sources, "auth_token", timeProvider, cancellationToken);
@@ -21,7 +21,7 @@ public static class AuthTokenResponse
     /// return <c>{ <paramref name="member"/>, expires_in }</c>. Use
     /// <c>"person_token"</c> for the person token endpoint.
     /// </summary>
-    public static async Task<IResult> CreateTrackedAsync(Func<string> mint, DateTimeOffset ceiling,
+    public static async Task<IResult> CreateTrackedAsync(Func<CancellationToken, ValueTask<string>> mint, DateTimeOffset ceiling,
         IJtiStore inventory, IReadOnlyCollection<TokenKey> sources, string member, TimeProvider? timeProvider = null,
         CancellationToken cancellationToken = default)
         => await CreateTrackedCoreAsync(mint, ceiling, inventory, sources, member, timeProvider, Expired, cancellationToken);
@@ -33,7 +33,7 @@ public static class AuthTokenResponse
     /// polling <c>expired</c>; <paramref name="ceilingExpired"/> answers a ceiling
     /// set by something other than a source token, such as a mission's <c>expires_at</c>.
     /// </summary>
-    public static Task<IResult> CreateTrackedAsync(Func<string> mint, DateTimeOffset ceiling,
+    public static Task<IResult> CreateTrackedAsync(Func<CancellationToken, ValueTask<string>> mint, DateTimeOffset ceiling,
         IJtiStore inventory, IReadOnlyCollection<TokenRegistration> sources, string member, TimeProvider? timeProvider = null,
         CancellationToken cancellationToken = default, IResult? ceilingExpired = null)
     {
@@ -43,7 +43,7 @@ public static class AuthTokenResponse
             () => AAuthProblemDetails.SourceExpired(sources, clock.GetUtcNow(), ceilingExpired), cancellationToken);
     }
 
-    private static async Task<IResult> CreateTrackedCoreAsync(Func<string> mint, DateTimeOffset ceiling,
+    private static async Task<IResult> CreateTrackedCoreAsync(Func<CancellationToken, ValueTask<string>> mint, DateTimeOffset ceiling,
         IJtiStore inventory, IReadOnlyCollection<TokenKey> sources, string member, TimeProvider? timeProvider,
         Func<IResult> expired, CancellationToken cancellationToken)
     {
@@ -53,7 +53,7 @@ public static class AuthTokenResponse
     }
 
     // Mint a token and record it as a grant of its sources; a failure is expired or revoked.
-    internal static async Task<(string? Token, IResult? Failure)> MintTrackedAsync(Func<string> mint, DateTimeOffset ceiling,
+    internal static async Task<(string? Token, IResult? Failure)> MintTrackedAsync(Func<CancellationToken, ValueTask<string>> mint, DateTimeOffset ceiling,
         IJtiStore inventory, IReadOnlyCollection<TokenKey> sources, TimeProvider clock,
         Func<IResult> expired, CancellationToken cancellationToken)
     {
@@ -62,7 +62,7 @@ public static class AuthTokenResponse
             if (await inventory.IsRevokedAsync(source, cancellationToken))
                 return (null, Revoked());
         string token;
-        try { token = mint(); }
+        try { token = await mint(cancellationToken); }
         catch (AuthTokenExpiredException) { return (null, expired()); }
         var payload = TokenVerifier.DecodeJsonSegment(token.Split('.')[1], "payload");
         var registration = TokenRegistration.FromPayload(payload);
@@ -73,12 +73,13 @@ public static class AuthTokenResponse
         return (token, null);
     }
 
-    public static IResult Create(Func<string> mint, DateTimeOffset ceiling, TimeProvider? timeProvider = null)
+    public static async Task<IResult> CreateAsync(Func<CancellationToken, ValueTask<string>> mint, DateTimeOffset ceiling,
+        TimeProvider? timeProvider = null, CancellationToken cancellationToken = default)
     {
         var clock = timeProvider ?? TimeProvider.System;
         if (ceiling.ToUnixTimeSeconds() <= clock.GetUtcNow().ToUnixTimeSeconds())
             return Expired();
-        try { return Create(mint(), ceiling, clock); }
+        try { return Create(await mint(cancellationToken), ceiling, clock); }
         catch (AuthTokenExpiredException) { return Expired(); }
     }
 

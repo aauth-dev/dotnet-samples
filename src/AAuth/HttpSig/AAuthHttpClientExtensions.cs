@@ -12,7 +12,7 @@ namespace AAuth.HttpSig;
 public sealed class AAuthClientOptions
 {
     /// <summary>The agent's signing key (must have private component).</summary>
-    public IAAuthKey Key { get; set; } = null!;
+    public IAAuthSigner Key { get; set; } = null!;
 
     /// <summary>The signing mode strategy.</summary>
     public ISignatureKeyProvider SigningMode { get; set; } = null!;

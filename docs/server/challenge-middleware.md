@@ -69,7 +69,7 @@ person token's `iss`, an auth token's `ps`), `presented_jti` is its `jti`,
 `mission_s256` and `tenant` are copied when present. `aud` is the resource's
 `AccessServer` (four-party) or the person's PS (three-party). A custom endpoint
 can mint the same token from the verified assertion with
-`AAuthChallengeMiddleware.BuildResourceToken(options, presented, scope, ...)`,
+`AAuthChallengeMiddleware.BuildResourceTokenAsync(options, presented, scope, ...)`,
 which also accepts an optional `interaction` and `loginHint`.
 
 ## Challenge Options
@@ -80,11 +80,10 @@ public sealed class ChallengeOptions
     // How to handle access decisions
     public AAuthAccessMode AccessMode { get; init; } = AAuthAccessMode.RequireAuthToken;
 
-    // Resource signing key for minting resource tokens
-    public IAAuthKey? ResourceSigningKey { get; init; }
-
-    // Key identifier for the resource signing key (kid in the resource token header)
-    public string? ResourceKeyId { get; init; }
+    // Resource signing keys for minting resource tokens; the JWKS publishes
+    // every key and resource tokens are signed with the active one (its kid
+    // goes in the resource token header)
+    public AAuthSigningKeySet? ResourceSigningKeys { get; init; }
 
     // Resource identifier (used as iss in the resource token)
     public string? ResourceIdentifier { get; init; }
@@ -113,8 +112,7 @@ Verification). There is no mission request header to read.
 app.UseAAuthChallenge(new ChallengeOptions
 {
     AccessMode = AAuthAccessMode.RequireAuthToken,
-    ResourceSigningKey = resourceKey,
-    ResourceKeyId = keyId,
+    ResourceSigningKeys = new AAuthSigningKeySet(keyId, resourceKey),
     ResourceIdentifier = resourceUrl,
     // mission_s256 and tenant are copied from the presented token automatically
 });

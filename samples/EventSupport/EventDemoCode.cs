@@ -41,7 +41,7 @@ public static class EventDemoCode
         """;
     public const string SubscribeToken = """
         public static async Task<JsonObject> AcquireSubscribeTokenAsync(EventsProtocol protocol,
-            IAgentEventStore store, IAAuthKey key, string agentToken, string agent,
+            IAgentEventStore store, IAAuthSigner key, string agentToken, string agent,
             string provider, string resource, string context, CancellationToken cancellationToken)
         {
             var body = System.Text.Encoding.UTF8.GetBytes(new JsonObject
@@ -57,7 +57,7 @@ public static class EventDemoCode
         """;
     public const string Registration = """
         public static async Task RegisterSubscriptionAsync(EventsProtocol protocol,
-            Uri subscriptionUrl, IAAuthKey key, string subscribeToken, CancellationToken cancellationToken)
+            Uri subscriptionUrl, IAAuthSigner key, string subscribeToken, CancellationToken cancellationToken)
         {
             using var response = await protocol.SendAsync(HttpMethod.Post, subscriptionUrl,
                 key, subscribeToken, selfIssued: false,
@@ -68,7 +68,7 @@ public static class EventDemoCode
         """;
     public const string Delivery = """
         public static async Task TriggerSampleEventAsync(EventsProtocol protocol, string resource,
-            string eid, IAAuthKey agentKey, string agentToken, string? account, CancellationToken cancellationToken)
+            string eid, IAAuthSigner agentKey, string agentToken, string? account, CancellationToken cancellationToken)
         {
             using var response = await protocol.SendAsync(HttpMethod.Post,
                 new Uri(resource + "/local/events/" + eid + "/notify"
@@ -78,14 +78,14 @@ public static class EventDemoCode
         }
 
         public static async Task DeliverResourceEventAsync(EventsProtocol protocol, string resource,
-            string provider, string agent, string eid, IAAuthKey resourceKey, string resourceKid,
+            string provider, string agent, string eid, IAAuthSigner resourceKey, string resourceKid,
             byte[] payload, CancellationToken cancellationToken)
         {
-            var token = new EventTokenBuilder
+            var token = await new EventTokenBuilder
             {
                 Issuer = resource, Audience = agent, Eid = eid, Key = resourceKey,
                 KeyId = resourceKid, Verifier = protocol.TokenVerifier,
-            }.Build();
+            }.BuildAsync(cancellationToken);
             var endpoint = await protocol.ResolveEventEndpointAsync(provider, cancellationToken);
             using var response = await protocol.SendAsync(HttpMethod.Post, endpoint,
                 resourceKey, token, selfIssued: true, body: payload, cancellationToken: cancellationToken);
@@ -94,7 +94,7 @@ public static class EventDemoCode
         """;
     public const string Receipt = """
         public static async Task VerifyInboxAsync(EventsProtocol protocol, IAgentEventStore store,
-            string provider, string agent, string eid, IAAuthKey key, string agentToken,
+            string provider, string agent, string eid, IAAuthSigner key, string agentToken,
             CancellationToken cancellationToken)
         {
             using var response = await protocol.SendAsync(HttpMethod.Get,
@@ -128,12 +128,12 @@ public static class EventDemoCode
             body: subscriptionParameters);
 
         // Resource signs both JWT and HTTP with the same discoverable key.
-        var eventToken = new EventTokenBuilder
+        var eventToken = await new EventTokenBuilder
         {
             Issuer = resource, Audience = agent, Eid = subscription.Eid,
             Key = resourceKey, KeyId = resourceKid,
             Verifier = protocol.TokenVerifier
-        }.Build();
+        }.BuildAsync();
         var endpoint = await protocol.ResolveEventEndpointAsync(subscription.Provider);
         using var delivery = await protocol.SendAsync(HttpMethod.Post,
             endpoint, resourceKey, eventToken, selfIssued: true, body: payloadBytes);

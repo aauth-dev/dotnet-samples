@@ -34,7 +34,7 @@ public static class AAuthFederationServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddAAuthFederation(
         this IServiceCollection services,
-        IAAuthKey personServerKey,
+        IAAuthSigner personServerKey,
         string personServerIssuer,
         string personServerKeyId)
     {

@@ -9,17 +9,17 @@ namespace AAuth.Tests.HttpSig;
 public class SignatureKeyParserTests
 {
     [Fact]
-    public void Parse_ExtractsConfirmationKeyFromAgentJwt()
+    public async Task Parse_ExtractsConfirmationKeyFromAgentJwt()
     {
         var key = AAuthKey.Generate();
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:demo@ap.example",
             KeyId = "demo",
             Key = key,
-        }.Build();
+        }.BuildAsync();
 
         var headerValue = SignatureKeyHeader.FormatJwt(jwt);
         var parsed = SignatureKeyParser.Parse(headerValue);

@@ -36,12 +36,12 @@ public class AuthTokenDeliveryTests
     [InlineData("Personal", "personal", false)]
     public async Task AccountDelivery_MatchesExactResourceExpectation(string? actual, string? expected, bool accepted)
     {
-        var result = await Validate(BuildAuthToken(account: actual), expectedAccount: expected);
+        var result = await Validate(await BuildAuthTokenAsync(account: actual), expectedAccount: expected);
         Assert.Equal(accepted, result.IsValid);
         if (!accepted) Assert.Contains("account_mismatch", result.Error);
     }
 
-    private string BuildAuthToken(
+    private async Task<string> BuildAuthTokenAsync(
         string? issuer = null,
         string? audience = null,
         string? subject = null,
@@ -50,7 +50,7 @@ public class AuthTokenDeliveryTests
         string? scope = null,
         string? account = null)
     {
-        return new AuthTokenBuilder
+        return await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
@@ -64,7 +64,7 @@ public class AuthTokenDeliveryTests
             Subject = subject ?? Subject,
             Account = account,
             Dwk = AuthTokenBuilder.AccessDwk,
-        }.Build();
+        }.BuildAsync();
     }
 
     private AuthTokenResponseValidator CreateValidator()
@@ -85,7 +85,7 @@ public class AuthTokenDeliveryTests
     [Fact(DisplayName = "§Auth Token Delivery — valid token accepted")]
     public async Task ValidToken_Accepted()
     {
-        var result = await Validate(BuildAuthToken());
+        var result = await Validate(await BuildAuthTokenAsync());
 
         Assert.True(result.IsValid, result.Error);
         Assert.Null(result.Error);
@@ -95,7 +95,7 @@ public class AuthTokenDeliveryTests
     [Fact(DisplayName = "§Auth Token Delivery — issuer mismatch rejected")]
     public async Task IssuerMismatch_Rejected()
     {
-        var result = await Validate(BuildAuthToken(), issuer: "http://localhost:9999");
+        var result = await Validate(await BuildAuthTokenAsync(), issuer: "http://localhost:9999");
 
         Assert.False(result.IsValid);
         Assert.Contains("issuer_mismatch", result.Error);
@@ -104,7 +104,7 @@ public class AuthTokenDeliveryTests
     [Fact(DisplayName = "§Auth Token Delivery — audience mismatch rejected")]
     public async Task AudienceMismatch_Rejected()
     {
-        var result = await Validate(BuildAuthToken(), audience: "http://localhost:9999");
+        var result = await Validate(await BuildAuthTokenAsync(), audience: "http://localhost:9999");
 
         Assert.False(result.IsValid);
         Assert.Contains("aud", result.Error, StringComparison.OrdinalIgnoreCase);
@@ -116,8 +116,8 @@ public class AuthTokenDeliveryTests
     public async Task PersonMismatch_Rejected(string field)
     {
         var token = field == "sub"
-            ? BuildAuthToken(subject: "someone-else")
-            : BuildAuthToken(personServer: "http://localhost:9999");
+            ? await BuildAuthTokenAsync(subject: "someone-else")
+            : await BuildAuthTokenAsync(personServer: "http://localhost:9999");
 
         var result = await Validate(token);
 
@@ -128,7 +128,7 @@ public class AuthTokenDeliveryTests
     [Fact(DisplayName = "§Auth Token Delivery — cnf.jwk mismatch rejected")]
     public async Task ConfirmationKeyMismatch_Rejected()
     {
-        var result = await Validate(BuildAuthToken(), agentKey: AAuthKey.Generate());
+        var result = await Validate(await BuildAuthTokenAsync(), agentKey: AAuthKey.Generate());
 
         Assert.False(result.IsValid);
         Assert.Contains("cnf.jwk", result.Error, StringComparison.OrdinalIgnoreCase);
@@ -137,7 +137,7 @@ public class AuthTokenDeliveryTests
     [Fact(DisplayName = "§Auth Token Delivery — a token outliving the presented token is rejected")]
     public async Task OutlivesPresentedToken_Rejected()
     {
-        var result = await Validate(BuildAuthToken(), presentedExpiresAt: DateTimeOffset.UtcNow.AddMinutes(5));
+        var result = await Validate(await BuildAuthTokenAsync(), presentedExpiresAt: DateTimeOffset.UtcNow.AddMinutes(5));
 
         Assert.False(result.IsValid);
         Assert.Contains("lifetime_mismatch", result.Error);
@@ -146,7 +146,7 @@ public class AuthTokenDeliveryTests
     [Fact(DisplayName = "§Auth Token Delivery — scope escalation rejected")]
     public async Task ScopeEscalation_Rejected()
     {
-        var result = await Validate(BuildAuthToken(scope: "data.read data.write"), requestedScope: "data.read");
+        var result = await Validate(await BuildAuthTokenAsync(scope: "data.read data.write"), requestedScope: "data.read");
 
         Assert.False(result.IsValid);
         Assert.Contains("scope", result.Error, StringComparison.OrdinalIgnoreCase);
@@ -155,7 +155,7 @@ public class AuthTokenDeliveryTests
     [Fact(DisplayName = "§Auth Token Delivery — scope narrowing accepted")]
     public async Task ScopeNarrowing_Accepted()
     {
-        var result = await Validate(BuildAuthToken(scope: "data.read"), requestedScope: "data.read data.write");
+        var result = await Validate(await BuildAuthTokenAsync(scope: "data.read"), requestedScope: "data.read data.write");
 
         Assert.True(result.IsValid, result.Error);
     }

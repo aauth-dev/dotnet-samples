@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.Routing;
 
 namespace AAuth.Samples.Events;
 
-public sealed class BookingsEvents(string issuer, IAAuthKey key, string keyId, EventsProtocol protocol, SqliteEventStore store)
+public sealed class BookingsEvents(string issuer, IAAuthSigner key, string keyId, EventsProtocol protocol, SqliteEventStore store)
 {
     public const string Operation = "receiveReservationAvailable";
     public const string EventType = "reservation.available";
@@ -45,11 +45,11 @@ public sealed class BookingsEvents(string issuer, IAAuthKey key, string keyId, E
             var receipt = store.DeliveryReceipt(subscription);
             if (receipt is not null) return Results.Content(receipt, "application/json", statusCode: 202);
             if (store.Find(subscription.Provider, eid, protocol.TokenVerifier.TimeProvider.GetUtcNow()) is null) return Results.NotFound();
-            var envelope = store.PrepareDelivery(subscription.Provider, eid, () =>
+            var envelope = await store.PrepareDeliveryAsync(subscription.Provider, eid, async () =>
             {
                 var builder = new EventTokenBuilder { Issuer = issuer, Audience = subscription.Agent, Eid = eid,
                     Key = key, KeyId = keyId, Verifier = protocol.TokenVerifier };
-                return new EventEnvelope(builder.Build(), eid, builder.Jti, issuer, subscription.Agent, protocol.TokenVerifier.TimeProvider.GetUtcNow().AddMinutes(5),
+                return new EventEnvelope(await builder.BuildAsync(context.RequestAborted), eid, builder.Jti, issuer, subscription.Agent, protocol.TokenVerifier.TimeProvider.GetUtcNow().AddMinutes(5),
                     System.Text.Encoding.UTF8.GetBytes(new JsonObject { ["event_type"] = EventType,
                         ["reservation_id"] = "dining-lumiere-001", ["account"] = subscription.Account }.ToJsonString()));
             });

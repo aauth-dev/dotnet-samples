@@ -31,7 +31,7 @@ public sealed class SnippetCompilationTests
         var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/reference/configuration.md"));
         var signing = text.Split("### AAuthSigningHandler", StringSplitOptions.None)[1]
             .Split("### ISignatureKeyProvider Implementations", StringSplitOptions.None)[0];
-        Assert.Contains("IAAuthKey", signing);
+        Assert.Contains("IAAuthSigner", signing);
         Assert.Contains("provider does not supply the private key", signing);
         foreach (var name in new[] { "Label", "Capabilities", "OnSignatureBase" })
         {
@@ -93,11 +93,11 @@ public sealed class SnippetCompilationTests
     {
         var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/server/token-issuance.md"));
         var overview = text.Split("## Overview", StringSplitOptions.None)[1].Split("## Resource Tokens", StringSplitOptions.None)[0];
-        Assert.Contains("IAAuthKey", overview);
+        Assert.Contains("IAAuthSigner", overview);
         Assert.Contains("Ed25519", overview);
         Assert.Contains("ES256", overview);
         foreach (var builder in new[] { typeof(AAuth.Tokens.AgentTokenBuilder), typeof(AAuth.Tokens.AuthTokenBuilder), typeof(AAuth.Tokens.ResourceTokenBuilder) })
-            Assert.Equal(typeof(AAuth.Crypto.IAAuthKey), builder.GetProperty("Key")!.PropertyType);
+            Assert.Equal(typeof(AAuth.Crypto.IAAuthSigner), builder.GetProperty("Key")!.PropertyType);
         Assert.DoesNotMatch(@"(?i)each produces[^\r\n]*signed with Ed25519", overview);
     }
 

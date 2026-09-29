@@ -102,7 +102,7 @@ var perCallGrants = new AAuthSingleUseGrants();
 // metadata options — including R3's r3_vocabularies via the AdditionalMetadata seam.
 app.MapAAuthWellKnown();
 var tokenInventory = app.MapAAuthIssuerRevocation(resourceUrl, ResourceTokenBuilder.ResourceDwk,
-    resourceKey, ResourceKid, "/revoke", SampleEgress.Policy, TimeProvider.System,
+    new AAuthSigningKeySet(ResourceKid, resourceKey), "/revoke", SampleEgress.Policy, TimeProvider.System,
     options => options.IsAcceptedIssuer = caller => caller == personServerUrl || caller == accessServerUrl);
 
 app.MapGet("/", () => Results.Ok(new
@@ -170,7 +170,7 @@ app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
     }
 
     var stored = StoreR3Document(documents, operations.Operations.Select(op => op.Id), account, presenter.Person.Issuer);
-    var resourceToken = BuildResourceToken(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
+    var resourceToken = await BuildResourceTokenAsync(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
     ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
     return Results.Ok(new
     {
@@ -315,12 +315,12 @@ R3Challenge Challenger() => new()
 };
 
 // The resource token names the presented person token (draft-11 §Resource Token Structure).
-string BuildResourceToken(TokenVerifier.VerifiedToken presented, string agentJkt, string r3Uri, string r3S256, string? account) =>
-    Challenger().BuildResourceToken(presented, agentJkt, r3Uri, r3S256, account: account);
+ValueTask<string> BuildResourceTokenAsync(TokenVerifier.VerifiedToken presented, string agentJkt, string r3Uri, string r3S256, string? account) =>
+    Challenger().BuildResourceTokenAsync(presented, agentJkt, r3Uri, r3S256, account: account);
 
 // Per-call proposals name the auth token the agent already presented.
-string BuildProposalResourceToken(TokenVerifier.VerifiedToken verifiedAuthToken, string proposalUri, string proposalS256) =>
-    Challenger().BuildResourceToken(verifiedAuthToken, proposalUri, proposalS256);
+ValueTask<string> BuildProposalResourceTokenAsync(TokenVerifier.VerifiedToken verifiedAuthToken, string proposalUri, string proposalS256, CancellationToken ct) =>
+    Challenger().BuildResourceTokenAsync(verifiedAuthToken, proposalUri, proposalS256, cancellationToken: ct);
 
 IResult PersonTokenRequired(HttpContext ctx)
 {
@@ -370,7 +370,7 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
             var presenter = await VerifyPresenterAsync(ctx, fetcher);
             if (presenter.Person is null) return new AuthOutcome(null, PersonTokenRequired(ctx));
             var stored = StoreR3Document(ctx.RequestServices.GetRequiredService<R3ProposalStore>(), fallbackTools, account, presenter.Person.Issuer);
-            var resourceToken = BuildResourceToken(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
+            var resourceToken = await BuildResourceTokenAsync(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
             ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
             return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("auth_token_required",
                 statusCode: StatusCodes.Status401Unauthorized,
@@ -558,7 +558,7 @@ async Task<OperationOutcome> EnforceOperationAsync(HttpContext context, TokenVer
         if (decision.Kind == R3EnforcementDecisionKind.PerCall)
         {
             proposals.Entitle(decision.ProposalS256!, (string)token.Payload["ps"]!);
-            var resourceToken = BuildProposalResourceToken(token, decision.ProposalUri!, decision.ProposalS256!);
+            var resourceToken = await BuildProposalResourceTokenAsync(token, decision.ProposalUri!, decision.ProposalS256!, context.RequestAborted);
             context.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
             return new(parameters, false, AAuthProblemDetails.Create("r3_approval_required", statusCode: 401,
                 extensions: new Dictionary<string, object?> { ["operationId"] = operation, ["r3_uri"] = decision.ProposalUri, ["r3_s256"] = decision.ProposalS256 }));

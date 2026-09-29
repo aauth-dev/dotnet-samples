@@ -69,7 +69,7 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
     EgressPolicy = SampleEgress.Policy,
     Issuer = conciergeUrl,
     Name = "Concierge Demo",
-    SigningKeys = new Dictionary<string, IAAuthKey> { [ConciergeKid] = conciergeKey },
+    SigningKeys = new AAuthSigningKeySet { [ConciergeKid] = conciergeKey },
 });
 
 // -----------------------------------------------------------------------
@@ -99,8 +99,7 @@ app.UseWhen(
         {
             EgressPolicy = SampleEgress.Policy,
             AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = conciergeKey,
-            ResourceKeyId = ConciergeKid,
+            ResourceSigningKeys = new AAuthSigningKeySet(ConciergeKid, conciergeKey),
             ResourceIdentifier = conciergeUrl,
             DefaultScopes = ConciergeScope,
         }));
@@ -142,7 +141,7 @@ app.UseWhen(ctx => IsWalletPath(ctx.Request.Path), branch => branch.UseAAuthInte
     },
     new ChallengeOptions
     {
-        EgressPolicy = SampleEgress.Policy, ResourceSigningKey = conciergeKey, ResourceKeyId = ConciergeKid,
+        EgressPolicy = SampleEgress.Policy, ResourceSigningKeys = new AAuthSigningKeySet(ConciergeKid, conciergeKey),
         ResourceIdentifier = conciergeUrl, AccessServer = accessServerUrl, DefaultScopes = "wallet.read",
         ScopeDescriptions = new Dictionary<string, string> { ["wallet.read"] = "Read the travel wallet through the concierge" },
     }));

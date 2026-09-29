@@ -61,7 +61,7 @@ app.UseWhen(context => context.Request.Path.StartsWithSegments("/catalog"), bran
         PersonServers = { Allowed = new HashSet<string> { person } },
     },
 }));
-app.MapGet("/catalog/{service}", (string service, HttpContext context) =>
+app.MapGet("/catalog/{service}", async (string service, HttpContext context) =>
 {
     if (!catalog.TryGetValue(service, out var entries)) return Results.NotFound();
     var identity = context.GetAAuthVerification()!;
@@ -73,8 +73,8 @@ app.MapGet("/catalog/{service}", (string service, HttpContext context) =>
         R3Metadata.ValidateOperations(request, metadata, definitions);
         var document = descriptions[service];
         // Agent token -> person-token requirement; person token -> R3 resource token naming it.
-        return new R3Challenge { EgressPolicy = SampleEgress.Policy, ResourceIssuer = issuer, Audience = access, Key = key, KeyId = kid }
-            .Challenge(context, document.Uri, document.S256);
+        return await new R3Challenge { EgressPolicy = SampleEgress.Policy, ResourceIssuer = issuer, Audience = access, Key = key, KeyId = kid }
+            .ChallengeAsync(context, document.Uri, document.S256);
     }
     var payload = context.GetAAuthParsedKey()!.Payload!;
     var decision = new R3Enforcement(documents, new Uri(issuer)).Evaluate(payload, operation);

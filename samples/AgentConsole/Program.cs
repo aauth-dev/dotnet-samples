@@ -107,7 +107,7 @@ if (apUrl is null)
     return 1;
 }
 
-IAAuthKey key;
+IAAuthSigner key;
 string localKeyHandle;
 string? agentTokenKid;
 string? agentJwksUri;
@@ -201,7 +201,7 @@ switch (signingMode)
         builder = new AAuthClientBuilder(twoKeyResult.EphemeralKey).WithEgressPolicy(SampleEgress.Policy);
         // TODO: In a long-running client, the naming JWT (5-min expiry) and ephemeral key
         // must be regenerated on refresh. For this single-request demo, the initial pair suffices.
-        var currentNamingJwt = NamingJwtBuilder.Build(key, twoKeyResult.EphemeralKey);
+        var currentNamingJwt = await NamingJwtBuilder.BuildAsync(key, twoKeyResult.EphemeralKey);
         builder.UseJktJwt(() => currentNamingJwt);
         break;
     default: // "jwt"

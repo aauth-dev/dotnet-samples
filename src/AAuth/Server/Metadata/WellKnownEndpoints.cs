@@ -191,16 +191,22 @@ public static class WellKnownEndpoints
         return doc;
     }
 
-    internal static JsonObject BuildJwks(IReadOnlyDictionary<string, IAAuthKey> signingKeys)
+    internal static JsonObject BuildJwks(IEnumerable<AAuthSigningKeySet> signingKeySets)
     {
         var keys = new JsonArray();
-        foreach (var (kid, key) in signingKeys)
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var set in signingKeySets)
         {
-            var jwk = key.ToPublicJwk();
-            jwk["kid"] = kid;
-            jwk["use"] = "sig";
-            jwk["alg"] = key.Algorithm;
-            keys.Add(jwk);
+            foreach (var (kid, key) in set)
+            {
+                // First registration of a given kid wins.
+                if (!seen.Add(kid)) continue;
+                var jwk = key.ToPublicJwk();
+                jwk["kid"] = kid;
+                jwk["use"] = "sig";
+                jwk["alg"] = key.Algorithm;
+                keys.Add(jwk);
+            }
         }
         return new JsonObject { ["keys"] = keys };
     }
@@ -270,32 +276,36 @@ public static class WellKnownEndpoints
 
     private static readonly ConditionalWeakTable<IEndpointRouteBuilder, SharedJwksState> _jwksState = new();
 
-    private static void RegisterJwksKeys(IEndpointRouteBuilder endpoints, IReadOnlyDictionary<string, IAAuthKey> signingKeys)
+    private static void RegisterJwksKeys(IEndpointRouteBuilder endpoints, AAuthSigningKeySet signingKeys)
     {
         var state = _jwksState.GetOrCreateValue(endpoints);
         lock (state)
         {
-            // Merge keys (first registration of a given kid wins).
-            foreach (var (kid, key) in signingKeys)
+            // Merge key sets. The JWKS is rebuilt per request from the live
+            // sets, so rotation (Add/Activate/Remove) needs no restart.
+            if (!state.KeySets.Contains(signingKeys))
             {
-                state.Keys.TryAdd(kid, key);
+                state.KeySets.Add(signingKeys);
             }
 
             // Register the JWKS endpoint only once. The endpoint closure captures
-            // `state` so it serves the merged key set at request time.
+            // `state` so it serves the merged key sets at request time.
             if (!state.EndpointRegistered)
             {
                 state.EndpointRegistered = true;
-                endpoints.MapGet("/.well-known/jwks.json", () => Results.Json(
-                    BuildJwks(state.Keys),
-                    contentType: "application/json"));
+                endpoints.MapGet("/.well-known/jwks.json", () =>
+                {
+                    AAuthSigningKeySet[] sets;
+                    lock (state) sets = [.. state.KeySets];
+                    return Results.Json(BuildJwks(sets), contentType: "application/json");
+                });
             }
         }
     }
 
     private sealed class SharedJwksState
     {
-        public Dictionary<string, IAAuthKey> Keys { get; } = new();
+        public List<AAuthSigningKeySet> KeySets { get; } = new();
         public bool EndpointRegistered { get; set; }
     }
 }
@@ -316,7 +326,7 @@ public sealed class AAuthResourceMetadataOptions
     /// that only verifies agent signatures MAY omit them, in which case no
     /// <c>jwks_uri</c> is advertised and no JWKS endpoint is mapped (§Resource Metadata).
     /// </summary>
-    public IReadOnlyDictionary<string, IAAuthKey>? SigningKeys { get; set; }
+    public AAuthSigningKeySet? SigningKeys { get; set; }
 
     /// <summary>
     /// Optional advisory <c>access_mode</c> declaring the credential flow agents

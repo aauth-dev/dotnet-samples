@@ -25,7 +25,7 @@ public static class TestTokens
         _ => (variant is "expired" or "recently-expired" ? "expired_" : "invalid_") + field,
     };
 
-    public static JsonNode MalformedCredential(string jwt, IAAuthKey key, string variant)
+    public static async Task<JsonNode> MalformedCredentialAsync(string jwt, IAAuthSigner key, string variant)
     {
         switch (variant)
         {
@@ -51,7 +51,7 @@ public static class TestTokens
         if (variant == "duplicate-header") headerJson = headerJson[..^1] + ",\"alg\":\"" + key.Algorithm + "\"}";
         if (variant == "duplicate-payload") payloadJson = payloadJson[..^1] + ",\"iss\":" + payload["iss"]!.ToJsonString() + "}";
         var input = Base64UrlEncoder.Encode(headerJson) + "." + Base64UrlEncoder.Encode(payloadJson);
-        var signature = key.Sign(Encoding.ASCII.GetBytes(input));
+        var signature = await key.SignAsync(Encoding.ASCII.GetBytes(input));
         if (variant == "signature") signature[0] ^= 1;
         if (variant == "signature-length") signature = signature[..1];
         return JsonValue.Create(input + "." + (variant == "signature-base64" ? "%" : Base64UrlEncoder.Encode(signature)))!;
@@ -68,7 +68,7 @@ public static class TestTokens
                 .Where(mutation => mutation != "blank" || claim != "scope")
                 .Select(mutation => new object[] { type, claim, mutation })));
 
-    public static string Raw(IAAuthKey key, string type, Action<JsonObject, JsonObject>? mutate = null)
+    public static async Task<string> RawAsync(IAAuthSigner key, string type, Action<JsonObject, JsonObject>? mutate = null)
     {
         var header = new JsonObject { ["alg"] = key.Algorithm, ["typ"] = type, ["kid"] = "issuer" };
         var payload = new JsonObject
@@ -96,7 +96,7 @@ public static class TestTokens
         else payload["cnf"] = new JsonObject { ["jwk"] = key.ToPublicJwk() };
         mutate?.Invoke(header, payload);
         var input = Base64UrlEncoder.Encode(header.ToJsonString()) + "." + Base64UrlEncoder.Encode(payload.ToJsonString());
-        return input + "." + Base64UrlEncoder.Encode(key.Sign(Encoding.ASCII.GetBytes(input)));
+        return input + "." + Base64UrlEncoder.Encode(await key.SignAsync(Encoding.ASCII.GetBytes(input)));
     }
 
     public static void Mutate(JsonObject header, JsonObject payload, string claim, string mutation)
@@ -111,11 +111,12 @@ public static class TestTokens
         };
     }
 
+    // Static readonly field initializers cannot await; local key signing completes synchronously.
     private static string BuildResource() => new ResourceTokenBuilder
     {
         Issuer = "https://resource.test", Audience = "https://ps.test",
         PersonServer = "https://ps.test", Subject = "person-1", PresentedJti = "person-token-1",
         AgentJkt = "fixture-key",
         Key = AAuthKey.Generate(), KeyId = "resource-1",
-    }.Build();
+    }.BuildAsync().AsTask().GetAwaiter().GetResult();
 }

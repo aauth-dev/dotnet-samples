@@ -14,26 +14,27 @@ public class EventsTokenTests
     private static readonly TokenVerifier Verifier = new() { TimeProvider = new FakeTimeProvider(Now) };
 
     [Fact]
-    public void EventWithJtiAndWithoutCnfVerifies()
+    public async Task EventWithJtiAndWithoutCnfVerifies()
     {
         var key = AAuthKey.Generate();
-        var jwt = EventsTokens.Create(key, "resource", Payload(), false, Verifier);
+        var jwt = await EventsTokens.CreateAsync(key, "resource", Payload(), false, Verifier);
         var token = EventsTokens.Verify(jwt, key, false, Verifier, "aauth:agent@ap.example");
         Assert.False(token.Payload.ContainsKey("cnf"));
         Assert.Equal("ev-4d2a91", token.Jti);
     }
 
     [Fact]
-    public void EventWithoutJtiFails()
+    public async Task EventWithoutJtiFails()
     {
         var key = AAuthKey.Generate();
         var payload = Payload();
         payload.Remove("jti");
-        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(Sign(key, payload), key, false, Verifier));
+        var jwt = await SignAsync(key, payload);
+        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(jwt, key, false, Verifier));
     }
 
     [Fact]
-    public void BuilderIssuesDistinctJtiPerEvent()
+    public async Task BuilderIssuesDistinctJtiPerEvent()
     {
         var key = AAuthKey.Generate();
         EventTokenBuilder Builder() => new()
@@ -41,8 +42,8 @@ public class EventsTokenTests
             Issuer = "https://resource.example", Audience = "aauth:agent@ap.example", Eid = "event-one",
             Key = key, KeyId = "resource", Verifier = Verifier,
         };
-        var first = EventsTokens.Verify(Builder().Build(), key, false, Verifier);
-        var second = EventsTokens.Verify(Builder().Build(), key, false, Verifier);
+        var first = EventsTokens.Verify(await Builder().BuildAsync(), key, false, Verifier);
+        var second = EventsTokens.Verify(await Builder().BuildAsync(), key, false, Verifier);
         Assert.Equal((string?)first.Payload["eid"], (string?)second.Payload["eid"]);
         Assert.NotEqual(first.Jti, second.Jti);
     }
@@ -58,22 +59,24 @@ public class EventsTokenTests
     [InlineData("iat", "1788880001")]
     [InlineData("iat", "null")]
     [InlineData("exp", "1788880000")]
-    public void InvalidEventClaimsFail(string claim, string json)
+    public async Task InvalidEventClaimsFail(string claim, string json)
     {
         var key = AAuthKey.Generate();
         var payload = Payload();
         payload[claim] = JsonNode.Parse(json);
-        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(Sign(key, payload), key, false, Verifier));
+        var jwt = await SignAsync(key, payload);
+        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(jwt, key, false, Verifier));
     }
 
     [Theory]
     [InlineData("none")]
     [InlineData("EdDSA")]
     [InlineData("ES256")]
-    public void OldOrMismatchedAlgorithmsFail(string algorithm)
+    public async Task OldOrMismatchedAlgorithmsFail(string algorithm)
     {
         var key = AAuthKey.Generate();
-        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(Sign(key, Payload(), algorithm), key, false, Verifier));
+        var jwt = await SignAsync(key, Payload(), algorithm);
+        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(jwt, key, false, Verifier));
     }
 
     private static JsonObject Payload() => new()
@@ -83,10 +86,10 @@ public class EventsTokenTests
         ["iat"] = Now.ToUnixTimeSeconds(), ["exp"] = Now.AddMinutes(5).ToUnixTimeSeconds()
     };
 
-    private static string Sign(IAAuthKey key, JsonObject payload, string algorithm = "Ed25519")
+    private static async Task<string> SignAsync(IAAuthSigner key, JsonObject payload, string algorithm = "Ed25519")
     {
         var header = new JsonObject { ["alg"] = algorithm, ["typ"] = EventsTokens.EventType, ["kid"] = "resource" };
         var input = Base64UrlEncoder.Encode(header.ToJsonString()) + "." + Base64UrlEncoder.Encode(payload.ToJsonString());
-        return input + "." + Base64UrlEncoder.Encode(key.Sign(Encoding.ASCII.GetBytes(input)));
+        return input + "." + Base64UrlEncoder.Encode(await key.SignAsync(Encoding.ASCII.GetBytes(input)));
     }
 }

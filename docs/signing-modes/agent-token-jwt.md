@@ -44,7 +44,7 @@ use the full `AgentTokenBuilder` via `WithTokenRefresh`:
 
 ```csharp
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh((ctx, ct) => Task.FromResult(new AgentTokenBuilder
+    .WithTokenRefresh(async (ctx, ct) => await new AgentTokenBuilder
     {
         Issuer = "https://my-service.example",
         Subject = "aauth:my-service@my-service.example",
@@ -55,7 +55,7 @@ using var client = new AAuthClientBuilder(key)
         {
             ["attestation"] = "platform-verified",
         },
-    }.Build()))
+    }.BuildAsync(ct))
     .WithChallengeHandling("https://ps.example")
     .Build();
 ```

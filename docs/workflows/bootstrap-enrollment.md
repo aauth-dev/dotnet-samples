@@ -34,7 +34,7 @@ The bootstrap convenience APIs `BootstrapBuilder.WithKey`,
 `AgentProviderClient.EnrolWithKeyAsync`, and `EnrollResult.Key` currently use the
 concrete Ed25519 `AAuthKey`. They do not provide fluent ES256 enrollment.
 This limitation does not apply to `IKeyStore`, signing/verification, or
-`AAuthClientBuilder.Enrolled` single-key refresh, which accept `IAAuthKey`.
+`AAuthClientBuilder.Enrolled` single-key refresh, which accept `IAAuthSigner`.
 The sample AP accepts signed ES256 enrollment requests through its HTTP endpoint.
 
 > **The agent and the AP never share a keystore.** The agent holds the **private** durable key locally in its own `IKeyStore`. The AP holds only the **public** key, indexed in its enrollment database by JWK thumbprint. At refresh time the AP identifies the agent from the HTTP signature — never from any string the agent sends.

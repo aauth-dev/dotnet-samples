@@ -131,17 +131,11 @@ public static class AAuthEndpointExtensions
         var resourceMetadata = app.ApplicationServices.GetService<AAuthResourceMetadataOptions>();
 
         // Challenge defaults from the DI-registered resource metadata (G3): the
-        // resource identifier and the first signing key. UseAAuth callers override
+        // resource identifier and its signing keys. UseAAuth callers override
         // only when they must.
         var resourceIdentifier = opts.ResourceIdentifier ?? resourceMetadata?.Issuer;
-        var signingKey = opts.ResourceSigningKey;
-        var signingKid = opts.ResourceKeyId;
-        if (signingKey is null && resourceMetadata?.SigningKeys is { Count: > 0 } keys)
-        {
-            var first = keys.First();
-            signingKid = first.Key;
-            signingKey = first.Value;
-        }
+        var signingKeys = opts.ResourceSigningKeys
+            ?? (resourceMetadata?.SigningKeys is { Count: > 0 } keys ? keys : null);
 
         return app.Use((HttpContext context, RequestDelegate next) =>
         {
@@ -197,8 +191,7 @@ public static class AAuthEndpointExtensions
                 {
                     EgressPolicy = resourceMetadata?.EgressPolicy ?? metadataClient?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production,
                     AccessMode = AAuthAccessMode.RequireAuthToken,
-                    ResourceSigningKey = signingKey,
-                    ResourceKeyId = signingKid,
+                    ResourceSigningKeys = signingKeys,
                     ResourceIdentifier = resourceIdentifier,
                     AccessServer = opts.AccessServer,
                     DefaultScopes = req.Scope,

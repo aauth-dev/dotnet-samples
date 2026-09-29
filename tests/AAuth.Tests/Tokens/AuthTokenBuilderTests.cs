@@ -13,10 +13,10 @@ public class AuthTokenBuilderTests
     [InlineData(120, 3600, 120)]
     [InlineData(3600, 120, 120)]
     [InlineData(7200, 7200, 3600)]
-    public void Build_BoundsAgentAndDelegationExpiry(int agentSeconds, int parentSeconds, int expectedSeconds)
+    public async Task Build_BoundsAgentAndDelegationExpiry(int agentSeconds, int parentSeconds, int expectedSeconds)
     {
         var now = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-        var token = BoundedBuilder(now, now.AddSeconds(agentSeconds), now.AddSeconds(parentSeconds)).Build();
+        var token = await BoundedBuilder(now, now.AddSeconds(agentSeconds), now.AddSeconds(parentSeconds)).BuildAsync();
         var payload = JsonNode.Parse(Base64UrlEncoder.DecodeBytes(token.Split('.')[1]))!;
         Assert.Equal(now.AddSeconds(expectedSeconds).ToUnixTimeSeconds(), (long)payload["exp"]!);
         Assert.Equal(now.ToUnixTimeSeconds(), (long)payload["iat"]!);
@@ -27,31 +27,31 @@ public class AuthTokenBuilderTests
     [InlineData(-1, 120)]
     [InlineData(120, 0)]
     [InlineData(120, -1)]
-    public void Build_RejectsExpiredAgentOrDelegation(int agentSeconds, int parentSeconds)
+    public async Task Build_RejectsExpiredAgentOrDelegation(int agentSeconds, int parentSeconds)
     {
         var now = DateTimeOffset.UtcNow;
-        Assert.Throws<AuthTokenExpiredException>(() =>
-            BoundedBuilder(now, now.AddSeconds(agentSeconds), now.AddSeconds(parentSeconds)).Build());
+        await Assert.ThrowsAsync<AuthTokenExpiredException>(async () =>
+            await BoundedBuilder(now, now.AddSeconds(agentSeconds), now.AddSeconds(parentSeconds)).BuildAsync());
     }
 
     [Fact]
-    public void Build_RejectsDefaultExpiry()
+    public async Task Build_RejectsDefaultExpiry()
     {
-        Assert.Throws<AuthTokenExpiredException>(() => BoundedBuilder(DateTimeOffset.UtcNow, default, null).Build());
+        await Assert.ThrowsAsync<AuthTokenExpiredException>(async () => await BoundedBuilder(DateTimeOffset.UtcNow, default, null).BuildAsync());
     }
 
     [Fact]
-    public void Build_AllowsIdentityExtensions()
+    public async Task Build_AllowsIdentityExtensions()
     {
         var key = AAuthKey.Generate();
-        var token = new AuthTokenBuilder
+        var token = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ps.example", Audience = "https://resource.example", PersonServer = "https://ps.example", Subject = "person-1",
             Key = key, KeyId = "ps1", AgentConfirmationKey = key, Scope = "read",
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
             AdditionalClaims = new System.Collections.Generic.Dictionary<string, JsonNode?> { ["email"] = "user@example.test" },
-        }.Build();
+        }.BuildAsync();
         Assert.Equal("user@example.test", (string?)JsonNode.Parse(Base64UrlEncoder.DecodeBytes(token.Split('.')[1]))!["email"]);
     }
 
@@ -79,10 +79,10 @@ public class AuthTokenBuilderTests
     [InlineData("groups")]
     [InlineData("sub")]
     [InlineData("nbf")]
-    public void Build_RejectsUnsetReservedClaims(string claim)
+    public async Task Build_RejectsUnsetReservedClaims(string claim)
     {
         var key = AAuthKey.Generate();
-        Assert.Throws<InvalidOperationException>(() => new AuthTokenBuilder
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -98,16 +98,16 @@ public class AuthTokenBuilderTests
             {
                 [claim] = "injected",
             },
-        }.Build());
+        }.BuildAsync());
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public void Build_RejectsNonPositiveLifetime(int seconds)
+    public async Task Build_RejectsNonPositiveLifetime(int seconds)
     {
         var key = AAuthKey.Generate();
-        Assert.Throws<InvalidOperationException>(() => new AuthTokenBuilder
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -120,15 +120,15 @@ public class AuthTokenBuilderTests
             KeyId = "ps1",
             Scope = "read",
             Lifetime = TimeSpan.FromSeconds(seconds),
-        }.Build());
+        }.BuildAsync());
     }
 
     [Fact]
-    public void Build_EmitsRequiredClaims()
+    public async Task Build_EmitsRequiredClaims()
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = new AuthTokenBuilder
+        var jwt = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -140,7 +140,7 @@ public class AuthTokenBuilderTests
             KeyId = "ps1",
             Subject = "user-pairwise-id",
             Scope = "whoami",
-        }.Build();
+        }.BuildAsync();
 
         var payload = (JsonObject)JsonNode.Parse(Base64UrlEncoder.DecodeBytes(jwt.Split('.')[1]))!;
         Assert.Equal("https://ps.example", (string?)payload["iss"]);
@@ -159,11 +159,11 @@ public class AuthTokenBuilderTests
     [Theory]
     [InlineData("", "https://ps.example")]
     [InlineData("person-1", "")]
-    public void Build_RejectsMissingSubOrPersonServer(string subject, string personServer)
+    public async Task Build_RejectsMissingSubOrPersonServer(string subject, string personServer)
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        Assert.Throws<InvalidOperationException>(() => new AuthTokenBuilder
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -174,6 +174,6 @@ public class AuthTokenBuilderTests
             AgentConfirmationKey = agentKey,
             Key = psKey,
             KeyId = "k",
-        }.Build());
+        }.BuildAsync());
     }
 }

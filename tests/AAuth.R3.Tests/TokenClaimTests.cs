@@ -62,7 +62,7 @@ public class TokenClaimTests
     }
 
     [Fact]
-    public void AuthClaims_RoundTripThroughAdditionalClaims()
+    public async Task AuthClaims_RoundTripThroughAdditionalClaims()
     {
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
@@ -72,7 +72,7 @@ public class TokenClaimTests
             R3Grant.Mcp("search_trip_options", "hold_itinerary"),
             R3Grant.Mcp("book_trip"));
 
-        var jwt = new AuthTokenBuilder
+        var jwt = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -85,7 +85,7 @@ public class TokenClaimTests
             Dwk = AuthTokenBuilder.AccessDwk,
             Subject = "pairwise-sub",
             AdditionalClaims = claims,
-        }.Build();
+        }.BuildAsync();
         var payload = (JsonObject)JsonNode.Parse(Base64UrlEncoder.DecodeBytes(jwt.Split('.')[1]))!;
 
         var parsed = R3ClaimReader.ReadAuthToken(payload);
@@ -117,8 +117,8 @@ public class TokenClaimTests
         var r3Uri = "https://resource.test/r3/doc";
         var r3S256 = Base64UrlEncoder.Encode(new byte[32]);
         var mission = R3Hash.ComputeS256("mission"u8);
-        var presented = R3TestData.VerifyPersonToken(R3TestData.PersonToken(psKey, agentKey, mission), psKey, agentKey);
-        var token = R3TestData.ResourceToken(resourceKey, presented, agentKey, r3Uri, r3S256);
+        var presented = R3TestData.VerifyPersonToken(await R3TestData.PersonTokenAsync(psKey, agentKey, mission), psKey, agentKey);
+        var token = await R3TestData.ResourceTokenAsync(resourceKey, presented, agentKey, r3Uri, r3S256);
 
         var handler = new StaticJsonHandler()
             .AddJson($"{R3TestData.ResourceIssuer}/.well-known/aauth-resource.json",
@@ -144,13 +144,13 @@ public class TokenClaimTests
     }
 
     [Fact]
-    public void ChallengeHeader_CarriesResourceToken()
+    public async Task ChallengeHeader_CarriesResourceToken()
     {
         var resourceKey = AAuthKey.Generate();
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var presented = R3TestData.VerifyPersonToken(R3TestData.PersonToken(psKey, agentKey), psKey, agentKey);
-        var token = R3TestData.ResourceToken(resourceKey, presented, agentKey, "https://resource.test/r3/doc", "abc123");
+        var presented = R3TestData.VerifyPersonToken(await R3TestData.PersonTokenAsync(psKey, agentKey), psKey, agentKey);
+        var token = await R3TestData.ResourceTokenAsync(resourceKey, presented, agentKey, "https://resource.test/r3/doc", "abc123");
 
         var parsed = AAuthRequirementHeader.Parse(AAuthRequirementHeader.FormatAuthToken(token));
 

@@ -39,7 +39,7 @@ public sealed class AgentTokenBuilder
     public required string KeyId { get; init; }
 
     /// <summary>The agent's signing key. Its public half is embedded as <c>cnf.jwk</c>.</summary>
-    public required IAAuthKey Key { get; init; }
+    public required IAAuthSigner Key { get; init; }
 
     /// <summary>
     /// Optional separate confirmation key whose public half is embedded as
@@ -81,7 +81,7 @@ public sealed class AgentTokenBuilder
     public IReadOnlyDictionary<string, JsonNode?>? AdditionalClaims { get; init; }
 
     /// <summary>Build and sign the agent token. Returns the compact JWT serialization.</summary>
-    public string Build()
+    public async ValueTask<string> BuildAsync(CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(Issuer))
         {
@@ -202,16 +202,7 @@ public sealed class AgentTokenBuilder
             }
         }
 
-        var headerBytes = Encoding.UTF8.GetBytes(header.ToJsonString());
-        var payloadBytes = Encoding.UTF8.GetBytes(payload.ToJsonString());
-
-        var headerSegment = Base64UrlEncoder.Encode(headerBytes);
-        var payloadSegment = Base64UrlEncoder.Encode(payloadBytes);
-        var signingInput = headerSegment + "." + payloadSegment;
-        var signature = Key.Sign(Encoding.ASCII.GetBytes(signingInput));
-        var signatureSegment = Base64UrlEncoder.Encode(signature);
-
-        return signingInput + "." + signatureSegment;
+        return await JwtWriter.SignCompactAsync(header, payload, Key, cancellationToken).ConfigureAwait(false);
     }
 
     private static bool IsHttpsUrl(string value) =>

@@ -6,7 +6,9 @@
 
 The SDK provides builders for all four AAuth JWT token types (agent, person,
 resource, and auth tokens). Each produces a
-compact JWT (`header.payload.signature`) signed by the configured `IAAuthKey`.
+compact JWT (`header.payload.signature`) signed by the configured `IAAuthSigner`.
+`BuildAsync(cancellationToken)` awaits the signer, so a remote signer (HSM, KMS)
+can sign without blocking a thread.
 Built-in keys support Ed25519 (`AAuthKey`) and ES256 (`EcdsaAAuthKey`); the key's
 algorithm determines `alg`. Ed25519 examples are not a universal algorithm
 requirement. Choose a supported algorithm that the recipient accepts.
@@ -32,7 +34,7 @@ using AAuth.Server.Challenge;
 
 // The person or auth token the agent presented, verified by UseAAuthVerification.
 var presented = context.GetAAuthVerifiedAssertion()!;
-var resourceToken = AAuthChallengeMiddleware.BuildResourceToken(
+var resourceToken = await AAuthChallengeMiddleware.BuildResourceTokenAsync(
     challengeOptions, presented, scope: "read write");
 
 // Return as 401 challenge (sets the AAuth-Requirement header:
@@ -45,7 +47,7 @@ The underlying builder takes the same values explicitly:
 ```csharp
 using AAuth.Tokens;
 
-var resourceToken = new ResourceTokenBuilder
+var resourceToken = await new ResourceTokenBuilder
 {
     Issuer = "https://resource.example",
     Audience = "https://as.example",          // resource's AS, or the person's PS (three-party)
@@ -59,7 +61,7 @@ var resourceToken = new ResourceTokenBuilder
     KeyId = "resource-key-1",
     Scope = "read write",                     // requested scope
     Lifetime = TimeSpan.FromMinutes(5),       // default: 5 min
-}.Build();
+}.BuildAsync();
 ```
 
 ### ResourceTokenBuilder Properties
@@ -93,7 +95,7 @@ A person token is identity, not authorization: it carries no `scope` or
 `MapAAuthPersonServer` mints these at `POST /person`.
 
 ```csharp
-var personToken = new PersonTokenBuilder
+var personToken = await new PersonTokenBuilder
 {
     Issuer = "https://ps.example",
     Audience = "https://resource.example",   // the resource this token identifies the person to
@@ -103,7 +105,7 @@ var personToken = new PersonTokenBuilder
     Key = psSigningKey,
     KeyId = "ps-key-1",
     MissionS256 = mission.S256,              // optional: the mission the agent named
-}.Build();
+}.BuildAsync();
 ```
 
 ## Auth Tokens (`aa-auth+jwt`)
@@ -117,7 +119,7 @@ var verifiedAgent = await tokenVerifier.VerifyWithJwksAsync(
     agentToken, metadata, jwks,
     AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk,
     expectedAudience: null);
-var authToken = new AuthTokenBuilder
+var authToken = await new AuthTokenBuilder
 {
     AgentTokenExpiresAt = verifiedAgent.ExpiresAt,
     Issuer = "https://ps.example",
@@ -130,7 +132,7 @@ var authToken = new AuthTokenBuilder
     Dwk = AuthTokenBuilder.PersonDwk,        // "aauth-person.json" (or AccessDwk for AS)
     Scope = "read",
     Lifetime = TimeSpan.FromHours(1),
-}.Build();
+}.BuildAsync();
 ```
 
 ### AuthTokenBuilder Properties
@@ -191,7 +193,7 @@ The `Dwk` determines which `.well-known` document an agent fetches to find the i
 Issued by an Agent Provider to bind an agent's key to its identity.
 
 ```csharp
-var agentToken = new AgentTokenBuilder
+var agentToken = await new AgentTokenBuilder
 {
     Issuer = "https://ap.example",
     Subject = "aauth:myapp@ap.example",
@@ -200,7 +202,7 @@ var agentToken = new AgentTokenBuilder
     ConfirmationKey = agentPublicKey,          // binds token to this key
     PersonServer = "https://ps.example",       // optional
     Lifetime = TimeSpan.FromHours(24),
-}.Build();
+}.BuildAsync();
 ```
 
 ## Token Verification
@@ -375,7 +377,7 @@ var app = builder.Build();
 app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     Issuer       = psIssuer,
-    SigningKeys  = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
+    SigningKeys  = new AAuthSigningKeySet(PsKid, psKey),
     DefaultScope = "calendar.read",
     // Unset ⇒ federate to verified aud; empty ⇒ three-party only.
     Trust        = { AccessServers = { Allowed = trustedAccessServers } },
@@ -387,7 +389,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 | Property | Type | Required | Default | Description |
 |----------|------|:--------:|---------|-------------|
 | `Issuer` | `string` | Yes | — | HTTPS URL of this PS (`iss` of minted auth tokens) |
-| `SigningKeys` | `IReadOnlyDictionary<string, IAAuthKey>` | Yes | — | Key-id to signing key map published at the PS JWKS; supports Ed25519 and ES256 keys |
+| `SigningKeys` | `AAuthSigningKeySet` | Yes | — | Signing keys published at the PS JWKS; tokens are signed with the active key. Supports Ed25519 and ES256 keys |
 | `TokenPath` | `string` | No | `/token` | The auth token endpoint path (`auth_token_endpoint`) |
 | `PersonTokenPath` | `string` | No | `/person` | The person token endpoint path (`person_token_endpoint`) |
 | `RevocationPath` | `string` | No | `/revoke` | The revocation endpoint path |

@@ -344,9 +344,9 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         Assert.Equal(TimeSpan.Zero, deferred.Headers.RetryAfter?.Delta);
         Assert.True(deferred.Headers.CacheControl?.NoStore);
         Assert.False(deferred.Headers.Contains("AAuth-Requirement"));
-        using (var agent = SignedClient(asAgent: true))
+        using (var agent = await SignedClientAsync(asAgent: true))
             Assert.Equal(HttpStatusCode.NotFound, (await agent.GetAsync(location)).StatusCode);
-        using var revoker = SignedClient();
+        using var revoker = await SignedClientAsync();
         using (var stillPending = new HttpRequestMessage(HttpMethod.Get, location))
         {
             stillPending.Headers.TryAddWithoutValidation("Prefer", "wait=0");
@@ -636,14 +636,14 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
 
     private async Task<HttpResponseMessage> PostSignedRevoke(HttpContent content, bool asAgent = false, bool coverContent = true)
     {
-        using var client = SignedClient(asAgent, coverContent);
+        using var client = await SignedClientAsync(asAgent, coverContent);
         using var request = new HttpRequestMessage(HttpMethod.Post, "/revoke") { Content = content };
         return await client.SendAsync(request);
     }
 
-    private HttpClient SignedClient(bool asAgent = false, bool coverContent = true)
+    private async Task<HttpClient> SignedClientAsync(bool asAgent = false, bool coverContent = true)
     {
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -652,7 +652,7 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
             KeyId = "ap-key-1",
             ConfirmationKey = _agentKey,
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
 
         ISignatureKeyProvider provider = asAgent
             ? new JwtSignatureKeyProvider(() => agentToken)

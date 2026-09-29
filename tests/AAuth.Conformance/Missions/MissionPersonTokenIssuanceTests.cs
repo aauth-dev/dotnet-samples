@@ -73,7 +73,7 @@ public class MissionPersonTokenIssuanceTests
         {
             EgressPolicy = new AAuthEgressPolicy(dnsResolver: new PublicDns()),
             Issuer = PsIssuer,
-            SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = PsKey },
+            SigningKeys = new AAuthSigningKeySet { [PsKid] = PsKey },
             Trust = { AccessServers = { Allowed = new HashSet<string>() } },
         });
         app.MapAAuthGovernance(options => options.PersonServer = PsIssuer);
@@ -81,7 +81,7 @@ public class MissionPersonTokenIssuanceTests
         return app;
     }
 
-    private static string AgentToken(AAuthKey agentKey) => new AgentTokenBuilder
+    private static ValueTask<string> AgentTokenAsync(AAuthKey agentKey) => new AgentTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = "https://ap.example",
@@ -90,7 +90,7 @@ public class MissionPersonTokenIssuanceTests
         Key = ApKey,
         ConfirmationKey = agentKey,
         PersonServer = PsIssuer,
-    }.Build();
+    }.BuildAsync();
 
     private static HttpClient SignedAgentClient(IHost host, AAuthKey agentKey, string agentToken)
         => new InProcessHttpClient(new AAuthSigningHandler(agentKey, () => agentToken)
@@ -133,7 +133,7 @@ public class MissionPersonTokenIssuanceTests
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(20);
         using var host = await BuildHostAsync(new StubApprover(MissionApprovalDecision.Approve([]) with { ExpiresAt = expiresAt }));
         var agentKey = AAuthKey.Generate();
-        var agentToken = AgentToken(agentKey);
+        var agentToken = await AgentTokenAsync(agentKey);
         using var http = SignedAgentClient(host, agentKey, agentToken);
 
         using var response = await http.PostAsJsonAsync("/mission", Proposal(Whoami, Calendar, Consent, Denied));
@@ -152,7 +152,7 @@ public class MissionPersonTokenIssuanceTests
     {
         using var host = await BuildHostAsync(new StubApprover(MissionApprovalDecision.Approve([])));
         var agentKey = AAuthKey.Generate();
-        using var http = SignedAgentClient(host, agentKey, AgentToken(agentKey));
+        using var http = SignedAgentClient(host, agentKey, await AgentTokenAsync(agentKey));
 
         using var response = await http.PostAsJsonAsync("/mission", Proposal());
 
@@ -171,7 +171,7 @@ public class MissionPersonTokenIssuanceTests
             with { ApprovedResources = [Calendar, "https://not-proposed.example"] };
         using var host = await BuildHostAsync(new StubApprover(decision), deferred);
         var agentKey = AAuthKey.Generate();
-        using var http = SignedAgentClient(host, agentKey, AgentToken(agentKey));
+        using var http = SignedAgentClient(host, agentKey, await AgentTokenAsync(agentKey));
 
         var response = await http.PostAsJsonAsync("/mission", Proposal(Whoami, Calendar));
         if (deferred)
@@ -196,7 +196,7 @@ public class MissionPersonTokenIssuanceTests
     {
         using var host = await BuildHostAsync(new StubApprover(MissionApprovalDecision.Defer()), deferred: true);
         var agentKey = AAuthKey.Generate();
-        var agentToken = AgentToken(agentKey);
+        var agentToken = await AgentTokenAsync(agentKey);
         using var http = SignedAgentClient(host, agentKey, agentToken);
 
         using var parked = await http.PostAsJsonAsync("/mission", Proposal(Whoami, Denied));
@@ -217,7 +217,7 @@ public class MissionPersonTokenIssuanceTests
     {
         using var host = await BuildHostAsync(new StubApprover(MissionApprovalDecision.Approve([])));
         var agentKey = AAuthKey.Generate();
-        var agentToken = AgentToken(agentKey);
+        var agentToken = await AgentTokenAsync(agentKey);
         using var http = SignedAgentClient(host, agentKey, agentToken);
 
         using var response = await http.PostAsJsonAsync("/mission", Proposal(Whoami));
@@ -240,7 +240,7 @@ public class MissionPersonTokenIssuanceTests
     {
         using var host = await BuildHostAsync(new StubApprover(MissionApprovalDecision.Defer()), deferred: true);
         var agentKey = AAuthKey.Generate();
-        var agentToken = AgentToken(agentKey);
+        var agentToken = await AgentTokenAsync(agentKey);
         using var http = SignedAgentClient(host, agentKey, agentToken);
         using var parked = await http.PostAsJsonAsync("/mission", Proposal(Whoami));
         var location = parked.Headers.Location!.ToString();

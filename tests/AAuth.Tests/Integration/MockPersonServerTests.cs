@@ -89,7 +89,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
     public async Task Token_MintsAuthToken_BoundToAgentKey()
     {
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -98,7 +98,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
             Key = ResourceStub.ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         // Sign the POST /token request with the agent's key + agent token.
         var signing = new AAuthSigningHandler(agentKey, () => agentToken)
@@ -118,7 +118,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         Assert.Equal(PsIssuer, (string?)person["iss"]);
         Assert.Equal(ResourceUrl, (string?)person["aud"]);
         Assert.Null(person["scope"]);
-        var resourceToken = PersonTokenFlow.ResourceToken(personToken, agentKey);
+        var resourceToken = await PersonTokenFlow.ResourceTokenAsync(personToken, agentKey);
 
         var response = await http.PostAsJsonAsync("/token", PersonTokenFlow.Body(resourceToken, personToken));
 
@@ -160,7 +160,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         // must be refused — only agents may exchange.
         var agentKey = AAuthKey.Generate();
         var psKey = AAuthKey.Generate();
-        var authTokenAsCarrier = new AuthTokenBuilder
+        var authTokenAsCarrier = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -172,7 +172,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
             KeyId = "ps-x",
             Subject = "pairwise",
             Scope = "calendar.read",
-        }.Build();
+        }.BuildAsync();
 
         var signing = new AAuthSigningHandler(agentKey, () => authTokenAsCarrier)
         {
@@ -194,7 +194,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
     public async Task Token_RejectsMissingResourceToken()
     {
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -203,7 +203,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
             Key = ResourceStub.ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var signing = new AAuthSigningHandler(agentKey, () => agentToken)
         {
@@ -228,7 +228,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         // does not hold must be rejected at /token (Phase 10, §G9): the PS
         // now verifies the resource token's signature before minting.
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -237,7 +237,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
             Key = ResourceStub.ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var signing = new AAuthSigningHandler(agentKey, () => agentToken)
         {
@@ -249,7 +249,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         // carrying the published kid, so the PS resolves the genuine key and
         // the signature check fails.
         var personToken = await PersonTokenFlow.RequestAsync(http, ResourceStub.Url);
-        var forged = PersonTokenFlow.ResourceToken(personToken, agentKey, key: AAuthKey.Generate());
+        var forged = await PersonTokenFlow.ResourceTokenAsync(personToken, agentKey, key: AAuthKey.Generate());
 
         var response = await http.PostAsJsonAsync("/token", PersonTokenFlow.Body(forged, personToken));
 
@@ -267,7 +267,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         // Mutate the payload of a genuine resource token after signing; the
         // signature no longer matches → rejected at /token.
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -276,7 +276,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
             Key = ResourceStub.ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var signing = new AAuthSigningHandler(agentKey, () => agentToken)
         {
@@ -285,7 +285,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         using var http = new InProcessHttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
 
         var personToken = await PersonTokenFlow.RequestAsync(http, ResourceStub.Url);
-        var genuine = PersonTokenFlow.ResourceToken(personToken, agentKey);
+        var genuine = await PersonTokenFlow.ResourceTokenAsync(personToken, agentKey);
 
         // Tamper: flip the scope to a privileged one without re-signing.
         var segments = genuine.Split('.');
@@ -310,10 +310,10 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
     public async Task Token_RequiresPresentedToken()
     {
         var agentKey = AAuthKey.Generate();
-        using var http = SignedAgent(agentKey);
+        using var http = await SignedAgentAsync(agentKey);
         var personToken = await PersonTokenFlow.RequestAsync(http, ResourceStub.Url);
         var response = await http.PostAsJsonAsync("/token",
-            new JsonObject { ["resource_token"] = PersonTokenFlow.ResourceToken(personToken, agentKey) });
+            new JsonObject { ["resource_token"] = await PersonTokenFlow.ResourceTokenAsync(personToken, agentKey) });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
     }
@@ -325,9 +325,9 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
     public async Task Token_RejectsResourceTokenThatDoesNotPairWithPresentedToken(string claim)
     {
         var agentKey = AAuthKey.Generate();
-        using var http = SignedAgent(agentKey);
+        using var http = await SignedAgentAsync(agentKey);
         var personToken = await PersonTokenFlow.RequestAsync(http, ResourceStub.Url);
-        var resourceToken = PersonTokenFlow.ResourceToken(personToken, agentKey, mutate: claim);
+        var resourceToken = await PersonTokenFlow.ResourceTokenAsync(personToken, agentKey, mutate: claim);
         var response = await http.PostAsJsonAsync("/token", PersonTokenFlow.Body(resourceToken, personToken));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("invalid_resource_token", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
@@ -337,10 +337,12 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
     public async Task Token_RejectsAgentTokenAsPresentedToken()
     {
         var agentKey = AAuthKey.Generate();
-        using var http = SignedAgent(agentKey, out var agentToken);
+        var signedAgent = await SignedAgentWithTokenAsync(agentKey);
+        using var http = signedAgent.Client;
+        var agentToken = signedAgent.AgentToken;
         var personToken = await PersonTokenFlow.RequestAsync(http, ResourceStub.Url);
         var response = await http.PostAsJsonAsync("/token",
-            PersonTokenFlow.Body(PersonTokenFlow.ResourceToken(personToken, agentKey), agentToken));
+            PersonTokenFlow.Body(await PersonTokenFlow.ResourceTokenAsync(personToken, agentKey), agentToken));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("invalid_presented_token", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
     }
@@ -351,7 +353,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
     [InlineData("https://calendar.test/?q=1")]
     public async Task PersonToken_RejectsInvalidResource(string? resource)
     {
-        using var http = SignedAgent(AAuthKey.Generate());
+        using var http = await SignedAgentAsync(AAuthKey.Generate());
         var response = await http.PostAsJsonAsync("/person", new JsonObject { ["resource"] = resource });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
@@ -360,7 +362,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task PersonToken_RejectsUnknownMission()
     {
-        using var http = SignedAgent(AAuthKey.Generate());
+        using var http = await SignedAgentAsync(AAuthKey.Generate());
         var response = await http.PostAsJsonAsync("/person", new JsonObject
         {
             ["resource"] = ResourceStub.Url,
@@ -370,11 +372,11 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         Assert.Equal("mission_not_found", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
     }
 
-    private InProcessHttpClient SignedAgent(AAuthKey agentKey) => SignedAgent(agentKey, out _);
+    private async Task<InProcessHttpClient> SignedAgentAsync(AAuthKey agentKey) => (await SignedAgentWithTokenAsync(agentKey)).Client;
 
-    private InProcessHttpClient SignedAgent(AAuthKey agentKey, out string agentToken)
+    private async Task<(InProcessHttpClient Client, string AgentToken)> SignedAgentWithTokenAsync(AAuthKey agentKey)
     {
-        var token = agentToken = new AgentTokenBuilder
+        var token = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -383,12 +385,12 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
             Key = ResourceStub.ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
-        return new InProcessHttpClient(new AAuthSigningHandler(agentKey, () => token)
+        }.BuildAsync();
+        return (new InProcessHttpClient(new AAuthSigningHandler(agentKey, () => token)
         {
             InnerHandler = _factory.Server.CreateHandler(),
         })
-        { BaseAddress = new Uri(PsIssuer) };
+        { BaseAddress = new Uri(PsIssuer) }, token);
     }
 }
 
@@ -412,11 +414,11 @@ internal static class PersonTokenFlow
     public static JsonObject Payload(string jwt) =>
         JsonNode.Parse(Base64UrlEncoder.DecodeBytes(jwt.Split('.')[1]))!.AsObject();
 
-    public static string ResourceToken(string personToken, AAuthKey agentKey, string? account = null,
+    public static async Task<string> ResourceTokenAsync(string personToken, AAuthKey agentKey, string? account = null,
         string scope = "calendar.read", AAuthKey? key = null, string? mutate = null)
     {
         var person = Payload(personToken);
-        return new ResourceTokenBuilder
+        return await new ResourceTokenBuilder
         {
             Account = account,
             ScopeDescriptions = TestScopeDefinitions.Resource,
@@ -432,7 +434,7 @@ internal static class PersonTokenFlow
             Key = key ?? ResourceStub.Key,
             KeyId = ResourceStub.Kid,
             Scope = scope,
-        }.Build();
+        }.BuildAsync();
     }
 
     public static JsonObject Body(string resourceToken, string presentedToken) =>
@@ -442,7 +444,7 @@ internal static class PersonTokenFlow
     public static async Task<JsonObject> TokenRequestAsync(HttpClient signedAgent, AAuthKey agentKey, string? account = null)
     {
         var personToken = await RequestAsync(signedAgent, ResourceStub.Url);
-        return Body(ResourceToken(personToken, agentKey, account), personToken);
+        return Body(await ResourceTokenAsync(personToken, agentKey, account), personToken);
     }
 }
 
@@ -481,7 +483,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     public async Task MissionAndPermissionPendingBindOwnerKeyAndRetainCancellation(bool permission, string method)
     {
         var key = AAuthKey.Generate();
-        var (owner, _, _) = BuildSignedAgentClient(key);
+        var (owner, _, _) = await BuildSignedAgentClientAsync(key);
         using var signedOwner = owner;
         var entry = _factory.Services.GetRequiredService<MockPersonServer.MissionPendingStore>().Add(new MockPersonServer.MissionPendingEntry
         {
@@ -490,7 +492,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
             OwnerKeyThumbprint = key.ComputeJwkThumbprint(), S256 = "test", PersonServer = PsIssuer,
         });
         var path = (permission ? "/permission-pending/" : "/mission-create-pending/") + entry.Id;
-        var (attacker, _, _) = BuildSignedAgentClient(AAuthKey.Generate());
+        var (attacker, _, _) = await BuildSignedAgentClientAsync(AAuthKey.Generate());
         using var signedAttacker = attacker;
         using var foreign = await attacker.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
         Assert.Equal(HttpStatusCode.NotFound, foreign.StatusCode);
@@ -505,7 +507,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     public async Task Token_Returns202WithInteractionRequirement_WhenConsentMissing()
     {
         var agentKey = AAuthKey.Generate();
-        var (signedClient, _, _) = BuildSignedAgentClient(agentKey, "aauth:demo@ap.example");
+        var (signedClient, _, _) = await BuildSignedAgentClientAsync(agentKey, "aauth:demo@ap.example");
         using var response = await signedClient.PostAsJsonAsync("/token",
             await PersonTokenFlow.TokenRequestAsync(signedClient, agentKey));
 
@@ -524,7 +526,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     {
         var agentKey = AAuthKey.Generate();
         var agentId = "aauth:demo@ap.example";
-        var (signedClient, plainHttp, _) = BuildSignedAgentClient(agentKey, agentId);
+        var (signedClient, plainHttp, _) = await BuildSignedAgentClientAsync(agentKey, agentId);
         using var initial = await signedClient.PostAsJsonAsync("/token",
             await PersonTokenFlow.TokenRequestAsync(signedClient, agentKey));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
@@ -556,7 +558,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     {
         var agentKey = AAuthKey.Generate();
         var agentId = "aauth:pre@ap.example";
-        var (signedClient, plainHttp, _) = BuildSignedAgentClient(agentKey, agentId);
+        var (signedClient, plainHttp, _) = await BuildSignedAgentClientAsync(agentKey, agentId);
 
         // Pre-record consent before any exchange.
         using var admin = await plainHttp.PostAsJsonAsync("/admin/consent", new JsonObject
@@ -580,7 +582,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     {
         var agentKey = AAuthKey.Generate();
         var agentId = "aauth:browser@ap.example";
-        var (signedClient, plainHttp, _) = BuildSignedAgentClient(agentKey, agentId);
+        var (signedClient, plainHttp, _) = await BuildSignedAgentClientAsync(agentKey, agentId);
         // Agent → 202 with interaction URL + code.
         using var initial = await signedClient.PostAsJsonAsync("/token",
             await PersonTokenFlow.TokenRequestAsync(signedClient, agentKey));
@@ -614,7 +616,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     public async Task Interaction_ConsentPage_AttributesAgentAssertedContentApartFromResource()
     {
         var agentKey = AAuthKey.Generate();
-        var (signedClient, plainHttp, _) = BuildSignedAgentClient(agentKey, "aauth:browser@ap.example");
+        var (signedClient, plainHttp, _) = await BuildSignedAgentClientAsync(agentKey, "aauth:browser@ap.example");
         var request = await PersonTokenFlow.TokenRequestAsync(signedClient, agentKey);
         request["justification"] = "Trust me <script>alert(1)</script>";
         request["platform"] = "ios";
@@ -646,7 +648,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     [Fact]
     public async Task Interaction_PostApproveWithCodeAlone_Returns401()
     {
-        var (_, plainHttp, _) = BuildSignedAgentClient();
+        var (_, plainHttp, _) = await BuildSignedAgentClientAsync();
         using var resp = await plainHttp.PostAsync(
             "/interaction/approve",
             new FormUrlEncodedContent(new[]
@@ -666,7 +668,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         // AAuthInteractionDeniedException is keyed off in the SDK.
         var agentKey = AAuthKey.Generate();
         var agentId = "aauth:denier@ap.example";
-        var (signedClient, plainHttp, _) = BuildSignedAgentClient(agentKey, agentId);
+        var (signedClient, plainHttp, _) = await BuildSignedAgentClientAsync(agentKey, agentId);
         using var initial = await signedClient.PostAsJsonAsync("/token",
             await PersonTokenFlow.TokenRequestAsync(signedClient, agentKey));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
@@ -691,11 +693,11 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     // ----------------------------------------------------------------
     // Helpers
     // ----------------------------------------------------------------
-    private (HttpClient Signed, HttpClient Plain, string AgentToken) BuildSignedAgentClient(
+    private async Task<(HttpClient Signed, HttpClient Plain, string AgentToken)> BuildSignedAgentClientAsync(
         AAuthKey? agentKey = null, string agentId = "aauth:demo@ap.example")
     {
         agentKey ??= AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -704,7 +706,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
             Key = ResourceStub.ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
         var signing = new AAuthSigningHandler(agentKey, () => agentToken)
         {
             InnerHandler = _factory.Server.CreateHandler(),
@@ -725,7 +727,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     {
         var key = AAuthKey.Generate();
         var agentId = "aauth:account-" + Guid.NewGuid().ToString("N") + "@ap.example";
-        var (client, browser, _) = BuildSignedAgentClient(key, agentId);
+        var (client, browser, _) = await BuildSignedAgentClientAsync(key, agentId);
         using var signed = client;
         using var consentBrowser = browser;
         using var initial = await client.PostAsJsonAsync("/token", await PersonTokenFlow.TokenRequestAsync(client, key, "personal"));
@@ -742,7 +744,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         Assert.Equal(HttpStatusCode.OK, renewed.StatusCode);
 
         var selectedKey = switchKey ? AAuthKey.Generate() : key;
-        var (other, _, _) = BuildSignedAgentClient(selectedKey, agentId);
+        var (other, _, _) = await BuildSignedAgentClientAsync(selectedKey, agentId);
         using var switched = other;
         using var pending = await other.PostAsJsonAsync("/token", await PersonTokenFlow.TokenRequestAsync(other, selectedKey, switchedAccount));
         Assert.Equal(HttpStatusCode.Accepted, pending.StatusCode);
@@ -764,10 +766,10 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     public async Task SignedMalformedAccount_IsRejectedByPersonServer(string malformed)
     {
         var key = AAuthKey.Generate();
-        var (client, _, _) = BuildSignedAgentClient(key);
+        var (client, _, _) = await BuildSignedAgentClientAsync(key);
         using var signed = client;
         var personToken = await PersonTokenFlow.RequestAsync(client, ResourceStub.Url);
-        var segments = PersonTokenFlow.ResourceToken(personToken, key).Split('.');
+        var segments = (await PersonTokenFlow.ResourceTokenAsync(personToken, key)).Split('.');
         var payload = JsonNode.Parse(Base64UrlEncoder.DecodeBytes(segments[1]))!.AsObject();
         payload["account"] = JsonNode.Parse(malformed);
         var input = segments[0] + "." + Base64UrlEncoder.Encode(System.Text.Encoding.UTF8.GetBytes(payload.ToJsonString()));

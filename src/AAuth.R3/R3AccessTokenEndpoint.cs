@@ -25,11 +25,10 @@ public static class R3AccessTokenEndpoint
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
 
-        var (signingKid, signingKey) = options.FirstSigningKey();
         options.EgressPolicy.ValidateIdentifier(options.Issuer);
         var issuer = options.Issuer;
         var inventory = app.MapAAuthIssuerRevocation(issuer, AuthTokenBuilder.AccessDwk,
-            signingKey, signingKid, "/revoke", options.EgressPolicy, options.TimeProvider, configure: null);
+            options.SigningKeys, "/revoke", options.EgressPolicy, options.TimeProvider, configure: null);
         var tokenPath = "/" + options.TokenPath.Trim('/');
 
         WellKnownEndpoints.MapAAuthAccessServerWellKnown(app, new AAuthAccessServerMetadataOptions
@@ -52,7 +51,8 @@ public static class R3AccessTokenEndpoint
         async Task<string> MintAndAuditAsync(AuthMintParts parts, AgentIssuanceContext issuance, string resourceIssuer, CancellationToken ct)
         {
             var claims = R3AuthClaims.AuthToken(parts.Uri, parts.S256, parts.Granted, parts.PerCall, options.VocabularySchemas);
-            var token = new AuthTokenBuilder
+            var (signingKid, signingKey) = options.SigningKeys.Active;
+            var token = await new AuthTokenBuilder
             {
                 EgressPolicy = options.EgressPolicy,
                 Issuer = issuer,
@@ -71,7 +71,7 @@ public static class R3AccessTokenEndpoint
                 Tenant = parts.Tenant,
                 Scope = parts.Scope,
                 AdditionalClaims = claims,
-            }.Build();
+            }.BuildAsync(ct).ConfigureAwait(false);
             var payload = JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(token.Split('.')[1]))!;
             await options.AuditSink.RecordTokenIssuanceAsync(new R3TokenIssuanceAuditRecord(
                 parts.Uri, parts.S256, issuance.AgentId, resourceIssuer, issuer,
@@ -239,7 +239,7 @@ public static class R3AccessTokenEndpoint
             try
             {
                 var authToken = await MintAndAuditAsync(mintParts, issuance, resourceIssuer, context.RequestAborted);
-                return await AuthTokenResponse.CreateTrackedAsync(() => authToken, issuance.ExpiresAt,
+                return await AuthTokenResponse.CreateTrackedAsync(_ => ValueTask.FromResult(authToken), issuance.ExpiresAt,
                     inventory, sourceRegistrations, "auth_token", options.TimeProvider, context.RequestAborted);
             }
             catch (AuthTokenExpiredException)
@@ -320,7 +320,7 @@ public static class R3AccessTokenEndpoint
                                 entry.MintGate.Release();
                             }
                         }
-                        return await AuthTokenResponse.CreateTrackedAsync(() => entry.AuthToken, entry.Issuance.ExpiresAt,
+                        return await AuthTokenResponse.CreateTrackedAsync(_ => ValueTask.FromResult(entry.AuthToken), entry.Issuance.ExpiresAt,
                             inventory, entry.Issuance.SourceTokens.Select(source => source.Token).ToArray(), options.TimeProvider, context.RequestAborted);
                     case R3PendingStatus.Denied:
                         return AAuth.Server.AAuthProblemDetails.Create("denied", statusCode: StatusCodes.Status403Forbidden);
@@ -459,7 +459,7 @@ public static class R3AccessTokenEndpoint
             return bytes;
         }
 
-        var (kid, key) = options.FirstSigningKey();
+        var (kid, key) = options.SigningKeys.Active;
         using var client = R3FetchClient.Create(key, options.Issuer, AAuthConstants.DwkFiles.Access, kid,
             options.FetchHttpMessageHandler, options.EgressPolicy, options.FetchTransportContract);
         return await client.FetchAndVerifyAsync(uri, s256, resourceIssuer, cancellationToken).ConfigureAwait(false);
@@ -653,7 +653,7 @@ public sealed class R3AccessTokenEndpointOptions
     public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     public AAuth.Discovery.AAuthTransportContract? FetchTransportContract { get; set; }
     public required string Issuer { get; set; }
-    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; set; }
+    public required AAuthSigningKeySet SigningKeys { get; set; }
     public string TokenPath { get; set; } = "/token";
     /// <summary>
     /// Trust for this Access Server. <see cref="AAuthTrustOptions.PersonServers"/> is
@@ -720,6 +720,7 @@ public sealed class R3AccessTokenEndpointOptions
         {
             throw new InvalidOperationException("At least one AS signing key is required.");
         }
+        _ = SigningKeys.Active;
         if (string.IsNullOrWhiteSpace(TokenPath))
         {
             throw new InvalidOperationException("TokenPath must be set.");
@@ -740,15 +741,6 @@ public sealed class R3AccessTokenEndpointOptions
         {
             throw new InvalidOperationException("PendingPath must be set.");
         }
-    }
-
-    internal (string Kid, IAAuthKey Key) FirstSigningKey()
-    {
-        foreach (var pair in SigningKeys)
-        {
-            return (pair.Key, pair.Value);
-        }
-        throw new InvalidOperationException("At least one AS signing key is required.");
     }
 
     // PS-AS trust: open by default (broker any *verifiable* Person Server, the spec

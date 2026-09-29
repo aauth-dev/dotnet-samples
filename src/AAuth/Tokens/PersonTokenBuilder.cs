@@ -37,7 +37,7 @@ public sealed class PersonTokenBuilder
     public DateTimeOffset? AuthorizationExpiresAt { get; init; }
 
     /// <summary>The PS signing key.</summary>
-    public required IAAuthKey Key { get; init; }
+    public required IAAuthSigner Key { get; init; }
 
     /// <summary>The PS key id (<c>kid</c>).</summary>
     public required string KeyId { get; init; }
@@ -56,7 +56,7 @@ public sealed class PersonTokenBuilder
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>Build and sign the person token.</summary>
-    public string Build()
+    public async ValueTask<string> BuildAsync(CancellationToken cancellationToken = default)
     {
         TokenClaims.Require(Issuer, nameof(Issuer));
         TokenClaims.Require(Audience, nameof(Audience));
@@ -83,7 +83,8 @@ public sealed class PersonTokenBuilder
         };
         if (MissionS256 is not null) payload[MissionReference.ClaimName] = MissionS256;
         if (!string.IsNullOrEmpty(Tenant)) payload["tenant"] = Tenant;
-        return JwtWriter.SignCompact(new JsonObject { ["alg"] = Key.Algorithm, ["typ"] = TokenType, ["kid"] = KeyId }, payload, Key);
+        return await JwtWriter.SignCompactAsync(new JsonObject { ["alg"] = Key.Algorithm, ["typ"] = TokenType, ["kid"] = KeyId }, payload, Key,
+            cancellationToken).ConfigureAwait(false);
     }
 }
 

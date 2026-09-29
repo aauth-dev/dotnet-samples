@@ -185,8 +185,8 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         _activities.Clear();
 
         var callCount = 0;
-        var agentToken = BuildAgentToken();
-        var authToken = BuildAuthToken();
+        var agentToken = await BuildAgentTokenAsync();
+        var authToken = await BuildAuthTokenAsync();
 
         var stubHandler = new StubHandler(req =>
         {
@@ -307,9 +307,9 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private string BuildAgentToken()
+    private async Task<string> BuildAgentTokenAsync()
     {
-        return new AgentTokenBuilder
+        return await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -318,12 +318,12 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             KeyId = "ap-key-1",
             ConfirmationKey = _agentKey,
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
     }
 
-    private string BuildAuthToken()
+    private async Task<string> BuildAuthTokenAsync()
     {
-        return new AuthTokenBuilder
+        return await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -336,7 +336,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             Subject = "pairwise-sub",
             Scope = ResourceScope,
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
     }
 
     private async Task VerifyActivityTagsViaEndpoint(
@@ -378,11 +378,11 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             string token;
             if (expectedScope is not null)
             {
-                token = BuildAuthToken();
+                token = await BuildAuthTokenAsync();
             }
             else
             {
-                token = BuildAgentToken();
+                token = await BuildAgentTokenAsync();
             }
 
             var signed = await SignRequest(token, "/check-tags");

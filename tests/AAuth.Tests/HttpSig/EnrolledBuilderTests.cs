@@ -166,9 +166,9 @@ public class EnrolledBuilderTests
     {
         private readonly AAuthKey _key;
         public InMemoryKeyStore(AAuthKey key) => _key = key;
-        public Task<IAAuthKey?> LoadAsync(string handle, System.Threading.CancellationToken ct = default)
-            => Task.FromResult<IAAuthKey?>(_key);
-        public Task StoreAsync(string handle, IAAuthKey key, System.Threading.CancellationToken ct = default)
+        public Task<IAAuthSigner?> LoadAsync(string handle, System.Threading.CancellationToken ct = default)
+            => Task.FromResult<IAAuthSigner?>(_key);
+        public Task StoreAsync(string handle, IAAuthSigner key, System.Threading.CancellationToken ct = default)
             => Task.CompletedTask;
         public Task DeleteAsync(string handle, System.Threading.CancellationToken ct = default)
             => Task.CompletedTask;

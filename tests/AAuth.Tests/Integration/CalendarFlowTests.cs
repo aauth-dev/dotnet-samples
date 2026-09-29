@@ -142,12 +142,12 @@ public class CalendarFlowTests : IAsyncLifetime
     public async Task ShippedResource_AdvertisesRevocationAndAcceptsOnlyTrustedPersonServers()
     {
         var key = AAuthKey.Generate();
-        var token = new AgentTokenBuilder
+        var token = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy, Issuer = ApIssuer, Subject = "aauth:revocation@ap.test",
             Key = ApKey, KeyId = ApKeyId, ConfirmationKey = key, PersonServer = PsIssuer,
             TokenId = "calendar-revocation",
-        }.Build();
+        }.BuildAsync();
         using var agent = new InProcessHttpClient(new AAuthSigningHandler(key, () => token,
             new FakeTimeProvider(DateTimeOffset.UtcNow.AddSeconds(-2))) { InnerHandler = _calendar!.Server.CreateHandler() });
         using var initial = await agent.GetAsync(CalendarIssuer + "/events");
@@ -173,14 +173,14 @@ public class CalendarFlowTests : IAsyncLifetime
         Assert.False(stillValid.Headers.Contains("Signature-Error"));
 
         // A trusted PS revokes a person token the Calendar has never seen; its later presentation is refused.
-        string PersonToken() => new PersonTokenBuilder
+        ValueTask<string> PersonTokenAsync() => new PersonTokenBuilder
         {
             EgressPolicy = TestEgress.Policy, Issuer = RevokerIssuer, Audience = CalendarIssuer, Subject = "person",
             ConfirmationKey = key, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             Key = RevokerKey, KeyId = RevokerKeyId,
-        }.Build();
-        var revokedPersonToken = PersonToken();
-        var livePersonToken = PersonToken();
+        }.BuildAsync();
+        var revokedPersonToken = await PersonTokenAsync();
+        var livePersonToken = await PersonTokenAsync();
         var payload = TokenVerifier.DecodeJsonSegment(revokedPersonToken.Split('.')[1], "payload");
         using var personServer = new AAuthClientBuilder(RevokerKey)
             .UseJwksUri(RevokerIssuer, AAuthConstants.DwkFiles.Person, RevokerKeyId)
@@ -207,7 +207,7 @@ public class CalendarFlowTests : IAsyncLifetime
     public async Task ThreePartyFlow_ExchangesAndReturnsClaims()
     {
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -216,7 +216,7 @@ public class CalendarFlowTests : IAsyncLifetime
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
         using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
@@ -284,7 +284,7 @@ public class CalendarFlowTests : IAsyncLifetime
         negCalendar = calendar;
 
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -293,7 +293,7 @@ public class CalendarFlowTests : IAsyncLifetime
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
 
@@ -332,7 +332,7 @@ public class CalendarFlowTests : IAsyncLifetime
     public async Task AdminScopeFlow_IssuesElevatedScope()
     {
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -341,7 +341,7 @@ public class CalendarFlowTests : IAsyncLifetime
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
         using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
@@ -358,7 +358,7 @@ public class CalendarFlowTests : IAsyncLifetime
     public async Task RoleFlow_ReturnsAssertedRoles()
     {
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -367,7 +367,7 @@ public class CalendarFlowTests : IAsyncLifetime
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
         using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
@@ -389,7 +389,7 @@ public class CalendarFlowTests : IAsyncLifetime
         // on /events/admin must therefore reject it with 403 — exercising
         // role-based DENIAL, not just the success path.
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -398,7 +398,7 @@ public class CalendarFlowTests : IAsyncLifetime
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
         using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
@@ -417,7 +417,7 @@ public class CalendarFlowTests : IAsyncLifetime
         // Send only through the signing pipeline (no ChallengeHandler) so we
         // can inspect each raw 401 + AAuth-Requirement response Calendar emits.
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -426,7 +426,7 @@ public class CalendarFlowTests : IAsyncLifetime
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
         // BuildAgentClient with personServer:null gives us the signing
@@ -527,7 +527,7 @@ public class CalendarFlowTests : IAsyncLifetime
 
         var agentKey = AAuthKey.Generate();
         const string AgentId = "aauth:consent@ap.test";
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -536,7 +536,7 @@ public class CalendarFlowTests : IAsyncLifetime
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         // Routing handler so the agent's single signed pipeline can reach
         // both the consent-PS and the consent-aware Calendar by host name.
@@ -662,7 +662,7 @@ public class CalendarFlowTests : IAsyncLifetime
 
         var agentKey = AAuthKey.Generate();
         const string AgentId = "aauth:denier@ap.test";
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -671,7 +671,7 @@ public class CalendarFlowTests : IAsyncLifetime
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         HttpMessageHandler RoutingHandler() => new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
         {

@@ -55,7 +55,7 @@ public class EventHttpTests
             ["aud"] = victim.Issuer, ["eid"] = "evil", ["cnf"] = new JsonObject { ["jwk"] = evil.AgentKey.ToPublicJwk() },
             ["iat"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), ["exp"] = DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds() };
         var input = Base64UrlEncoder.Encode(header.ToJsonString()) + "." + Base64UrlEncoder.Encode(payload.ToJsonString());
-        var forged = input + "." + Base64UrlEncoder.Encode(evil.ResourceKey.Sign(Encoding.ASCII.GetBytes(input)));
+        var forged = input + "." + Base64UrlEncoder.Encode(await evil.ResourceKey.SignAsync(Encoding.ASCII.GetBytes(input)));
         foreach (var ticket in new[] { "ticket", "fake-ticket", "public" })
         {
             using var denied = await victim.Protocol.SendAsync(HttpMethod.Post, new(victim.Issuer + "/subscribe/" + ticket),
@@ -65,9 +65,9 @@ public class EventHttpTests
         Assert.Null(victim.Store.FindNotification(evil.Issuer, "evil"));
         Assert.Empty(evil.Store.Pending(agent));
         Assert.Empty(victim.Store.Pending(agent));
-        var legitimate = new SubscribeTokenBuilder { Issuer = victim.Issuer, Subject = agent, Audience = victim.Issuer,
+        var legitimate = await new SubscribeTokenBuilder { Issuer = victim.Issuer, Subject = agent, Audience = victim.Issuer,
             Eid = "legitimate", Key = victim.ResourceKey, KeyId = "key", ConfirmationKey = victim.AgentKey,
-            Verifier = victim.Protocol.TokenVerifier }.Build();
+            Verifier = victim.Protocol.TokenVerifier }.BuildAsync();
         using var accepted = await victim.Protocol.SendAsync(HttpMethod.Post, new(victim.Issuer + "/subscribe/ticket"),
             victim.AgentKey, legitimate, false, "{\"event_types\":[\"reservation.available\"]}"u8.ToArray());
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
@@ -125,7 +125,7 @@ public class EventHttpTests
         await using var host = await EventHost.StartAsync();
         host.Store.Create(new("eid", EventHost.Agent, host.Issuer, DateTimeOffset.UtcNow.AddHours(1), 1));
         host.Store.Register(new("eid", host.Issuer, EventHost.Agent, BookingsEvents.Operation, "work", "state", DateTimeOffset.UtcNow.AddHours(1)), null, DateTimeOffset.UtcNow);
-        using var first = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/local/events/eid/notify?account=work"), host.AgentKey, host.AgentToken(), false);
+        using var first = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/local/events/eid/notify?account=work"), host.AgentKey, await host.AgentTokenAsync(), false);
         Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
         var expected = await first.Content.ReadAsStringAsync();
         var reopened = new SqliteEventStore(host.Database);
@@ -134,12 +134,12 @@ public class EventHttpTests
         Assert.Equal(expected, reopened.DeliveryReceipt(subscription));
         Assert.Null(reopened.DeliveryReceipt(subscription with { Account = "personal" }));
         Assert.Null(reopened.DeliveryReceipt(subscription with { Agent = "aauth:other@127.0.0.1" }));
-        using var retry = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/local/events/eid/notify?account=work"), host.AgentKey, host.AgentToken(), false);
+        using var retry = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/local/events/eid/notify?account=work"), host.AgentKey, await host.AgentTokenAsync(), false);
         Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
         Assert.Equal(expected, await retry.Content.ReadAsStringAsync());
         Assert.Equal(1, host.Deliveries);
         Assert.Single(reopened.Pending(EventHost.Agent));
-        using var wrongAccount = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/local/events/eid/notify?account=personal"), host.AgentKey, host.AgentToken(), false);
+        using var wrongAccount = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/local/events/eid/notify?account=personal"), host.AgentKey, await host.AgentTokenAsync(), false);
         Assert.Equal(HttpStatusCode.Forbidden, wrongAccount.StatusCode);
     }
 
@@ -152,22 +152,22 @@ public class EventHttpTests
             var eid = "large-" + index;
             host.Store.Create(new(eid, EventHost.Agent, host.Issuer, DateTimeOffset.UtcNow.AddHours(1), 1));
             using var delivery = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/events"), host.ResourceKey,
-                host.EventToken(eid), true, new byte[65536]);
+                await host.EventTokenAsync(eid), true, new byte[65536]);
             Assert.Equal(HttpStatusCode.Accepted, delivery.StatusCode);
         }
-        using var limited = await host.Protocol.SendAsync(HttpMethod.Get, new(host.Issuer + "/local/events/inbox?limit=1"), host.AgentKey, host.AgentToken(), false);
+        using var limited = await host.Protocol.SendAsync(HttpMethod.Get, new(host.Issuer + "/local/events/inbox?limit=1"), host.AgentKey, await host.AgentTokenAsync(), false);
         var first = Assert.Single((await limited.Content.ReadFromJsonAsync<PendingEvent[]>())!);
-        using var next = await host.Protocol.SendAsync(HttpMethod.Get, new(host.Issuer + "/local/events/inbox?limit=1&after=" + first.Receipt), host.AgentKey, host.AgentToken(), false);
+        using var next = await host.Protocol.SendAsync(HttpMethod.Get, new(host.Issuer + "/local/events/inbox?limit=1&after=" + first.Receipt), host.AgentKey, await host.AgentTokenAsync(), false);
         Assert.NotEqual(first.Receipt, Assert.Single((await next.Content.ReadFromJsonAsync<PendingEvent[]>())!).Receipt);
-        var otherToken = new AgentTokenBuilder { Issuer = host.Issuer, Subject = "aauth:other@127.0.0.1", Key = host.ResourceKey,
-            ConfirmationKey = host.AgentKey, KeyId = "key", EgressPolicy = host.Protocol.TokenVerifier.EgressPolicy }.Build();
+        var otherToken = await new AgentTokenBuilder { Issuer = host.Issuer, Subject = "aauth:other@127.0.0.1", Key = host.ResourceKey,
+            ConfirmationKey = host.AgentKey, KeyId = "key", EgressPolicy = host.Protocol.TokenVerifier.EgressPolicy }.BuildAsync();
         using var stolen = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/local/events/inbox/" + first.Receipt + "/ack"), host.AgentKey, otherToken, false);
         Assert.Equal(HttpStatusCode.NotFound, stolen.StatusCode);
         var seen = new HashSet<string>();
         var pages = 0;
         while (true)
         {
-            using var response = await host.Protocol.SendAsync(HttpMethod.Get, new(host.Issuer + "/local/events/inbox"), host.AgentKey, host.AgentToken(), false);
+            using var response = await host.Protocol.SendAsync(HttpMethod.Get, new(host.Issuer + "/local/events/inbox"), host.AgentKey, await host.AgentTokenAsync(), false);
             response.EnsureSuccessStatusCode();
             Assert.InRange((await response.Content.ReadAsByteArrayAsync()).Length, 2, 1024 * 1024);
             var batch = (await response.Content.ReadFromJsonAsync<PendingEvent[]>())!;
@@ -178,7 +178,7 @@ public class EventHttpTests
             {
                 Assert.True(seen.Add(item.Receipt));
                 Assert.Equal(65536, item.Event.Body.Length);
-                using var ack = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/local/events/inbox/" + item.Receipt + "/ack"), host.AgentKey, host.AgentToken(), false);
+                using var ack = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/local/events/inbox/" + item.Receipt + "/ack"), host.AgentKey, await host.AgentTokenAsync(), false);
                 Assert.Equal(HttpStatusCode.NoContent, ack.StatusCode);
             }
         }
@@ -198,7 +198,7 @@ public class EventHttpTests
         using var command = connection.CreateCommand();
         command.CommandText = "CREATE TRIGGER fail_outbox BEFORE INSERT ON event_outbox BEGIN SELECT RAISE(ABORT, 'failure'); END;";
         command.ExecuteNonQuery();
-        var jwt = host.EventToken("eid");
+        var jwt = await host.EventTokenAsync("eid");
         using var failed = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/events"), host.ResourceKey, jwt, true);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, failed.StatusCode);
         Assert.Empty(host.Store.Pending(EventHost.Agent));
@@ -206,8 +206,8 @@ public class EventHttpTests
         command.ExecuteNonQuery();
         using var retry = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/events"), host.ResourceKey, jwt, true);
         Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
-        var another = new EventTokenBuilder { Issuer = host.Issuer, Audience = EventHost.Agent, Eid = "eid", Key = host.ResourceKey,
-            KeyId = "key", Verifier = host.Protocol.TokenVerifier, Lifetime = TimeSpan.FromMinutes(6) }.Build();
+        var another = await new EventTokenBuilder { Issuer = host.Issuer, Audience = EventHost.Agent, Eid = "eid", Key = host.ResourceKey,
+            KeyId = "key", Verifier = host.Protocol.TokenVerifier, Lifetime = TimeSpan.FromMinutes(6) }.BuildAsync();
         using var exceeded = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/events"), host.ResourceKey, another, true);
         Assert.Equal(HttpStatusCode.TooManyRequests, exceeded.StatusCode);
     }
@@ -220,12 +220,12 @@ public class EventHttpTests
         var receiver = new EventReceiver(host.Protocol, host.Store, EventHost.Agent);
         var oldVerifier = new TokenVerifier { EgressPolicy = host.Protocol.TokenVerifier.EgressPolicy,
             TimeProvider = new FakeTimeProvider(DateTimeOffset.UtcNow.AddHours(-1)) };
-        var expired = new EventTokenBuilder { Issuer = host.Issuer, Audience = EventHost.Agent, Eid = "eid", Key = host.ResourceKey,
-            KeyId = "key", Verifier = oldVerifier }.Build();
+        var expired = await new EventTokenBuilder { Issuer = host.Issuer, Audience = EventHost.Agent, Eid = "eid", Key = host.ResourceKey,
+            KeyId = "key", Verifier = oldVerifier }.BuildAsync();
         var expiration = await Assert.ThrowsAsync<AAuthVerificationException>(() => receiver.ReceiveAsync(expired, []));
         Assert.Equal(AAuth.Errors.SignatureErrorCode.ExpiredJwt, expiration.Code);
-        var forged = new EventTokenBuilder { Issuer = host.Issuer, Audience = EventHost.Agent, Eid = "eid", Key = host.AgentKey,
-            KeyId = "key", Verifier = host.Protocol.TokenVerifier }.Build();
+        var forged = await new EventTokenBuilder { Issuer = host.Issuer, Audience = EventHost.Agent, Eid = "eid", Key = host.AgentKey,
+            KeyId = "key", Verifier = host.Protocol.TokenVerifier }.BuildAsync();
         await Assert.ThrowsAsync<TokenVerificationException>(() => receiver.ReceiveAsync(forged, []));
         Assert.Empty(host.Store.ReadEvents(EventHost.Agent));
     }
@@ -236,17 +236,17 @@ public class EventHttpTests
         await using var host = await EventHost.StartAsync();
         host.Store.SetState("receive", "work", "state");
         host.Store.IssueTicket(new("ticket", host.AgentKey.ComputeJwkThumbprint(), "receive", "work", "state", DateTimeOffset.UtcNow.AddMinutes(5)));
-        string Subscribe(string audience) => new SubscribeTokenBuilder { Issuer = host.Issuer, Subject = EventHost.Agent,
+        ValueTask<string> SubscribeAsync(string audience) => new SubscribeTokenBuilder { Issuer = host.Issuer, Subject = EventHost.Agent,
             Audience = audience, Eid = "eid", Key = host.ResourceKey, KeyId = "key", ConfirmationKey = host.AgentKey,
-            Verifier = host.Protocol.TokenVerifier }.Build();
+            Verifier = host.Protocol.TokenVerifier }.BuildAsync();
         using var invalid = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/subscribe/ticket"), host.AgentKey,
-            Subscribe(host.Issuer), false, "{\"event_types\":[\"other\"]}"u8.ToArray());
+            await SubscribeAsync(host.Issuer), false, "{\"event_types\":[\"other\"]}"u8.ToArray());
         Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
         using var wrongAudience = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/subscribe/ticket"), host.AgentKey,
-            Subscribe("https://other.example"), false, "{\"event_types\":[\"reservation.available\"]}"u8.ToArray());
+            await SubscribeAsync("https://other.example"), false, "{\"event_types\":[\"reservation.available\"]}"u8.ToArray());
         Assert.Equal(HttpStatusCode.Unauthorized, wrongAudience.StatusCode);
         using var valid = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/subscribe/ticket"), host.AgentKey,
-            Subscribe(host.Issuer), false, "{\"event_types\":[\"reservation.available\"]}"u8.ToArray());
+            await SubscribeAsync(host.Issuer), false, "{\"event_types\":[\"reservation.available\"]}"u8.ToArray());
         Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
     }
 
@@ -256,7 +256,7 @@ public class EventHttpTests
     public async Task ActualHttpSubscriptionDeliveryAndAuthenticatedInbox(bool protectedChannel)
     {
         await using var host = await EventHost.StartAsync();
-        var agentToken = host.AgentToken();
+        var agentToken = await host.AgentTokenAsync();
         using var issued = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/local/events/subscribe"),
             host.AgentKey, agentToken, false, Encoding.UTF8.GetBytes(new JsonObject { ["resource"] = host.Issuer, ["max_uses"] = 1 }.ToJsonString()));
         Assert.Equal(HttpStatusCode.OK, issued.StatusCode);
@@ -272,7 +272,7 @@ public class EventHttpTests
             artifact["subscribe_token"]!.GetValue<string>(), false, "{\"event_types\":[\"reservation.available\"]}"u8.ToArray());
         Assert.Equal(HttpStatusCode.OK, registered.StatusCode);
         Assert.Equal(protectedChannel ? "work" : null, host.Store.Find(host.Issuer, eid, DateTimeOffset.UtcNow)!.Account);
-        var jwt = host.EventToken(eid);
+        var jwt = await host.EventTokenAsync(eid);
         var payload = Encoding.UTF8.GetBytes("{\n  \"event_type\": \"reservation.available\", \"label\": \"caf\u00e9\"\n}");
         using var delivered = await host.Protocol.SendAsync(HttpMethod.Post, await host.Protocol.ResolveEventEndpointAsync(host.Issuer), host.ResourceKey, jwt, true, payload);
         Assert.Equal(HttpStatusCode.Accepted, delivered.StatusCode);
@@ -300,7 +300,8 @@ public class EventHttpTests
         host.Store.Create(new("eid", EventHost.Agent, host.Issuer, DateTimeOffset.UtcNow.AddHours(1), 1));
         using var request = new HttpRequestMessage(HttpMethod.Post, host.Issuer + "/events") { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
         request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
-        using var signer = new AAuthSigningHandler(wrongKey ? host.AgentKey : host.ResourceKey, new SelfJwtSignatureKeyProvider(() => host.EventToken("eid")));
+        var eventToken = await host.EventTokenAsync("eid");
+        using var signer = new AAuthSigningHandler(wrongKey ? host.AgentKey : host.ResourceKey, new SelfJwtSignatureKeyProvider(() => eventToken));
         await signer.SignAsync(request);
         if (tamperBody)
         {
@@ -318,10 +319,11 @@ public class EventHttpTests
     {
         await using var host = await EventHost.StartAsync();
         var resolver = new DefaultSignatureKeyResolver(new JwksClient(host.Http), new MetadataClient(host.Http));
-        var parsed = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatSelfJwt(host.EventToken("eid")));
+        var parsed = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatSelfJwt(await host.EventTokenAsync("eid")));
         await Assert.ThrowsAsync<AAuthVerificationException>(() => resolver.ResolveAsync(parsed));
         var noCompanion = new EventsProtocol(host.Http, []);
-        await Assert.ThrowsAsync<AAuthVerificationException>(() => noCompanion.VerifyEventAsync(host.EventToken("eid"), EventHost.Agent));
+        var eventToken = await host.EventTokenAsync("eid");
+        await Assert.ThrowsAsync<AAuthVerificationException>(() => noCompanion.VerifyEventAsync(eventToken, EventHost.Agent));
     }
 
     [Fact]
@@ -329,13 +331,13 @@ public class EventHttpTests
     {
         await using var host = await EventHost.StartAsync();
         async Task<HttpResponseMessage> Deliver(string eid, string? agent = null, string? token = null) => await host.Protocol.SendAsync(HttpMethod.Post,
-            new(host.Issuer + "/events"), host.ResourceKey, token ?? host.EventToken(eid, agent), true);
+            new(host.Issuer + "/events"), host.ResourceKey, token ?? await host.EventTokenAsync(eid, agent), true);
         using var unknown = await Deliver("unknown");
         Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
         host.Store.Create(new("eid", EventHost.Agent, host.Issuer, DateTimeOffset.UtcNow.AddHours(1), 1));
         using var wrongAudience = await Deliver("eid", "aauth:other@ap.example");
         Assert.Equal(HttpStatusCode.Forbidden, wrongAudience.StatusCode);
-        var eventToken = host.EventToken("eid");
+        var eventToken = await host.EventTokenAsync("eid");
         using var first = await Deliver("eid", token: eventToken);
         using var retry = await Deliver("eid", token: eventToken);
         using var another = await Deliver("eid");
@@ -356,10 +358,10 @@ public class EventHttpTests
     {
         await using var host = await EventHost.StartAsync();
         var receiver = new EventReceiver(host.Protocol, host.Store, EventHost.Agent);
-        await Assert.ThrowsAsync<TokenVerificationException>(() => receiver.ReceiveAsync(host.EventToken("eid"), []));
+        await Assert.ThrowsAsync<TokenVerificationException>(async () => await receiver.ReceiveAsync(await host.EventTokenAsync("eid"), []));
         host.Store.Remember(new("eid", "https://unexpected.example", EventHost.Agent, "wrong resource"));
-        await Assert.ThrowsAsync<TokenVerificationException>(() => receiver.ReceiveAsync(host.EventToken("eid"), []));
-        await Assert.ThrowsAsync<TokenVerificationException>(() => receiver.ReceiveAsync(host.EventToken("eid", "aauth:other@ap.example"), []));
+        await Assert.ThrowsAsync<TokenVerificationException>(async () => await receiver.ReceiveAsync(await host.EventTokenAsync("eid"), []));
+        await Assert.ThrowsAsync<TokenVerificationException>(async () => await receiver.ReceiveAsync(await host.EventTokenAsync("eid", "aauth:other@ap.example"), []));
         Assert.Empty(host.Store.ReadEvents(EventHost.Agent));
     }
 
@@ -424,16 +426,16 @@ public class EventHttpTests
         private static bool Validate(JsonObject body) => body.Count == 1 && body["event_types"] is JsonArray values
             && values.Count == 1 && values[0]?.GetValue<string>() == "reservation.available";
 
-        public string AgentToken() => new AgentTokenBuilder
+        public ValueTask<string> AgentTokenAsync() => new AgentTokenBuilder
         {
             Issuer = Issuer, Subject = Agent, Key = ResourceKey, ConfirmationKey = AgentKey,
             KeyId = "key", EgressPolicy = Protocol.TokenVerifier.EgressPolicy
-        }.Build();
+        }.BuildAsync();
 
-        public string EventToken(string eid, string? agent = null) => new EventTokenBuilder
+        public ValueTask<string> EventTokenAsync(string eid, string? agent = null) => new EventTokenBuilder
         {
             Issuer = Issuer, Audience = agent ?? Agent, Eid = eid, Key = ResourceKey, KeyId = "key", Verifier = Protocol.TokenVerifier
-        }.Build();
+        }.BuildAsync();
 
         public async ValueTask DisposeAsync()
         {

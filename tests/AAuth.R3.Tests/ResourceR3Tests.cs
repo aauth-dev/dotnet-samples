@@ -19,7 +19,7 @@ namespace AAuth.R3.Tests;
 public class ResourceR3Tests
 {
     [Fact]
-    public void ProposalAndDocumentRemainAvailableWhileIssuedGrantIsValid()
+    public async Task ProposalAndDocumentRemainAvailableWhileIssuedGrantIsValid()
     {
         var clock = new RetentionClock();
         var store = new R3ProposalStore();
@@ -31,7 +31,7 @@ public class ResourceR3Tests
         var issued = clock.Now;
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var token = new AAuth.Tokens.AuthTokenBuilder
+        var token = await new AAuth.Tokens.AuthTokenBuilder
         {
             Issuer = R3TestData.AsIssuer, Audience = R3TestData.ResourceIssuer,
             PersonServer = R3TestData.PsIssuer, Subject = R3TestData.PersonSubject, AgentConfirmationKey = agentKey,
@@ -39,7 +39,7 @@ public class ResourceR3Tests
             Key = issuerKey, KeyId = "issuer", Dwk = AAuth.Tokens.AuthTokenBuilder.AccessDwk,
             IssuedAt = issued, AgentTokenExpiresAt = issued.AddHours(1),
             AdditionalClaims = R3AuthClaims.AuthToken(proposal.ProposalUri!, proposal.ProposalS256!, R3Grant.Mcp("book")),
-        }.Build();
+        }.BuildAsync();
         clock.Now = issued.AddMinutes(11);
         var verified = new AAuth.Tokens.TokenVerifier { TimeProvider = clock }.VerifyAuthToken(
             token, issuerKey, R3TestData.ResourceIssuer, agentKey);
@@ -374,13 +374,13 @@ public class ResourceR3Tests
         var resourceKey = AAuthKey.Generate();
         var asKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var authToken = new AAuth.Tokens.AuthTokenBuilder
+        var authToken = await new AAuth.Tokens.AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy, Issuer = R3TestData.AsIssuer, Audience = R3TestData.ResourceIssuer,
             PersonServer = R3TestData.PsIssuer, Subject = R3TestData.PersonSubject, AgentConfirmationKey = agentKey,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1), Key = asKey, KeyId = R3TestData.AsKid,
             Dwk = AAuth.Tokens.AuthTokenBuilder.AccessDwk, Account = "personal",
-        }.Build();
+        }.BuildAsync();
         var verifiedAuthToken = new AAuth.Tokens.TokenVerifier { EgressPolicy = TestEgress.Policy }
             .VerifyAuthToken(authToken, asKey, R3TestData.ResourceIssuer, agentKey);
         var decision = R3EnforcementDecision.PerCall(
@@ -402,10 +402,10 @@ public class ResourceR3Tests
             KeyId = R3TestData.ResourceKid,
         };
 
-        await decision.ToResult(
+        await (await decision.ToResultAsync(
             context,
             challenge,
-            verifiedAuthToken).ExecuteAsync(context);
+            verifiedAuthToken)).ExecuteAsync(context);
 
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
         Assert.Equal("application/problem+json", context.Response.ContentType);

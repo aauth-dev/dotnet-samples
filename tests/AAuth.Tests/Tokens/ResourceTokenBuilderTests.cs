@@ -14,7 +14,7 @@ public class ResourceTokenBuilderTests
     [InlineData(null)]
     [InlineData("workspace/Personal")]
     [InlineData("workspace/personal")]
-    public void Build_PreservesOptionalAccount(string? account)
+    public async Task Build_PreservesOptionalAccount(string? account)
     {
         var builder = new ResourceTokenBuilder
         {
@@ -28,14 +28,14 @@ public class ResourceTokenBuilderTests
             KeyId = "r1",
             Account = account,
         };
-        var payload = JsonNode.Parse(Base64UrlEncoder.DecodeBytes(builder.Build().Split('.')[1]))!.AsObject();
+        var payload = JsonNode.Parse(Base64UrlEncoder.DecodeBytes((await builder.BuildAsync()).Split('.')[1]))!.AsObject();
         Assert.Equal(account is not null, payload.ContainsKey("account"));
         Assert.Equal(account, (string?)payload["account"]);
     }
 
-    private static (string Jwt, JsonObject Payload) BuildSample(AAuthKey resourceKey)
+    private static async Task<(string Jwt, JsonObject Payload)> BuildSampleAsync(AAuthKey resourceKey)
     {
-        var jwt = new ResourceTokenBuilder
+        var jwt = await new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
             EgressPolicy = TestEgress.Policy,
@@ -48,7 +48,7 @@ public class ResourceTokenBuilderTests
             Key = resourceKey,
             KeyId = "r1",
             Scope = "whoami",
-        }.Build();
+        }.BuildAsync();
 
         var payload = JsonNode.Parse(
             Base64UrlEncoder.DecodeBytes(jwt.Split('.')[1])) as JsonObject;
@@ -56,10 +56,10 @@ public class ResourceTokenBuilderTests
     }
 
     [Fact]
-    public void Build_EmitsRequiredClaims()
+    public async Task Build_EmitsRequiredClaims()
     {
         var key = AAuthKey.Generate();
-        var (jwt, payload) = BuildSample(key);
+        var (jwt, payload) = await BuildSampleAsync(key);
 
         Assert.Equal("https://resource.example", (string?)payload["iss"]);
         Assert.Equal("aauth-resource.json", (string?)payload["dwk"]);
@@ -76,10 +76,10 @@ public class ResourceTokenBuilderTests
     }
 
     [Fact]
-    public void Build_RejectsLifetimeOverFiveMinutes()
+    public async Task Build_RejectsLifetimeOverFiveMinutes()
     {
         var key = AAuthKey.Generate();
-        Assert.Throws<InvalidOperationException>(() => new ResourceTokenBuilder
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
             EgressPolicy = TestEgress.Policy,
@@ -92,14 +92,14 @@ public class ResourceTokenBuilderTests
             Key = key,
             KeyId = "k",
             Lifetime = TimeSpan.FromMinutes(10),
-        }.Build());
+        }.BuildAsync());
     }
 
     [Fact]
-    public void Build_RejectsNonHttpsIssuer()
+    public async Task Build_RejectsNonHttpsIssuer()
     {
         var key = AAuthKey.Generate();
-        Assert.Throws<InvalidOperationException>(() => new ResourceTokenBuilder
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
             EgressPolicy = TestEgress.Policy,
@@ -111,6 +111,6 @@ public class ResourceTokenBuilderTests
             AgentJkt = "t",
             Key = key,
             KeyId = "k",
-        }.Build());
+        }.BuildAsync());
     }
 }

@@ -29,11 +29,11 @@ internal sealed class InProcessHttpClient : HttpClient
 // is not covered by content-type/content-digest (the SDK signer covers them).
 internal sealed class UncoveredBodySigner(AAuth.HttpSig.AAuthSigningHandler signer) : DelegatingHandler
 {
-    protected override System.Threading.Tasks.Task<HttpResponseMessage> SendAsync(
+    protected override async System.Threading.Tasks.Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
     {
-        signer.Sign(request);
-        return base.SendAsync(request, cancellationToken);
+        await signer.SignHeadersAsync(request, cancellationToken);
+        return await base.SendAsync(request, cancellationToken);
     }
 }
 

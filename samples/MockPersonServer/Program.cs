@@ -152,7 +152,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
     EgressPolicy = SampleEgress.Policy,
     Issuer = psIssuer,
     TokenInventory = tokenInventory,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
+    SigningKeys = new AAuthSigningKeySet { [PsKid] = psKey },
     DefaultScope = PsScope,
     Trust = { AccessServers = { Allowed = new HashSet<string>(trustedAccessServers) } },
     // Governance endpoints (mapped below) advertised in aauth-person.json so the

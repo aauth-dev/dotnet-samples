@@ -9,7 +9,7 @@ using AAuth.Tokens;
 
 namespace AAuth.Samples;
 
-public sealed class FederatedWorkerScenario(IAAuthKey providerKey, string providerKid, string provider,
+public sealed class FederatedWorkerScenario(IAAuthSigner providerKey, string providerKid, string provider,
     string personServer, string wallet) : IDisposable
 {
     public static IReadOnlyDictionary<string, string> ScopeDescriptions { get; } =
@@ -30,27 +30,27 @@ public sealed class FederatedWorkerScenario(IAAuthKey providerKey, string provid
     public string? InteractionUrl { get; private set; }
     public Func<Interaction, CancellationToken, Task>? OnInteraction { get; set; }
 
-    public void IssueParent() => ParentToken = Agent(ParentId, _parentKey);
-    public void IssueWorker() => WorkerToken = Agent(WorkerId, _workerKey, ParentId);
+    public async Task IssueParentAsync(CancellationToken ct = default) => ParentToken = await AgentAsync(ParentId, _parentKey, ct: ct);
+    public async Task IssueWorkerAsync(CancellationToken ct = default) => WorkerToken = await AgentAsync(WorkerId, _workerKey, ParentId, ct);
 
     // The original caller authorizes at the provider, which then acts as the
     // intermediary (§Call Chaining): the caller's auth token becomes the upstream token.
     public async Task ObtainUpstreamAsync(CancellationToken ct = default)
     {
         var originalId = $"aauth:original@{new Uri(provider).Host}";
-        var originalToken = Agent(originalId, _originalKey);
+        var originalToken = await AgentAsync(originalId, _originalKey, ct: ct);
         using var client = new AAuthClientBuilder(_originalKey).UseJwt(originalToken).WithEgressPolicy(SampleEgress.Policy).Build();
         var exchange = new TokenExchangeClient(client, new MetadataClient(_discovery));
         var personToken = await exchange.RequestPersonTokenAsync(personServer, provider,
             new TokenExchangeRequest { OnInteractionRequired = InteractAsync }, ct);
         var presented = Payload(personToken);
-        var resource = new ResourceTokenBuilder
+        var resource = await new ResourceTokenBuilder
         {
             EgressPolicy = SampleEgress.Policy, Issuer = provider, Audience = personServer,
             PersonServer = personServer, Subject = (string)presented["sub"]!, PresentedJti = (string)presented["jti"]!,
             AgentJkt = _originalKey.ComputeJwkThumbprint(), Key = providerKey, KeyId = providerKid,
             Scope = "delegation.invoke", ScopeDescriptions = ScopeDescriptions,
-        }.Build();
+        }.BuildAsync(ct);
         UpstreamToken = await exchange.ExchangeAsync(personServer, resource,
             new TokenExchangeRequest { PresentedToken = personToken, OnInteractionRequired = InteractAsync }, ct);
     }
@@ -125,11 +125,11 @@ public sealed class FederatedWorkerScenario(IAAuthKey providerKey, string provid
         await OnInteraction(interaction, ct);
     }
 
-    private string Agent(string id, IAAuthKey key, string? parent = null) => new AgentTokenBuilder
+    private ValueTask<string> AgentAsync(string id, IAAuthKey key, string? parent = null, CancellationToken ct = default) => new AgentTokenBuilder
     {
         EgressPolicy = SampleEgress.Policy, Issuer = provider, Subject = id, Key = providerKey, KeyId = providerKid,
         ConfirmationKey = key, ParentAgent = parent, PersonServer = personServer, Lifetime = TimeSpan.FromMinutes(10),
-    }.Build();
+    }.BuildAsync(ct);
 
     public static JsonObject Payload(string jwt) => JsonNode.Parse(
         Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(jwt.Split('.')[1]))!.AsObject();

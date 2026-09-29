@@ -19,16 +19,10 @@ public sealed class ChallengeOptions
     public AAuthAccessMode AccessMode { get; set; } = AAuthAccessMode.RequireAuthToken;
 
     /// <summary>
-    /// The resource's signing key used to sign resource tokens.
+    /// The resource's signing keys; resource tokens are signed with the active key.
     /// Required when <see cref="AccessMode"/> is <see cref="AAuthAccessMode.RequireAuthToken"/>.
     /// </summary>
-    public IAAuthKey? ResourceSigningKey { get; set; }
-
-    /// <summary>
-    /// Key identifier for the resource signing key (<c>kid</c> in the resource token header).
-    /// Required when <see cref="AccessMode"/> is <see cref="AAuthAccessMode.RequireAuthToken"/>.
-    /// </summary>
-    public string? ResourceKeyId { get; set; }
+    public AAuthSigningKeySet? ResourceSigningKeys { get; set; }
 
     /// <summary>
     /// The resource's own identifier (used as <c>iss</c> in the resource token).

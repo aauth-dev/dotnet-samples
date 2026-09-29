@@ -49,7 +49,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
 {
     EgressPolicy = SampleEgress.Policy,
     Issuer = issuer,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [AsKid] = asKey },
+    SigningKeys = new AAuthSigningKeySet { [AsKid] = asKey },
     Trust = { PersonServers = { Allowed = new HashSet<string>(trustedPersonServers) } },
     // AS policy decides the granted-vs-per-call split (r3 §Auth Token Extensions).
     IsPerCallOperation = operation => perCallOperations.Any(identifier =>

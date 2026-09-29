@@ -37,7 +37,7 @@ internal static class R3TestData
         return new JsonObject { ["keys"] = new JsonArray(jwk) };
     }
 
-    public static string AgentToken(AAuthKey apKey, AAuthKey agentKey) => new AgentTokenBuilder
+    public static ValueTask<string> AgentTokenAsync(AAuthKey apKey, AAuthKey agentKey) => new AgentTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = ApIssuer,
@@ -45,11 +45,11 @@ internal static class R3TestData
         Key = apKey,
         ConfirmationKey = agentKey,
         KeyId = ApKid,
-    }.Build();
+    }.BuildAsync();
 
     public const string PersonSubject = "person-1";
 
-    public static string PersonToken(AAuthKey psKey, AAuthKey agentKey, string? missionS256 = null, DateTimeOffset? agentTokenExpiresAt = null) =>
+    public static ValueTask<string> PersonTokenAsync(AAuthKey psKey, AAuthKey agentKey, string? missionS256 = null, DateTimeOffset? agentTokenExpiresAt = null) =>
         new PersonTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
@@ -61,7 +61,7 @@ internal static class R3TestData
             Key = psKey,
             KeyId = PsKid,
             MissionS256 = missionS256,
-        }.Build();
+        }.BuildAsync();
 
     public static TokenVerifier.VerifiedToken VerifyPersonToken(string personToken, AAuthKey psKey, AAuthKey agentKey) =>
         new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyPersonToken(personToken, psKey, ResourceIssuer, agentKey);
@@ -75,9 +75,9 @@ internal static class R3TestData
         KeyId = ResourceKid,
     };
 
-    public static string ResourceToken(AAuthKey resourceKey, TokenVerifier.VerifiedToken presented, AAuthKey agentKey,
+    public static ValueTask<string> ResourceTokenAsync(AAuthKey resourceKey, TokenVerifier.VerifiedToken presented, AAuthKey agentKey,
         string r3Uri, string r3S256, string? scope = null, string? account = null) =>
-        Challenge(resourceKey).BuildResourceToken(presented, agentKey.ComputeJwkThumbprint(), r3Uri, r3S256, scope, account);
+        Challenge(resourceKey).BuildResourceTokenAsync(presented, agentKey.ComputeJwkThumbprint(), r3Uri, r3S256, scope, account);
 
     public static R3Document Document() => new()
     {

@@ -13,7 +13,7 @@ internal static class CodeSnippets
         """;
 
     public const string SelfSignAgentToken = """
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = SampleEgress.Policy,
             Issuer = "https://ap.example",
@@ -21,7 +21,7 @@ internal static class CodeSnippets
             KeyId = "sample-key-1",
             Key = key,
             PersonServer = "https://ps.example",
-        }.Build();
+        }.BuildAsync();
         """;
 
     public const string DiscoverAp = """
@@ -97,7 +97,7 @@ internal static class CodeSnippets
         // Self-anchored (Signature Keys draft-08 section 3.5): the verifier computes the durable
         // key's thumbprint from the header jwk, checks it equals iss
         // (urn:jkt:sha-256:<thumbprint>), then verifies the naming JWT signature.
-        var namingJwt = NamingJwtBuilder.Build(durableKey, ephemeralKey);
+        var namingJwt = await NamingJwtBuilder.BuildAsync(durableKey, ephemeralKey);
 
         using var client = new AAuthClientBuilder(ephemeralKey).WithEgressPolicy(SampleEgress.Policy)
             .UseJktJwt(() => namingJwt)

@@ -52,8 +52,8 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     public static readonly HttpRequestOptionsKey<IReadOnlyList<string>> AdditionalComponentsKey
         = new("AAuth.AdditionalSignatureComponents");
 
-    private readonly IAAuthKey _key;
-    internal static readonly HttpRequestOptionsKey<IAAuthKey> SigningKeyContext = new("AAuth.LocalSigningKey");
+    private readonly IAAuthSigner _key;
+    internal static readonly HttpRequestOptionsKey<IAAuthSigner> SigningKeyContext = new("AAuth.LocalSigningKey");
     private readonly ISignatureKeyProvider _signatureKeyProvider;
     private readonly TimeProvider _time;
 
@@ -79,7 +79,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// <param name="signatureKeyProvider">Strategy that produces the Signature-Key header value.</param>
     /// <param name="timeProvider">Time source for the <c>created</c> parameter.</param>
     public AAuthSigningHandler(
-        IAAuthKey key,
+        IAAuthSigner key,
         ISignatureKeyProvider signatureKeyProvider,
         TimeProvider? timeProvider = null)
     {
@@ -106,7 +106,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// </param>
     /// <param name="timeProvider">Time source for the <c>created</c> parameter.</param>
     public AAuthSigningHandler(
-        IAAuthKey key,
+        IAAuthSigner key,
         Func<string> tokenFactory,
         TimeProvider? timeProvider = null)
         : this(key, new JwtSignatureKeyProvider(tokenFactory), timeProvider)
@@ -125,7 +125,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     {
         CoverBody(request);
         await EnsureRequiredContentDigestAsync(request, cancellationToken).ConfigureAwait(false);
-        Sign(request);
+        await SignHeadersAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
     // §Covered Components: a body-bearing request to a PS or AS MUST cover
@@ -150,7 +150,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     // SHA-256 is emitted. Requests without a body, or that already carry the
     // header, are left untouched. This buffering only happens when a resource
     // has actually demanded `content-digest`, so the common no-digest path is
-    // unaffected. Direct callers of the synchronous <see cref="Sign"/> must
+    // unaffected. Direct callers of <see cref="SignHeadersAsync"/> must
     // pre-populate Content-Digest themselves.
     private static async Task EnsureRequiredContentDigestAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
@@ -189,8 +189,12 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         request.Content.Headers.TryAddWithoutValidation("Content-Digest", value);
     }
 
-    /// <summary>Apply AAuth signature headers to <paramref name="request"/>.</summary>
-    public void Sign(HttpRequestMessage request)
+    /// <summary>
+    /// Apply AAuth signature headers to <paramref name="request"/> without adding body
+    /// coverage. <see cref="SignAsync"/> is the normal entry point; callers of this
+    /// method must request and pre-populate any body components themselves.
+    /// </summary>
+    public async Task SignHeadersAsync(HttpRequestMessage request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.RequestUri is null)
@@ -255,7 +259,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
             throw new InvalidOperationException("Signature base must be ASCII.");
         OnSignatureBase?.Invoke(request, signatureBase);
 
-        var signature = _key.Sign(Encoding.ASCII.GetBytes(signatureBase));
+        var signature = await _key.SignAsync(Encoding.ASCII.GetBytes(signatureBase), cancellationToken).ConfigureAwait(false);
 
         request.Headers.Remove(AAuthConstants.Headers.SignatureKey);
         request.Headers.Remove(AAuthConstants.Headers.SignatureInput);
@@ -389,7 +393,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// <param name="provider">Strategy that produces the Signature-Key header value.</param>
     /// <param name="innerHandler">Optional inner handler (defaults to <see cref="HttpClientHandler"/>).</param>
     public static HttpClient CreateClient(
-        IAAuthKey key,
+        IAAuthSigner key,
         ISignatureKeyProvider provider,
         HttpMessageHandler? innerHandler = null)
     {

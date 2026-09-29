@@ -35,14 +35,14 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
     EgressPolicy = SampleEgress.Policy,
     Issuer = tourUrl,
     Name = "Guided Tour Demo",
-    SigningKeys = new Dictionary<string, IAAuthKey> { [TourKid] = tourKey },
+    SigningKeys = new AAuthSigningKeySet { [TourKid] = tourKey },
 });
 
 app.MapStaticAssets();
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     EgressPolicy = SampleEgress.Policy, Issuer = tourUrl,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [TourKid] = tourKey },
+    SigningKeys = new AAuthSigningKeySet { [TourKid] = tourKey },
     ScopeDescriptions = FederatedWorkerScenario.ScopeDescriptions,
 });
 app.UseAntiforgery();

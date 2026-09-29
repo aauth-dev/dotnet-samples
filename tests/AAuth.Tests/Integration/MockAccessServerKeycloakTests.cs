@@ -119,9 +119,9 @@ public class MockAccessServerKeycloakTests
         using var signed = BuildPsSignedClient(factory);
         var response = await signed.PostAsJsonAsync("/token", new JsonObject
         {
-            ["agent_token"] = BuildAgentToken(agentKey, GuestAgentId),
-            ["resource_token"] = BuildResourceToken(agentKey, AsIssuer, GuestAgentId, "wallet.read"),
-            ["presented_token"] = BuildPersonToken(agentKey),
+            ["agent_token"] = await BuildAgentTokenAsync(agentKey, GuestAgentId),
+            ["resource_token"] = await BuildResourceTokenAsync(agentKey, AsIssuer, GuestAgentId, "wallet.read"),
+            ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -168,9 +168,9 @@ public class MockAccessServerKeycloakTests
         using var signed = BuildPsSignedClient(factory);
         var response = await signed.PostAsJsonAsync("/token", new JsonObject
         {
-            ["agent_token"] = BuildAgentToken(agentKey, agentId),
-            ["resource_token"] = BuildResourceToken(agentKey, AsIssuer, agentId, scope),
-            ["presented_token"] = BuildPersonToken(agentKey),
+            ["agent_token"] = await BuildAgentTokenAsync(agentKey, agentId),
+            ["resource_token"] = await BuildResourceTokenAsync(agentKey, AsIssuer, agentId, scope),
+            ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -230,7 +230,7 @@ public class MockAccessServerKeycloakTests
 
     // -- token builders --------------------------------------------------
 
-    private static string BuildAgentToken(AAuthKey agentKey, string agent) =>
+    private static ValueTask<string> BuildAgentTokenAsync(AAuthKey agentKey, string agent) =>
         new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
@@ -240,12 +240,12 @@ public class MockAccessServerKeycloakTests
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
     private const string PersonSubject = "person-1";
     private const string PersonJti = "person-jti-1";
 
-    private static string BuildPersonToken(AAuthKey agentKey) =>
+    private static ValueTask<string> BuildPersonTokenAsync(AAuthKey agentKey) =>
         new PersonTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
@@ -257,9 +257,9 @@ public class MockAccessServerKeycloakTests
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             Key = PsKey,
             KeyId = PsKid,
-        }.Build();
+        }.BuildAsync();
 
-    private static string BuildResourceToken(AAuthKey agentKey, string audience, string agent, string scope) =>
+    private static ValueTask<string> BuildResourceTokenAsync(AAuthKey agentKey, string audience, string agent, string scope) =>
         new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
@@ -273,7 +273,7 @@ public class MockAccessServerKeycloakTests
             Key = ResourceKey,
             KeyId = ResourceKid,
             Scope = scope,
-        }.Build();
+        }.BuildAsync();
 
     private static JsonObject DecodePayload(string? jwt) =>
         (JsonObject)JsonNode.Parse(

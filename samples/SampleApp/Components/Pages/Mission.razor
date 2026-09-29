@@ -45,7 +45,7 @@
     <div class="col-md-6">
         <h5>Client Code</h5>
         <pre><code class="language-csharp">// Self-issued agent token signs every governance call.
-var agentToken = new AgentTokenBuilder
+var agentToken = await new AgentTokenBuilder
 {
     EgressPolicy = SampleEgress.Policy,
     Issuer = identity.Issuer,
@@ -53,7 +53,7 @@ var agentToken = new AgentTokenBuilder
     KeyId = identity.KeyId,
     Key = identity.Key,
     PersonServer = personServer,
-}.Build();
+}.BuildAsync();
 
 using var signed = new AAuthClientBuilder(identity.Key)
     .WithEgressPolicy(SampleEgress.Policy).UseJwt(agentToken).Build();
@@ -368,7 +368,7 @@ if (cancelBooking.IsGranted)
 
             // Self-issued signing channel: SampleApp is its own AP (§Self-Hosted
             // Agents), so it mints its own short-lived agent token.
-            _agentToken = MintAgentToken(personServer);
+            _agentToken = await MintAgentTokenAsync(personServer);
             var handler = new AAuthSigningHandler(_identity.Key, () => _agentToken)
                 { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
             using var signed = new SampleHttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
@@ -535,7 +535,7 @@ if (cancelBooking.IsGranted)
 
     // Build a fresh self-issued agent token (a new jti each call satisfies the
     // resource's replay detection on repeated access).
-    private string MintAgentToken(string personServer) => new AgentTokenBuilder
+    private ValueTask<string> MintAgentTokenAsync(string personServer) => new AgentTokenBuilder
     {
         EgressPolicy = SampleEgress.Policy,
         Issuer = _identity.Issuer,
@@ -544,7 +544,7 @@ if (cancelBooking.IsGranted)
         Key = _identity.Key,
         PersonServer = personServer,
         Lifetime = TimeSpan.FromHours(1),
-    }.Build();
+    }.BuildAsync();
 
     // Person token under the mission -> challenge -> token exchange (governed by
     // the PS) -> retry. The person token carries mission_s256, which the resource
@@ -558,7 +558,7 @@ if (cancelBooking.IsGranted)
         DeferredPollerOptions poller)
     {
         // Refresh the agent token for a fresh jti before each resource access.
-        _agentToken = MintAgentToken(personServer);
+        _agentToken = await MintAgentTokenAsync(personServer);
 
         var personToken = mission.PersonTokens.TryGetValue(new Uri(resourceUrl).GetLeftPart(UriPartial.Authority), out var approved)
             ? approved

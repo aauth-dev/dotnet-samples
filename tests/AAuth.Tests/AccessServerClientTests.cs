@@ -57,7 +57,7 @@ public class AccessServerClientTests
     public async Task FederateAsync_DispatchesMixedClarificationAndNewInteractions(bool claimsFirst)
     {
         var agentKey = AAuthKey.Generate();
-        var token = BuildAuthToken(agentKey, ResourceUrl, "whoami");
+        var token = await BuildAuthTokenAsync(agentKey, ResourceUrl, "whoami");
         var callbacks = new List<string>();
         var polls = 0;
         HttpResponseMessage Pending(string requirement, string code = "ABCDEFGH")
@@ -103,7 +103,7 @@ public class AccessServerClientTests
     public async Task FederateAsync_RejectsOverlongAuthToken_DirectOrDeferred(bool deferred)
     {
         var agentKey = AAuthKey.Generate();
-        var token = BuildAuthToken(agentKey, ResourceUrl, "whoami");
+        var token = await BuildAuthTokenAsync(agentKey, ResourceUrl, "whoami");
         HttpResponseMessage Pending()
         {
             var response = new HttpResponseMessage(HttpStatusCode.Accepted) { Content = JsonContent.Create(new { status = "pending" }) };
@@ -125,7 +125,8 @@ public class AccessServerClientTests
     public async Task FederateAsync_ForwardsChildToken()
     {
         var key = AAuthKey.Generate();
-        var stub = new StubAccessServer(() => Ok(BuildAuthToken(key, ResourceUrl, "whoami")));
+        var authToken = await BuildAuthTokenAsync(key, ResourceUrl, "whoami");
+        var stub = new StubAccessServer(() => Ok(authToken));
         await BuildClient(stub).FederateAsync(AsIssuer, new AccessServerRequest
         {
             ResourceToken = "resource", AgentToken = "parent", SubagentToken = "child",
@@ -166,7 +167,7 @@ public class AccessServerClientTests
     public async Task FederateAsync_ReturnsVerifiedAuthToken_OnSuccess()
     {
         var agentKey = AAuthKey.Generate();
-        var authToken = BuildAuthToken(agentKey, audience: ResourceUrl, scope: "whoami");
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: ResourceUrl, scope: "whoami");
         var stub = new StubAccessServer(() => Ok(authToken));
         var client = BuildClient(stub);
 
@@ -183,7 +184,7 @@ public class AccessServerClientTests
     public async Task FederateAsync_IncludesUpstreamToken_WhenProvided()
     {
         var agentKey = AAuthKey.Generate();
-        var authToken = BuildAuthToken(agentKey, audience: ResourceUrl, scope: "whoami");
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: ResourceUrl, scope: "whoami");
         var stub = new StubAccessServer(() => Ok(authToken));
         var client = BuildClient(stub);
 
@@ -250,7 +251,7 @@ public class AccessServerClientTests
     public async Task FederateAsync_PushesClaimsAndReturnsAuthToken_OnClaimsRequirement()
     {
         var agentKey = AAuthKey.Generate();
-        var authToken = BuildAuthToken(agentKey, audience: ResourceUrl, scope: "whoami");
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: ResourceUrl, scope: "whoami");
 
         // First /token call -> 202 requirement=claims (required_claims in body);
         // the signed claims push -> 200 auth_token.
@@ -321,7 +322,7 @@ public class AccessServerClientTests
         // claims push -> 200 auth_token. Verifies the client handles a
         // requirement=claims that arrives MID-POLL, not just as the first reply.
         var agentKey = AAuthKey.Generate();
-        var authToken = BuildAuthToken(agentKey, audience: ResourceUrl, scope: "whoami");
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: ResourceUrl, scope: "whoami");
 
         var stub = new StubAccessServer(
             tokenResponse: () =>
@@ -388,7 +389,7 @@ public class AccessServerClientTests
     {
         var agentKey = AAuthKey.Generate();
         // The AS mints a token for a DIFFERENT resource than the PS expects.
-        var authToken = BuildAuthToken(agentKey, audience: "https://evil.test", scope: "whoami");
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: "https://evil.test", scope: "whoami");
         var stub = new StubAccessServer(() => Ok(authToken));
         var client = BuildClient(stub);
 
@@ -492,7 +493,7 @@ public class AccessServerClientTests
                 "application/json"),
         };
 
-    private static string BuildAuthToken(AAuthKey agentKey, string audience, string scope) =>
+    private static ValueTask<string> BuildAuthTokenAsync(AAuthKey agentKey, string audience, string scope) =>
         new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
@@ -506,7 +507,7 @@ public class AccessServerClientTests
             Dwk = AuthTokenBuilder.AccessDwk,
             Scope = scope,
             Subject = Subject,
-        }.Build();
+        }.BuildAsync();
 
     /// <summary>
     /// Stub AS: serves <c>aauth-access.json</c> + JWKS for discovery, and a

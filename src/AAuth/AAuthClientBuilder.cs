@@ -28,7 +28,7 @@ namespace AAuth;
 /// </example>
 public sealed class AAuthClientBuilder
 {
-    private readonly IAAuthKey _key;
+    private readonly IAAuthSigner _key;
     private ISignatureKeyProvider? _provider;
     private HttpMessageHandler? _innerHandler;
     private AAuthEgressPolicy _egressPolicy = AAuthEgressPolicy.Production;
@@ -109,7 +109,7 @@ public sealed class AAuthClientBuilder
     private string? _agentToken;
     private Func<string>? _tokenFactory;
 
-    public AAuthClientBuilder(IAAuthKey key)
+    public AAuthClientBuilder(IAAuthSigner key)
     {
         ArgumentNullException.ThrowIfNull(key);
         _key = key;
@@ -128,7 +128,7 @@ public sealed class AAuthClientBuilder
     ///     .Build();
     /// </code>
     /// </example>
-    public static SelfIssuingBuilder SelfIssuing(IAAuthKey key)
+    public static SelfIssuingBuilder SelfIssuing(IAAuthSigner key)
     {
         ArgumentNullException.ThrowIfNull(key);
         return new SelfIssuingBuilder(key);
@@ -148,7 +148,7 @@ public sealed class AAuthClientBuilder
     ///     .Build();
     /// </code>
     /// </example>
-    public static EnrolledBuilder Enrolled(IAAuthKey key)
+    public static EnrolledBuilder Enrolled(IAAuthSigner key)
     {
         ArgumentNullException.ThrowIfNull(key);
         return new EnrolledBuilder(key);

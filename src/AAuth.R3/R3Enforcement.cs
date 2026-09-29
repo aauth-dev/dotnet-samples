@@ -189,12 +189,12 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
         {
             R3EnforcementDecisionKind.Granted => Results.Ok(),
             R3EnforcementDecisionKind.PerCall => throw new InvalidOperationException(
-                "Per-call R3 decisions require an AAuth-Requirement challenge; call the ToResult overload that receives HttpContext and R3Challenge."),
+                "Per-call R3 decisions require an AAuth-Requirement challenge; call the ToResultAsync overload that receives HttpContext and R3Challenge."),
             _ => AAuth.Server.AAuthProblemDetails.Create(Error ?? "r3_denied", statusCode: StatusCodes.Status403Forbidden),
         };
     }
 
-    public IResult ToResult(HttpContext context, R3Challenge challenge, TokenVerifier.VerifiedToken verifiedAuthToken, string? scope = null)
+    public async Task<IResult> ToResultAsync(HttpContext context, R3Challenge challenge, TokenVerifier.VerifiedToken verifiedAuthToken, string? scope = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(challenge);
@@ -206,7 +206,8 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
         }
 
         var proposal = RequirePerCallProposal();
-        var resourceToken = challenge.BuildResourceToken(verifiedAuthToken, proposal.Uri, proposal.S256, scope);
+        var resourceToken = await challenge.BuildResourceTokenAsync(verifiedAuthToken, proposal.Uri, proposal.S256, scope,
+            context.RequestAborted).ConfigureAwait(false);
         return ToPerCallChallengeResult(context, resourceToken);
     }
 

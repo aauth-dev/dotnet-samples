@@ -23,7 +23,7 @@ public class MissionClaimTests
         return (JsonObject)JsonNode.Parse(Base64UrlEncoder.Decode(parts[1]))!;
     }
 
-    private static string ResourceToken(string? missionS256) => new ResourceTokenBuilder
+    private static ValueTask<string> ResourceTokenAsync(string? missionS256) => new ResourceTokenBuilder
     {
         ScopeDescriptions = TestScopeDefinitions.Resource,
         EgressPolicy = TestEgress.Policy,
@@ -37,9 +37,9 @@ public class MissionClaimTests
         KeyId = "r1",
         Scope = "whoami",
         MissionS256 = missionS256,
-    }.Build();
+    }.BuildAsync();
 
-    private static string AuthToken(IAAuthKey issuerKey, IAAuthKey agentKey, string? missionS256) => new AuthTokenBuilder
+    private static ValueTask<string> AuthTokenAsync(IAAuthSigner issuerKey, IAAuthKey agentKey, string? missionS256) => new AuthTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -52,42 +52,42 @@ public class MissionClaimTests
         KeyId = "p1",
         Scope = "whoami",
         MissionS256 = missionS256,
-    }.Build();
+    }.BuildAsync();
 
     [Fact(DisplayName = "§Resource Token Structure — mission_s256 omitted when not set")]
-    public void ResourceToken_OmitsMission_WhenNotSet()
+    public async Task ResourceToken_OmitsMission_WhenNotSet()
     {
-        var payload = PayloadOf(ResourceToken(null));
+        var payload = PayloadOf(await ResourceTokenAsync(null));
         Assert.False(payload.ContainsKey("mission_s256"));
         Assert.False(payload.ContainsKey("mission"));
     }
 
     [Fact(DisplayName = "§Resource Token Structure — mission_s256 emitted as a string when set")]
-    public void ResourceToken_EmitsMission_WhenSet()
+    public async Task ResourceToken_EmitsMission_WhenSet()
     {
-        var payload = PayloadOf(ResourceToken(S256));
+        var payload = PayloadOf(await ResourceTokenAsync(S256));
         Assert.Equal(S256, (string?)payload["mission_s256"]);
         Assert.False(payload.ContainsKey("mission"));
     }
 
     [Fact(DisplayName = "§Auth Token Structure — mission_s256 omitted when not set")]
-    public void AuthToken_OmitsMission_WhenNotSet()
+    public async Task AuthToken_OmitsMission_WhenNotSet()
     {
-        Assert.False(PayloadOf(AuthToken(AAuthKey.Generate(), AAuthKey.Generate(), null)).ContainsKey("mission_s256"));
+        Assert.False(PayloadOf(await AuthTokenAsync(AAuthKey.Generate(), AAuthKey.Generate(), null)).ContainsKey("mission_s256"));
     }
 
     [Fact(DisplayName = "§Auth Token Structure — mission_s256 emitted as a string when set")]
-    public void AuthToken_EmitsMission_WhenSet()
+    public async Task AuthToken_EmitsMission_WhenSet()
     {
-        var payload = PayloadOf(AuthToken(AAuthKey.Generate(), AAuthKey.Generate(), S256));
+        var payload = PayloadOf(await AuthTokenAsync(AAuthKey.Generate(), AAuthKey.Generate(), S256));
         Assert.Equal(S256, (string?)payload["mission_s256"]);
         Assert.False(payload.ContainsKey("mission"));
     }
 
     [Fact(DisplayName = "§Person Token Structure — mission_s256 emitted as a string when set")]
-    public void PersonToken_EmitsMission_WhenSet()
+    public async Task PersonToken_EmitsMission_WhenSet()
     {
-        var payload = PayloadOf(new PersonTokenBuilder
+        var payload = PayloadOf(await new PersonTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = Aud,
@@ -98,7 +98,7 @@ public class MissionClaimTests
             Key = AAuthKey.Generate(),
             KeyId = "p1",
             MissionS256 = S256,
-        }.Build());
+        }.BuildAsync());
         Assert.Equal(S256, (string?)payload["mission_s256"]);
     }
 
@@ -106,30 +106,30 @@ public class MissionClaimTests
     [InlineData("47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=")]   // padded
     [InlineData("tooshort")]                                      // not 32 bytes
     [InlineData("47DEQpj8HBSa+_TImW/5JCeuQeRkm5NMpJWZG3hSuFU")]   // standard base64 (+,/)
-    public void Builders_RejectMalformedMission(string s256)
+    public async Task Builders_RejectMalformedMission(string s256)
     {
-        Assert.Throws<System.InvalidOperationException>(() => ResourceToken(s256));
-        Assert.Throws<System.InvalidOperationException>(() => AuthToken(AAuthKey.Generate(), AAuthKey.Generate(), s256));
+        await Assert.ThrowsAsync<System.InvalidOperationException>(async () => await ResourceTokenAsync(s256));
+        await Assert.ThrowsAsync<System.InvalidOperationException>(async () => await AuthTokenAsync(AAuthKey.Generate(), AAuthKey.Generate(), s256));
     }
 
     [Fact(DisplayName = "§Auth Token Verification — VerifiedToken.MissionS256 surfaces the verified claim")]
-    public void VerifiedToken_SurfacesMission()
+    public async Task VerifiedToken_SurfacesMission()
     {
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var verified = new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(
-            AuthToken(issuerKey, agentKey, S256), issuerKey, Iss, agentKey);
+            await AuthTokenAsync(issuerKey, agentKey, S256), issuerKey, Iss, agentKey);
 
         Assert.Equal(S256, verified.MissionS256);
     }
 
     [Fact(DisplayName = "§Auth Token Verification — VerifiedToken.MissionS256 is null when absent")]
-    public void VerifiedToken_MissionNull_WhenAbsent()
+    public async Task VerifiedToken_MissionNull_WhenAbsent()
     {
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var verified = new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(
-            AuthToken(issuerKey, agentKey, null), issuerKey, Iss, agentKey);
+            await AuthTokenAsync(issuerKey, agentKey, null), issuerKey, Iss, agentKey);
 
         Assert.Null(verified.MissionS256);
     }

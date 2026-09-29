@@ -22,7 +22,8 @@ public static class NamingJwtBuilder
     /// </summary>
     /// <param name="durableKey">The agent's durable enrollment key (signs this JWT; its public half is embedded in the header <c>jwk</c>).</param>
     /// <param name="ephemeralKey">The fresh ephemeral key whose public half is embedded as <c>cnf.jwk</c>.</param>
-    public static string Build(IAAuthKey durableKey, IAAuthKey ephemeralKey)
+    public static ValueTask<string> BuildAsync(IAAuthSigner durableKey, IAAuthKey ephemeralKey,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(durableKey);
         ArgumentNullException.ThrowIfNull(ephemeralKey);
@@ -48,6 +49,6 @@ public static class NamingJwtBuilder
             },
         };
 
-        return JwtWriter.SignCompact(header, payload, durableKey);
+        return JwtWriter.SignCompactAsync(header, payload, durableKey, cancellationToken);
     }
 }

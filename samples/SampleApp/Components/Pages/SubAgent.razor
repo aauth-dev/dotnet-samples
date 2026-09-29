@@ -74,7 +74,7 @@ string personServer = "http://localhost:5100";     // your Person Server</code><
 // marker; the `+` in the local part is operational readability only. The
 // AP knows `parentId` (a PUBLIC string) because the parent asked it to
 // spawn this worker — no parent SECRET is involved.
-var subAgentToken = new AgentTokenBuilder
+var subAgentToken = await new AgentTokenBuilder
 {
     EgressPolicy = SampleEgress.Policy,
     Issuer          = agentProvider,   // the AP
@@ -84,10 +84,10 @@ var subAgentToken = new AgentTokenBuilder
     ConfirmationKey = subAgentKey,     // binds the WORKER's PUBLIC key
     ParentAgent     = parentId,        // the parent's PUBLIC id (set by the AP)
     PersonServer    = personServer,
-}.Build();
+}.BuildAsync();
 
 // Single-level depth (§Sub-Agents): the AP MUST NOT issue a sub-agent
-// token whose parent is itself a sub-agent — Build() throws. And a
+// token whose parent is itself a sub-agent — BuildAsync() throws. And a
 // sub-agent MUST NOT call the Person Server directly.</code></pre>
 </div>
 <div class="col-md-6">
@@ -219,9 +219,9 @@ var authToken = await exchange.ExchangeAsync(
         };
         try
         {
-            flow.IssueParent();
+            await flow.IssueParentAsync();
             _steps.Add(new("Parent enrolled", "Aria receives its own key-bound identity.", flow.ParentId));
-            flow.IssueWorker();
+            await flow.IssueWorkerAsync();
             _subAgentClaims = Pretty(FederatedWorkerScenario.Payload(flow.WorkerToken!));
             _steps.Add(new("Sub-agent issued", "The worker has a distinct key and parent_agent relationship.", flow.WorkerId));
             await flow.ObtainUpstreamAsync();

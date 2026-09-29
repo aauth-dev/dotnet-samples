@@ -64,7 +64,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
     [Fact(DisplayName = "UseAAuthIntermediary — rejects agent token with 401 + person-token challenge")]
     public async Task RejectsAgentToken_With401Challenge()
     {
-        var agentToken = BuildAgentToken();
+        var agentToken = await BuildAgentTokenAsync();
         var response = await SendSigned(agentToken);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -79,7 +79,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
     [Fact(DisplayName = "UseAAuthIntermediary — a person token gets a resource token naming it")]
     public async Task ChallengesPersonToken_WithResourceToken()
     {
-        var personToken = BuildPersonToken();
+        var personToken = await BuildPersonTokenAsync();
         var response = await SendSigned(personToken);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -97,7 +97,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
     [Fact(DisplayName = "UseAAuthIntermediary — passes auth token through to handler")]
     public async Task PassesAuthToken_Through()
     {
-        var authToken = BuildAuthToken();
+        var authToken = await BuildAuthTokenAsync();
         var response = await SendSigned(authToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -181,8 +181,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
                 ScopeDescriptions = TestScopeDefinitions.Resource,
                 EgressPolicy = TestEgress.Policy,
                 AccessMode = AAuthAccessMode.RequireAuthToken,
-                ResourceSigningKey = _resourceKey,
-                ResourceKeyId = ResourceKid,
+                ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey),
                 ResourceIdentifier = ResourceId,
             });
 
@@ -217,7 +216,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
         return capture.Captured!;
     }
 
-    private string BuildAgentToken()
+    private ValueTask<string> BuildAgentTokenAsync()
     {
         return new AgentTokenBuilder
         {
@@ -229,10 +228,10 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
             ConfirmationKey = _agentKey,
             IssuedAt = FixedClock,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
     }
 
-    private string BuildPersonToken() => new PersonTokenBuilder
+    private ValueTask<string> BuildPersonTokenAsync() => new PersonTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = PsIssuer,
@@ -243,9 +242,9 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
         Key = _psKey,
         KeyId = "ps-key-1",
         IssuedAt = FixedClock,
-    }.Build();
+    }.BuildAsync();
 
-    private string BuildAuthToken()
+    private ValueTask<string> BuildAuthTokenAsync()
     {
         return new AuthTokenBuilder
         {
@@ -260,7 +259,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
             Subject = "pairwise-sub",
             Scope = "data:read",
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
     }
 
     private sealed class CaptureHandler : HttpMessageHandler

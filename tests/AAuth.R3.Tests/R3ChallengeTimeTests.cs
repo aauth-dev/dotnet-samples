@@ -9,7 +9,7 @@ namespace AAuth.R3.Tests;
 public class R3ChallengeTimeTests
 {
     [Fact(DisplayName = "R3Challenge stamps iat and exp from its TimeProvider")]
-    public void ResourceToken_UsesTimeProvider()
+    public async Task ResourceToken_UsesTimeProvider()
     {
         var now = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
         var challenge = new R3Challenge
@@ -27,7 +27,7 @@ public class R3ChallengeTimeTests
             ["exp"] = now.AddMinutes(5).ToUnixTimeSeconds(),
         }, R3TestData.PsIssuer, PersonTokenBuilder.TokenType);
 
-        var token = challenge.BuildResourceToken(presented, agentJkt: "agent-jkt",
+        var token = await challenge.BuildResourceTokenAsync(presented, agentJkt: "agent-jkt",
             r3Uri: R3TestData.ResourceIssuer + "/r3/doc", r3S256: R3Hash.ComputeS256("{}"u8), scope: null);
 
         var payload = JsonNode.Parse(Base64Url.DecodeFromChars(token.Split('.')[1]))!;

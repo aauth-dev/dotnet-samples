@@ -60,16 +60,16 @@ public class InboxFlowTests : IAsyncLifetime
 
     // Build an agent that drives the consent handshake, approving at the Inbox's
     // own consent page when interaction is required.
-    private HttpClient BuildAgent()
+    private async Task<HttpClient> BuildAgentAsync()
     {
         var approver = _inbox!.CreateClient(); // plain browser-style client
         return new AAuthClientBuilder(_agentKey)
-            .UseJwt(new AgentTokenBuilder
+            .UseJwt(await new AgentTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
                 Issuer = "https://ap.test", Subject = "aauth:inbox@ap.test", Key = _issuerKey,
                 ConfirmationKey = _agentKey, KeyId = "ap-key",
-            }.Build())
+            }.BuildAsync())
             .WithResourceManagedAccess()
             .WithInteractionHandling(opts =>
             {
@@ -89,7 +89,7 @@ public class InboxFlowTests : IAsyncLifetime
     [Fact]
     public async Task Reactive_Messages_ConsentThenReplay()
     {
-        using var agent = BuildAgent();
+        using var agent = await BuildAgentAsync();
 
         // 1. GET /messages → 202 interaction → approve → poll → 200 (complete),
         //    the agent captures the issued AAuth-Access.
@@ -107,7 +107,7 @@ public class InboxFlowTests : IAsyncLifetime
     [Fact]
     public async Task Proactive_Authorize_ConsentThenReplay()
     {
-        using var agent = BuildAgent();
+        using var agent = await BuildAgentAsync();
 
         // 1. POST /authorize { scope } → 202 interaction → approve → poll → 200.
         var auth = await agent.PostAsJsonAsync($"{Base}/authorize", new { scope = "inbox.read" });
@@ -123,7 +123,7 @@ public class InboxFlowTests : IAsyncLifetime
     [Fact]
     public async Task Authorize_NonJsonContentType_Returns415()
     {
-        using var agent = BuildAgent();
+        using var agent = await BuildAgentAsync();
 
         // A signed POST that passes verification but carries a non-JSON body must
         // fail cleanly (415), not surface ReadFromJsonAsync's InvalidOperationException

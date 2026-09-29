@@ -88,7 +88,7 @@ public sealed class EventsProtocol
         return _metadata.Policy.ValidateUrl(EventsTokens.RequireText(metadata, "event_endpoint"), endpoint: true);
     }
 
-    public async Task<HttpResponseMessage> SendAsync(HttpMethod method, Uri url, IAAuthKey key,
+    public async Task<HttpResponseMessage> SendAsync(HttpMethod method, Uri url, IAAuthSigner key,
         string jwt, bool selfIssued, byte[]? body = null, CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(method, url) { Content = new ByteArrayContent(body ?? []) };

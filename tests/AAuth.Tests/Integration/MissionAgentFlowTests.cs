@@ -62,7 +62,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row01_MissionApproved_ReturnsActiveMission()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true });
 
         var mission = await ProposeMissionAsync(agent, "row01 research mission");
@@ -75,7 +75,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task MissionNamingResources_ApprovalCarriesPersonTokens()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true });
 
         var mission = await MissionClientFor(agent).ProposeAsync(
@@ -92,7 +92,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row02_MissionDenied_Aborts()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approveMission"] = false });
 
         var proposal = new MissionProposal("row02 rejected mission");
@@ -105,7 +105,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row03_TokenInScope_SilentGrant()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject
         {
             ["reset"] = true,
@@ -122,7 +122,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row04_TokenRepeat_PriorConsentSilentGrant()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approveToken"] = true });
         var mission = await ProposeMissionAsync(agent, "row04 prior-consent mission");
 
@@ -138,7 +138,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row05_TokenOutOfScope_PromptThenIssue()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approveToken"] = true });
         var mission = await ProposeMissionAsync(agent, "row05 out-of-scope approve mission");
 
@@ -157,7 +157,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row06_TokenOutOfScope_PromptThenDeny()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approveToken"] = false });
         var mission = await ProposeMissionAsync(agent, "row06 out-of-scope deny mission");
 
@@ -169,7 +169,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row07_TokenClarification_RoundThenIssue()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject
         {
             ["reset"] = true,
@@ -200,7 +200,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row08_TokenClarification_CancelViaDelete()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject
         {
             ["reset"] = true,
@@ -229,7 +229,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row09_PermissionApprovedTool_SilentGrant()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true });
         var mission = await ProposeMissionAsync(agent, "row09 approved-tool mission", "add_to_calendar");
 
@@ -243,7 +243,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row10_PermissionNonPreApproved_PromptThenGrant()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approvePermission"] = true });
         var mission = await ProposeMissionAsync(agent, "row10 prompt-grant mission", "add_to_calendar");
 
@@ -260,7 +260,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row11_PermissionNonPreApproved_PromptThenDeny()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approvePermission"] = false });
         var mission = await ProposeMissionAsync(agent, "row11 prompt-deny mission", "add_to_calendar");
 
@@ -280,7 +280,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row12_TerminationMidFlow_RejectsWithMissionTerminated()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject
         {
             ["reset"] = true,
@@ -312,11 +312,11 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [InlineData("mission", "terminated")]
     public async Task Governance_SignedInvalidMissionCannotAct(string endpoint, string scenario)
     {
-        var owner = NewAgent();
+        var owner = await NewAgentAsync();
         await ScriptAsync(owner, new JsonObject { ["reset"] = true });
         var mission = await ProposeMissionAsync(owner, "ownership regression", "WebSearch");
         var before = (await ReadLogAsync(mission)).Count;
-        var caller = scenario == "foreign" ? NewAgent("aauth:foreign@ap.example") : owner;
+        var caller = scenario == "foreign" ? await NewAgentAsync("aauth:foreign@ap.example") : owner;
         if (scenario == "terminated")
             await _factory.Services.GetRequiredService<IMissionStore>().SetStateAsync(mission.S256, MissionState.Terminated);
         var s256 = scenario == "unknown" ? Mission.ComputeS256("unknown"u8.ToArray()) : mission.S256;
@@ -343,7 +343,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task PermissionPending_TerminatedMissionCannotReleaseLateApproval()
     {
-        var owner = NewAgent();
+        var owner = await NewAgentAsync();
         await ScriptAsync(owner, new JsonObject { ["reset"] = true });
         var mission = await ProposeMissionAsync(owner, "Late permission approval");
         await ScriptAsync(owner, new JsonObject { ["interactive"] = true });
@@ -365,7 +365,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     public async Task MissionConsent_RendersUntrustedMarkdownAsEncodedText()
     {
         const string untrusted = "<img src=x onerror=alert(1)><script>private()</script> [unsafe](javascript:alert(1))";
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["interactive"] = true });
         using var response = await agent.Signed.PostAsJsonAsync("/mission", new JsonObject { ["description"] = untrusted });
         Assert.Equal(System.Net.HttpStatusCode.Accepted, response.StatusCode);
@@ -388,11 +388,11 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
 
     private sealed record Agent(string AgentId, AAuthKey AgentKey, HttpClient Signed, HttpClient Plain, MetadataClient Metadata);
 
-    private Agent NewAgent(string? agentId = null)
+    private async Task<Agent> NewAgentAsync(string? agentId = null)
     {
         agentId ??= $"aauth:demo@ap.example";
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -401,7 +401,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
             Key = ResourceStub.ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
         var signing = new AAuthSigningHandler(agentKey, () => agentToken)
         {
             InnerHandler = _factory.Server.CreateHandler(),
@@ -447,7 +447,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         });
         var person = PersonTokenFlow.Payload(personToken);
         Assert.Equal(mission.S256, (string?)person["mission_s256"]);
-        var resourceToken = new ResourceTokenBuilder
+        var resourceToken = await new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
             EgressPolicy = TestEgress.Policy,
@@ -461,7 +461,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
             KeyId = ResourceStub.Kid,
             Scope = scope,
             MissionS256 = mission.S256,
-        }.Build();
+        }.BuildAsync();
 
         return await exchange.ExchangeAsync(PsIssuer, resourceToken, new TokenExchangeRequest
         {

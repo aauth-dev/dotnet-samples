@@ -21,14 +21,14 @@ public class SignatureV10AdversarialTests
     [Theory]
     [InlineData("GuidedTour", "http://localhost:5400")]
     [InlineData("SampleApp", "http://localhost:5240")]
-    public void SampleWorkerScenarioUsesHostOnlyAgentDomains(string assemblyName, string provider)
+    public async Task SampleWorkerScenarioUsesHostOnlyAgentDomains(string assemblyName, string provider)
     {
         var type = System.Reflection.Assembly.Load(assemblyName).GetType("AAuth.Samples.FederatedWorkerScenario")!;
         var key = AAuthKey.Generate();
         using var scenario = (IDisposable)Activator.CreateInstance(type, key, "provider-key", provider,
             "http://localhost:5100", "http://localhost:5003")!;
-        type.GetMethod("IssueParent")!.Invoke(scenario, null);
-        type.GetMethod("IssueWorker")!.Invoke(scenario, null);
+        await (Task)type.GetMethod("IssueParentAsync")!.Invoke(scenario, [CancellationToken.None])!;
+        await (Task)type.GetMethod("IssueWorkerAsync")!.Invoke(scenario, [CancellationToken.None])!;
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var parent = verifier.VerifySelfIssuedAgentToken((string)type.GetProperty("ParentToken")!.GetValue(scenario)!, key);
         var worker = verifier.VerifySelfIssuedAgentToken((string)type.GetProperty("WorkerToken")!.GetValue(scenario)!, key);
@@ -46,7 +46,7 @@ public class SignatureV10AdversarialTests
     public async Task DuplicateRawMembersRejectBeforeDiscovery(string member, bool inHeader)
     {
         var key = AAuthKey.Generate();
-        var original = TestTokens.Raw(key, AuthTokenBuilder.TokenType).Split('.');
+        var original = (await TestTokens.RawAsync(key, AuthTokenBuilder.TokenType)).Split('.');
         var header = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Decode(original[0]);
         var payload = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Decode(original[1]);
         var target = inHeader ? header : payload;
@@ -71,7 +71,7 @@ public class SignatureV10AdversarialTests
         {
             Assert.Equal(SignatureErrorCode.InvalidJwt, Assert.Throws<AAuthVerificationException>(() =>
                 SignatureKeyParser.ParseAny($"sig={scheme};jwt=\"{jwt}\"")).Code);
-            var context = Signed(key, $"sig={scheme};jwt=\"{jwt}\"");
+            var context = await SignedAsync(key, $"sig={scheme};jwt=\"{jwt}\"");
             using var activity = new System.Diagnostics.Activity("duplicate-jwt").Start();
             await Middleware(http, AAuthVerificationOptions.Generic(Time)).InvokeAsync(context);
             Assert.Equal(401, context.Response.StatusCode);
@@ -138,7 +138,7 @@ public class SignatureV10AdversarialTests
         Assert.Equal(SignatureErrorCode.InvalidJwt, Assert.Throws<AAuthVerificationException>(() => NamingTokenVerifier.Verify(jwt, Now, TimeSpan.Zero)).Code);
         var discovery = new DuplicateDiscoveryProbe();
         using var http = new InProcessHttpClient(discovery);
-        var context = Signed(confirmation, SignatureKeyHeader.FormatJktJwt(jwt));
+        var context = await SignedAsync(confirmation, SignatureKeyHeader.FormatJktJwt(jwt));
         await Middleware(http, AAuthVerificationOptions.Generic(Time)).InvokeAsync(context);
         Assert.Equal(401, context.Response.StatusCode);
         Assert.Equal("error=invalid_jwt", context.Response.Headers["Signature-Error"].ToString());
@@ -184,11 +184,11 @@ public class SignatureV10AdversarialTests
     public async Task RawMalformedValuesHaveTypedErrorsWithoutTrustedContext(string type, string claim, string json)
     {
         var key = AAuthKey.Generate();
-        var jwt = TestTokens.Raw(key, type, (_, payload) => payload[claim] = JsonNode.Parse(json));
+        var jwt = await TestTokens.RawAsync(key, type, (_, payload) => payload[claim] = JsonNode.Parse(json));
         var verifier = new TokenVerifier { TimeProvider = Time };
         Assert.Equal(SignatureErrorCode.InvalidJwt, Assert.Throws<TokenVerificationException>(() => verifier.Verify(jwt, key, type,
             type == AgentTokenBuilder.TokenType ? AgentTokenBuilder.AgentDwk : AuthTokenBuilder.PersonDwk)).Code);
-        var context = Signed(key, SignatureKeyHeader.FormatJwt(jwt));
+        var context = await SignedAsync(key, SignatureKeyHeader.FormatJwt(jwt));
         using var activity = new System.Diagnostics.Activity("malformed-jwt").Start();
         await Middleware(null).InvokeAsync(context);
         Assert.Equal(401, context.Response.StatusCode);
@@ -205,7 +205,7 @@ public class SignatureV10AdversarialTests
     public async Task RegisteredCustomTypeWithoutOptionalIatOrJtiInvokesItsPolicy(bool allow)
     {
         var key = AAuthKey.Generate();
-        var jwt = TestTokens.Raw(key, AgentTokenBuilder.TokenType, (header, payload) =>
+        var jwt = await TestTokens.RawAsync(key, AgentTokenBuilder.TokenType, (header, payload) =>
         {
             header["typ"] = "custom+jwt";
             payload.Remove("iat");
@@ -213,7 +213,7 @@ public class SignatureV10AdversarialTests
         });
         var custom = new CustomVerifier(allow);
         using var http = new InProcessHttpClient(new Discovery(key, ""));
-        var context = Signed(key, SignatureKeyHeader.FormatJwt(jwt));
+        var context = await SignedAsync(key, SignatureKeyHeader.FormatJwt(jwt));
         var middleware = new AAuthVerificationMiddleware(_ => Task.CompletedTask, new AAuthVerifier { TimeProvider = Time },
             new DefaultSignatureKeyResolver(tokenVerifiers: [custom]), new MetadataClient(http), new JwksClient(http),
             new() { TimeProvider = Time });
@@ -240,11 +240,11 @@ public class SignatureV10AdversarialTests
     [Theory]
     [InlineData("localhost")]
     [InlineData("127.0.0.1")]
-    public void LoopbackAgentClaimsRequireExplicitDevelopmentPolicy(string host)
+    public async Task LoopbackAgentClaimsRequireExplicitDevelopmentPolicy(string host)
     {
         var key = AAuthKey.Generate();
         var issuer = "http://" + host + ":5010";
-        var jwt = TestTokens.Raw(key, AgentTokenBuilder.TokenType, (_, payload) =>
+        var jwt = await TestTokens.RawAsync(key, AgentTokenBuilder.TokenType, (_, payload) =>
         {
             payload["iss"] = issuer;
             payload["sub"] = "aauth:wire@" + host;
@@ -262,8 +262,8 @@ public class SignatureV10AdversarialTests
     public async Task RawMandatoryClaimsNeverCreateTrustedContext(string type, string claim, string mutation)
     {
         var key = AAuthKey.Generate();
-        var jwt = TestTokens.Raw(key, type, (header, payload) => TestTokens.Mutate(header, payload, claim, mutation));
-        var context = Signed(key, SignatureKeyHeader.FormatJwt(jwt));
+        var jwt = await TestTokens.RawAsync(key, type, (header, payload) => TestTokens.Mutate(header, payload, claim, mutation));
+        var context = await SignedAsync(key, SignatureKeyHeader.FormatJwt(jwt));
         await Middleware(null, new() { TimeProvider = Time, ResourceIdentifier = "https://resource.example" }).InvokeAsync(context);
         Assert.Equal(401, context.Response.StatusCode);
         Assert.Equal("error=invalid_jwt", context.Response.Headers["Signature-Error"].ToString());
@@ -299,9 +299,9 @@ public class SignatureV10AdversarialTests
         if (mutation == "numeric-jti") payload["jti"] = 123;
         if (mutation is "missing-alg" or "forged-invalid-cnf") confirmation.Remove("alg");
         if (mutation == "private-cnf") payload["cnf"] = new JsonObject { ["jwk"] = key.ToPrivateJwk() };
-        var jwt = SignatureV10WireTests.Jwt(header, payload, mutation.StartsWith("forged") ? AAuthKey.Generate() : issuerKey);
+        var jwt = await SignatureV10WireTests.JwtAsync(header, payload, mutation.StartsWith("forged") ? AAuthKey.Generate() : issuerKey);
         using var http = new InProcessHttpClient(new Discovery(issuerKey, mutation));
-        var context = Signed(key, "sig=jwt;jwt=\"" + jwt + "\"");
+        var context = await SignedAsync(key, "sig=jwt;jwt=\"" + jwt + "\"");
         await Middleware(http).InvokeAsync(context);
         Assert.Equal(401, context.Response.StatusCode);
         Assert.Equal("error=" + expectedError, context.Response.Headers["Signature-Error"].ToString());
@@ -316,7 +316,7 @@ public class SignatureV10AdversarialTests
     public async Task UnknownSchemeNegotiatesAccordingToProfile(bool generic, int status)
     {
         var key = AAuthKey.Generate();
-        var context = Signed(key, "sig=unregistered;flag");
+        var context = await SignedAsync(key, "sig=unregistered;flag");
         await Middleware(null, new() { GenericSignatureKeys = generic, TimeProvider = Time }).InvokeAsync(context);
         Assert.Equal(status, context.Response.StatusCode);
         Assert.Equal("error=unsupported_scheme", context.Response.Headers["Signature-Error"].ToString());
@@ -327,7 +327,7 @@ public class SignatureV10AdversarialTests
     public async Task AuthorizationDenialHasNoSignatureHeaders()
     {
         var key = AAuthKey.Generate();
-        var context = Signed(key, SignatureKeyHeader.FormatHwk(key));
+        var context = await SignedAsync(key, SignatureKeyHeader.FormatHwk(key));
         await Middleware(null, AAuthVerificationOptions.Generic(Time), deny: true).InvokeAsync(context);
         Assert.Equal(403, context.Response.StatusCode);
         Assert.False(context.Response.Headers.ContainsKey("Signature-Error"));
@@ -336,10 +336,10 @@ public class SignatureV10AdversarialTests
     }
 
     [Fact]
-    public void ConflictingKeyIdFails()
+    public async Task ConflictingKeyIdFails()
     {
         var key = AAuthKey.Generate();
-        var context = Signed(key, SignatureKeyHeader.FormatHwk(key), ";keyid=\"wrong\"");
+        var context = await SignedAsync(key, SignatureKeyHeader.FormatHwk(key), ";keyid=\"wrong\"");
         var failure = Assert.Throws<AAuthVerificationException>(() => new AAuthVerifier { TimeProvider = Time }.Verify("POST", "resource.example", "/wire",
             context.Request.Headers["Signature-Key"]!, context.Request.Headers["Signature-Input"]!, context.Request.Headers["Signature"]!, key));
         Assert.Equal(SignatureErrorCode.InvalidKey, failure.Code);
@@ -350,7 +350,7 @@ public class SignatureV10AdversarialTests
     [InlineData("iat")]
     [InlineData("future-iat")]
     [InlineData("alg")]
-    public void NamingJwtRequiresClaimsAndCorrectAlgorithm(string mutation)
+    public async Task NamingJwtRequiresClaimsAndCorrectAlgorithm(string mutation)
     {
         var durable = EcdsaAAuthKey.Generate();
         var key = AAuthKey.Generate();
@@ -360,17 +360,17 @@ public class SignatureV10AdversarialTests
         if (mutation == "future-iat") payload["iat"] = Now.AddMinutes(1).ToUnixTimeSeconds();
         else if (mutation == "alg") header["alg"] = "Ed25519";
         else payload.Remove(mutation);
-        var jwt = SignatureV10WireTests.Jwt(header, payload, durable);
+        var jwt = await SignatureV10WireTests.JwtAsync(header, payload, durable);
         // A future iat beyond the window is clock skew, not a malformed token.
         Assert.Equal(mutation == "future-iat" ? SignatureErrorCode.ClockSkew : SignatureErrorCode.InvalidJwt,
             Assert.Throws<AAuthVerificationException>(() => NamingTokenVerifier.Verify(jwt, Now, TimeSpan.Zero)).Code);
     }
 
     [Fact]
-    public void SelfJwtForbidsEvenNullConfirmation()
+    public async Task SelfJwtForbidsEvenNullConfirmation()
     {
         var key = AAuthKey.Generate();
-        var jwt = SignatureV10WireTests.Jwt(new JsonObject { ["alg"] = "Ed25519" }, new JsonObject { ["cnf"] = null }, key);
+        var jwt = await SignatureV10WireTests.JwtAsync(new JsonObject { ["alg"] = "Ed25519" }, new JsonObject { ["cnf"] = null }, key);
         Assert.Equal(SignatureErrorCode.InvalidJwt, Assert.Throws<AAuthVerificationException>(() =>
             SignatureKeyParser.ParseAny("sig=self-jwt;jwt=\"" + jwt + "\"")).Code);
     }
@@ -386,7 +386,7 @@ public class SignatureV10AdversarialTests
         var digest = "sha-256=:" + Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(body))) + ":";
         var parameters = "(\"@method\" \"@authority\" \"@path\" \"signature-key\" \"content-digest\");created=1800000000";
         var signatureBase = $"\"@method\": POST\n\"@authority\": resource.example\n\"@path\": /wire\n\"signature-key\": {carrier}\n\"content-digest\": {digest}\n\"@signature-params\": {parameters}";
-        var context = Signed(key, carrier);
+        var context = await SignedAsync(key, carrier);
         context.Request.Headers["Content-Digest"] = digest;
         context.Request.Headers["Signature-Input"] = "sig=" + parameters;
         context.Request.Headers["Signature"] = "sig=:" + Convert.ToBase64String(key.Sign(Encoding.ASCII.GetBytes(signatureBase))) + ":";
@@ -401,7 +401,7 @@ public class SignatureV10AdversarialTests
     {
         var key = AAuthKey.Generate();
         var carrier = "ignored=unknown, " + SignatureKeyHeader.FormatHwk(key);
-        var context = Signed(key, carrier);
+        var context = await SignedAsync(key, carrier);
         context.Request.Headers["Signature-Key"] = new Microsoft.Extensions.Primitives.StringValues(["ignored=unknown", SignatureKeyHeader.FormatHwk(key)]);
         context.Request.Headers.Append("Signature-Input", "ignored=(\"@method\");created=1");
         context.Request.Headers.Append("Signature", "ignored=:AQID:");
@@ -451,7 +451,7 @@ public class SignatureV10AdversarialTests
     public async Task UnexpectedResolverDefectsAreNotAuthenticationFailures()
     {
         var key = AAuthKey.Generate();
-        var context = Signed(key, SignatureKeyHeader.FormatHwk(key));
+        var context = await SignedAsync(key, SignatureKeyHeader.FormatHwk(key));
         var middleware = new AAuthVerificationMiddleware(_ => Task.CompletedTask,
             new AAuthVerifier { TimeProvider = Time }, new BrokenResolver(), null, null, AAuthVerificationOptions.Generic(Time));
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => middleware.InvokeAsync(context));
@@ -465,7 +465,7 @@ public class SignatureV10AdversarialTests
             throw new InvalidOperationException("Programming defect");
     }
 
-    private static DefaultHttpContext Signed(IAAuthKey key, string carrier, string extra = "")
+    private static async Task<DefaultHttpContext> SignedAsync(IAAuthSigner key, string carrier, string extra = "")
     {
         var context = new DefaultHttpContext();
         context.Request.Method = "POST"; context.Request.Host = new HostString("resource.example"); context.Request.Path = "/wire";
@@ -473,7 +473,7 @@ public class SignatureV10AdversarialTests
         var signatureBase = "\"@method\": POST\n\"@authority\": resource.example\n\"@path\": /wire\n\"signature-key\": " + carrier + "\n\"@signature-params\": " + parameters;
         context.Request.Headers["Signature-Key"] = carrier;
         context.Request.Headers["Signature-Input"] = "sig=" + parameters;
-        context.Request.Headers["Signature"] = "sig=:" + Convert.ToBase64String(key.Sign(Encoding.ASCII.GetBytes(signatureBase))) + ":";
+        context.Request.Headers["Signature"] = "sig=:" + Convert.ToBase64String(await key.SignAsync(Encoding.ASCII.GetBytes(signatureBase))) + ":";
         return context;
     }
 

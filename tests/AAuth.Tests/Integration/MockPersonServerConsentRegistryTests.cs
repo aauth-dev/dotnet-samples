@@ -136,7 +136,7 @@ public class MockPersonServerConsentRegistryTests : IClassFixture<MockPersonServ
     {
         var agentKey = AAuthKey.Generate();
         var agentId = "aauth:registry-" + System.Guid.NewGuid().ToString("N") + "@ap.example";
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -145,7 +145,7 @@ public class MockPersonServerConsentRegistryTests : IClassFixture<MockPersonServ
             Key = ResourceStub.ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
         var agent = new InProcessHttpClient(new AAuthSigningHandler(agentKey, () => agentToken)
         {
             InnerHandler = _factory.Server.CreateHandler(),

@@ -36,9 +36,9 @@ public class CallChainingTests
         var metadataClient = new MetadataClient(new InProcessHttpClient(new MockMetadataHandler()));
         var exchangeClient = new TokenExchangeClient(httpClient, metadataClient);
 
-        var resourceToken = BuildResourceToken();
-        var presentedToken = BuildPersonToken(psKey, agentKey, "http://localhost:5555");
-        var upstreamToken = BuildAuthToken(psKey, agentKey, "http://localhost:5555", "http://localhost:5555");
+        var resourceToken = await BuildResourceTokenAsync();
+        var presentedToken = await BuildPersonTokenAsync(psKey, agentKey, "http://localhost:5555");
+        var upstreamToken = await BuildAuthTokenAsync(psKey, agentKey, "http://localhost:5555", "http://localhost:5555");
 
         await Assert.ThrowsAsync<TokenVerificationException>(() => exchangeClient.ExchangeAsync(
             "http://localhost:5555",
@@ -65,10 +65,10 @@ public class CallChainingTests
         var metadataClient = new MetadataClient(new InProcessHttpClient(new MockMetadataHandler()));
         var exchangeClient = new TokenExchangeClient(httpClient, metadataClient);
 
-        await Assert.ThrowsAsync<TokenVerificationException>(() => exchangeClient.ExchangeAsync(
+        await Assert.ThrowsAsync<TokenVerificationException>(async () => await exchangeClient.ExchangeAsync(
             "http://localhost:5555",
-            BuildResourceToken(),
-            BuildPersonToken(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5555")));
+            await BuildResourceTokenAsync(),
+            await BuildPersonTokenAsync(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5555")));
 
         Assert.NotNull(capturedBody);
         Assert.Null(capturedBody!["upstream_token"]);
@@ -83,15 +83,15 @@ public class CallChainingTests
         var httpClient = new InProcessHttpClient(handler) { BaseAddress = new Uri("http://localhost:5555") };
         var exchangeClient = new TokenExchangeClient(httpClient, new MetadataClient(new InProcessHttpClient(new MockMetadataHandler())));
 
-        await Assert.ThrowsAsync<ArgumentException>(() => exchangeClient.ExchangeAsync(
-            "http://localhost:5555", BuildResourceToken(), new TokenExchangeRequest()));
+        await Assert.ThrowsAsync<ArgumentException>(async () => await exchangeClient.ExchangeAsync(
+            "http://localhost:5555", await BuildResourceTokenAsync(), new TokenExchangeRequest()));
         Assert.False(called);
     }
 
     [Fact(DisplayName = "§CallChaining — an auth token carries no act delegation chain")]
-    public void AuthTokenBuilderEmitsNoAct()
+    public async Task AuthTokenBuilderEmitsNoAct()
     {
-        var payload = DecodePayload(BuildAuthToken(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5555", "http://localhost:5555"));
+        var payload = DecodePayload(await BuildAuthTokenAsync(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5555", "http://localhost:5555"));
         Assert.Null(payload["act"]);
         Assert.Null(payload["agent"]);
     }
@@ -99,18 +99,18 @@ public class CallChainingTests
     // ── Routing Logic ───────────────────────────────────────────────────────
 
     [Fact(DisplayName = "§CallChaining — an upstream auth token routes to its ps, not its iss")]
-    public void RoutesToAuthTokenPersonServer()
+    public async Task RoutesToAuthTokenPersonServer()
     {
-        var token = BuildAuthToken(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5300", "http://localhost:8888");
+        var token = await BuildAuthTokenAsync(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5300", "http://localhost:8888");
 
         var server = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
         Assert.Equal("http://localhost:8888", server);
     }
 
     [Fact(DisplayName = "§CallChaining — an upstream person token routes to its iss")]
-    public void RoutesToPersonTokenIssuer()
+    public async Task RoutesToPersonTokenIssuer()
     {
-        var token = BuildPersonToken(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5555");
+        var token = await BuildPersonTokenAsync(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5555");
 
         var server = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
         Assert.Equal("http://localhost:5555", server);
@@ -149,12 +149,12 @@ public class CallChainingTests
     // ── AuthTokenBuilder uses Key.Algorithm ─────────────────────────────────
 
     [Fact(DisplayName = "§CallChaining — AuthTokenBuilder uses Key.Algorithm (ES256)")]
-    public void AuthTokenBuilderUsesKeyAlgorithm()
+    public async Task AuthTokenBuilderUsesKeyAlgorithm()
     {
         var ecKey = EcdsaAAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
 
-        var token = new AuthTokenBuilder
+        var token = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -166,7 +166,7 @@ public class CallChainingTests
             KeyId = "ec-1",
             Subject = "user-1",
             Scope = "read",
-        }.Build();
+        }.BuildAsync();
 
         var header = DecodeHeader(token);
         Assert.Equal("ES256", (string?)header["alg"]);
@@ -178,11 +178,11 @@ public class CallChainingTests
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
-    private static string BuildResourceToken()
+    private static async Task<string> BuildResourceTokenAsync()
     {
         var key = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        return new ResourceTokenBuilder
+        return await new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
             EgressPolicy = TestEgress.Policy,
@@ -195,10 +195,10 @@ public class CallChainingTests
             Key = key,
             KeyId = "res-1",
             Scope = "read",
-        }.Build();
+        }.BuildAsync();
     }
 
-    private static string BuildPersonToken(AAuthKey psKey, AAuthKey agentKey, string issuer) => new PersonTokenBuilder
+    private static ValueTask<string> BuildPersonTokenAsync(AAuthKey psKey, AAuthKey agentKey, string issuer) => new PersonTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = issuer,
@@ -208,11 +208,11 @@ public class CallChainingTests
         AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
         Key = psKey,
         KeyId = "ps-1",
-    }.Build();
+    }.BuildAsync();
 
-    private static string BuildAuthToken(AAuthKey key, AAuthKey agentKey, string issuer, string personServer)
+    private static async Task<string> BuildAuthTokenAsync(AAuthKey key, AAuthKey agentKey, string issuer, string personServer)
     {
-        return new AuthTokenBuilder
+        return await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -225,7 +225,7 @@ public class CallChainingTests
             KeyId = "ps-1",
             Subject = "user-1",
             Scope = "read",
-        }.Build();
+        }.BuildAsync();
     }
 
     private static string EncodeUnsignedJwt(JsonObject header, JsonObject payload)

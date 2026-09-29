@@ -23,8 +23,8 @@ public class SignatureV10WireTests
     [MemberData(nameof(Schemes))]
     public async Task IndependentWireVerifiesAllSchemesAndAlgorithms(string scheme, bool ecdsa)
     {
-        IAAuthKey key = ecdsa ? EcdsaAAuthKey.Generate() : AAuthKey.Generate();
-        IAAuthKey issuerKey = ecdsa ? AAuthKey.Generate() : EcdsaAAuthKey.Generate();
+        IAAuthSigner key = ecdsa ? EcdsaAAuthKey.Generate() : AAuthKey.Generate();
+        IAAuthSigner issuerKey = ecdsa ? AAuthKey.Generate() : EcdsaAAuthKey.Generate();
         var jwk = key.ToPublicJwk();
         var issuer = "https://issuer.example";
         var payload = new JsonObject { ["iss"] = issuer, ["dwk"] = "aauth-agent.json", ["sub"] = "aauth:wire@issuer.example", ["jti"] = "token-id",
@@ -53,7 +53,7 @@ public class SignatureV10WireTests
                     header["alg"] = key.Algorithm;
                 }
                 else payload["cnf"] = new JsonObject { ["jwk"] = jwk };
-                wire = $"chosen={scheme};jwt=\"{Jwt(header, payload, issuerKey)}\"";
+                wire = $"chosen={scheme};jwt=\"{await JwtAsync(header, payload, issuerKey)}\"";
                 break;
         }
         wire = "ignored=unregistered;flag, " + wire;
@@ -64,7 +64,7 @@ public class SignatureV10WireTests
         var resolution = await resolver.ResolveAsync(SignatureKeyParser.ParseAny(wire, "chosen"));
         var parameters = "(\"@path\" \"content-type\" \"@method\" \"signature-key\" \"@authority\");created=1800000000;expires=1800000010;nonce=\"a\\\"b\\\\c\";alg=\"ignored\"";
         var signatureBase = $"\"@path\": /wire%2Fpath\n\"content-type\": application/json\n\"@method\": POST\n\"signature-key\": {wire}\n\"@authority\": resource.example\n\"@signature-params\": {parameters}";
-        var signature = key.Sign(Encoding.ASCII.GetBytes(signatureBase));
+        var signature = await key.SignAsync(Encoding.ASCII.GetBytes(signatureBase));
         new AAuthVerifier { TimeProvider = Time }.Verify("POST", "resource.example", "/wire%2Fpath", wire,
             "ignored=(\"@method\");created=1, chosen=" + parameters,
             "ignored=:AQID:, chosen=:" + Convert.ToBase64String(signature) + ":", resolution.PublicKey,
@@ -109,10 +109,10 @@ public class SignatureV10WireTests
         new AAuthVerifier { TimeProvider = Time }.ValidateInput(input, "sig");
     }
 
-    internal static string Jwt(JsonObject header, JsonObject payload, IAAuthKey key)
+    internal static async Task<string> JwtAsync(JsonObject header, JsonObject payload, IAAuthSigner key)
     {
         var input = Base64UrlEncoder.Encode(header.ToJsonString()) + "." + Base64UrlEncoder.Encode(payload.ToJsonString());
-        return input + "." + Base64UrlEncoder.Encode(key.Sign(Encoding.ASCII.GetBytes(input)));
+        return input + "." + Base64UrlEncoder.Encode(await key.SignAsync(Encoding.ASCII.GetBytes(input)));
     }
 
     [Theory]
@@ -120,13 +120,13 @@ public class SignatureV10WireTests
     [InlineData(true)]
     public async Task TwoRealSignaturesBindTheCompleteKeyDictionary(bool sameKey)
     {
-        IAAuthKey first = AAuthKey.Generate();
-        IAAuthKey second = sameKey ? first : EcdsaAAuthKey.Generate();
+        IAAuthSigner first = AAuthKey.Generate();
+        IAAuthSigner second = sameKey ? first : EcdsaAAuthKey.Generate();
         var carrier = SignatureKeyHeader.FormatHwk(first, "first") + ", " + SignatureKeyHeader.FormatHwk(second, "second");
         var parameters = "(\"@method\" \"@authority\" \"@path\" \"signature-key\");created=1800000000";
         var signatureBase = $"\"@method\": GET\n\"@authority\": resource.example\n\"@path\": /wire\n\"signature-key\": {carrier}\n\"@signature-params\": {parameters}";
-        var signatures = "first=:" + Convert.ToBase64String(first.Sign(Encoding.ASCII.GetBytes(signatureBase)))
-            + ":, second=:" + Convert.ToBase64String(second.Sign(Encoding.ASCII.GetBytes(signatureBase))) + ":";
+        var signatures = "first=:" + Convert.ToBase64String(await first.SignAsync(Encoding.ASCII.GetBytes(signatureBase)))
+            + ":, second=:" + Convert.ToBase64String(await second.SignAsync(Encoding.ASCII.GetBytes(signatureBase))) + ":";
         var inputs = "first=" + parameters + ", second=" + parameters;
         var verifier = new AAuthVerifier { TimeProvider = Time };
         var firstIdentity = verifier.Verify("GET", "resource.example", "/wire", carrier, inputs, signatures, first, label: "first");

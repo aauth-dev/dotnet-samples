@@ -20,7 +20,7 @@ public class SubscribeTokenTests
     [InlineData("http://127.0.0.1:5301", "aauth:victim@127.0.0.1", true)]
     [InlineData("http://127.0.0.1:5301", "aauth:victim@localhost", false)]
     [InlineData("http://127.0.0.1:5301", "aauth:victim@ap.example", false)]
-    public void SubscribeIssuerMustOwnAgentDomain(string issuer, string subject, bool valid)
+    public async Task SubscribeIssuerMustOwnAgentDomain(string issuer, string subject, bool valid)
     {
         var key = AAuthKey.Generate();
         var payload = Payload(key);
@@ -28,8 +28,9 @@ public class SubscribeTokenTests
         payload["sub"] = subject;
         var verifier = new TokenVerifier { TimeProvider = new FakeTimeProvider(Now),
             EgressPolicy = new AAuth.Discovery.AAuthEgressPolicy(["http://127.0.0.1:5301"]) };
-        if (valid) EventsTokens.Verify(Sign(key, payload), key, true, verifier);
-        else Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(Sign(key, payload), key, true, verifier));
+        var jwt = await SignAsync(key, payload);
+        if (valid) EventsTokens.Verify(jwt, key, true, verifier);
+        else Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(jwt, key, true, verifier));
     }
 
     [Theory]
@@ -47,12 +48,13 @@ public class SubscribeTokenTests
     [InlineData("cnf", "null")]
     [InlineData("dwk", "\"aauth-resource.json\"")]
     [InlineData("iss", "\"not-a-url\"")]
-    public void InvalidSubscribeClaimsFail(string name, string json)
+    public async Task InvalidSubscribeClaimsFail(string name, string json)
     {
         var key = AAuthKey.Generate();
         var payload = Payload(key);
         payload[name] = JsonNode.Parse(json);
-        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(Sign(key, payload), key, true, Verifier));
+        var jwt = await SignAsync(key, payload);
+        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(jwt, key, true, Verifier));
     }
 
     [Theory]
@@ -64,28 +66,29 @@ public class SubscribeTokenTests
     [InlineData("cnf")]
     [InlineData("dwk")]
     [InlineData("iss")]
-    public void MissingRequiredClaimFails(string claim)
+    public async Task MissingRequiredClaimFails(string claim)
     {
         var key = AAuthKey.Generate();
         var payload = Payload(key); payload.Remove(claim);
-        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(Sign(key, payload), key, true, Verifier));
+        var jwt = await SignAsync(key, payload);
+        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(jwt, key, true, Verifier));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void BothAlgorithmsSupportBoundedAndUnlimitedWithoutJti(bool ecdsa)
+    public async Task BothAlgorithmsSupportBoundedAndUnlimitedWithoutJti(bool ecdsa)
     {
-        IAAuthKey key = ecdsa ? EcdsaAAuthKey.Generate() : AAuthKey.Generate();
-        var jwt = new SubscribeTokenBuilder { Issuer = "https://ap.example", Subject = "aauth:agent@ap.example",
-            Audience = "https://resource.example", Eid = "eid", Key = key, KeyId = "key", ConfirmationKey = key, Verifier = Verifier }.Build();
+        IAAuthSigner key = ecdsa ? EcdsaAAuthKey.Generate() : AAuthKey.Generate();
+        var jwt = await new SubscribeTokenBuilder { Issuer = "https://ap.example", Subject = "aauth:agent@ap.example",
+            Audience = "https://resource.example", Eid = "eid", Key = key, KeyId = "key", ConfirmationKey = key, Verifier = Verifier }.BuildAsync();
         var verified = EventsTokens.Verify(jwt, key, true, Verifier, "https://resource.example");
         Assert.False(verified.Payload.ContainsKey("max_uses"));
         Assert.False(verified.Payload.ContainsKey("jti"));
         var payload = Payload(key); payload["max_uses"] = 2; payload["jti"] = "optional";
-        Assert.Equal(2, EventsTokens.Verify(Sign(key, payload), key, true, Verifier).Payload["max_uses"]!.GetValue<int>());
-        var eventJwt = new EventTokenBuilder { Issuer = "https://resource.example", Audience = "aauth:agent@ap.example", Eid = "eid",
-            Key = key, KeyId = "key", Verifier = Verifier }.Build();
+        Assert.Equal(2, EventsTokens.Verify(await SignAsync(key, payload), key, true, Verifier).Payload["max_uses"]!.GetValue<int>());
+        var eventJwt = await new EventTokenBuilder { Issuer = "https://resource.example", Audience = "aauth:agent@ap.example", Eid = "eid",
+            Key = key, KeyId = "key", Verifier = Verifier }.BuildAsync();
         Assert.Equal(EventsTokens.EventType, EventsTokens.Verify(eventJwt, key, false, Verifier).TokenType);
     }
 
@@ -93,21 +96,23 @@ public class SubscribeTokenTests
     [InlineData("EdDSA")]
     [InlineData("none")]
     [InlineData("")]
-    public void ConfirmationKeyRequiresCurrentPublicAlgorithm(string algorithm)
+    public async Task ConfirmationKeyRequiresCurrentPublicAlgorithm(string algorithm)
     {
         var key = AAuthKey.Generate(); var payload = Payload(key);
         payload["cnf"]!["jwk"]!["alg"] = algorithm;
-        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(Sign(key, payload), key, true, Verifier));
+        var jwt = await SignAsync(key, payload);
+        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(jwt, key, true, Verifier));
     }
 
     [Theory]
     [InlineData("exp", -1)]
     [InlineData("iat", 60)]
-    public void ExpiredOrFutureSubscribeFails(string claim, int offset)
+    public async Task ExpiredOrFutureSubscribeFails(string claim, int offset)
     {
         var key = AAuthKey.Generate(); var payload = Payload(key);
         payload[claim] = Now.AddSeconds(offset).ToUnixTimeSeconds();
-        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(Sign(key, payload), key, true, Verifier));
+        var jwt = await SignAsync(key, payload);
+        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(jwt, key, true, Verifier));
     }
 
     private static JsonObject Payload(IAAuthKey key) => new()
@@ -117,10 +122,10 @@ public class SubscribeTokenTests
         ["iat"] = Now.ToUnixTimeSeconds(), ["exp"] = Now.AddMinutes(5).ToUnixTimeSeconds()
     };
 
-    private static string Sign(IAAuthKey key, JsonObject payload)
+    private static async Task<string> SignAsync(IAAuthSigner key, JsonObject payload)
     {
         var header = new JsonObject { ["alg"] = key.Algorithm, ["typ"] = EventsTokens.SubscribeType, ["kid"] = "key" };
         var input = Base64UrlEncoder.Encode(header.ToJsonString()) + "." + Base64UrlEncoder.Encode(payload.ToJsonString());
-        return input + "." + Base64UrlEncoder.Encode(key.Sign(Encoding.ASCII.GetBytes(input)));
+        return input + "." + Base64UrlEncoder.Encode(await key.SignAsync(Encoding.ASCII.GetBytes(input)));
     }
 }

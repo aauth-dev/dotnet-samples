@@ -34,11 +34,11 @@ public class ReusableChainingTests
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         const string agentId = "aauth:intermediary@ap.test";
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = egress, Issuer = origin, Subject = agentId, Key = issuerKey, KeyId = "key",
             ConfirmationKey = agentKey, PersonServer = origin,
-        }.Build();
+        }.BuildAsync();
         var asserter = new Asserter();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseKestrel().UseUrls(origin);
@@ -54,14 +54,14 @@ public class ReusableChainingTests
         await using var app = builder.Build();
         app.MapAAuthPersonServer(new AAuthPersonServerOptions
         {
-            Issuer = origin, EgressPolicy = egress, SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = issuerKey },
+            Issuer = origin, EgressPolicy = egress, SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey },
             UnsignedPathPrefixes = ["/data"],
         });
         foreach (var dwk in new[] { AAuthConstants.DwkFiles.Agent, AAuthConstants.DwkFiles.Resource })
             app.MapGet("/.well-known/" + dwk, () => Results.Json(new { issuer = origin, jwks_uri = origin + "/.well-known/jwks.json" }));
         const string mission = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         var challenges = 0;
-        app.MapGet("/data", (HttpContext context) =>
+        app.MapGet("/data", async (HttpContext context) =>
         {
             var parsed = SignatureKeyParser.Parse(context.Request.Headers["Signature-Key"]!);
             var typ = (string?)parsed.Header?["typ"];
@@ -75,14 +75,14 @@ public class ReusableChainingTests
             // §Resource Token Structure: name the presented person token.
             challenges++;
             var person = parsed.Payload!;
-            var resource = new ResourceTokenBuilder
+            var resource = await new ResourceTokenBuilder
             {
                 EgressPolicy = egress, Issuer = origin, Audience = origin,
                 PersonServer = (string)person["iss"]!, Subject = (string)person["sub"]!, PresentedJti = (string)person["jti"]!,
                 MissionS256 = (string?)person["mission_s256"],
                 AgentJkt = agentKey.ComputeJwkThumbprint(), Key = issuerKey, KeyId = "key",
                 Scope = "read", ScopeDescriptions = TestScopeDefinitions.Resource,
-            }.Build();
+            }.BuildAsync();
             context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatAuthToken(resource);
             return Results.StatusCode(401);
         });
@@ -90,7 +90,7 @@ public class ReusableChainingTests
         await app.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
             mission, origin, "aauth:caller-a@origin.test", ReadOnlyMemory<byte>.Empty));
         var callerKey = AAuthKey.Generate();
-        string Upstream(bool second) => new AuthTokenBuilder
+        ValueTask<string> UpstreamAsync(bool second) => new AuthTokenBuilder
         {
             EgressPolicy = egress, Issuer = origin, Audience = origin, PersonServer = origin, Key = issuerKey, KeyId = "key",
             Subject = second && changed == "subject" ? "person-b" : "person-a",
@@ -98,15 +98,15 @@ public class ReusableChainingTests
             MissionS256 = second && changed == "mission" ? mission : null,
             AgentConfirmationKey = second && changed == "key" ? AAuthKey.Generate() : callerKey,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
-        }.Build();
-        var current = Upstream(false);
+        }.BuildAsync();
+        var current = await UpstreamAsync(false);
         using var client = new AAuthClientBuilder(agentKey).UseJwt(agentToken).WithCallChaining(() => current)
             .WithEgressPolicy(egress).Build();
         var first = await client.GetStringAsync(origin + "/data");
         Assert.Equal(first, await client.GetStringAsync(origin + "/data"));
         Assert.Equal(1, challenges);
         Assert.Equal(2, asserter.Calls);
-        current = Upstream(true);
+        current = await UpstreamAsync(true);
         var second = await client.GetStringAsync(origin + "/data");
         Assert.Equal(2, challenges);
         Assert.NotEqual(first, second);

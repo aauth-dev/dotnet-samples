@@ -26,13 +26,14 @@ namespace AAuth.Conformance.ResourceTokens;
 public sealed class HeldInvocationTests
 {
     private static readonly AAuthKey AgentKey = AAuthKey.Generate();
+    // Static field initializer cannot await; local key signing completes synchronously.
     private static readonly string ResourceToken = new ResourceTokenBuilder
     {
         Issuer = "https://resource.example", Audience = "https://ps.example", PersonServer = "https://ps.example",
         Subject = "person-1", PresentedJti = "person-jti", AgentJkt = AgentKey.ComputeJwkThumbprint(),
         Key = AgentKey, KeyId = "resource-key", Scope = "orders.write",
         ScopeDescriptions = new Dictionary<string, string> { ["orders.write"] = "Place orders" },
-    }.Build();
+    }.BuildAsync().AsTask().GetAwaiter().GetResult();
 
     private sealed class Clock : TimeProvider
     {

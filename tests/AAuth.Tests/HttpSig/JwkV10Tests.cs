@@ -11,13 +11,13 @@ public class JwkV10Tests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void ExportImportRetainsAlgorithmCryptoAndRfc7638Thumbprint(bool ecdsa)
+    public async Task ExportImportRetainsAlgorithmCryptoAndRfc7638Thumbprint(bool ecdsa)
     {
-        IAAuthKey original = ecdsa ? EcdsaAAuthKey.Generate() : AAuthKey.Generate();
+        IAAuthExportableKey original = ecdsa ? EcdsaAAuthKey.Generate() : AAuthKey.Generate();
         var jwk = original.ToPublicJwk();
         Assert.Equal(ecdsa ? "ES256" : "Ed25519", (string?)jwk["alg"]);
         var imported = KeyFactory.FromPublicJwk(jwk);
-        Assert.True(imported.Verify("wire"u8.ToArray(), original.Sign("wire"u8.ToArray())));
+        Assert.True(imported.Verify("wire"u8.ToArray(), await original.SignAsync("wire"u8.ToArray())));
         var canonical = ecdsa
             ? $"{{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"{jwk["x"]}\",\"y\":\"{jwk["y"]}\"}}"
             : $"{{\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":\"{jwk["x"]}\"}}";

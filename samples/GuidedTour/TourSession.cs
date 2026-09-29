@@ -851,7 +851,8 @@ public sealed partial class TourSession : IAsyncDisposable
                     .WithInnerHandler(inner, AAuth.Discovery.AAuthTransportContract.EnforcesEgressPolicy);
                 if (onSignatureBase is not null)
                     builder.OnSignatureBase(onSignatureBase);
-                builder.UseJktJwt(() => NamingJwtBuilder.Build(_agentKey!, _ephemeralKey));
+                // UseJktJwt takes a sync factory; the local durable key signs synchronously.
+                builder.UseJktJwt(() => NamingJwtBuilder.BuildAsync(_agentKey!, _ephemeralKey).AsTask().GetAwaiter().GetResult());
                 return builder.BuildHandler();
             default:
                 builder.UseJwt(tokenFactory);
@@ -1237,7 +1238,7 @@ public sealed partial class TourSession : IAsyncDisposable
             var personServer = IsIdentityMode || IsResourceManagedMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
                 ? null
                 : _options.PersonServerUrl;
-            _agentToken = new AgentTokenBuilder
+            _agentToken = await new AgentTokenBuilder
             {
                 EgressPolicy = SampleEgress.Policy,
                 Issuer = _selfIdentity.Issuer,
@@ -1245,7 +1246,7 @@ public sealed partial class TourSession : IAsyncDisposable
                 KeyId = _selfIdentity.KeyId,
                 Key = _selfIdentity.Key,
                 PersonServer = personServer,
-            }.Build();
+            }.BuildAsync(ct);
 
             // Autonomous mode simulates "standing consent" — pre-register
             // consent at the Mock Person Server so POST /token returns 200
@@ -1263,19 +1264,19 @@ public sealed partial class TourSession : IAsyncDisposable
 
     /// <summary>
     /// Re-mints <see cref="_agentToken"/> (the <see cref="AgentTokenBuilder"/>
-    /// also generates a fresh `jti` on each <c>Build()</c>). This models a real
+    /// also generates a fresh `jti` on each <c>BuildAsync()</c>). This models a real
     /// agent rotating its short-lived agent token per access. Token reuse is
     /// itself fine — the resource enforces replay detection per <em>signed
     /// request</em> (keyed on the signature, not the token), so one long-lived
     /// token can serve many distinct requests; only a captured signature
     /// replayed verbatim is rejected (spec §Freshness and Replay).
     /// </summary>
-    private void RefreshAgentToken()
+    private async Task RefreshAgentTokenAsync(CancellationToken ct)
     {
         var personServer = IsIdentityMode || IsResourceManagedMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
             ? null
             : _options.PersonServerUrl;
-        _agentToken = new AgentTokenBuilder
+        _agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = SampleEgress.Policy,
             Issuer = _selfIdentity.Issuer,
@@ -1283,7 +1284,7 @@ public sealed partial class TourSession : IAsyncDisposable
             KeyId = _selfIdentity.KeyId,
             Key = _selfIdentity.Key,
             PersonServer = personServer,
-        }.Build();
+        }.BuildAsync(ct);
     }
 
     /// <summary>
@@ -1668,7 +1669,7 @@ public sealed partial class TourSession : IAsyncDisposable
             ? null
             : _options.PersonServerUrl;
 
-        _agentToken = new AgentTokenBuilder
+        _agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = SampleEgress.Policy,
             Issuer = "https://ap.example",
@@ -1676,9 +1677,7 @@ public sealed partial class TourSession : IAsyncDisposable
             KeyId = "tour",
             Key = _agentKey!,
             PersonServer = personServer,
-        }.Build();
-
-        await Task.CompletedTask;
+        }.BuildAsync();
 
         Steps.Add(new StepRecord
         {
@@ -1819,11 +1818,11 @@ public sealed partial class TourSession : IAsyncDisposable
         switch (step)
         {
             case 1:
-                flow.IssueParent(); token = flow.ParentToken;
+                await flow.IssueParentAsync(ct); token = flow.ParentToken;
                 title = "Parent obtains its identity"; narrative = "The provider issues Aria an agent token bound to Aria's distinct key.";
                 snippet = SubAgentParentTokenSnippet; to = Actor.Parent; break;
             case 2:
-                flow.IssueWorker(); token = flow.WorkerToken;
+                await flow.IssueWorkerAsync(ct); token = flow.WorkerToken;
                 title = "Sub-agent obtains its identity (parent_agent)"; narrative = "The worker has its own key; parent_agent names Aria.";
                 snippet = SubAgentWorkerTokenSnippet; from = to = Actor.SubAgent; break;
             case 3:
@@ -1886,7 +1885,7 @@ public sealed partial class TourSession : IAsyncDisposable
         //   apKey   = _selfIdentity.Key      // the AP's Ed25519 SIGNING key
         //   apKeyId = _selfIdentity.KeyId    // the AP's published key id (kid)
         // The AP holds these; agents it issues tokens for never do.
-        var parentToken = new AgentTokenBuilder
+        var parentToken = await new AgentTokenBuilder
         {
             EgressPolicy = SampleEgress.Policy,
             Issuer          = apUrl,                  // the Agent Provider
@@ -1895,7 +1894,7 @@ public sealed partial class TourSession : IAsyncDisposable
             Key             = apKey,                  // …with its OWN signing key
             ConfirmationKey = parentKey,              // binds the parent's PUBLIC key
             PersonServer    = personServer,
-        }.Build();                                    // → aa-agent+jwt (no parent_agent)
+        }.BuildAsync();                               // → aa-agent+jwt (no parent_agent)
 
         // (the AP returns the signed token to the parent)
         """;
@@ -1914,7 +1913,7 @@ public sealed partial class TourSession : IAsyncDisposable
         // The AP signs the token with its OWN issuer credentials (apUrl /
         // apKey / apKeyId — the same ones from step 1, held by the AP, not
         // the worker). It stamps `parent_agent` to mark this a sub-agent.
-        var workerToken = new AgentTokenBuilder
+        var workerToken = await new AgentTokenBuilder
         {
             EgressPolicy = SampleEgress.Policy,
             Issuer          = apUrl,                  // the Agent Provider (issuer)
@@ -1924,7 +1923,7 @@ public sealed partial class TourSession : IAsyncDisposable
             ConfirmationKey = workerKey,              // binds the WORKER's PUBLIC key
             ParentAgent     = "aauth:aria@host",      // §Sub-Agents — names the parent
             PersonServer    = personServer,
-        }.Build();
+        }.BuildAsync();
 
         // ===================== ANYONE (read-only helpers) ==============
         var id = AgentId.Parse("aauth:aria+worker1@host");
@@ -5006,7 +5005,7 @@ public sealed partial class TourSession : IAsyncDisposable
     {
         // Rotate the short-lived agent token to model a real agent (replay is
         // keyed on the per-request signature, so reuse would also pass).
-        RefreshAgentToken();
+        await RefreshAgentTokenAsync(ct);
 
         // ── Hop A: a person token for the Concierge under the mission ─────
         var personCapture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };

@@ -135,7 +135,7 @@ public sealed class TokenExchangeClient
             },
         };
 
-        IAAuthKey? signingKey = null;
+        IAAuthSigner? signingKey = null;
         string? signedAgentToken = null;
         var response = await _exchange.PostAsync(
             tokenEndpointUri, body, exchangeOptions, cancellationToken, request =>
@@ -198,7 +198,7 @@ public sealed class TokenExchangeClient
         DeferredExchange.AddIfPresent(body, MissionReference.ClaimName, options.MissionS256);
         AddRequestParameters(body, options);
 
-        IAAuthKey? signingKey = null;
+        IAAuthSigner? signingKey = null;
         string? signedAgentToken = null;
         var response = await _exchange.PostAsync(endpoint, body, new DeferredExchangeOptions
         {

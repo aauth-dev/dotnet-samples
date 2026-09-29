@@ -81,13 +81,13 @@ public class SignatureErrorTests : IAsyncLifetime
     public async Task StaleCreated_Returns_InvalidSignature()
     {
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AAuth.Tokens.AgentTokenBuilder
+        var agentToken = await new AAuth.Tokens.AgentTokenBuilder
         {
             Issuer = "https://ap.example",
             Subject = "aauth:test@ap.example",
             KeyId = "k1",
             Key = agentKey,
-        }.Build();
+        }.BuildAsync();
         var signatureKey = SignatureKeyHeader.FormatJwt(agentToken);
 
         var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "/protected");
@@ -109,13 +109,13 @@ public class SignatureErrorTests : IAsyncLifetime
     [InlineData(3600, "error=clock_skew")]
     public async Task CreatedOutsideWindow_ReturnsDistinctCodes(int offsetSeconds, string expected)
     {
-        var agentToken = new AAuth.Tokens.AgentTokenBuilder
+        var agentToken = await new AAuth.Tokens.AgentTokenBuilder
         {
             Issuer = "https://ap.example",
             Subject = "aauth:test@ap.example",
             KeyId = "k1",
             Key = AAuthKey.Generate(),
-        }.Build();
+        }.BuildAsync();
         var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "/protected");
         request.Headers.TryAddWithoutValidation("Signature-Key", SignatureKeyHeader.FormatJwt(agentToken));
         var created = DateTimeOffset.UtcNow.AddSeconds(offsetSeconds).ToUnixTimeSeconds();

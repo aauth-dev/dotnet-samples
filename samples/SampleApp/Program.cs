@@ -42,14 +42,14 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
     EgressPolicy = SampleEgress.Policy,
     Issuer = sampleAppUrl,
     Name = "SampleApp Demo",
-    SigningKeys = new Dictionary<string, IAAuthKey> { [SelfIssuedKid] = selfIssuedKey },
+    SigningKeys = new AAuthSigningKeySet { [SelfIssuedKid] = selfIssuedKey },
 });
 
 app.UseAntiforgery();
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     EgressPolicy = SampleEgress.Policy, Issuer = sampleAppUrl,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [SelfIssuedKid] = selfIssuedKey },
+    SigningKeys = new AAuthSigningKeySet { [SelfIssuedKid] = selfIssuedKey },
     ScopeDescriptions = FederatedWorkerScenario.ScopeDescriptions,
 });
 

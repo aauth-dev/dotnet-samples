@@ -37,7 +37,7 @@ public class UpstreamTokenValidationTests
     [InlineData("missing-sub")]
     public async Task SignedButStructurallyInvalidUpstreamIsRejected(string variant)
     {
-        var segments = BuildAuthToken().Split('.');
+        var segments = (await BuildAuthTokenAsync()).Split('.');
         var header = JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[0]))!.AsObject();
         var payload = JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[1]))!.AsObject();
         switch (variant)
@@ -47,12 +47,12 @@ public class UpstreamTokenValidationTests
             case "private-key": payload["cnf"]!["jwk"]!["d"] = "private"; break;
             case "missing-sub": payload.Remove("sub"); break;
         }
-        var result = await Validate(JwtWriter.SignCompact(header, payload, _psKey));
+        var result = await Validate(await JwtWriter.SignCompactAsync(header, payload, _psKey));
         Assert.False(result.IsValid);
         Assert.NotNull(result.Error);
     }
 
-    private string BuildAuthToken(
+    private async Task<string> BuildAuthTokenAsync(
         string? issuer = null,
         string? audience = null,
         string? personServer = null,
@@ -61,7 +61,7 @@ public class UpstreamTokenValidationTests
         AAuthKey? key = null,
         string? kid = null)
     {
-        return new AuthTokenBuilder
+        return await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
@@ -75,13 +75,13 @@ public class UpstreamTokenValidationTests
             Dwk = dwk ?? AuthTokenBuilder.PersonDwk,
             Scope = "data.read",
             MissionS256 = missionS256,
-        }.Build();
+        }.BuildAsync();
     }
 
-    private string BuildAsAuthToken(string? missionS256 = null) => BuildAuthToken(
+    private Task<string> BuildAsAuthTokenAsync(string? missionS256 = null) => BuildAuthTokenAsync(
         issuer: AsIssuer, dwk: AuthTokenBuilder.AccessDwk, missionS256: missionS256, key: _asKey, kid: AsKid);
 
-    private string BuildPersonToken(string? issuer = null, string? audience = null, string? tenant = null) => new PersonTokenBuilder
+    private ValueTask<string> BuildPersonTokenAsync(string? issuer = null, string? audience = null, string? tenant = null) => new PersonTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = issuer ?? PsIssuer,
@@ -93,7 +93,7 @@ public class UpstreamTokenValidationTests
         KeyId = PsKid,
         MissionS256 = S256,
         Tenant = tenant,
-    }.Build();
+    }.BuildAsync();
 
     private UpstreamTokenValidator CreateValidator()
     {
@@ -115,7 +115,7 @@ public class UpstreamTokenValidationTests
     [Fact(DisplayName = "§Upstream Token Verification — valid PS-issued auth token accepted")]
     public async Task ValidToken_Accepted()
     {
-        var result = await Validate(BuildAuthToken());
+        var result = await Validate(await BuildAuthTokenAsync());
 
         Assert.True(result.IsValid);
         Assert.Null(result.Error);
@@ -132,7 +132,7 @@ public class UpstreamTokenValidationTests
     [Fact(DisplayName = "§Upstream Token Verification — valid person token accepted")]
     public async Task ValidPersonToken_Accepted()
     {
-        var result = await Validate(BuildPersonToken(tenant: "acme"));
+        var result = await Validate(await BuildPersonTokenAsync(tenant: "acme"));
 
         Assert.True(result.IsValid, result.Error);
         Assert.Equal(PersonTokenBuilder.TokenType, result.TokenType);
@@ -147,7 +147,7 @@ public class UpstreamTokenValidationTests
     [Fact(DisplayName = "§Upstream Token Verification — AS-issued auth token surfaces ps and mission_s256")]
     public async Task AsIssuedToken_SurfacesPersonServerAndMission()
     {
-        var result = await Validate(BuildAsAuthToken(S256), iss => iss == AsIssuer);
+        var result = await Validate(await BuildAsAuthTokenAsync(S256), iss => iss == AsIssuer);
 
         Assert.True(result.IsValid, result.Error);
         Assert.Equal(AsIssuer, result.Issuer);
@@ -158,7 +158,7 @@ public class UpstreamTokenValidationTests
     [Fact(DisplayName = "§Upstream Token Verification — an out-of-set dwk is rejected")]
     public async Task OutOfSetDwk_Rejected()
     {
-        var result = await Validate(BuildAuthToken(dwk: "aauth-resource.json"));
+        var result = await Validate(await BuildAuthTokenAsync(dwk: "aauth-resource.json"));
 
         Assert.False(result.IsValid);
         Assert.Contains("dwk", result.Error, StringComparison.OrdinalIgnoreCase);
@@ -167,7 +167,7 @@ public class UpstreamTokenValidationTests
     [Fact(DisplayName = "§Upstream Token Verification — auth token from an untrusted AS rejected")]
     public async Task UntrustedIssuer_Rejected()
     {
-        var result = await Validate(BuildAsAuthToken());
+        var result = await Validate(await BuildAsAuthTokenAsync());
 
         Assert.False(result.IsValid);
         Assert.Contains("not trusted", result.Error);
@@ -176,7 +176,7 @@ public class UpstreamTokenValidationTests
     [Fact(DisplayName = "§Upstream Token Verification — predicate may reject an otherwise-valid AS")]
     public async Task PredicateRejectsIssuer_Rejected()
     {
-        var result = await Validate(BuildAsAuthToken(), iss => iss == "http://localhost:9999");
+        var result = await Validate(await BuildAsAuthTokenAsync(), iss => iss == "http://localhost:9999");
 
         Assert.False(result.IsValid);
         Assert.Contains("not trusted", result.Error);
@@ -185,7 +185,7 @@ public class UpstreamTokenValidationTests
     [Fact(DisplayName = "§Upstream Token Verification — the expected PS is trusted without the predicate")]
     public async Task ExpectedPersonServer_TrustedWithoutPredicate()
     {
-        var result = await Validate(BuildAuthToken(), _ => false);
+        var result = await Validate(await BuildAuthTokenAsync(), _ => false);
 
         Assert.True(result.IsValid, result.Error);
         Assert.Equal(PsIssuer, result.Issuer);
@@ -197,8 +197,8 @@ public class UpstreamTokenValidationTests
     public async Task OtherPersonServer_Rejected(string kind)
     {
         var token = kind == "auth"
-            ? BuildAuthToken(personServer: "http://localhost:9999")
-            : BuildPersonToken();
+            ? await BuildAuthTokenAsync(personServer: "http://localhost:9999")
+            : await BuildPersonTokenAsync();
         var result = await CreateValidator().ValidateAsync(token, Intermediary,
             kind == "auth" ? PsIssuer : "http://localhost:9999", (_, _) => ValueTask.FromResult(true));
 
@@ -212,8 +212,8 @@ public class UpstreamTokenValidationTests
     public async Task AudienceMismatch_Rejected(string kind)
     {
         var token = kind == "auth"
-            ? BuildAuthToken(audience: "http://localhost:9999")
-            : BuildPersonToken(audience: "http://localhost:9999");
+            ? await BuildAuthTokenAsync(audience: "http://localhost:9999")
+            : await BuildPersonTokenAsync(audience: "http://localhost:9999");
         var result = await Validate(token);
 
         Assert.False(result.IsValid);
@@ -223,7 +223,7 @@ public class UpstreamTokenValidationTests
     [Fact(DisplayName = "§Upstream Token Verification — agent token rejected as upstream")]
     public async Task AgentToken_Rejected()
     {
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = PsIssuer,
@@ -231,7 +231,7 @@ public class UpstreamTokenValidationTests
             ConfirmationKey = _agentKey,
             Key = _psKey,
             KeyId = PsKid,
-        }.Build();
+        }.BuildAsync();
 
         var result = await Validate(agentToken);
 
@@ -241,7 +241,7 @@ public class UpstreamTokenValidationTests
     [Fact(DisplayName = "§Upstream Token Verification — expired token rejected")]
     public async Task ExpiredToken_Rejected()
     {
-        var token = new AuthTokenBuilder
+        var token = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
@@ -256,7 +256,7 @@ public class UpstreamTokenValidationTests
             IssuedAt = DateTimeOffset.UtcNow - TimeSpan.FromHours(2),
             TimeProvider = new IssuanceTestClock(DateTimeOffset.UtcNow - TimeSpan.FromHours(2)),
             Lifetime = TimeSpan.FromMinutes(5),
-        }.Build();
+        }.BuildAsync();
 
         var result = await Validate(token);
 

@@ -122,7 +122,7 @@ app.MapAAuthAccessServer(new AAuthAccessServerOptions
 {
     EgressPolicy = SampleEgress.Policy,
     Issuer = asIssuer,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [AsKid] = asKey },
+    SigningKeys = new AAuthSigningKeySet { [AsKid] = asKey },
     DefaultScope = AsScope,
     Trust = { PersonServers = { Allowed = new HashSet<string>(trustedPersonServers) } },
     InteractionLoginPath = "/interaction/login",

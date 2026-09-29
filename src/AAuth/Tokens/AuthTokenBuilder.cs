@@ -58,7 +58,7 @@ public sealed class AuthTokenBuilder
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>The issuer's signing key.</summary>
-    public required IAAuthKey Key { get; init; }
+    public required IAAuthSigner Key { get; init; }
 
     /// <summary>The issuer's key id (<c>kid</c>).</summary>
     public required string KeyId { get; init; }
@@ -112,7 +112,7 @@ public sealed class AuthTokenBuilder
     public IReadOnlyDictionary<string, JsonNode?>? AdditionalClaims { get; init; }
 
     /// <summary>Build and sign the auth token.</summary>
-    public string Build()
+    public async ValueTask<string> BuildAsync(CancellationToken cancellationToken = default)
     {
         Require(Issuer, nameof(Issuer));
         Require(Audience, nameof(Audience));
@@ -206,7 +206,7 @@ public sealed class AuthTokenBuilder
             }
         }
 
-        return JwtWriter.SignCompact(header, payload, Key);
+        return await JwtWriter.SignCompactAsync(header, payload, Key, cancellationToken).ConfigureAwait(false);
     }
 
     private static void Require(string value, string name)

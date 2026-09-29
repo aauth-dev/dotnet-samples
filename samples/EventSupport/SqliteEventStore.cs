@@ -147,14 +147,14 @@ public sealed class SqliteEventStore : IAgentProviderEventStore, IResourceEventS
         return state;
     }
 
-    public EventEnvelope PrepareDelivery(string provider, string eid, Func<EventEnvelope> create)
+    public async Task<EventEnvelope> PrepareDeliveryAsync(string provider, string eid, Func<Task<EventEnvelope>> create)
     {
         using var connection = Open();
         using var transaction = connection.BeginTransaction(deferred: false);
         var existing = Scalar(connection, transaction, "SELECT envelope FROM resource_deliveries WHERE provider=$provider AND eid=$eid",
             ("$provider", provider), ("$eid", eid)) as string;
         if (existing is not null) return JsonSerializer.Deserialize<EventEnvelope>(existing)!;
-        var envelope = create();
+        var envelope = await create();
         Execute(connection, transaction, "INSERT INTO resource_deliveries(provider,eid,envelope) VALUES($provider,$eid,$envelope)",
             ("$provider", provider), ("$eid", eid), ("$envelope", JsonSerializer.Serialize(envelope)));
         transaction.Commit();

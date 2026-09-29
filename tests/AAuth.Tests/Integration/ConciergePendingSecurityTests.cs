@@ -35,17 +35,17 @@ public class ConciergePendingSecurityTests
                 services.AddSingleton(new JwksClient(new InProcessHttpClient(new DiscoveryHandler(issuerKey))));
             });
         });
-        string Token(AAuthKey key, string agent) => new AuthTokenBuilder
+        ValueTask<string> TokenAsync(AAuthKey key, string agent) => new AuthTokenBuilder
         {
             Issuer = person, Audience = resource, PersonServer = person, Subject = agent, AgentConfirmationKey = key,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10), Key = issuerKey, KeyId = "ps-key", Scope = "concierge",
-        }.Build();
+        }.BuildAsync();
         const string agent = "aauth:owner@ap.example";
-        var original = Token(ownerKey, agent);
+        var original = await TokenAsync(ownerKey, agent);
         _ = factory.Server;
         var pending = factory.Services.GetRequiredService<Concierge.PendingStore>().Add(original, person + "/interaction", "ABCDEFGH");
         var foreignKey = variant == "key" ? AAuthKey.Generate() : ownerKey;
-        var foreign = Token(foreignKey, variant == "agent" ? "aauth:foreign@ap.example" : agent);
+        var foreign = await TokenAsync(foreignKey, variant == "agent" ? "aauth:foreign@ap.example" : agent);
         using var caller = new AAuthClientBuilder(foreignKey).UseJwt(foreign).WithEgressPolicy(TestEgress.Policy)
             .WithInnerHandler(factory.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
         using var rejected = await caller.SendAsync(new HttpRequestMessage(new HttpMethod(method), resource + "/pending/" + pending.Id));

@@ -14,7 +14,7 @@ public sealed class EnrollmentService
     private readonly IConfiguration _config;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
 
-    private IAAuthKey? _key;
+    private IAAuthSigner? _key;
     private string? _localKeyHandle;
     private string? _agentTokenKid;
     private string? _jwksUri;
@@ -26,7 +26,7 @@ public sealed class EnrollmentService
         _config = config;
     }
 
-    public IAAuthKey Key => _key ?? throw new InvalidOperationException("Not enrolled yet.");
+    public IAAuthSigner Key => _key ?? throw new InvalidOperationException("Not enrolled yet.");
     public string LocalKeyHandle => _localKeyHandle ?? throw new InvalidOperationException("Not enrolled yet.");
     public string? AgentTokenKid => _agentTokenKid;
     public string? JwksUri => _jwksUri;

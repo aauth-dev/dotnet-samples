@@ -31,12 +31,13 @@ public class ChallengeClarificationSeamTests
     private const string ResourceUrl = "https://r.example";
     private const string Ps = "https://ps.example";
     private static readonly AAuth.Crypto.AAuthKey SigningKey = AAuth.Crypto.AAuthKey.Generate();
+    // Static field initializer cannot await; local key signing completes synchronously.
     private static readonly string AgentToken = new AAuth.Tokens.AgentTokenBuilder
     {
         Issuer = "https://ap.example", Subject = "aauth:test@ap.example", KeyId = "key",
         Key = SigningKey, ConfirmationKey = SigningKey,
-    }.Build();
-    private static string ResourceToken(string presentedToken)
+    }.BuildAsync().AsTask().GetAwaiter().GetResult();
+    private static ValueTask<string> ResourceTokenAsync(string presentedToken)
     {
         var presented = AAuth.Tokens.TokenVerifier.DecodeJsonSegment(presentedToken.Split('.')[1], "payload");
         return new AAuth.Tokens.ResourceTokenBuilder
@@ -44,16 +45,16 @@ public class ChallengeClarificationSeamTests
             Issuer = ResourceUrl, Audience = Ps, PersonServer = Ps,
             Subject = (string)presented["sub"]!, PresentedJti = (string)presented["jti"]!,
             AgentJkt = SigningKey.ComputeJwkThumbprint(), Key = SigningKey, KeyId = "key",
-        }.Build();
+        }.BuildAsync();
     }
 
-    private static string PersonToken() => new AAuth.Tokens.PersonTokenBuilder
+    private static ValueTask<string> PersonTokenAsync() => new AAuth.Tokens.PersonTokenBuilder
     {
         Issuer = Ps, Audience = ResourceUrl, Subject = "person-1", ConfirmationKey = SigningKey,
         AgentTokenExpiresAt = DateTimeOffset.FromUnixTimeSeconds(
             (long)AAuth.Tokens.TokenVerifier.DecodeJsonSegment(AgentToken.Split('.')[1], "payload")["exp"]!),
         Lifetime = TimeSpan.FromMinutes(30), Key = SigningKey, KeyId = "key",
-    }.Build();
+    }.BuildAsync();
 
     private static ChallengeHandler BuildChallengeHandler(
         ClarifyingExchangeHandler exchangeHandler,
@@ -155,25 +156,25 @@ public class ChallengeClarificationSeamTests
     /// </summary>
     private sealed class ChallengingResourceHandler : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken ct)
         {
             var carrier = AAuth.HttpSig.SignatureKeyParser.Parse(request.Headers.GetValues("Signature-Key").Single()).Jwt!;
             var typ = (string?)AAuth.Tokens.TokenVerifier.DecodeJsonSegment(carrier.Split('.')[0], "header")["typ"];
             if (typ == AAuth.Tokens.AuthTokenBuilder.TokenType)
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent("{\"ok\":true}", Encoding.UTF8, "application/json"),
-                });
+                };
             }
             var challenge = new HttpResponseMessage(HttpStatusCode.Unauthorized);
             challenge.Headers.TryAddWithoutValidation(
                 AAuthRequirementHeader.Name,
                 typ == AAuth.Tokens.PersonTokenBuilder.TokenType
-                    ? AAuthRequirementHeader.FormatAuthToken(ResourceToken(carrier))
+                    ? AAuthRequirementHeader.FormatAuthToken(await ResourceTokenAsync(carrier))
                     : AAuthRequirementHeader.FormatPersonToken());
-            return Task.FromResult(challenge);
+            return challenge;
         }
     }
 
@@ -219,7 +220,7 @@ public class ChallengeClarificationSeamTests
             }
 
             if (path == "/person" && request.Method == HttpMethod.Post)
-                return Json(HttpStatusCode.OK, new JsonObject { ["person_token"] = PersonToken() });
+                return Json(HttpStatusCode.OK, new JsonObject { ["person_token"] = await PersonTokenAsync() });
 
             if (request.Method == HttpMethod.Delete)
             {

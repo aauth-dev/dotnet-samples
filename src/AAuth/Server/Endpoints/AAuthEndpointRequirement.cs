@@ -49,9 +49,6 @@ public sealed class AAuthServerOptions
     /// <summary>Override the resource identifier (default: DI metadata issuer).</summary>
     public string? ResourceIdentifier { get; set; }
 
-    /// <summary>Override the challenge signing key (default: DI metadata first key).</summary>
-    public IAAuthKey? ResourceSigningKey { get; set; }
-
-    /// <summary>Override the challenge key id (default: DI metadata first kid).</summary>
-    public string? ResourceKeyId { get; set; }
+    /// <summary>Override the challenge signing keys (default: the DI metadata signing keys).</summary>
+    public AAuthSigningKeySet? ResourceSigningKeys { get; set; }
 }

@@ -23,12 +23,13 @@ public class ChallengeHandlerTests
     private const string PsUrl = "http://localhost:5555";
     private const string ResourceUrl = "http://localhost:6000";
     private static readonly AAuthKey SigningKey = AAuthKey.Generate();
+    // Static initializers and the property getter below cannot await; local key signing completes synchronously.
     private static readonly string AgentToken = new AgentTokenBuilder
     {
         Issuer = "https://ap.example", Subject = "aauth:test@ap.example", Key = SigningKey,
         KeyId = "agent-key", ConfirmationKey = SigningKey,
-    }.Build();
-    private static string ResourceToken => BuildResourceToken();
+    }.BuildAsync().AsTask().GetAwaiter().GetResult();
+    private static string ResourceToken => BuildResourceTokenAsync().AsTask().GetAwaiter().GetResult();
     private const string PersonSubject = "person-1";
     private const string PersonJti = "person-jti-1";
     private static readonly string MissionHash = Base64UrlEncoder.Encode(new byte[32]);
@@ -65,7 +66,7 @@ public class ChallengeHandlerTests
             pollerOptions: null,
             upstreamTokenProvider: () => upstreamToken)
         {
-            InnerHandler = SignedResource(BuildResourceToken(personServer: personServerUrl)),
+            InnerHandler = SignedResource(await BuildResourceTokenAsync(personServer: personServerUrl)),
         };
 
         using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
@@ -149,7 +150,7 @@ public class ChallengeHandlerTests
     public async Task MissionPersonToken_ReusedOnlyWhenItMatches(string variant)
     {
         var mission = Base64UrlEncoder.Encode(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("mission")));
-        var token = new PersonTokenBuilder
+        var token = await new PersonTokenBuilder
         {
             EgressPolicy = TestEgress.Policy, Issuer = PsUrl, Audience = ResourceUrl, Subject = PersonSubject,
             ConfirmationKey = variant == "key" ? AAuthKey.Generate() : SigningKey,
@@ -157,7 +158,7 @@ public class ChallengeHandlerTests
             Key = SigningKey, KeyId = "ps-key",
             MissionS256 = variant == "mission"
                 ? Base64UrlEncoder.Encode(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("other"))) : mission,
-        }.Build();
+        }.BuildAsync();
         var exchangeHandler = new CapturingExchangeHandler(_ => { });
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
         var challengeHandler = new ChallengeHandler(
@@ -196,7 +197,7 @@ public class ChallengeHandlerTests
         {
             ["iss"] = PsUrl, ["aud"] = ResourceUrl, ["sub"] = PersonSubject, ["jti"] = authJti,
         });
-        var stepUpResourceToken = BuildResourceToken(presentedJti: authJti);
+        var stepUpResourceToken = await BuildResourceTokenAsync(presentedJti: authJti);
         var posts = new List<(string Path, JsonObject Body)>();
         var exchangeHandler = new CapturingExchangeHandler(req =>
             posts.Add((req.RequestUri!.AbsolutePath, JsonNode.Parse(req.Content!.ReadAsStringAsync().Result)!.AsObject())));
@@ -233,17 +234,17 @@ public class ChallengeHandlerTests
     [Fact(DisplayName = "ChallengeHandler — a 202 requirement=auth-token is completed by signed GETs of the pending URL, never by resending the body")]
     public async Task DeferredAuthToken_PollsPendingUrlWithoutResendingBody()
     {
-        var authToken = new AuthTokenBuilder
+        var authToken = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy, Issuer = PsUrl, Audience = ResourceUrl, PersonServer = PsUrl,
             Subject = PersonSubject, AgentConfirmationKey = SigningKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30),
             Key = SigningKey, KeyId = "ps-key", Lifetime = TimeSpan.FromMinutes(10), TokenId = "auth-jti-1",
-        }.Build();
+        }.BuildAsync();
         var exchangeHandler = new CapturingExchangeHandler(_ => { }, authToken);
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
         var exchangeHttp = new InProcessHttpClient(new AAuthSigningHandler(SigningKey, () => AgentToken) { InnerHandler = exchangeHandler });
         var holder = new AAuthTokenHolder(PersonToken);
-        var resource = new HoldingResourceHandler(BuildResourceToken());
+        var resource = new HoldingResourceHandler(await BuildResourceTokenAsync());
         var challengeHandler = new ChallengeHandler(
             new TokenExchangeClient(exchangeHttp, metaClient), holder,
             new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
@@ -302,7 +303,7 @@ public class ChallengeHandlerTests
             InnerHandler = new AAuthSigningHandler(SigningKey, () => holder.Current)
             {
                 // The holder refreshes between the resource seeing the token and the exchange.
-                InnerHandler = new MockResourceHandler(BuildResourceToken(presentedJti: authJti), () => holder.Update(AgentToken)),
+                InnerHandler = new MockResourceHandler(await BuildResourceTokenAsync(presentedJti: authJti), () => holder.Update(AgentToken)),
             },
         };
         using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
@@ -895,7 +896,7 @@ public class ChallengeHandlerTests
     [InlineData("presented")]
     public async Task InvalidChallengeNeverContactsPersonServerOrRequestsConsent(string failure)
     {
-        var token = BuildResourceToken(failure: failure);
+        var token = await BuildResourceTokenAsync(failure: failure);
         if (failure == "audience")
         {
             var segments = token.Split('.');
@@ -979,15 +980,16 @@ public class ChallengeHandlerTests
         InnerHandler = new MockResourceHandler(token),
     };
 
+    // Static field initializer cannot await; local key signing completes synchronously.
     private static readonly string PersonToken = new PersonTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = PsUrl, Audience = ResourceUrl, Subject = PersonSubject, TokenId = PersonJti,
         ConfirmationKey = SigningKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
         Key = SigningKey, KeyId = "ps-key",
-    }.Build();
+    }.BuildAsync().AsTask().GetAwaiter().GetResult();
 
-    private static string BuildResourceToken(string? missionS256 = null, string? failure = null, string personServer = PsUrl, string presentedJti = PersonJti) => new ResourceTokenBuilder
+    private static ValueTask<string> BuildResourceTokenAsync(string? missionS256 = null, string? failure = null, string personServer = PsUrl, string presentedJti = PersonJti) => new ResourceTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = failure == "origin" ? "https://other.example" : ResourceUrl,
@@ -1001,7 +1003,7 @@ public class ChallengeHandlerTests
         Account = failure == "account" ? "other-account" : null,
         MissionS256 = missionS256,
         IssuedAt = failure == "expiry" ? DateTimeOffset.UtcNow.AddHours(-1) : null,
-    }.Build();
+    }.BuildAsync();
 
     private static string BuildTokenWithPayload(JsonObject payload, string typ = AuthTokenBuilder.TokenType)
     {

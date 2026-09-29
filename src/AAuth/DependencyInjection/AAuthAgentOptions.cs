@@ -15,7 +15,7 @@ public sealed class AAuthAgentOptions
 {
     public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>The agent's signing key (must have private component).</summary>
-    public IAAuthKey Key { get; set; } = null!;
+    public IAAuthSigner Key { get; set; } = null!;
 
     /// <summary>Already-held agent JWT. Combine with TokenRefresher for renewal; no implicit enrollment occurs.</summary>
     public string? AgentToken { get; set; }

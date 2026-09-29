@@ -15,9 +15,9 @@ public class AAuthAgentDITests
 {
     private readonly AAuthKey _key = AAuthKey.Generate();
 
-    private string BuildAgentToken(string? ps = "https://ps.example")
+    private async Task<string> BuildAgentTokenAsync(string? ps = "https://ps.example")
     {
-        return new AgentTokenBuilder
+        return await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -25,7 +25,7 @@ public class AAuthAgentDITests
             KeyId = "k1",
             Key = _key,
             PersonServer = ps,
-        }.Build();
+        }.BuildAsync();
     }
 
     [Fact]
@@ -94,10 +94,11 @@ public class AAuthAgentDITests
     public async Task AddAAuthAgent_ClientSigns()
     {
         var services = new ServiceCollection();
+        var agentToken = await BuildAgentTokenAsync();
         services.AddAAuthAgent("my-agent", opts =>
         {
             opts.Key = _key;
-            opts.AgentToken = BuildAgentToken();
+            opts.AgentToken = agentToken;
         });
 
         var provider = services.BuildServiceProvider();

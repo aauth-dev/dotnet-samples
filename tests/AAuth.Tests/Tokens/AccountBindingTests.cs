@@ -10,21 +10,21 @@ namespace AAuth.Tests.Tokens;
 public class AccountBindingTests
 {
     [Fact]
-    public void CachedCarrierTracksRefreshedSourceAndRequestBindings()
+    public async Task CachedCarrierTracksRefreshedSourceAndRequestBindings()
     {
         var key = AAuthKey.Generate();
-        string AgentToken() => new AgentTokenBuilder
+        ValueTask<string> AgentTokenAsync() => new AgentTokenBuilder
         {
             Issuer = "https://ap.example", Subject = "aauth:agent@ap.example", Key = key, KeyId = "agent-key",
-        }.Build();
-        var original = AgentToken();
-        var refreshed = AgentToken();
-        var auth = new AuthTokenBuilder
+        }.BuildAsync();
+        var original = await AgentTokenAsync();
+        var refreshed = await AgentTokenAsync();
+        var auth = await new AuthTokenBuilder
         {
             Issuer = "https://ps.example", Audience = "https://resource.example", PersonServer = "https://ps.example",
             Key = key, KeyId = "ps-key", AgentConfirmationKey = key, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
             Subject = "person", Account = "personal",
-        }.Build();
+        }.BuildAsync();
         var holder = new AAuth.Agent.AAuthTokenHolder();
         using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data");
         request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, "personal");
@@ -42,19 +42,19 @@ public class AccountBindingTests
     }
 
     [Fact]
-    public void CachedCarrier_IsNotSharedAcrossUpstreamPeopleOrConcurrentAccounts()
+    public async Task CachedCarrier_IsNotSharedAcrossUpstreamPeopleOrConcurrentAccounts()
     {
         var key = AAuthKey.Generate();
-        var agent = new AgentTokenBuilder
+        var agent = await new AgentTokenBuilder
         {
             Issuer = "https://ap.example", Subject = "aauth:agent@ap.example", Key = key, KeyId = "agent-key",
-        }.Build();
-        var auth = new AuthTokenBuilder
+        }.BuildAsync();
+        var auth = await new AuthTokenBuilder
         {
             Issuer = "https://ps.example", Audience = "https://resource.example", PersonServer = "https://ps.example",
             Key = key, KeyId = "ps-key", AgentConfirmationKey = key, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
             Subject = "person-a", Account = "personal",
-        }.Build();
+        }.BuildAsync();
         var holder = new AAuth.Agent.AAuthTokenHolder();
         System.Net.Http.HttpRequestMessage Request(string account, string? upstream)
         {
@@ -106,22 +106,22 @@ public class AccountBindingTests
     [InlineData("personal", null, false)]
     [InlineData("personal", "work", false)]
     [InlineData("personal", "personal", true)]
-    public void CachedAuthToken_IsSelectedOnlyForMatchingAccount(string? tokenAccount, string? requestedAccount, bool reused)
+    public async Task CachedAuthToken_IsSelectedOnlyForMatchingAccount(string? tokenAccount, string? requestedAccount, bool reused)
     {
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             Issuer = "https://ap.example", Subject = "aauth:demo@ap.example",
             Key = issuerKey, KeyId = "ap1", ConfirmationKey = agentKey,
-        }.Build();
-        var authToken = new AuthTokenBuilder
+        }.BuildAsync();
+        var authToken = await new AuthTokenBuilder
         {
             Issuer = "https://ps.example", Audience = "https://resource.example",
             PersonServer = "https://ps.example", AgentConfirmationKey = agentKey,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
             Key = issuerKey, KeyId = "ps1", Subject = "person", Account = tokenAccount,
-        }.Build();
+        }.BuildAsync();
         var holder = new AAuth.Agent.AAuthTokenHolder(authToken);
         using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data");
         if (requestedAccount is not null) request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, requestedAccount);
@@ -134,22 +134,22 @@ public class AccountBindingTests
     [Theory]
     [InlineData(null)]
     [InlineData("work")]
-    public void CachedPersonToken_IsSelectedForAnyAccount(string? requestedAccount)
+    public async Task CachedPersonToken_IsSelectedForAnyAccount(string? requestedAccount)
     {
         // A person token never carries `account`; the resource token it earns binds the account.
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             Issuer = "https://ap.example", Subject = "aauth:demo@ap.example",
             Key = issuerKey, KeyId = "ap1", ConfirmationKey = agentKey,
-        }.Build();
-        var personToken = new PersonTokenBuilder
+        }.BuildAsync();
+        var personToken = await new PersonTokenBuilder
         {
             Issuer = "https://ps.example", Audience = "https://resource.example", Subject = "person",
             ConfirmationKey = agentKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
             Key = issuerKey, KeyId = "ps1",
-        }.Build();
+        }.BuildAsync();
         var holder = new AAuth.Agent.AAuthTokenHolder(personToken);
         using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data");
         if (requestedAccount is not null) request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, requestedAccount);
@@ -181,17 +181,17 @@ public class AccountBindingTests
     [InlineData("personal", null, false)]
     [InlineData(null, "personal", false)]
     [InlineData("Personal", "personal", false)]
-    public void AuthToken_RequiresExactIndependentExpectation(string? actual, string? expected, bool accepted)
+    public async Task AuthToken_RequiresExactIndependentExpectation(string? actual, string? expected, bool accepted)
     {
         var issuer = AAuthKey.Generate();
         var agent = AAuthKey.Generate();
-        var jwt = new AuthTokenBuilder
+        var jwt = await new AuthTokenBuilder
         {
             Issuer = "https://ps.example", Audience = "https://resource.example",
             PersonServer = "https://ps.example", AgentConfirmationKey = agent,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
             Key = issuer, KeyId = "ps1", Subject = "person", Account = actual,
-        }.Build();
+        }.BuildAsync();
         var payload = JsonNode.Parse(Base64UrlEncoder.DecodeBytes(jwt.Split('.')[1]))!.AsObject();
         Assert.Equal(actual is not null, payload.ContainsKey("account"));
         var verifier = new TokenVerifier();

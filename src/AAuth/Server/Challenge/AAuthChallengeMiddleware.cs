@@ -147,21 +147,23 @@ public sealed class AAuthChallengeMiddleware
     /// <c>sub</c>, <c>presented_jti</c>, <c>mission_s256</c> and <c>tenant</c> come
     /// from it; <c>aud</c> is the resource's AS (four-party) or the person's PS.
     /// </summary>
-    public static string BuildResourceToken(ChallengeOptions options, AAuthVerifiedAssertion presented,
+    public static async ValueTask<string> BuildResourceTokenAsync(ChallengeOptions options, AAuthVerifiedAssertion presented,
         string? scope, string? account = null, IReadOnlyDictionary<string, string>? scopeDescriptions = null,
-        IReadOnlyCollection<string>? personServerScopes = null, Interaction? interaction = null, string? loginHint = null)
+        IReadOnlyCollection<string>? personServerScopes = null, Interaction? interaction = null, string? loginHint = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(presented);
-        if (options.ResourceSigningKey is null || !options.ResourceSigningKey.HasPrivateKey)
-            throw new InvalidOperationException("ChallengeOptions.ResourceSigningKey must be set with a private key for RequireAuthToken mode.");
-        if (string.IsNullOrEmpty(options.ResourceKeyId))
-            throw new InvalidOperationException("ChallengeOptions.ResourceKeyId must be set for RequireAuthToken mode.");
+        if (options.ResourceSigningKeys is not { Count: > 0 } signingKeys)
+            throw new InvalidOperationException("ChallengeOptions.ResourceSigningKeys must be set for RequireAuthToken mode.");
+        var (keyId, signer) = signingKeys.Active;
+        if (!signer.HasPrivateKey)
+            throw new InvalidOperationException("ChallengeOptions.ResourceSigningKeys' active key must be able to sign.");
         if (string.IsNullOrEmpty(options.ResourceIdentifier))
             throw new InvalidOperationException("ChallengeOptions.ResourceIdentifier must be set for RequireAuthToken mode.");
         var token = presented.Token;
         var personServer = PersonServerOf(token);
-        return new ResourceTokenBuilder
+        return await new ResourceTokenBuilder
         {
             EgressPolicy = options.EgressPolicy,
             Issuer = options.ResourceIdentifier,
@@ -172,15 +174,15 @@ public sealed class AAuthChallengeMiddleware
             AgentJkt = presented.HttpSigningKey.ComputeJwkThumbprint(),
             MissionS256 = token.MissionS256,
             Tenant = token.Tenant,
-            Key = options.ResourceSigningKey,
-            KeyId = options.ResourceKeyId,
+            Key = signer,
+            KeyId = keyId,
             Scope = scope,
             Account = account,
             ScopeDescriptions = scopeDescriptions,
             PersonServerScopesSupported = personServerScopes,
             Interaction = interaction,
             LoginHint = loginHint,
-        }.Build();
+        }.BuildAsync(cancellationToken).ConfigureAwait(false);
     }
 
     // The PS the presented token names: a person token's iss, an auth token's ps.
@@ -205,8 +207,9 @@ public sealed class AAuthChallengeMiddleware
             identityScopes = (person["scopes_supported"] as System.Text.Json.Nodes.JsonArray)?
                 .Select(scope => scope?.GetValue<string>() ?? "").ToArray();
         }
-        var resourceToken = BuildResourceToken(_options, presented, _options.DefaultScopes,
-            _options.RequestedAccount?.Invoke(context), definitions, identityScopes);
+        var resourceToken = await BuildResourceTokenAsync(_options, presented, _options.DefaultScopes,
+            _options.RequestedAccount?.Invoke(context), definitions, identityScopes,
+            cancellationToken: context.RequestAborted);
 
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         context.Response.Headers[AAuthRequirementHeader.Name] =

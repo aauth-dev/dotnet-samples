@@ -45,7 +45,7 @@ public sealed class ResourceTokenBuilder
     public required string AgentJkt { get; init; }
 
     /// <summary>Resource's signing key.</summary>
-    public required IAAuthKey Key { get; init; }
+    public required IAAuthSigner Key { get; init; }
 
     /// <summary>Resource's key identifier (<c>kid</c>).</summary>
     public required string KeyId { get; init; }
@@ -76,7 +76,7 @@ public sealed class ResourceTokenBuilder
     public string? TokenId { get; init; }
 
     /// <summary>Build and sign the resource token.</summary>
-    public string Build()
+    public async ValueTask<string> BuildAsync(CancellationToken cancellationToken = default)
     {
         Require(Issuer, nameof(Issuer));
         Require(Audience, nameof(Audience));
@@ -158,7 +158,7 @@ public sealed class ResourceTokenBuilder
             payload["interaction"] = new JsonObject { ["url"] = Interaction.Url, ["code"] = Interaction.Code };
         }
 
-        return JwtWriter.SignCompact(header, payload, Key);
+        return await JwtWriter.SignCompactAsync(header, payload, Key, cancellationToken).ConfigureAwait(false);
     }
 
     private static void Require(string value, string name)

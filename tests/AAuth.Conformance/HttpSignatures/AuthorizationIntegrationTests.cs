@@ -165,9 +165,9 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private string BuildAgentToken()
+    private async Task<string> BuildAgentTokenAsync()
     {
-        return new AgentTokenBuilder
+        return await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -176,12 +176,12 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
             KeyId = "ap-key-1",
             ConfirmationKey = _agentKey,
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
     }
 
-    private string BuildAuthToken(string scope = "whoami", string? missionS256 = null)
+    private async Task<string> BuildAuthTokenAsync(string scope = "whoami", string? missionS256 = null)
     {
-        return new AuthTokenBuilder
+        return await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -195,7 +195,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
             Scope = scope,
             MissionS256 = missionS256,
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
     }
 
     private async Task<HttpRequestMessage> SignRequest(string token, string path)
@@ -255,7 +255,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     [Fact(DisplayName = "§Auth — AAuthVerificationResult stored in HttpContext.Features")]
     public async Task VerificationResultStoredInFeatures()
     {
-        var token = BuildAuthToken();
+        var token = await BuildAuthTokenAsync();
         var response = await SendSigned(token, "/claims");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -263,7 +263,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     [Fact(DisplayName = "§Auth — HttpContext.User populated with AAuth claims")]
     public async Task UserPopulatedWithClaims()
     {
-        var token = BuildAuthToken();
+        var token = await BuildAuthTokenAsync();
         var response = await SendSigned(token, "/claims");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -285,7 +285,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     [Fact(DisplayName = "§Auth — agent token maps to Identified level")]
     public async Task AgentTokenMapsToIdentified()
     {
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         var response = await SendSigned(token, "/claims");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -309,12 +309,12 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     public async Task AuthorizedPolicyRequiresAuthToken()
     {
         // Agent token (Identified) should be rejected by Authorized policy.
-        var agentToken = BuildAgentToken();
+        var agentToken = await BuildAgentTokenAsync();
         var response = await SendSigned(agentToken, "/authorized");
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 
         // Auth token (Authorized) should pass.
-        var authToken = BuildAuthToken();
+        var authToken = await BuildAuthTokenAsync();
         response = await SendSigned(authToken, "/authorized");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(1, _jwksRequests);
@@ -323,11 +323,11 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     [Fact(DisplayName = "§Auth — [Authorize(AAuth.Identified)] accepts agent and auth tokens")]
     public async Task IdentifiedPolicyAcceptsBoth()
     {
-        var agentToken = BuildAgentToken();
+        var agentToken = await BuildAgentTokenAsync();
         var response = await SendSigned(agentToken, "/identified");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        var authToken = BuildAuthToken();
+        var authToken = await BuildAuthTokenAsync();
         response = await SendSigned(authToken, "/identified");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(1, _jwksRequests);
@@ -343,7 +343,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     [Fact(DisplayName = "§Auth — scope policy accepts matching scope")]
     public async Task ScopePolicyAcceptsMatchingScope()
     {
-        var token = BuildAuthToken("whoami");
+        var token = await BuildAuthTokenAsync("whoami");
         var response = await SendSigned(token, "/scoped-whoami");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -352,7 +352,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     public async Task ScopePolicyRejectsMissingScope()
     {
         // Token has "whoami" scope, endpoint requires "admin".
-        var token = BuildAuthToken("whoami");
+        var token = await BuildAuthTokenAsync("whoami");
         var response = await SendSigned(token, "/scoped-admin");
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -360,7 +360,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     [Fact(DisplayName = "§Auth — User.HasClaim works with AAuth claims")]
     public async Task UserHasClaimWorks()
     {
-        var token = BuildAuthToken("whoami data:read");
+        var token = await BuildAuthTokenAsync("whoami data:read");
         var response = await SendSigned(token, "/claims");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -374,7 +374,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     public async Task AuthTokenCarriesMission()
     {
         const string mission = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-        var token = BuildAuthToken(missionS256: mission);
+        var token = await BuildAuthTokenAsync(missionS256: mission);
         var response = await SendSigned(token, "/claims");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 

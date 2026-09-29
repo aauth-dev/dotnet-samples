@@ -80,7 +80,7 @@ public class PersonServerMapperTests
         {
             EgressPolicy = new AAuthEgressPolicy(dnsResolver: new PublicDns()),
             Issuer = PsIssuer,
-            SigningKeys = new System.Collections.Generic.Dictionary<string, IAAuthKey> { [PsKid] = PsKey },
+            SigningKeys = new AAuthSigningKeySet { [PsKid] = PsKey },
             Trust = { AccessServers = { Allowed = new System.Collections.Generic.HashSet<string> { AsIssuer } } },
             ResourceInteractionSessions = demoResource ? new AAuth.Server.BrowserConsentSessions("resource-tests", "demo-person", isolatedDemoAccess: _ => true) : null,
             TokenInventory = inventory,
@@ -91,10 +91,10 @@ public class PersonServerMapperTests
         return app;
     }
 
-    private static HttpClient SignedAgentClient(IHost host, AAuthKey agentKey, string agentId, TimeSpan? lifetime = null,
+    private static async Task<HttpClient> SignedAgentClientAsync(IHost host, AAuthKey agentKey, string agentId, TimeSpan? lifetime = null,
         string? body = null)
     {
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -104,7 +104,7 @@ public class PersonServerMapperTests
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
             Lifetime = lifetime ?? TimeSpan.FromHours(1),
-        }.Build();
+        }.BuildAsync();
         var signing = new AAuthSigningHandler(agentKey, () => agentToken);
         // body: "uncovered" signs without content-type/content-digest; "tampered"
         // swaps the body after signing, keeping the signed Content-Digest.
@@ -127,10 +127,10 @@ public class PersonServerMapperTests
         var agentKey = AAuthKey.Generate();
         var asserter = new CapturingAsserter();
         using var host = await BuildHostAsync(asserter);
-        using var http = SignedAgentClient(host, agentKey, AgentId, body: body);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId, body: body);
 
         using var response = await http.PostAsJsonAsync(path,
-            path == "/token" ? TokenRequest(agentKey) : new JsonObject { ["resource"] = ResourceUrl });
+            path == "/token" ? await TokenRequestAsync(agentKey) : new JsonObject { ["resource"] = ResourceUrl });
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         var error = Assert.Single(response.Headers.GetValues("Signature-Error"));
@@ -149,7 +149,7 @@ public class PersonServerMapperTests
     }
 
     // A person token this PS issued to the agent for the resource (§Person Token Structure).
-    private static string PersonToken(AAuthKey agentKey, string? missionS256 = null, string subject = "user-42")
+    private static ValueTask<string> PersonTokenAsync(AAuthKey agentKey, string? missionS256 = null, string subject = "user-42")
         => new PersonTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
@@ -161,10 +161,10 @@ public class PersonServerMapperTests
             Key = PsKey,
             KeyId = PsKid,
             MissionS256 = missionS256,
-        }.Build();
+        }.BuildAsync();
 
     // The resource token naming the presented person token (ps/sub/presented_jti/mission_s256).
-    private static string ResourceToken(
+    private static ValueTask<string> ResourceTokenAsync(
         AAuthKey agentKey, string presentedToken, string audience, string scope = "whoami", string? account = null,
         Interaction? interaction = null, string? overwrite = null)
     {
@@ -186,18 +186,18 @@ public class PersonServerMapperTests
             Scope = scope,
             Account = account,
             Interaction = interaction,
-        }.Build();
+        }.BuildAsync();
     }
 
     // The §Auth Token Request body: a resource token paired with the person token it names.
-    private static JsonObject TokenRequest(
+    private static async Task<JsonObject> TokenRequestAsync(
         AAuthKey agentKey, string audience = PsIssuer, string scope = "whoami", string? missionS256 = null,
         string? account = null)
     {
-        var personToken = PersonToken(agentKey, missionS256);
+        var personToken = await PersonTokenAsync(agentKey, missionS256);
         return new JsonObject
         {
-            ["resource_token"] = ResourceToken(agentKey, personToken, audience, scope, account),
+            ["resource_token"] = await ResourceTokenAsync(agentKey, personToken, audience, scope, account),
             ["presented_token"] = personToken,
         };
     }
@@ -206,7 +206,7 @@ public class PersonServerMapperTests
     // token's `iss` (= https://ap.example) per §Upstream Token Verification, and it
     // MUST name this PS. A PS-issued token is verified with this PS's own key; an
     // AS-issued one via the stub JWKS (ResourceKey).
-    private static string UpstreamToken(string issuer, string? missionS256 = null, string audience = "https://ap.example")
+    private static ValueTask<string> UpstreamTokenAsync(string issuer, string? missionS256 = null, string audience = "https://ap.example")
         => issuer == PsIssuer
             ? new PersonTokenBuilder
             {
@@ -219,7 +219,7 @@ public class PersonServerMapperTests
                 Key = PsKey,
                 KeyId = PsKid,
                 MissionS256 = missionS256,
-            }.Build()
+            }.BuildAsync()
             : new AuthTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
@@ -234,7 +234,7 @@ public class PersonServerMapperTests
                 Scope = "data.read",
                 Subject = "upstream-user",
                 MissionS256 = missionS256,
-            }.Build();
+            }.BuildAsync();
 
     private static JsonObject DecodePayload(string jwt)
     {
@@ -248,7 +248,7 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
         using var response = await http.PostAsJsonAsync("/person",
             new JsonObject { ["resource"] = ResourceUrl, ["mission_s256"] = S256 });
@@ -285,16 +285,16 @@ public class PersonServerMapperTests
         const string missionS256 = "Q7cOX4Oq4Fmc5L8FJbfyLmXDVz-lEVJbzsUNr8dlc2E";
         await host.Services.GetRequiredService<IMissionStore>().SaveAsync(
             new StoredMission(missionS256, PsIssuer, AgentId, new byte[] { 4, 5, 6 }) { ExpiresAt = now.AddMinutes(5) });
-        using var http = SignedAgentClient(host, agentKey, AgentId,
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId,
             bound switch { "hour" => TimeSpan.FromHours(3), "agent" => TimeSpan.FromMinutes(10), _ => TimeSpan.FromHours(1) });
         var body = new JsonObject { ["resource"] = ResourceUrl };
         if (bound == "mission") body["mission_s256"] = missionS256;
         if (bound == "upstream")
-            body["upstream_token"] = new PersonTokenBuilder
+            body["upstream_token"] = await new PersonTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy, Issuer = PsIssuer, Audience = "https://ap.example", Subject = "upstream-user",
                 ConfirmationKey = AAuthKey.Generate(), AgentTokenExpiresAt = now.AddMinutes(7), Key = PsKey, KeyId = PsKid,
-            }.Build();
+            }.BuildAsync();
 
         using var response = await http.PostAsJsonAsync("/person", body);
 
@@ -317,7 +317,7 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
         using var person = await http.PostAsJsonAsync("/person", new JsonObject { ["resource"] = ResourceUrl });
         Assert.True(person.IsSuccessStatusCode, await person.Content.ReadAsStringAsync());
@@ -325,7 +325,7 @@ public class PersonServerMapperTests
 
         using var response = await http.PostAsJsonAsync("/token", new JsonObject
         {
-            ["resource_token"] = ResourceToken(agentKey, personToken, PsIssuer),
+            ["resource_token"] = await ResourceTokenAsync(agentKey, personToken, PsIssuer),
             ["presented_token"] = personToken,
         });
 
@@ -352,8 +352,8 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var body = TokenRequest(agentKey);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var body = await TokenRequestAsync(agentKey);
         body.Remove("presented_token");
 
         using var response = await http.PostAsJsonAsync("/token", body);
@@ -377,11 +377,11 @@ public class PersonServerMapperTests
         var agentKey = AAuthKey.Generate();
         var asserter = new CapturingAsserter();
         using var host = await BuildHostAsync(asserter);
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var personToken = PersonToken(agentKey);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var personToken = await PersonTokenAsync(agentKey);
         var body = new JsonObject
         {
-            ["resource_token"] = ResourceToken(agentKey, personToken, PsIssuer, overwrite: overwrite),
+            ["resource_token"] = await ResourceTokenAsync(agentKey, personToken, PsIssuer, overwrite: overwrite),
             ["presented_token"] = personToken,
         };
 
@@ -401,11 +401,11 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var body = TokenRequest(agentKey);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var body = await TokenRequestAsync(agentKey);
         body["presented_token"] = variant == "other-person-token"
-            ? PersonToken(agentKey)
-            : PersonToken(AAuthKey.Generate());
+            ? await PersonTokenAsync(agentKey)
+            : await PersonTokenAsync(AAuthKey.Generate());
 
         using var response = await http.PostAsJsonAsync("/token", body);
 
@@ -419,7 +419,7 @@ public class PersonServerMapperTests
     public async Task TokenRequest_MissingResourceToken_ReturnsProblemDetails()
     {
         using var host = await BuildHostAsync();
-        using var client = SignedAgentClient(host, AAuthKey.Generate(), AgentId);
+        using var client = await SignedAgentClientAsync(host, AAuthKey.Generate(), AgentId);
         using var response = await client.PostAsJsonAsync("/token", new JsonObject());
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -442,7 +442,7 @@ public class PersonServerMapperTests
 
         // Sub-agent token: signed by the AP key the stub serves (ResourceKey/ResKid),
         // cnf bound to the sub-agent key, carrying parent_agent.
-        var subagentToken = new AgentTokenBuilder
+        var subagentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -452,14 +452,14 @@ public class PersonServerMapperTests
             ConfirmationKey = subKey,
             ParentAgent = ParentId,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         // Person + resource tokens the SUB-AGENT obtained (bound to its own key).
-        var request = TokenRequest(subKey);
+        var request = await TokenRequestAsync(subKey);
         request["subagent_token"] = subagentToken;
 
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, parentKey, ParentId); // parent signs
+        using var http = await SignedAgentClientAsync(host, parentKey, ParentId); // parent signs
 
         using var response = await http.PostAsJsonAsync("/token", request);
 
@@ -483,9 +483,9 @@ public class PersonServerMapperTests
         var agentKey = AAuthKey.Generate();
         var asserter = new CapturingAsserter();
         using var host = await BuildHostAsync(asserter);
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
-        var request = TokenRequest(agentKey);
+        var request = await TokenRequestAsync(agentKey);
         request["prompt"] = "consent";
         request["capabilities"] = new JsonArray("interaction", "payment");
         using var response = await http.PostAsJsonAsync("/token", request);
@@ -506,7 +506,7 @@ public class PersonServerMapperTests
     {
         var asserter = new CapturingAsserter();
         using var host = await BuildHostAsync(asserter);
-        using var http = SignedAgentClient(host, AAuthKey.Generate(), AgentId);
+        using var http = await SignedAgentClientAsync(host, AAuthKey.Generate(), AgentId);
 
         using var response = await http.PostAsJsonAsync("/person", new JsonObject
         {
@@ -529,7 +529,7 @@ public class PersonServerMapperTests
         var subKey = AAuthKey.Generate();
 
         // A sub-agent token used to SIGN the request directly (not allowed).
-        var subagentToken = new AgentTokenBuilder
+        var subagentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -539,7 +539,7 @@ public class PersonServerMapperTests
             ConfirmationKey = subKey,
             ParentAgent = ParentId,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         using var host = await BuildHostAsync();
         var signing = new AAuthSigningHandler(subKey, () => subagentToken)
@@ -548,7 +548,7 @@ public class PersonServerMapperTests
         };
         using var http = new InProcessHttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
 
-        using var response = await http.PostAsJsonAsync("/token", TokenRequest(subKey));
+        using var response = await http.PostAsJsonAsync("/token", await TokenRequestAsync(subKey));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
@@ -564,7 +564,7 @@ public class PersonServerMapperTests
         using var host = await BuildHostAsync();
 
         // Sign with an auth token (wrong carrier type), not an agent token.
-        var authTokenAsCarrier = new AuthTokenBuilder
+        var authTokenAsCarrier = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
@@ -576,7 +576,7 @@ public class PersonServerMapperTests
             KeyId = "x",
             Subject = "pairwise",
             Scope = "whoami",
-        }.Build();
+        }.BuildAsync();
         var signing = new AAuthSigningHandler(agentKey, () => authTokenAsCarrier)
         {
             InnerHandler = host.GetTestServer().CreateHandler(),
@@ -597,7 +597,7 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
         using var response = await http.PostAsJsonAsync("/token", new JsonObject());
 
@@ -610,13 +610,13 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
         // A resource token carrying the published kid but signed with a different
         // key — the PS resolves the genuine JWKS key and the signature check fails.
-        var personToken = PersonToken(agentKey);
-        var genuine = DecodePayload(ResourceToken(agentKey, personToken, PsIssuer));
-        var forged = JwtWriter.SignCompact(new JsonObject
+        var personToken = await PersonTokenAsync(agentKey);
+        var genuine = DecodePayload(await ResourceTokenAsync(agentKey, personToken, PsIssuer));
+        var forged = await JwtWriter.SignCompactAsync(new JsonObject
         {
             ["alg"] = AAuthKey.Ed25519Algorithm, ["typ"] = ResourceTokenBuilder.TokenType, ["kid"] = ResKid,
         }, genuine, AAuthKey.Generate());
@@ -640,9 +640,9 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Deny("not allowed")));
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
-        using var response = await http.PostAsJsonAsync("/token", TokenRequest(agentKey));
+        using var response = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
@@ -655,9 +655,9 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.NeedsConsent()));
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
-        using var post = await http.PostAsJsonAsync("/token", TokenRequest(agentKey));
+        using var post = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey));
 
         Assert.Equal(HttpStatusCode.Accepted, post.StatusCode);
         var location = post.Headers.Location!.OriginalString;
@@ -690,9 +690,9 @@ public class PersonServerMapperTests
                 ? MissionTokenConsentDecision.Clarify("Why?") : MissionTokenConsentDecision.Grant()));
         await host.Services.GetRequiredService<IMissionStore>().SaveAsync(
             new StoredMission(missionS256, PsIssuer, AgentId, new byte[] { 4, 5, 6 }) { ExpiresAt = missionExpiry });
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
-        var response = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: missionS256));
+        var response = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: missionS256));
         if (deferred)
         {
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -722,8 +722,8 @@ public class PersonServerMapperTests
         var agentKey = AAuthKey.Generate();
         var asserter = new CapturingAsserter();
         using var host = await BuildHostAsync(asserter);
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var body = path == "/token" ? TokenRequest(agentKey) : new JsonObject { ["resource"] = ResourceUrl };
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var body = path == "/token" ? await TokenRequestAsync(agentKey) : new JsonObject { ["resource"] = ResourceUrl };
         body["justification"] = "# Booking your trip";
         body["platform"] = "ios";
         body["device"] = "Pixel 8 (App)";
@@ -750,8 +750,8 @@ public class PersonServerMapperTests
         var agentKey = AAuthKey.Generate();
         var asserter = new CapturingAsserter();
         using var host = await BuildHostAsync(asserter);
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var body = TokenRequest(agentKey);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var body = await TokenRequestAsync(agentKey);
         body[member] = new JsonObject();
 
         using var response = await http.PostAsJsonAsync("/token", body);
@@ -773,8 +773,8 @@ public class PersonServerMapperTests
             return context.ClarificationHistory.Count == 0
                 ? MissionTokenConsentDecision.Clarify("Why?") : MissionTokenConsentDecision.Grant();
         }));
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var body = TokenRequest(agentKey, missionS256: S256);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var body = await TokenRequestAsync(agentKey, missionS256: S256);
         body["justification"] = "Needed for the itinerary";
 
         using var first = await http.PostAsJsonAsync("/token", body);
@@ -799,17 +799,17 @@ public class PersonServerMapperTests
             reviews.Add(context);
             return MissionTokenConsentDecision.Grant();
         }));
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
-        using (var first = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: S256)))
+        using (var first = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: S256)))
             Assert.Equal(HttpStatusCode.OK, first.StatusCode);
-        using (var repeat = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: S256)))
+        using (var repeat = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: S256)))
             Assert.Equal(HttpStatusCode.OK, repeat.StatusCode);
         Assert.Single(reviews);
 
         await host.Services.GetRequiredService<IMissionLog>().AppendAsync(
             new MissionLogEntry(S256, MissionLogEntryKind.Update, DateTimeOffset.UtcNow) { Detail = "{\"description\":\"Only economy\"}" });
-        using (var afterUpdate = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: S256)))
+        using (var afterUpdate = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: S256)))
             Assert.Equal(HttpStatusCode.OK, afterUpdate.StatusCode);
 
         Assert.Equal(2, reviews.Count);
@@ -817,7 +817,7 @@ public class PersonServerMapperTests
         Assert.Equal("{\"description\":\"Only economy\"}", Assert.Single(reviews[1].AcceptedUpdates).Detail);
 
         // The consent given after the update restores the fast path.
-        using (var again = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: S256)))
+        using (var again = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: S256)))
             Assert.Equal(HttpStatusCode.OK, again.StatusCode);
         Assert.Equal(2, reviews.Count);
         await host.StopAsync();
@@ -830,8 +830,8 @@ public class PersonServerMapperTests
         var inventory = new InMemoryJtiStore(clock);
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync(inventory: inventory);
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var request = TokenRequest(agentKey);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var request = await TokenRequestAsync(agentKey);
         var resourceExp = (long)DecodePayload((string)request["resource_token"]!)["exp"]!;
         var person = DecodePayload((string)request["presented_token"]!);
 
@@ -858,8 +858,8 @@ public class PersonServerMapperTests
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync(inventory: inventory,
             consent: pending ? new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?")) : null);
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var request = pending ? TokenRequest(agentKey, missionS256: S256) : TokenRequest(agentKey);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var request = pending ? await TokenRequestAsync(agentKey, missionS256: S256) : await TokenRequestAsync(agentKey);
         var resource = DecodePayload((string)request["resource_token"]!);
         var resourceKey = new TokenKey((string)resource["iss"]!, (string)resource["jti"]!);
         var resourceExp = DateTimeOffset.FromUnixTimeSeconds((long)resource["exp"]!);
@@ -902,10 +902,10 @@ public class PersonServerMapperTests
         var agentKey = AAuthKey.Generate();
         var consent = new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?"));
         using var host = await BuildHostAsync(consent: consent);
-        using var owner = SignedAgentClient(host, agentKey, AgentId);
-        using var first = await owner.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: S256));
+        using var owner = await SignedAgentClientAsync(host, agentKey, AgentId);
+        using var first = await owner.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: S256));
         Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
-        using var attacker = SignedAgentClient(host, AAuthKey.Generate(),
+        using var attacker = await SignedAgentClientAsync(host, AAuthKey.Generate(),
             sameSubject ? AgentId : "aauth:attacker@ap.example");
         using var request = new HttpRequestMessage(new HttpMethod(method), first.Headers.Location);
         if (method == "POST")
@@ -925,8 +925,8 @@ public class PersonServerMapperTests
     {
         var key = AAuthKey.Generate();
         using var host = await BuildHostAsync(consent: new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?")));
-        using var client = SignedAgentClient(host, key, AgentId);
-        using var initial = await client.PostAsJsonAsync("/token", TokenRequest(key, missionS256: S256));
+        using var client = await SignedAgentClientAsync(host, key, AgentId);
+        using var initial = await client.PostAsJsonAsync("/token", await TokenRequestAsync(key, missionS256: S256));
         using var response = await client.PostAsJsonAsync(initial.Headers.Location,
             new JsonObject { ["action"] = action, ["clarification_response"] = "approve" });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -950,11 +950,11 @@ public class PersonServerMapperTests
             reviewed = context;
             return context.Scope == "read" ? MissionTokenConsentDecision.Grant() : MissionTokenConsentDecision.Clarify("Narrow scope?");
         }));
-        using var client = SignedAgentClient(host, key, AgentId);
-        using var initial = await client.PostAsJsonAsync("/token", TokenRequest(key, scope: "read write", missionS256: S256));
+        using var client = await SignedAgentClientAsync(host, key, AgentId);
+        using var initial = await client.PostAsJsonAsync("/token", await TokenRequestAsync(key, scope: "read write", missionS256: S256));
         var replacementKey = variant == "key" ? AAuthKey.Generate() : key;
-        var replacementPerson = PersonToken(replacementKey, S256, variant == "subject" ? "someone-else" : "user-42");
-        var replacement = variant == "malformed" ? "not-a-jwt" : ResourceToken(
+        var replacementPerson = await PersonTokenAsync(replacementKey, S256, variant == "subject" ? "someone-else" : "user-42");
+        var replacement = variant == "malformed" ? "not-a-jwt" : await ResourceTokenAsync(
             replacementKey, replacementPerson, variant == "audience" ? AsIssuer : PsIssuer, "read");
         var update = new JsonObject { ["action"] = "updated_request", ["resource_token"] = replacement };
         if (variant != "missing-presented") update["presented_token"] = replacementPerson;
@@ -980,8 +980,8 @@ public class PersonServerMapperTests
     {
         var key = AAuthKey.Generate();
         using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.NeedsConsent()));
-        using var client = SignedAgentClient(host, key, AgentId);
-        using var initial = await client.PostAsJsonAsync("/token", TokenRequest(key));
+        using var client = await SignedAgentClientAsync(host, key, AgentId);
+        using var initial = await client.PostAsJsonAsync("/token", await TokenRequestAsync(key));
         var store = host.Services.GetRequiredService<IPersonPendingStore>();
         var id = initial.Headers.Location!.ToString().Split('/')[^1];
         if (allow) { store.MarkAllowed(id, "user"); store.MarkDenied(id, "reversal"); }
@@ -1001,7 +1001,7 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         var missions = host.Services.GetRequiredService<IMissionStore>();
@@ -1010,7 +1010,7 @@ public class PersonServerMapperTests
         if (!expired) await missions.SetStateAsync(s256, MissionState.Terminated);
 
         using var response = await http.PostAsJsonAsync(path, path == "/token"
-            ? TokenRequest(agentKey, missionS256: s256)
+            ? await TokenRequestAsync(agentKey, missionS256: s256)
             : new JsonObject { ["resource"] = ResourceUrl, ["mission_s256"] = s256 });
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -1029,12 +1029,12 @@ public class PersonServerMapperTests
         var key = AAuthKey.Generate();
         using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Deny("denied identity")),
             new StubMissionConsent(_ => { reviews++; return MissionTokenConsentDecision.Grant(); }));
-        using var client = SignedAgentClient(host, key, AgentId);
+        using var client = await SignedAgentClientAsync(host, key, AgentId);
         const string hash = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         for (var attempt = 0; attempt < 2; attempt++)
         {
             using var response = await client.PostAsJsonAsync("/token",
-                TokenRequest(key, missionS256: hash, account: "personal"));
+                await TokenRequestAsync(key, missionS256: hash, account: "personal"));
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         }
         var log = host.Services.GetRequiredService<IMissionLog>();
@@ -1049,11 +1049,11 @@ public class PersonServerMapperTests
         using var host = await BuildHostAsync(
             new StubAsserter(IdentityAssertion.Assert("user-42")),
             new StubMissionConsent(_ => MissionTokenConsentDecision.Grant()));
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
-        using var response = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: s256));
+        using var response = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: s256));
 
         Assert.True(response.IsSuccessStatusCode,
             $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
@@ -1079,9 +1079,9 @@ public class PersonServerMapperTests
             ? MissionTokenConsentDecision.Clarify("Why do you need this scope?")
             : MissionTokenConsentDecision.Grant());
         using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
-        using var first = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: s256));
+        using var first = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: s256));
 
         Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
         Assert.Equal($"requirement={ClarificationRequirement.RequirementType}",
@@ -1120,9 +1120,9 @@ public class PersonServerMapperTests
             ? MissionTokenConsentDecision.Interact()
             : MissionTokenConsentDecision.Deny("not allowed"));
         using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
-        using var first = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: s256));
+        using var first = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: s256));
         Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
         var pendingUrl = first.Headers.Location!.ToString();
 
@@ -1145,9 +1145,9 @@ public class PersonServerMapperTests
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         var consent = new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?"));
         using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
-        using var first = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: s256));
+        using var first = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: s256));
         var pendingUrl = first.Headers.Location!.ToString();
 
         using var withdraw = await http.DeleteAsync(pendingUrl);
@@ -1170,13 +1170,13 @@ public class PersonServerMapperTests
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         var consent = new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?"));
         using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
-        using var owner = SignedAgentClient(host, agentKey, AgentId);
+        using var owner = await SignedAgentClientAsync(host, agentKey, AgentId);
 
-        using var first = await owner.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: s256));
+        using var first = await owner.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: s256));
         var pendingUrl = first.Headers.Location!.ToString();
 
         // A different, validly-signed agent must not touch the owner's pending entry.
-        using var attacker = SignedAgentClient(host, AAuthKey.Generate(), "aauth:attacker@ap.example");
+        using var attacker = await SignedAgentClientAsync(host, AAuthKey.Generate(), "aauth:attacker@ap.example");
         using var foreignPost = await attacker.PostAsJsonAsync(pendingUrl,
             new JsonObject { ["clarification_response"] = "let me in" });
         Assert.Equal(HttpStatusCode.NotFound, foreignPost.StatusCode);
@@ -1195,9 +1195,9 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
-        using var response = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, "https://untrusted-as.test"));
+        using var response = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, "https://untrusted-as.test"));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
@@ -1210,9 +1210,9 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var request = TokenRequest(agentKey);
-        request["upstream_token"] = UpstreamToken("https://untrusted-as.test");
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var request = await TokenRequestAsync(agentKey);
+        request["upstream_token"] = await UpstreamTokenAsync("https://untrusted-as.test");
 
         using var response = await http.PostAsJsonAsync("/token", request);
 
@@ -1230,10 +1230,10 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var request = path == "/token" ? TokenRequest(agentKey) : new JsonObject { ["resource"] = ResourceUrl };
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var request = path == "/token" ? await TokenRequestAsync(agentKey) : new JsonObject { ["resource"] = ResourceUrl };
         // The intermediary's agent token is from https://ap.example; this upstream names another AP.
-        request["upstream_token"] = UpstreamToken(upstreamIssuer, audience: "https://other-ap.example");
+        request["upstream_token"] = await UpstreamTokenAsync(upstreamIssuer, audience: "https://other-ap.example");
 
         using var response = await http.PostAsJsonAsync(path, request);
 
@@ -1247,9 +1247,9 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var request = TokenRequest(agentKey);
-        request["upstream_token"] = UpstreamToken(PsIssuer);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var request = await TokenRequestAsync(agentKey);
+        request["upstream_token"] = await UpstreamTokenAsync(PsIssuer);
 
         using var response = await http.PostAsJsonAsync("/token", request);
 
@@ -1269,9 +1269,9 @@ public class PersonServerMapperTests
         var agentKey = AAuthKey.Generate();
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var request = TokenRequest(agentKey, missionS256: s256);
-        request["upstream_token"] = UpstreamToken(AsIssuer, s256);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var request = await TokenRequestAsync(agentKey, missionS256: s256);
+        request["upstream_token"] = await UpstreamTokenAsync(AsIssuer, s256);
 
         using var response = await http.PostAsJsonAsync("/token", request);
 
@@ -1285,9 +1285,9 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
-        using var http = SignedAgentClient(host, agentKey, AgentId);
-        var request = TokenRequest(agentKey);
-        request["upstream_token"] = UpstreamToken(AsIssuer, S256);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var request = await TokenRequestAsync(agentKey);
+        request["upstream_token"] = await UpstreamTokenAsync(AsIssuer, S256);
 
         using var response = await http.PostAsJsonAsync("/token", request);
 
@@ -1306,20 +1306,20 @@ public class PersonServerMapperTests
         using var host = await BuildHostAsync(consent: new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?")));
         var missions = host.Services.GetRequiredService<IMissionStore>();
         await missions.SaveAsync(new StoredMission(S256, PsIssuer, "aauth:upstream-caller@ap.example", new byte[] { 1 }));
-        using var client = SignedAgentClient(host, key, AgentId);
-        var request = TokenRequest(key, missionS256: S256);
+        using var client = await SignedAgentClientAsync(host, key, AgentId);
+        var request = await TokenRequestAsync(key, missionS256: S256);
         var original = (string)request["resource_token"]!;
-        request["upstream_token"] = UpstreamToken(AsIssuer, S256);
+        request["upstream_token"] = await UpstreamTokenAsync(AsIssuer, S256);
         using var initial = await client.PostAsJsonAsync("/token", request);
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         var store = host.Services.GetRequiredService<IPersonPendingStore>();
         var id = initial.Headers.Location!.ToString().Split('/')[^1];
         var entry = store.Get(id)!;
-        var replacementPerson = PersonToken(key, changed ? "eBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" : null);
+        var replacementPerson = await PersonTokenAsync(key, changed ? "eBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" : null);
         using var replacement = await client.PostAsJsonAsync(initial.Headers.Location, new
         {
             action = "updated_request",
-            resource_token = ResourceToken(key, replacementPerson, PsIssuer),
+            resource_token = await ResourceTokenAsync(key, replacementPerson, PsIssuer),
             presented_token = replacementPerson,
         });
         Assert.Equal(HttpStatusCode.BadRequest, replacement.StatusCode);
@@ -1355,9 +1355,9 @@ public class PersonServerMapperTests
             await host.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
                 mission, variant == "stored-approver" ? "https://other-ps.test" : PsIssuer,
                 variant == "foreign-owner" ? "aauth:other@ap.example" : AgentId, new byte[] { 1 }));
-        using var client = SignedAgentClient(host, key, AgentId);
-        var personToken = PersonToken(key, mission);
-        var resourceToken = ResourceToken(key, personToken, PsIssuer,
+        using var client = await SignedAgentClientAsync(host, key, AgentId);
+        var personToken = await PersonTokenAsync(key, mission);
+        var resourceToken = await ResourceTokenAsync(key, personToken, PsIssuer,
             interaction: interaction ? new Interaction(ResourceUrl + "/permission", "ABCDEFGH") : null);
         using var response = await client.PostAsJsonAsync("/token", new
         {
@@ -1382,13 +1382,13 @@ public class PersonServerMapperTests
         using var host = await BuildHostAsync(asserter, new StubMissionConsent(context =>
             deferred && context.ClarificationHistory.Count == 0
                 ? MissionTokenConsentDecision.Clarify("Why?") : MissionTokenConsentDecision.Grant()));
-        var childToken = new AgentTokenBuilder
+        var childToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy, Issuer = "https://ap.example", Subject = child,
             KeyId = ResKid, Key = ResourceKey, ConfirmationKey = childKey, ParentAgent = AgentId, PersonServer = PsIssuer,
-        }.Build();
-        using var client = SignedAgentClient(host, parentKey, AgentId);
-        var request = TokenRequest(childKey, missionS256: S256);
+        }.BuildAsync();
+        using var client = await SignedAgentClientAsync(host, parentKey, AgentId);
+        var request = await TokenRequestAsync(childKey, missionS256: S256);
         request["subagent_token"] = childToken;
         using var initial = await client.PostAsJsonAsync("/token", request);
         HttpResponseMessage result = initial;
@@ -1419,13 +1419,13 @@ public class PersonServerMapperTests
         var key = AAuthKey.Generate();
         var asserter = new CapturingAsserter();
         using var host = await BuildHostAsync(asserter);
-        using var client = SignedAgentClient(host, key, AgentId);
-        var personToken = PersonToken(key);
-        var original = ResourceToken(key, personToken, PsIssuer);
+        using var client = await SignedAgentClientAsync(host, key, AgentId);
+        var personToken = await PersonTokenAsync(key);
+        var original = await ResourceTokenAsync(key, personToken, PsIssuer);
         var payload = DecodePayload(original);
         payload["interaction"] = new JsonObject { ["url"] = ResourceUrl + "/permission", ["code"] = "ABCDEFGH" };
         var header = TokenVerifier.DecodeJsonSegment(original.Split('.')[0], "header");
-        var token = JwtWriter.SignCompact(header, payload, ResourceKey);
+        var token = await JwtWriter.SignCompactAsync(header, payload, ResourceKey);
         using var response = await client.PostAsJsonAsync("/token", new { resource_token = token, presented_token = personToken });
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Null(asserter.Last);
@@ -1450,9 +1450,9 @@ public class PersonServerMapperTests
         var key = AAuthKey.Generate();
         var asserter = new CapturingAsserter();
         using var host = await BuildHostAsync(asserter, demoResource: true);
-        using var agent = SignedAgentClient(host, key, AgentId);
-        var personToken = PersonToken(key);
-        var token = ResourceToken(key, personToken, PsIssuer, account: "work",
+        using var agent = await SignedAgentClientAsync(host, key, AgentId);
+        var personToken = await PersonTokenAsync(key);
+        var token = await ResourceTokenAsync(key, personToken, PsIssuer, account: "work",
             interaction: new Interaction(ResourceUrl + "/permission", "ABCDEFGH"));
         using var initial = await agent.PostAsJsonAsync("/token", new { resource_token = token, presented_token = personToken });
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
@@ -1538,12 +1538,12 @@ public class PersonServerMapperTests
         var key = AAuthKey.Generate();
         var asserter = new CapturingAsserter();
         using var host = await BuildHostAsync(asserter);
-        using var agent = SignedAgentClient(host, key, AgentId);
-        var personToken = PersonToken(key);
-        var original = ResourceToken(key, personToken, PsIssuer);
+        using var agent = await SignedAgentClientAsync(host, key, AgentId);
+        var personToken = await PersonTokenAsync(key);
+        var original = await ResourceTokenAsync(key, personToken, PsIssuer);
         var payload = DecodePayload(original);
         payload["interaction"] = new JsonObject { ["url"] = url, ["code"] = "ABCDEFGH" };
-        var token = JwtWriter.SignCompact(TokenVerifier.DecodeJsonSegment(original.Split('.')[0], "header"), payload, ResourceKey);
+        var token = await JwtWriter.SignCompactAsync(TokenVerifier.DecodeJsonSegment(original.Split('.')[0], "header"), payload, ResourceKey);
         using var response = await agent.PostAsJsonAsync("/token", new { resource_token = token, presented_token = personToken });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Null(asserter.Last);

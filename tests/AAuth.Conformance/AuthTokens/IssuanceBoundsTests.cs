@@ -28,7 +28,7 @@ public class IssuanceBoundsTests
     {
         await using var fixture = await IssuerFixture.CreateAsync(true, false, injectClaim: true);
         using var client = fixture.Client(120);
-        using var response = await client.PostAsJsonAsync("/token", fixture.Request(120));
+        using var response = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(120));
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("policy_error", (string?)body!["error"]);
@@ -53,7 +53,7 @@ public class IssuanceBoundsTests
         await using var fixture = await IssuerFixture.CreateAsync(access, deferred);
         var started = fixture.Clock.Now;
         using var client = fixture.Client(parentSeconds);
-        using var initial = await client.PostAsJsonAsync("/token", fixture.Request(parentSeconds, childSeconds));
+        using var initial = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(parentSeconds, childSeconds));
         HttpResponseMessage response = initial;
         if (deferred)
         {
@@ -83,7 +83,7 @@ public class IssuanceBoundsTests
     {
         await using var fixture = await IssuerFixture.CreateAsync(access, true);
         using var client = fixture.Client(parentSeconds);
-        using var pending = await client.PostAsJsonAsync("/token", fixture.Request(parentSeconds, childSeconds));
+        using var pending = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(parentSeconds, childSeconds));
         Assert.Equal(HttpStatusCode.Accepted, pending.StatusCode);
         fixture.Approve(pending);
         fixture.Clock.Now = fixture.Clock.Now.AddSeconds(120);
@@ -103,7 +103,7 @@ public class IssuanceBoundsTests
     {
         await using var fixture = await IssuerFixture.CreateAsync(access, false);
         using var client = fixture.Client(parentSeconds);
-        using var response = await client.PostAsJsonAsync("/token", fixture.Request(parentSeconds, childSeconds));
+        using var response = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(parentSeconds, childSeconds));
         Assert.False(response.IsSuccessStatusCode);
         // A rejection may come from the signature layer (401 with no body) or the token endpoint.
         Assert.DoesNotContain("auth_token", await response.Content.ReadAsStringAsync());
@@ -119,7 +119,7 @@ public class IssuanceBoundsTests
         await using var fixture = await IssuerFixture.CreateAsync(access, deferred);
         var ceiling = fixture.Clock.Now.AddSeconds(60);
         using var client = fixture.Client(300);
-        using var initial = await client.PostAsJsonAsync("/token", fixture.Request(300, 120, upstream: true));
+        using var initial = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(300, 120, upstream: true));
         HttpResponseMessage response = initial;
         if (deferred)
         {
@@ -145,7 +145,7 @@ public class IssuanceBoundsTests
         await using var fixture = await IssuerFixture.CreateAsync(true, true, claims: true);
         var ceiling = fixture.Clock.Now.AddSeconds(120);
         using var client = fixture.Client(120);
-        using var pending = await client.PostAsJsonAsync("/token", fixture.Request(120));
+        using var pending = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(120));
         Assert.Equal(HttpStatusCode.Accepted, pending.StatusCode);
         fixture.Clock.Now = fixture.Clock.Now.AddSeconds(expired ? 120 : 30);
         using var response = await client.PostAsJsonAsync(pending.Headers.Location, new JsonObject
@@ -217,14 +217,14 @@ public class IssuanceBoundsTests
                 app.MapAAuthAccessServer(new AAuthAccessServerOptions
                 {
                     EgressPolicy = TestEgress.Policy,
-                    Issuer = As, SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = issuerKey },
+                    Issuer = As, SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey },
                     Trust = { PersonServers = { Allowed = new HashSet<string> { Ps } } }, TimeProvider = clock,
                 });
             else
                 app.MapAAuthPersonServer(new AAuthPersonServerOptions
                 {
                     EgressPolicy = TestEgress.Policy,
-                    Issuer = Ps, SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = issuerKey },
+                    Issuer = Ps, SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey },
                     Trust = { AccessServers = { Allowed = new HashSet<string>() } }, TimeProvider = clock,
                 });
             await app.StartAsync();
@@ -232,41 +232,42 @@ public class IssuanceBoundsTests
                 PsKey = psKey, ApKey = apKey, ResourceKey = resourceKey };
         }
 
-        private string AgentToken(int seconds, bool child = false) => new AgentTokenBuilder
+        private ValueTask<string> AgentTokenAsync(int seconds, bool child = false) => new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = Ap, Subject = child ? ChildId : ParentId, Key = ApKey, KeyId = "key",
             ConfirmationKey = child ? ChildKey : ParentKey, ParentAgent = child ? ParentId : null,
             PersonServer = Ps, IssuedAt = Clock.Now.AddSeconds(seconds - 3600), Lifetime = TimeSpan.FromHours(1),
-        }.Build();
+        }.BuildAsync();
 
         public HttpClient Client(int parentSeconds)
         {
             var client = Access
                 ? new AAuthClientBuilder(PsKey).UseJwksUri(Ps, AAuthConstants.DwkFiles.Person, "key")
                     .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(App.GetTestServer().CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly).Build()
-                : new InProcessHttpClient(new AAuthSigningHandler(ParentKey, () => AgentToken(parentSeconds))
+                // The sync token factory mints a fresh carrier per request (the tests rely on it); local signing completes synchronously.
+                : new InProcessHttpClient(new AAuthSigningHandler(ParentKey, () => AgentTokenAsync(parentSeconds).AsTask().GetAwaiter().GetResult())
                     { InnerHandler = App.GetTestServer().CreateHandler() });
             client.BaseAddress = new Uri(Access ? As : Ps);
             return client;
         }
 
-        public JsonObject Request(int parentSeconds, int childSeconds = 0, bool upstream = false)
+        public async Task<JsonObject> RequestAsync(int parentSeconds, int childSeconds = 0, bool upstream = false)
         {
             var mission = Access && upstream ? "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" : null;
             var agentKey = childSeconds != 0 ? ChildKey : ParentKey;
             // The presented person token outlives every ceiling these tests assert.
-            var personToken = new PersonTokenBuilder
+            var personToken = await new PersonTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
                 Issuer = Ps, Audience = Resource, Subject = "user", ConfirmationKey = agentKey,
                 AgentTokenExpiresAt = Clock.Now.AddHours(1), TimeProvider = Clock, MissionS256 = mission,
                 Key = PsKey, KeyId = "key",
-            }.Build();
+            }.BuildAsync();
             var body = new JsonObject
             {
-                ["agent_token"] = AgentToken(parentSeconds),
-                ["resource_token"] = new ResourceTokenBuilder
+                ["agent_token"] = await AgentTokenAsync(parentSeconds),
+                ["resource_token"] = await new ResourceTokenBuilder
                 {
                     ScopeDescriptions = TestScopeDefinitions.Resource,
                     EgressPolicy = TestEgress.Policy,
@@ -275,11 +276,11 @@ public class IssuanceBoundsTests
                     AgentJkt = agentKey.ComputeJwkThumbprint(),
                     Key = ResourceKey, KeyId = "key", Scope = "read",
                     MissionS256 = mission, IssuedAt = Clock.Now,
-                }.Build(),
+                }.BuildAsync(),
                 ["presented_token"] = personToken,
             };
-            if (childSeconds != 0) body["subagent_token"] = AgentToken(childSeconds, child: true);
-            if (upstream) body["upstream_token"] = new AuthTokenBuilder
+            if (childSeconds != 0) body["subagent_token"] = await AgentTokenAsync(childSeconds, child: true);
+            if (upstream) body["upstream_token"] = await new AuthTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
                 Issuer = Access ? As : Ps, Audience = Ap, PersonServer = Ps, Subject = "upstream-person",
@@ -287,7 +288,7 @@ public class IssuanceBoundsTests
                 AgentTokenExpiresAt = Clock.Now.AddSeconds(60), TimeProvider = Clock,
                 Dwk = Access ? AuthTokenBuilder.AccessDwk : AuthTokenBuilder.PersonDwk,
                 MissionS256 = mission,
-            }.Build();
+            }.BuildAsync();
             return body;
         }
 

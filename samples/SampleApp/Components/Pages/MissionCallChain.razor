@@ -287,7 +287,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
             // at approval, so it must be seeded BEFORE proposing.
             await ConfigurePersonServerAsync(personServer, resourceOrigin, conciergeUrl);
 
-            _agentToken = MintAgentToken(personServer);
+            _agentToken = await MintAgentTokenAsync(personServer);
             var handler = new AAuthSigningHandler(_identity.Key, () => _agentToken)
                 { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
             using var signed = new SampleHttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
@@ -366,7 +366,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
         }
     }
 
-    private string MintAgentToken(string personServer) => new AgentTokenBuilder
+    private ValueTask<string> MintAgentTokenAsync(string personServer) => new AgentTokenBuilder
     {
         EgressPolicy = SampleEgress.Policy,
         Issuer = _identity.Issuer,
@@ -375,7 +375,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
         Key = _identity.Key,
         PersonServer = personServer,
         Lifetime = TimeSpan.FromHours(1),
-    }.Build();
+    }.BuildAsync();
 
     // Challenge -> token exchange (with a clarification round) -> retry. The
     // clarification callback surfaces the (sanitized) question and answers it;
@@ -388,7 +388,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
         AAuth.Agent.Mission mission,
         DeferredPollerOptions poller)
     {
-        _agentToken = MintAgentToken(personServer);
+        _agentToken = await MintAgentTokenAsync(personServer);
 
         var personToken = await exchange.RequestPersonTokenAsync(personServer,
             new Uri(resourceUrl).GetLeftPart(UriPartial.Authority), new TokenExchangeRequest

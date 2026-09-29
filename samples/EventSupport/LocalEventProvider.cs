@@ -13,7 +13,7 @@ namespace AAuth.Samples.Events;
 
 public static class LocalEventProvider
 {
-    public static void MapLocalEventProvider(this IEndpointRouteBuilder routes, string issuer, IAAuthKey key,
+    public static void MapLocalEventProvider(this IEndpointRouteBuilder routes, string issuer, IAAuthSigner key,
         string keyId, EventsProtocol protocol, IAgentProviderEventStore store)
     {
         routes.MapAAuthEventEndpoint("/events", protocol, store);
@@ -36,12 +36,12 @@ public static class LocalEventProvider
             }
             var eid = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
             var agent = EventsTokens.RequireText(assertion.Token.Payload, "sub");
-            var jwt = new SubscribeTokenBuilder
+            var jwt = await new SubscribeTokenBuilder
             {
                 Issuer = issuer, Subject = agent, Audience = resource, Eid = eid, Key = key,
                 KeyId = keyId, ConfirmationKey = assertion.HttpSigningKey, MaxUses = maximum,
                 Verifier = protocol.TokenVerifier
-            }.Build();
+            }.BuildAsync(context.RequestAborted);
             try { store.Create(new(eid, agent, resource, protocol.TokenVerifier.TimeProvider.GetUtcNow().AddHours(1), maximum)); }
             catch (Exception exception) when (exception is not OperationCanceledException)
             { return AAuthProblemDetails.Create("temporarily_unavailable", statusCode: 503); }

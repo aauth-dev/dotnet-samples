@@ -10,7 +10,7 @@ namespace AAuth;
 
 /// <summary>
 /// Fluent sub-builder for configuring an AP-enrolled agent client.
-/// Returned by <see cref="AAuthClientBuilder.Enrolled(IAAuthKey)"/>.
+/// Returned by <see cref="AAuthClientBuilder.Enrolled(IAAuthSigner)"/>.
 /// </summary>
 /// <example>
 /// <code>
@@ -24,7 +24,7 @@ namespace AAuth;
 /// </example>
 public sealed class EnrolledBuilder
 {
-    private readonly IAAuthKey _key;
+    private readonly IAAuthSigner _key;
     private string? _refreshEndpoint;
     private string? _localKeyHandle;
     private IKeyStore? _keyStore;
@@ -40,7 +40,7 @@ public sealed class EnrolledBuilder
     public EnrolledBuilder WithDevelopmentLoopback(params string[] origins) =>
         WithEgressPolicy(AAuth.Discovery.AAuthEgressPolicy.ForDevelopmentLoopback(origins));
 
-    internal EnrolledBuilder(IAAuthKey key)
+    internal EnrolledBuilder(IAAuthSigner key)
     {
         _key = key;
     }

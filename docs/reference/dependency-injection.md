@@ -65,7 +65,7 @@ builder.Services.AddAAuthAgent("self-issued", options =>
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
     Issuer = issuer,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [Kid] = key },
+    SigningKeys = new AAuthSigningKeySet(Kid, key),
 });
 ```
 
@@ -346,7 +346,7 @@ refresh transport. Keys and stores remain caller-owned.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Key` | `IAAuthKey` | required | Agent signing key (must have private component) |
+| `Key` | `IAAuthSigner` | required | Agent signing key (must have private component) |
 | `AgentToken` | `string?` | `null` | Already-held agent JWT; no implicit provisioning |
 | `SignatureKeyProvider` | `ISignatureKeyProvider?` | `null` | Explicit generic signing; incompatible with agent credentials or PS/resource-managed flows |
 | `PersonServer` | `string?` | `null` | PS URL; with `TokenRefresher`, enables 401 challenge handling |
@@ -368,7 +368,7 @@ a verification-only resource can leave `SigningKeys` empty.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Issuer` | `string` | required | Resource HTTPS URL (metadata + audience) |
-| `SigningKeys` | `Dictionary<string, IAAuthKey>` | empty | Keys for signing resource tokens |
+| `SigningKeys` | `AAuthSigningKeySet` | empty | Keys published at the JWKS; resource tokens are signed with the active key |
 | `Name` | `string?` | `null` | Human-readable name in metadata (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope descriptions in metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
@@ -494,7 +494,7 @@ var app = builder.Build();
 app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     Issuer      = psIssuer,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
+    SigningKeys = new AAuthSigningKeySet(PsKid, psKey),
     // Unset ⇒ federate to verified aud; empty ⇒ three-party only.
     Trust       = { AccessServers = { Allowed = trustedAccessServers } },
 });

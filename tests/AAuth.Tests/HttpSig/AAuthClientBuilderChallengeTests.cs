@@ -28,14 +28,14 @@ public class AAuthClientBuilderChallengeTests
     public async Task RefreshPipelinePreservesCurrentToken(bool challenge, bool factory, bool nearExpiry)
     {
         var issued = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-        string CreateToken(TimeSpan lifetime) => new AgentTokenBuilder
+        ValueTask<string> CreateTokenAsync(TimeSpan lifetime) => new AgentTokenBuilder
         {
             Issuer = "https://ap.example", Subject = "aauth:refresh@ap.example", KeyId = "agent-key",
             Key = _key, IssuedAt = issued, Lifetime = lifetime, PersonServer = "https://ps.example",
             AdditionalClaims = new Dictionary<string, System.Text.Json.Nodes.JsonNode?> { ["account"] = System.Text.Json.Nodes.JsonValue.Create("account-a") },
-        }.Build();
-        var initial = CreateToken(nearExpiry ? TimeSpan.FromSeconds(30) : TimeSpan.FromMinutes(10));
-        var replacement = CreateToken(TimeSpan.FromHours(1));
+        }.BuildAsync();
+        var initial = await CreateTokenAsync(nearExpiry ? TimeSpan.FromSeconds(30) : TimeSpan.FromMinutes(10));
+        var replacement = await CreateTokenAsync(TimeSpan.FromHours(1));
         var current = initial;
         var factoryCalls = 0;
         var refreshCalls = 0;
@@ -68,7 +68,7 @@ public class AAuthClientBuilderChallengeTests
         Assert.Equal(nearExpiry ? replacement : initial, network.Tokens[^1]);
         if (factory)
         {
-            current = CreateToken(TimeSpan.FromMinutes(20));
+            current = await CreateTokenAsync(TimeSpan.FromMinutes(20));
             await client.GetAsync("https://resource.example/api");
             Assert.Equal(current, network.Tokens[^1]);
         }
@@ -99,7 +99,7 @@ public class AAuthClientBuilderChallengeTests
     [Fact]
     public async Task ChallengeFromAnotherResourceIsRejectedBeforeExchange()
     {
-        var resourceToken = new ResourceTokenBuilder
+        var resourceToken = await new ResourceTokenBuilder
         {
             Issuer = "https://other-resource.example",
             Audience = "https://ps.example",
@@ -109,8 +109,8 @@ public class AAuthClientBuilderChallengeTests
             AgentJkt = _key.ComputeJwkThumbprint(),
             Key = _key,
             KeyId = "resource-key",
-        }.Build();
-        using var client = new AAuthClientBuilder(_key).UseJwt(BuildAgentToken())
+        }.BuildAsync();
+        using var client = new AAuthClientBuilder(_key).UseJwt(await BuildAgentTokenAsync())
             .WithChallengeHandling("https://ps.example")
             .WithEgressPolicy(TestEgress.Policy)
             .WithInnerHandler(new ChallengeResponseHandler(resourceToken), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
@@ -136,7 +136,7 @@ public class AAuthClientBuilderChallengeTests
     [Fact]
     public async Task ChallengeFactoryBuildUsesCurrentClaimsInsteadOfSelectionSnapshot()
     {
-        var current = BuildAgentToken(personServer: null);
+        var current = await BuildAgentTokenAsync(personServer: null);
         var calls = 0;
         var handler = new StubHandler();
         var builder = new AAuthClientBuilder(_key).UseJwt(() => { calls++; return current; })
@@ -144,7 +144,7 @@ public class AAuthClientBuilderChallengeTests
             .WithEgressPolicy(TestEgress.Policy)
             .WithInnerHandler(handler, AAuth.Discovery.AAuthTransportContract.InProcessOnly);
         Assert.Equal(0, calls);
-        current = BuildAgentToken("https://current-ps.example");
+        current = await BuildAgentTokenAsync("https://current-ps.example");
         using var client = builder.Build();
         await client.GetAsync("https://resource.example/api");
         Assert.Equal(current, SignatureKeyParser.ParseAny(string.Join(",", handler.LastRequest!.Headers.GetValues("Signature-Key"))).Jwt);
@@ -154,9 +154,9 @@ public class AAuthClientBuilderChallengeTests
     [Fact]
     public async Task ChallengeFactoryRemainsLiveAndCancelledRequestsDoNotReadIt()
     {
-        var first = BuildAgentToken();
-        var second = new AgentTokenBuilder { Issuer = "https://other.example", Subject = "aauth:other@example.com",
-            Key = _key, KeyId = "k2", ConfirmationKey = _key }.Build();
+        var first = await BuildAgentTokenAsync();
+        var second = await new AgentTokenBuilder { Issuer = "https://other.example", Subject = "aauth:other@example.com",
+            Key = _key, KeyId = "k2", ConfirmationKey = _key }.BuildAsync();
         var current = first;
         var calls = 0;
         var handler = new StubHandler();
@@ -173,9 +173,9 @@ public class AAuthClientBuilderChallengeTests
         Assert.Equal(beforeCancel, calls);
     }
 
-    private string BuildAgentToken(string? personServer = "https://ps.example")
+    private async Task<string> BuildAgentTokenAsync(string? personServer = "https://ps.example")
     {
-        return new AgentTokenBuilder
+        return await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -183,13 +183,13 @@ public class AAuthClientBuilderChallengeTests
             KeyId = "k1",
             Key = _key,
             PersonServer = personServer,
-        }.Build();
+        }.BuildAsync();
     }
 
     [Fact]
-    public void WithChallengeHandling_NoArg_BuildsClient()
+    public async Task WithChallengeHandling_NoArg_BuildsClient()
     {
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)
             .WithChallengeHandling()
@@ -200,9 +200,9 @@ public class AAuthClientBuilderChallengeTests
     }
 
     [Fact]
-    public void WithChallengeHandling_ExplicitPs_BuildsClient()
+    public async Task WithChallengeHandling_ExplicitPs_BuildsClient()
     {
-        var token = BuildAgentToken(personServer: null);
+        var token = await BuildAgentTokenAsync(personServer: null);
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)
             .WithChallengeHandling("https://ps.example")
@@ -213,9 +213,9 @@ public class AAuthClientBuilderChallengeTests
     }
 
     [Fact]
-    public void WithChallengeHandling_NoArg_NoPsClaim_Throws()
+    public async Task WithChallengeHandling_NoArg_NoPsClaim_Throws()
     {
-        var token = BuildAgentToken(personServer: null);
+        var token = await BuildAgentTokenAsync(personServer: null);
         var builder = new AAuthClientBuilder(_key)
             .UseJwt(token)
             .WithChallengeHandling()
@@ -226,9 +226,9 @@ public class AAuthClientBuilderChallengeTests
     }
 
     [Fact]
-    public void WithChallengeHandling_WithOptions_BuildsClient()
+    public async Task WithChallengeHandling_WithOptions_BuildsClient()
     {
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)
             .WithChallengeHandling("https://ps.example", opts =>
@@ -253,9 +253,9 @@ public class AAuthClientBuilderChallengeTests
     }
 
     [Fact]
-    public void WithTokenRefresh_Interface_BuildsClient()
+    public async Task WithTokenRefresh_Interface_BuildsClient()
     {
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         var refresher = new FakeRefresher();
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)
@@ -268,9 +268,9 @@ public class AAuthClientBuilderChallengeTests
     }
 
     [Fact]
-    public void WithTokenRefresh_Delegate_BuildsClient()
+    public async Task WithTokenRefresh_Delegate_BuildsClient()
     {
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)
             .WithChallengeHandling("https://ps.example")
@@ -282,9 +282,9 @@ public class AAuthClientBuilderChallengeTests
     }
 
     [Fact]
-    public void UseJwt_StringOverload_BuildsClient()
+    public async Task UseJwt_StringOverload_BuildsClient()
     {
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)
             .Build();
@@ -295,7 +295,7 @@ public class AAuthClientBuilderChallengeTests
     [Fact]
     public async Task ChallengeHandling_SignsRequests()
     {
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         var handler = new StubHandler();
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)
@@ -311,7 +311,7 @@ public class AAuthClientBuilderChallengeTests
     [Fact]
     public async Task ChallengeHandling_AutoAdds_AuthTokenCapability()
     {
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         var handler = new StubHandler();
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)

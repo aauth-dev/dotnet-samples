@@ -31,9 +31,9 @@ public class RevocationLifecycleTests
     public async Task ThreeGenerationsRevokeAndNotifyAllLocalDescendants()
     {
         await using var graph = await Graph.CreateAsync();
-        var first = graph.AgentToken(FirstProvider, "original");
-        var second = graph.AgentToken(FirstResource, "intermediary-one", distinctKey: true);
-        var third = graph.AgentToken(SecondResource, "intermediary-two", distinctKey: true);
+        var first = await graph.AgentTokenAsync(FirstProvider, "original");
+        var second = await graph.AgentTokenAsync(FirstResource, "intermediary-one", distinctKey: true);
+        var third = await graph.AgentTokenAsync(SecondResource, "intermediary-two", distinctKey: true);
         var root = await graph.GrantAsync(first, FirstResource, false);
         var child = await graph.GrantAsync(second, SecondResource, false, root);
         var grandchild = await graph.GrantAsync(third, FirstResource, false, child);
@@ -58,7 +58,7 @@ public class RevocationLifecycleTests
     public async Task LocallyRevokedUpstreamCannotBeExtended(bool federated)
     {
         await using var graph = await Graph.CreateAsync();
-        var agent = graph.AgentToken(FirstProvider, "agent");
+        var agent = await graph.AgentTokenAsync(FirstProvider, "agent");
         var upstream = await graph.GrantAsync(agent, FirstProvider, false);
         using var issuer = graph.Signed(Person, AuthTokenBuilder.PersonDwk);
         Assert.Equal(HttpStatusCode.OK, (await Revoke(issuer, Person, upstream)).StatusCode);
@@ -74,7 +74,7 @@ public class RevocationLifecycleTests
     public async Task UpstreamRevokedDuringConsentCannotMintAfterApproval()
     {
         await using var graph = await Graph.CreateAsync();
-        var agent = graph.AgentToken(FirstProvider, "agent");
+        var agent = await graph.AgentTokenAsync(FirstProvider, "agent");
         var upstream = await graph.GrantAsync(agent, FirstProvider, false);
         graph.Consent.Required = true;
         using var initial = await graph.RequestAsync(agent, FirstResource, false, upstream);
@@ -97,7 +97,7 @@ public class RevocationLifecycleTests
     public async Task UpstreamRevocationCascadesToDownstreamGrant(bool federated)
     {
         await using var graph = await Graph.CreateAsync();
-        var agent = graph.AgentToken(FirstProvider, "agent");
+        var agent = await graph.AgentTokenAsync(FirstProvider, "agent");
         var upstream = await graph.GrantAsync(agent, FirstProvider, false);
         var grant = await graph.GrantAsync(agent, FirstResource, federated, upstream);
         Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(grant, FirstResource));
@@ -117,8 +117,8 @@ public class RevocationLifecycleTests
     public async Task UpstreamFromRevokedCallingAgent_IsRevokedUpstreamToken(bool federated)
     {
         await using var graph = await Graph.CreateAsync();
-        var caller = graph.AgentToken(FirstProvider, "caller");
-        var intermediary = graph.AgentToken(FirstResource, "intermediary", distinctKey: true);
+        var caller = await graph.AgentTokenAsync(FirstProvider, "caller");
+        var intermediary = await graph.AgentTokenAsync(FirstResource, "intermediary", distinctKey: true);
         var upstream = await graph.GrantAsync(caller, FirstResource, false);
         Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(upstream, FirstResource));
         using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
@@ -137,8 +137,8 @@ public class RevocationLifecycleTests
     public async Task UpstreamFromRevokedBinding_IsRevokedUpstreamToken(bool federated)
     {
         await using var graph = await Graph.CreateAsync();
-        var caller = graph.AgentToken(FirstProvider, "caller");
-        var intermediary = graph.AgentToken(FirstResource, "intermediary", distinctKey: true);
+        var caller = await graph.AgentTokenAsync(FirstProvider, "caller");
+        var intermediary = await graph.AgentTokenAsync(FirstResource, "intermediary", distinctKey: true);
         var upstream = await graph.GrantAsync(caller, FirstResource, false);
         Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(upstream, FirstResource));
 
@@ -150,10 +150,10 @@ public class RevocationLifecycleTests
         Assert.True(blocked.StatusCode == HttpStatusCode.BadRequest, $"Status={(int)blocked.StatusCode} {body}");
         Assert.Equal("revoked_upstream_token", (string?)JsonNode.Parse(body)!["error"]);
         // A refreshed agent token (new jti) for the same agent stays unbound.
-        using var refreshed = await graph.RequestAsync(graph.AgentToken(FirstProvider, "caller-refreshed"), SecondResource, federated);
+        using var refreshed = await graph.RequestAsync(await graph.AgentTokenAsync(FirstProvider, "caller-refreshed"), SecondResource, federated);
         Assert.NotEqual(HttpStatusCode.OK, refreshed.StatusCode);
         // Another agent at the same provider is unaffected.
-        var other = graph.AgentToken(SecondProvider, "other");
+        var other = await graph.AgentTokenAsync(SecondProvider, "other");
         Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(await graph.GrantAsync(other, SecondResource, federated), SecondResource));
     }
 
@@ -161,7 +161,7 @@ public class RevocationLifecycleTests
     public async Task SlowDownstream_PersonServerDefersAndCompletesOnPoll()
     {
         await using var graph = await Graph.CreateAsync();
-        var agent = graph.AgentToken(FirstProvider, "slow-agent");
+        var agent = await graph.AgentTokenAsync(FirstProvider, "slow-agent");
         await graph.GrantAsync(agent, FirstResource, false);
         graph.Failing[FirstResource] = "slow";
         using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
@@ -200,8 +200,8 @@ public class RevocationLifecycleTests
     public async Task ProviderRevoke_BlocksSourceAndCascadesExactIssuedOrProvidedGrants(bool federated)
     {
         await using var graph = await Graph.CreateAsync();
-        var first = graph.AgentToken(FirstProvider, "same-id");
-        var second = graph.AgentToken(SecondProvider, "same-id");
+        var first = await graph.AgentTokenAsync(FirstProvider, "same-id");
+        var second = await graph.AgentTokenAsync(SecondProvider, "same-id");
         var firstPerson = await graph.IssuePersonTokenAsync(first, FirstResource);
         var secondPerson = await graph.IssuePersonTokenAsync(first, SecondResource);
         var firstGrant = await graph.GrantAsync(first, FirstResource, federated, personToken: firstPerson);
@@ -246,7 +246,7 @@ public class RevocationLifecycleTests
     public async Task ProviderRevoke_CascadesToMissionApprovalPersonTokens()
     {
         await using var graph = await Graph.CreateAsync();
-        var agent = graph.AgentToken(FirstProvider, "mission-agent");
+        var agent = await graph.AgentTokenAsync(FirstProvider, "mission-agent");
         using var client = graph.AgentClient(agent);
         using var approval = await client.PostAsJsonAsync(Person + "/mission",
             new { description = "Plan the offsite", resources = new[] { FirstResource } });
@@ -260,7 +260,7 @@ public class RevocationLifecycleTests
         Assert.Contains(graph.Revocations, entry => entry.Resource == FirstResource
             && entry.Token == new TokenKey(Person, (string)Decode(personToken)["jti"]!));
         // A fresh agent token under the same key cannot present the revoked person token.
-        using var reused = await graph.RequestAsync(graph.AgentToken(FirstProvider, "fresh"), FirstResource, false,
+        using var reused = await graph.RequestAsync(await graph.AgentTokenAsync(FirstProvider, "fresh"), FirstResource, false,
             personToken: personToken);
         var reusedBody = await reused.Content.ReadAsStringAsync();
         Assert.False(reused.IsSuccessStatusCode, reusedBody);
@@ -271,7 +271,7 @@ public class RevocationLifecycleTests
     public async Task PendingApproval_CannotReplaceRevokedOriginalSourceWithFreshCarrier()
     {
         await using var graph = await Graph.CreateAsync(consent: true);
-        var original = graph.AgentToken(FirstProvider, "original");
+        var original = await graph.AgentTokenAsync(FirstProvider, "original");
         using var response = await graph.RequestAsync(original, FirstResource, false);
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var pendingPath = response.Headers.Location!.ToString();
@@ -279,7 +279,7 @@ public class RevocationLifecycleTests
         graph.Pending.MarkAllowed(entry.Id, "person");
         using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
         Assert.Equal(HttpStatusCode.OK, (await Revoke(ap, Person, original)).StatusCode);
-        var fresh = graph.AgentToken(FirstProvider, "fresh");
+        var fresh = await graph.AgentTokenAsync(FirstProvider, "fresh");
         using var agent = graph.AgentClient(fresh);
         using var poll = await agent.GetAsync(Person + pendingPath);
         // §Polling Error Codes: the agent token that started the request was revoked.
@@ -293,7 +293,7 @@ public class RevocationLifecycleTests
     public async Task UnseenResourceGrant_IsRecordedAndRefusedWhenPresented()
     {
         await using var graph = await Graph.CreateAsync();
-        var source = graph.AgentToken(FirstProvider, "unseen-grant");
+        var source = await graph.AgentTokenAsync(FirstProvider, "unseen-grant");
         var grant = await graph.GrantAsync(source, FirstResource, false);
         using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
         var revoked = await Revoke(ap, Person, source);
@@ -312,7 +312,7 @@ public class RevocationLifecycleTests
     public async Task AccessServer_ReportsDownstreamOutcome_AndRetriesOnRepeat(string failure, RevocationDownstreamError expected)
     {
         await using var graph = await Graph.CreateAsync();
-        var agent = graph.AgentToken(FirstProvider, "agent");
+        var agent = await graph.AgentTokenAsync(FirstProvider, "agent");
         var person = await graph.IssuePersonTokenAsync(agent, FirstResource);
         var grant = await graph.GrantAsync(agent, FirstResource, true, personToken: person);
         Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(grant, FirstResource));
@@ -352,8 +352,8 @@ public class RevocationLifecycleTests
     public async Task ResourceMiddleware_SameAuthJtiFromTwoIssuers_RemainsIsolated()
     {
         await using var graph = await Graph.CreateAsync();
-        var first = graph.AuthToken(Person, "same-auth-id");
-        var second = graph.AuthToken(Access, "same-auth-id");
+        var first = await graph.AuthTokenAsync(Person, "same-auth-id");
+        var second = await graph.AuthTokenAsync(Access, "same-auth-id");
         Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(first, FirstResource));
         Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(second, FirstResource));
         using var person = graph.Signed(Person, "aauth-person.json");
@@ -398,7 +398,7 @@ public class RevocationLifecycleTests
             access.MapAAuthAccessServer(new AAuthAccessServerOptions
             {
                 EgressPolicy = TestEgress.Policy, Issuer = Access,
-                SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = graph._keys[Access] },
+                SigningKeys = new AAuthSigningKeySet { ["key"] = graph._keys[Access] },
             });
             await access.StartAsync();
             graph._hosts.Add(Access, access);
@@ -416,7 +416,7 @@ public class RevocationLifecycleTests
             {
                 EgressPolicy = TestEgress.Policy, Issuer = Person, TokenInventory = graph.PersonInventory,
                 ConfigureRevocation = revocation => revocation.DeferAfter = TimeSpan.FromMilliseconds(200),
-                SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = graph._keys[Person] },
+                SigningKeys = new AAuthSigningKeySet { ["key"] = graph._keys[Person] },
             });
             person.MapAAuthGovernance(options => options.PersonServer = Person);
             await person.StartAsync();
@@ -475,32 +475,32 @@ public class RevocationLifecycleTests
             _hosts.Add(issuer, app);
         }
 
-        public string AgentToken(string issuer, string tokenId, bool distinctKey = false)
+        public async Task<string> AgentTokenAsync(string issuer, string tokenId, bool distinctKey = false)
         {
             var key = distinctKey ? AAuthKey.Generate() : _agentKey;
             _agentKeys[key.ComputeJwkThumbprint()] = key;
-            return new AgentTokenBuilder
+            return await new AgentTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy, Issuer = issuer, Subject = "aauth:demo@" + new Uri(issuer).Host, Key = _keys[issuer], KeyId = "key",
                 ConfirmationKey = key, TokenId = tokenId, PersonServer = Person,
-            }.Build();
+            }.BuildAsync();
         }
 
-        public string AuthToken(string issuer, string tokenId) => new AuthTokenBuilder
+        public ValueTask<string> AuthTokenAsync(string issuer, string tokenId) => new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy, Issuer = issuer, Audience = FirstResource, PersonServer = Person,
             AgentConfirmationKey = _agentKey, Key = _keys[issuer], KeyId = "key", Subject = "person",
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1), TokenId = tokenId,
             Dwk = issuer == Access ? AuthTokenBuilder.AccessDwk : AuthTokenBuilder.PersonDwk,
-        }.Build();
+        }.BuildAsync();
 
         // The person token this PS issued the agent for the resource (the presented token).
-        public string PersonToken(string agentToken, string resource) => new PersonTokenBuilder
+        public ValueTask<string> PersonTokenAsync(string agentToken, string resource) => new PersonTokenBuilder
         {
             EgressPolicy = TestEgress.Policy, Issuer = Person, Audience = resource, Subject = "person",
             ConfirmationKey = AgentKey(agentToken), AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             Key = _keys[Person], KeyId = "key",
-        }.Build();
+        }.BuildAsync();
 
         public HttpClient Signed(string issuer, string dwk) => new InProcessHttpClient(new AAuthSigningHandler(_keys[issuer],
             new JwksUriSignatureKeyProvider(issuer, dwk, "key")) { InnerHandler = new Router(this) });
@@ -521,15 +521,15 @@ public class RevocationLifecycleTests
         public async Task<HttpResponseMessage> RequestAsync(string agentToken, string resource, bool federated, string? upstream = null,
             string? personToken = null)
         {
-            personToken ??= PersonToken(agentToken, resource);
+            personToken ??= await PersonTokenAsync(agentToken, resource);
             var person = Decode(personToken);
-            var request = new ResourceTokenBuilder
+            var request = await new ResourceTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy, Issuer = resource, Audience = federated ? Access : Person,
                 PersonServer = Person, Subject = (string)person["sub"]!, PresentedJti = (string)person["jti"]!,
                 MissionS256 = (string?)person["mission_s256"],
                 AgentJkt = AgentKey(agentToken).ComputeJwkThumbprint(), Key = _keys[resource], KeyId = "key",
-            }.Build();
+            }.BuildAsync();
             using var client = AgentClient(agentToken);
             return await client.PostAsJsonAsync(Person + "/token", new { resource_token = request, presented_token = personToken, upstream_token = upstream });
         }

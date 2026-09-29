@@ -278,7 +278,7 @@ var app = builder.Build();
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
     Issuer = issuer,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [Kid] = key },
+    SigningKeys = new AAuthSigningKeySet(Kid, key),
 });
 
 // Build a signed HTTP client with automatic token refresh and challenge handling

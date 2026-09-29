@@ -217,21 +217,10 @@ public static class AAuthApplicationBuilderExtensions
         // 3. Challenge middleware (only if there's a signing key available)
         if (metadataOptions.SigningKeys is { Count: > 0 } signingKeys)
         {
-            // Use the first signing key for challenges
-            string? kid = null;
-            AAuth.Crypto.IAAuthKey? key = null;
-            foreach (var kvp in signingKeys)
-            {
-                kid = kvp.Key;
-                key = kvp.Value;
-                break;
-            }
-
             app.UseAAuthChallenge(new ChallengeOptions
             {
                 EgressPolicy = metadataOptions.EgressPolicy,
-                ResourceSigningKey = key,
-                ResourceKeyId = kid,
+                ResourceSigningKeys = signingKeys,
                 ResourceIdentifier = metadataOptions.Issuer,
                 RequestedAccount = pipelineOptions.AccountSelector,
                 AccessMode = pipelineOptions.AccessMode,

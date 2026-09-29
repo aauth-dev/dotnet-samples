@@ -6,6 +6,27 @@
 
 AAuth agents need persistent signing keys. The SDK provides two built-in storage backends and an interface for custom implementations.
 
+## Key Interfaces (Crypto Namespace)
+
+The SDK separates a key's public identity from the ability to sign with it:
+
+| Interface | Adds | Implemented by |
+|-----------|------|----------------|
+| `IAAuthKey` | Public identity: `Algorithm`, `ToPublicJwk()`, `ComputeJwkThumbprint()`, `Verify(...)` | Every key, including public-only keys used for verification |
+| `IAAuthSigner : IAAuthKey` | `ValueTask<byte[]> SignAsync(ReadOnlyMemory<byte> data, CancellationToken)` | Any key that can sign, local or remote |
+| `IAAuthExportableKey : IAAuthSigner` | `ToPrivateJwk()` | Local keys whose private half lives in process memory |
+
+Signing is asynchronous so that a signer backed by an HSM, a cloud KMS, or a
+platform keychain can make its remote call without blocking a thread. Token
+builders (`BuildAsync`), `NamingJwtBuilder.BuildAsync`, and the HTTP signing
+handler all await `IAAuthSigner.SignAsync`.
+
+`AAuthKey` (Ed25519) and `EcdsaAAuthKey` (ES256) are the built-in local,
+exportable keys. Their private halves are in memory, so the concrete types also
+keep a synchronous `Sign(byte[])` and `ToPrivateJwk()` for code that holds the
+concrete type. A non-exportable key implements only `IAAuthSigner` and
+delegates `SignAsync` to the device or service that holds the private key.
+
 ## IKeyStore Interface (Crypto Namespace)
 
 The `IKeyStore` interface defines async key storage for agent workflows (enrollment, token refresh). The SDK ships two built-in implementations: `InMemoryKeyStore` and `FileKeyStore`.
@@ -17,8 +38,8 @@ namespace AAuth.Crypto;
 
 public interface IKeyStore
 {
-    Task<IAAuthKey?> LoadAsync(string handle, CancellationToken ct = default);
-    Task StoreAsync(string handle, IAAuthKey key, CancellationToken ct = default);
+    Task<IAAuthSigner?> LoadAsync(string handle, CancellationToken ct = default);
+    Task StoreAsync(string handle, IAAuthSigner key, CancellationToken ct = default);
     Task DeleteAsync(string handle, CancellationToken ct = default);
     Task<string[]> ListAsync(CancellationToken ct = default);
 }
@@ -105,7 +126,7 @@ not shipped or compiled by this repository. It requires
 `Azure.Security.KeyVault.Secrets` and `Azure.Core`. It stores exportable
 Ed25519 software keys as secrets and reloads private bytes into the process;
 it is not an HSM or remote-signing implementation. Non-exportable keys require
-an `IAAuthKey` implementation that delegates signing to the secure device.
+an `IAAuthSigner` implementation that delegates `SignAsync` to the secure device.
 
 ```csharp
 // Sample implementation of AAuth.Crypto.IKeyStore — not part of the SDK.
@@ -118,7 +139,7 @@ public sealed class AzureKeyVaultStore : IKeyStore
     // Spec: 'handle' is agent-chosen, never leaves the agent.
     // It is distinct from the AP-published kid (AgentTokenKid) and
     // the JWK thumbprint used for cryptographic identity.
-    public async Task<IAAuthKey?> LoadAsync(string handle, CancellationToken ct)
+    public async Task<IAAuthSigner?> LoadAsync(string handle, CancellationToken ct)
     {
         try
         {
@@ -131,9 +152,11 @@ public sealed class AzureKeyVaultStore : IKeyStore
         }
     }
 
-    public async Task StoreAsync(string handle, IAAuthKey key, CancellationToken ct)
+    public async Task StoreAsync(string handle, IAAuthSigner key, CancellationToken ct)
     {
-        var jwk = ((AAuthKey)key).ToPrivateJwk().ToJsonString();
+        var exportable = key as IAAuthExportableKey
+            ?? throw new ArgumentException("Only exportable keys can be stored as secrets.", nameof(key));
+        var jwk = exportable.ToPrivateJwk().ToJsonString();
         await _client.SetSecretAsync(new KeyVaultSecret(handle, jwk), ct);
     }
 
@@ -161,6 +184,34 @@ For key rotation with continuity, use the `jkt-jwt` signing mode:
 3. Use `JktJwtSignatureKeyProvider` — resource sees the same identity
 
 See [Key Rotation (jkt-jwt)](../signing-modes/key-rotation-jkt-jwt.md) for details.
+
+## Issuer Signing Key Rotation
+
+Servers that sign tokens (resources, Person Servers, Access Servers, and
+issuer revocation endpoints) take their keys as an `AAuthSigningKeySet`. The
+set's JWKS publishes every key it holds, and new tokens are signed with the
+active key only. Rotation is live: the host keeps the same set instance and
+changes it in three steps, with no restart.
+
+```csharp
+// Share one set with the host options, for example
+// AAuthPersonServerOptions.SigningKeys or ChallengeOptions.ResourceSigningKeys.
+var issuerKeys = new AAuthSigningKeySet("key-1", AAuthKey.Generate());
+
+// 1. Publish the new key. The JWKS lists key-1 and key-2; tokens are still signed with key-1.
+issuerKeys.Add("key-2", AAuthKey.Generate());
+
+// 2. After verifiers have refreshed their cached JWKS, sign new tokens with key-2.
+issuerKeys.Activate("key-2");
+
+// 3. After the last token signed with key-1 has expired, stop publishing key-1.
+issuerKeys.Remove("key-1");
+```
+
+Until `Activate` is called, the first key added is active. The active key cannot
+be removed; activate another key first. Readers always see a consistent
+snapshot, so requests in flight during a change sign with either the old or the
+new active key, never a mix.
 
 ## Security Considerations
 

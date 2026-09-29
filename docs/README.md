@@ -80,7 +80,10 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `IKeyStore` | Key storage interface (implement for custom backends) |
 | `FileKeyStore` | Built-in `IKeyStore` — on-disk persistence (`~/.aauth/keys/`) |
 | `InMemoryKeyStore` | Built-in `IKeyStore` — in-memory (testing/ephemeral) |
-| `IAAuthKey` | Key abstraction (implement for custom key backends) |
+| `IAAuthKey` | Public key identity: algorithm, public JWK, thumbprint, verification |
+| `IAAuthSigner` | Signing key: `SignAsync` (implement for remote or non-exportable key backends) |
+| `IAAuthExportableKey` | Local signing key that can export its private JWK (`AAuthKey`, `EcdsaAAuthKey`) |
+| `AAuthSigningKeySet` | Issuer signing keys: JWKS publishes every key, tokens are signed with the active key; supports live rotation |
 
 ### `AAuth.HttpSig` — Signing and verification
 

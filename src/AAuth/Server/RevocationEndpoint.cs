@@ -26,7 +26,7 @@ public static class RevocationEndpoint
     /// narrows <see cref="AAuthRevocationOptions.IsAcceptedIssuer"/>.
     /// </summary>
     public static IJtiStore MapAAuthIssuerRevocation(this WebApplication app, string issuer, string dwk,
-        AAuth.Crypto.IAAuthKey signingKey, string signingKid, string path,
+        AAuth.Crypto.AAuthSigningKeySet signingKeys, string path,
         AAuth.Discovery.AAuthEgressPolicy egressPolicy, TimeProvider clock, Action<AAuthRevocationOptions>? configure,
         IJtiStore? inventory = null)
     {
@@ -35,8 +35,7 @@ public static class RevocationEndpoint
         var client = app.Services.GetService<RevocationClient>();
         if (client is null)
         {
-            var signing = new AAuth.HttpSig.AAuthSigningHandler(signingKey,
-                new AAuth.HttpSig.JwksUriSignatureKeyProvider(issuer, dwk, signingKid))
+            var signing = new ActiveKeySigningHandler(signingKeys, issuer, dwk)
             {
                 InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(egressPolicy),
             };
@@ -316,5 +315,20 @@ public static class RevocationEndpoint
         if (!outcomes.TryGetValue(recipient, out var current) || current is null
             || error == RevocationDownstreamError.RevocationUnavailable)
             outcomes[recipient] = error ?? current;
+    }
+
+    // Signs each downstream revocation with the issuer's key set's active key at send
+    // time, so key rotation reaches outbound revocations without a restart.
+    private sealed class ActiveKeySigningHandler(AAuth.Crypto.AAuthSigningKeySet keys, string issuer, string dwk)
+        : System.Net.Http.DelegatingHandler
+    {
+        protected override async Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var (kid, signer) = keys.Active;
+            await new AAuth.HttpSig.AAuthSigningHandler(signer, new AAuth.HttpSig.JwksUriSignatureKeyProvider(issuer, dwk, kid))
+                .SignAsync(request, cancellationToken).ConfigureAwait(false);
+            return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        }
     }
 }

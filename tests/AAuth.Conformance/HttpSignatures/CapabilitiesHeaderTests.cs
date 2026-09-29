@@ -66,17 +66,17 @@ public class CapabilitiesHeaderTests
     }
 
     [Fact(DisplayName = "§AAuth-Capabilities — AAuthSigningHandler emits Capabilities header when configured")]
-    public void SigningHandler_EmitsCapabilities()
+    public async Task SigningHandler_EmitsCapabilities()
     {
         var key = AAuthKey.Generate();
-        var token = new AAuth.Tokens.AgentTokenBuilder
+        var token = await new AAuth.Tokens.AgentTokenBuilder
         {
             Issuer = "https://ap.example",
             Subject = "aauth:test@example.com",
             Key = key,
             KeyId = "k1",
             PersonServer = "https://ps.example",
-        }.Build();
+        }.BuildAsync();
 
         var handler = new AAuthSigningHandler(key, () => token)
         {
@@ -87,7 +87,7 @@ public class CapabilitiesHeaderTests
             System.Net.Http.HttpMethod.Get,
             "https://resource.example/api");
 
-        handler.Sign(request);
+        await handler.SignHeadersAsync(request);
 
         Assert.True(request.Headers.Contains(AAuthCapabilitiesHeader.Name));
         var headerValue = string.Join(", ", request.Headers.GetValues(AAuthCapabilitiesHeader.Name));
@@ -96,24 +96,24 @@ public class CapabilitiesHeaderTests
     }
 
     [Fact(DisplayName = "§AAuth-Capabilities — AAuthSigningHandler does not emit Capabilities header when not configured")]
-    public void SigningHandler_NoCapabilities_NoHeader()
+    public async Task SigningHandler_NoCapabilities_NoHeader()
     {
         var key = AAuthKey.Generate();
-        var token = new AAuth.Tokens.AgentTokenBuilder
+        var token = await new AAuth.Tokens.AgentTokenBuilder
         {
             Issuer = "https://ap.example",
             Subject = "aauth:test@example.com",
             Key = key,
             KeyId = "k1",
             PersonServer = "https://ps.example",
-        }.Build();
+        }.BuildAsync();
 
         var handler = new AAuthSigningHandler(key, () => token);
         var request = new System.Net.Http.HttpRequestMessage(
             System.Net.Http.HttpMethod.Get,
             "https://resource.example/api");
 
-        handler.Sign(request);
+        await handler.SignHeadersAsync(request);
 
         Assert.False(request.Headers.Contains(AAuthCapabilitiesHeader.Name));
     }

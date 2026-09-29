@@ -21,7 +21,7 @@ public sealed class AAuthResourceOptions
     /// Signing keys keyed by <c>kid</c>. These are served via the JWKS endpoint
     /// and used to sign resource tokens / challenges.
     /// </summary>
-    public Dictionary<string, IAAuthKey> SigningKeys { get; set; } = new();
+    public AAuthSigningKeySet SigningKeys { get; set; } = new();
 
     /// <summary>
     /// Signature validity window for inbound <c>created</c>, applied in both

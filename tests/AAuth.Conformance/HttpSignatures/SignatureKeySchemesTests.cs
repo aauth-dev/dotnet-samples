@@ -44,18 +44,18 @@ public class SignatureKeySchemesTests
     }
 
     [Fact(DisplayName = "§4 — ParseAny handles jwt scheme")]
-    public void ParseAny_JwtScheme()
+    public async Task ParseAny_JwtScheme()
     {
         // Build a minimal valid JWT with cnf.jwk
         var key = AAuthKey.Generate();
-        var agentToken = new AAuth.Tokens.AgentTokenBuilder
+        var agentToken = await new AAuth.Tokens.AgentTokenBuilder
         {
             Issuer = "https://ap.example",
             Subject = "aauth:test@example.com",
             Key = key,
             KeyId = "k1",
             PersonServer = "https://ps.example",
-        }.Build();
+        }.BuildAsync();
         var headerValue = SignatureKeyHeader.FormatJwt(agentToken);
 
         var info = SignatureKeyParser.ParseAny(headerValue);
@@ -91,11 +91,11 @@ public class SignatureKeySchemesTests
     }
 
     [Fact(DisplayName = "§4 — ParseAny handles jkt-jwt scheme (self-issued naming JWT)")]
-    public void ParseAny_JktJwtScheme()
+    public async Task ParseAny_JktJwtScheme()
     {
         var durableKey = AAuthKey.Generate();
         var ephemeralKey = AAuthKey.Generate();
-        var namingJwt = AAuth.Agent.NamingJwtBuilder.Build(durableKey, ephemeralKey);
+        var namingJwt = await AAuth.Agent.NamingJwtBuilder.BuildAsync(durableKey, ephemeralKey);
         var headerValue = SignatureKeyHeader.FormatJktJwt(namingJwt);
 
         var info = SignatureKeyParser.ParseAny(headerValue);
@@ -110,11 +110,11 @@ public class SignatureKeySchemesTests
     }
 
     [Fact(DisplayName = "§3.4 — ParseAny rejects a jkt-jwt header carrying a stray jkt parameter")]
-    public void ParseAny_JktJwtScheme_RejectsStrayJktParameter()
+    public async Task ParseAny_JktJwtScheme_RejectsStrayJktParameter()
     {
         var durableKey = AAuthKey.Generate();
         var ephemeralKey = AAuthKey.Generate();
-        var namingJwt = AAuth.Agent.NamingJwtBuilder.Build(durableKey, ephemeralKey);
+        var namingJwt = await AAuth.Agent.NamingJwtBuilder.BuildAsync(durableKey, ephemeralKey);
         // The retired non-conformant format carried a jkt parameter.
         var headerValue = $"sig=jkt-jwt;jkt=\"{ephemeralKey.ComputeJwkThumbprint()}\";jwt=\"{namingJwt}\"";
 

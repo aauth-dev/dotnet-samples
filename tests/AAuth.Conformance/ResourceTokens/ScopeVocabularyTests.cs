@@ -12,7 +12,7 @@ public class ScopeVocabularyTests
     [InlineData("catalog.write", false)]
     [InlineData("openid", false)]
     [InlineData("catalog.empty", false)]
-    public void IssuanceRequiresDeclaredResourceAndIdentityScopes(string scope, bool allowed)
+    public async Task IssuanceRequiresDeclaredResourceAndIdentityScopes(string scope, bool allowed)
     {
         var key = AAuthKey.Generate();
         var builder = new ResourceTokenBuilder
@@ -23,8 +23,8 @@ public class ScopeVocabularyTests
             ScopeDescriptions = new Dictionary<string, string> { ["catalog.read"] = "Read catalog", ["catalog.empty"] = "" },
             PersonServerScopesSupported = ["email"],
         };
-        if (allowed) Assert.NotEmpty(builder.Build());
-        else Assert.Throws<InvalidOperationException>(() => builder.Build());
+        if (allowed) Assert.NotEmpty(await builder.BuildAsync());
+        else await Assert.ThrowsAsync<InvalidOperationException>(async () => await builder.BuildAsync());
     }
 
     [Fact]

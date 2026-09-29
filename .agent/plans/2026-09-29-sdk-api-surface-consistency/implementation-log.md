@@ -286,6 +286,67 @@ PROCEEDED.
   - Docs inventory refreshed; e2e typecheck clean.
   - Full Playwright: 78 passed, 1 skipped (Keycloak), `--retries=0`.
 
+### [2026-09-29] [Phase 3] Signing abstraction
+
+PROCEEDED.
+- **Key types.** `IAAuthKey` is the public identity (algorithm, public JWK,
+  thumbprint, `Verify`, `HasPrivateKey`). `IAAuthSigner : IAAuthKey` adds
+  `ValueTask<byte[]> SignAsync(ReadOnlyMemory<byte>, CancellationToken)`.
+  `IAAuthExportableKey : IAAuthSigner` adds `ToPrivateJwk`. `AAuthKey` and
+  `EcdsaAAuthKey` are exportable, keep a sync `Sign`, and complete
+  `SignAsync` synchronously. `KeyFactory.FromJwk` returns
+  `IAAuthExportableKey`; `IKeyStore` loads and stores `IAAuthSigner`.
+- **Async signing sites.** `JwtWriter.SignCompactAsync`, the five token
+  builders plus `SubscribeTokenBuilder`/`EventTokenBuilder` (`BuildAsync`),
+  `NamingJwtBuilder.BuildAsync`, `EventsTokens.CreateAsync`,
+  `R3Challenge.BuildResourceTokenAsync`/`ChallengeAsync`,
+  `R3EnforcementDecision.ToResultAsync`,
+  `AAuthChallengeMiddleware.BuildResourceTokenAsync`, and
+  `AAuthSigningHandler` (public sync `Sign` replaced by
+  `SignHeadersAsync`). `AuthTokenResponse` mint delegates are
+  `Func<CancellationToken, ValueTask<string>>`; `Create(Func<string>)`
+  became `CreateAsync`. Signing members that need a private key now take
+  `IAAuthSigner`.
+- **`AAuthSigningKeySet`.** Replaces every `SigningKeys` dictionary (PS,
+  AS, R3 AS, resource, and the four metadata options) and the
+  `ResourceSigningKey`/`ResourceKeyId` pairs on `ChallengeOptions` and
+  `AAuthServerOptions` (now `ResourceSigningKeys`). Snapshot-swapped under a
+  lock; the first key added is active until `Activate`; the active key
+  cannot be removed. PS, AS, R3 AS and the resource challenge read `Active`
+  atomically per mint. The JWKS endpoint rebuilds from the live sets per
+  request. `MapAAuthIssuerRevocation` takes the set and signs each
+  downstream revocation with the active key at send time.
+  `TokenVerifier.WithLocalIssuer` takes the set, so self-verification
+  follows rotation.
+- **Evidence.** `grep -rn '\.Sign(' src` returns nothing (the local-key
+  `Sign` definitions are the only sync signing code).
+  `RemoteSignerTests` (7) and `SigningKeySetTests` (7).
+- **Migration.** A subagent migrated tests, samples, Razor snippets and
+  docs (new key-interface and rotation sections in
+  `docs/advanced/key-management.md` and `docs/reference/configuration.md`).
+  Verified independently: build clean, counts unchanged before the new
+  tests. `.GetAwaiter().GetResult()` appears only in test static
+  initializers/getters, one per-request test token factory, and the
+  GuidedTour jkt-jwt naming-JWT factory (local key, commented).
+- **Deferred, with owner visibility.**
+  - KeyHandle resolution through `IKeyStore` (Q2) needs the config-bound
+    role registration: Phase 4.
+  - `AddAAuthFederation` still takes one signer and kid; it folds into
+    `AddAAuthPersonServer` in Phase 4, which should pass the PS key set.
+  - Agent-side token factories are sync (`UseJwt`/`UseJktJwt`/`UseSelfJwt`
+    `Func<string>`, `ISignatureKeyProvider.GetSignatureKeyHeader`). A KMS
+    durable key minting a jkt-jwt naming JWT per request would need
+    sync-over-async. Proposed for Phase 7: async signature-key providers.
+- **Gates.**
+  - Build clean.
+  - Test projects: AAuth.Tests 1715 (+14), AAuth.Conformance 1257,
+    AAuth.R3.Tests 328, AAuth.Events.Tests 80.
+  - ApiSurface: +666/-368 cumulative. Docs inventory refreshed (666
+    blocks); e2e typecheck clean.
+  - Full Playwright: 78 passed, 1 skipped, `--retries=0`.
+  - Keycloak profile (`KEYCLOAK_E2E=1`, live Keycloak 26.0 container):
+    `federated-deferred` 1 passed; container removed.
+
 ## Deviations from plan
 
 None yet.

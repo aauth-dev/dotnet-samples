@@ -34,7 +34,7 @@ var result = await apClient.RefreshTwoKeyAsync(
 // Durable key signs a self-issued naming JWT (jkt-s256+jwt):
 // durable jwk in the header, iss = its thumbprint URN,
 // ephemeral key bound via cnf.jwk
-var namingJwt = NamingJwtBuilder.Build(durableKey, result.EphemeralKey);
+var namingJwt = await NamingJwtBuilder.BuildAsync(durableKey, result.EphemeralKey);
 
 // Ephemeral key signs HTTP requests
 using var client = new AAuthClientBuilder(result.EphemeralKey).WithEgressPolicy(SampleEgress.Policy)
@@ -122,7 +122,7 @@ else
     private bool _enrolled;
     private string? _durableThumbprint;
     private string? _ephemeralThumbprint;
-    private IAAuthKey? _ephemeralKey;
+    private IAAuthSigner? _ephemeralKey;
     private string? _namingJwt;
     private string? _response;
     private string? _error;
@@ -182,7 +182,7 @@ else
             // Build the naming JWT for generic resource requests (Signature Keys draft-08 section 3.5): the
             // durable key signs it, embeds its own public key in the header, and
             // binds the ephemeral key via cnf.jwk.
-            _namingJwt = NamingJwtBuilder.Build(_enrollment.Key, _ephemeralKey);
+            _namingJwt = await NamingJwtBuilder.BuildAsync(_enrollment.Key, _ephemeralKey);
         }
         catch (Exception ex)
         {

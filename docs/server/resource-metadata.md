@@ -47,7 +47,7 @@ var app = builder.Build();
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     Issuer = "https://resource.example",
-    SigningKeys = new Dictionary<string, IAAuthKey> { ["key-1"] = signingKey },
+    SigningKeys = new AAuthSigningKeySet("key-1", signingKey),
     Name = "My Resource API",
     DocumentationUri = "https://docs.resource.example",
     ScopeDescriptions = new Dictionary<string, string>
@@ -68,7 +68,7 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 | Property | Required | Description |
 |----------|:--------:|-------------|
 | `Issuer` | Yes | The resource's canonical URL (used as `iss` in resource tokens) |
-| `SigningKeys` | Conditional | Key-id to `IAAuthKey` map; required to issue resource tokens or make signed calls, optional for verification-only resources |
+| `SigningKeys` | Conditional | `AAuthSigningKeySet`: every key is published at the JWKS and tokens are signed with the active key; required to issue resource tokens or make signed calls, optional for verification-only resources |
 | `Name` | No | Human-readable name for the resource (`name`) |
 | `DocumentationUri` | No | Developer-documentation URL (`documentation_uri`) |
 | `ScopeDescriptions` | No | Scope → description map (displayed during consent) |

@@ -240,13 +240,13 @@ The prerequisite for KMS/HSM keys and rotation. Every role uses it.
 
 ### Definition of Done
 
-- [ ] `grep -rn '\.Sign(' src` returns only the local-key implementation.
-- [ ] Tests:
-  - [ ] `RemoteSignerTests`: a fake async non-exportable signer mints
+- [x] `grep -rn '\.Sign(' src` returns only the local-key implementation.
+- [x] Tests:
+  - [x] `RemoteSignerTests`: a fake async non-exportable signer mints
         agent, person, auth, and resource tokens and signs HTTP requests.
-  - [ ] `SigningKeySetTests`: JWKS publishes all kids; tokens are signed with
+  - [x] `SigningKeySetTests`: JWKS publishes all kids; tokens are signed with
         the active kid; rotation takes effect without a restart.
-- [ ] Gates pass, including the Keycloak profile.
+- [x] Gates pass, including the Keycloak profile.
 
 ## Phase 4 — Server role registration (F-S1, F-S2, F-S9; Q2, Q3, Q9)
 

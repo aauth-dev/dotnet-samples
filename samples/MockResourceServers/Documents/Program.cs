@@ -37,9 +37,9 @@ app.UseWhen(context => context.Request.Path == "/document", branch => branch.Use
 }));
 var challenge = new ChallengeOptions
 {
-    EgressPolicy = SampleEgress.Policy, ResourceIdentifier = issuer, ResourceSigningKey = key, ResourceKeyId = kid,
+    EgressPolicy = SampleEgress.Policy, ResourceIdentifier = issuer, ResourceSigningKeys = new AAuthSigningKeySet(kid, key),
 };
-app.MapGet("/document", (HttpContext context) =>
+app.MapGet("/document", async (HttpContext context) =>
 {
     foreach (var expired in permissions.Where(pair => pair.Value.ExpiresAt <= DateTimeOffset.UtcNow)) permissions.TryRemove(expired.Key, out _);
     var identity = context.GetAAuthVerification()!;
@@ -54,9 +54,9 @@ app.MapGet("/document", (HttpContext context) =>
     {
         var permission = new Permission(personKey, identity.Jkt!);
         permissions[permission.Id] = permission;
-        var token = AAuthChallengeMiddleware.BuildResourceToken(challenge, context.GetAAuthVerifiedAssertion()!,
+        var token = await AAuthChallengeMiddleware.BuildResourceTokenAsync(challenge, context.GetAAuthVerifiedAssertion()!,
             "documents.read", account: "work", scopeDescriptions: scopes,
-            interaction: new Interaction(issuer + "/permission", permission.Browser.Code));
+            interaction: new Interaction(issuer + "/permission", permission.Browser.Code), cancellationToken: context.RequestAborted);
         context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatAuthToken(token);
         return AAuthProblemDetails.Create("auth_token_required", statusCode: 401);
     }

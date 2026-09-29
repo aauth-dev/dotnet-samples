@@ -51,11 +51,11 @@ public class AccessEndpointR3Tests
         var policies = 0;
         var fixture = await R3AccessFixture.CreateAsync(auditSink: audit, onFetch: () => fetches++, onPolicy: () => policies++);
         await using var app = fixture.App;
-        var token = field == "resource_token" ? fixture.ResourceToken : field == "upstream_token" ? UpstreamToken(fixture)
+        var token = field == "resource_token" ? fixture.ResourceToken : field == "upstream_token" ? await UpstreamTokenAsync(fixture)
             : field == "presented_token" ? fixture.PersonToken : fixture.AgentToken;
         var key = field == "resource_token" ? fixture.ResourceKey : field is "upstream_token" or "presented_token" ? fixture.PsKey : fixture.ApKey;
         using var response = await fixture.PostTokenAsync(extra: new JsonObject
-        { [field] = TestTokens.MalformedCredential(token, key, variant) });
+        { [field] = await TestTokens.MalformedCredentialAsync(token, key, variant) });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType!.MediaType);
         Assert.Equal(error, (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
@@ -74,7 +74,7 @@ public class AccessEndpointR3Tests
     public Task PresentedCredentialFailuresPrecedeFetchPolicyAndAudit(string field, string variant, string error) =>
         BodyCredentialFailuresPrecedeFetchPolicyAndAudit(field, variant, error);
 
-    private static string UpstreamToken(R3AccessFixture fixture, string? missionS256 = null, TimeProvider? clock = null,
+    private static ValueTask<string> UpstreamTokenAsync(R3AccessFixture fixture, string? missionS256 = null, TimeProvider? clock = null,
         DateTimeOffset? expiresAt = null, string? account = null) => new AuthTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
@@ -83,7 +83,7 @@ public class AccessEndpointR3Tests
         Key = fixture.PsKey, KeyId = R3TestData.PsKid, TimeProvider = clock ?? TimeProvider.System,
         AgentTokenExpiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddMinutes(5), Scope = "read",
         MissionS256 = missionS256, Account = account,
-    }.Build();
+    }.BuildAsync();
 
     [Theory]
     [InlineData(false)]
@@ -94,7 +94,7 @@ public class AccessEndpointR3Tests
         var fixture = await R3AccessFixture.CreateAsync(requireProposalConsent: deferred, auditSink: audit);
         await using var app = fixture.App;
         var mission = R3Hash.ComputeS256("mission"u8);
-        var (personToken, resourceToken) = fixture.PersonRequest(proposal: deferred, missionS256: mission);
+        var (personToken, resourceToken) = await fixture.PersonRequestAsync(proposal: deferred, missionS256: mission);
         var presented = R3TestData.VerifyPersonToken(personToken, fixture.PsKey, fixture.AgentKey);
         using var discovery = new InProcessHttpClient(app.GetTestServer().CreateHandler());
         using var metadata = new MetadataClient(discovery);
@@ -145,9 +145,9 @@ public class AccessEndpointR3Tests
             onFetch: () => fetches++, onPolicy: () => policies++);
         await using var app = fixture.App;
         // The resource token honestly names its presented token; only the upstream mission differs.
-        var (personToken, token) = fixture.PersonRequest(proposal: deferred,
+        var (personToken, token) = await fixture.PersonRequestAsync(proposal: deferred,
             missionS256: changed ? R3Hash.ComputeS256("changed"u8) : null);
-        var upstream = UpstreamToken(fixture, missionS256: R3Hash.ComputeS256("original"u8));
+        var upstream = await UpstreamTokenAsync(fixture, missionS256: R3Hash.ComputeS256("original"u8));
 
         using var response = await fixture.PostTokenAsync(token,
             new JsonObject { ["upstream_token"] = upstream, ["presented_token"] = personToken });
@@ -196,9 +196,9 @@ public class AccessEndpointR3Tests
             onFetch: () => fetches++, onPolicy: () => policies++);
         await using var app = fixture.App;
         var (personToken, token) = mutation == "stripped"
-            ? fixture.PersonRequest(proposal: deferred, missionS256: R3Hash.ComputeS256("mission"u8))
+            ? await fixture.PersonRequestAsync(proposal: deferred, missionS256: R3Hash.ComputeS256("mission"u8))
             : (fixture.PersonToken, deferred ? fixture.ProposalResourceToken : fixture.ResourceToken);
-        token = WithResourceMission(token, mutation switch
+        token = await WithResourceMissionAsync(token, mutation switch
         {
             "added" => R3Hash.ComputeS256("mission"u8),
             "malformed" => "not-a-sha256-digest",
@@ -214,14 +214,14 @@ public class AccessEndpointR3Tests
         Assert.Empty(audit.Records);
     }
 
-    private static string WithResourceMission(string token, string? missionS256, IAAuthKey key)
+    private static async Task<string> WithResourceMissionAsync(string token, string? missionS256, IAAuthSigner key)
     {
         var segments = token.Split('.');
         var payload = JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Decode(segments[1]))!.AsObject();
         if (missionS256 is null) payload.Remove("mission_s256");
         else payload["mission_s256"] = missionS256;
         var input = segments[0] + "." + Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(payload.ToJsonString());
-        return input + "." + Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(key.Sign(System.Text.Encoding.ASCII.GetBytes(input)));
+        return input + "." + Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(await key.SignAsync(System.Text.Encoding.ASCII.GetBytes(input)));
     }
 
     [Theory]
@@ -368,14 +368,14 @@ public class AccessEndpointR3Tests
         JsonNode? presented = variant switch
         {
             "missing" => null,
-            "other-person-token" => R3TestData.PersonToken(fixture.PsKey, fixture.AgentKey),
-            "other-agent-key" => R3TestData.PersonToken(fixture.PsKey, AAuthKey.Generate()),
-            _ => new PersonTokenBuilder
+            "other-person-token" => await R3TestData.PersonTokenAsync(fixture.PsKey, fixture.AgentKey),
+            "other-agent-key" => await R3TestData.PersonTokenAsync(fixture.PsKey, AAuthKey.Generate()),
+            _ => await new PersonTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy, Issuer = R3TestData.PsIssuer, Audience = R3TestData.AsIssuer,
                 Subject = R3TestData.PersonSubject, ConfirmationKey = fixture.AgentKey,
                 AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1), Key = fixture.PsKey, KeyId = R3TestData.PsKid,
-            }.Build(),
+            }.BuildAsync(),
         };
         using var response = await fixture.PostTokenAsync(extra: new JsonObject { ["presented_token"] = presented });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -465,7 +465,7 @@ public class AccessEndpointR3Tests
         var fixture = await R3AccessFixture.CreateAsync(isScopeAllowed: allow ?
             (resource, scope) => resource == R3TestData.ResourceIssuer && scope == "bookings.read" : null);
         await using var app = fixture.App;
-        var token = R3TestData.ResourceToken(fixture.ResourceKey, fixture.Presented, fixture.AgentKey,
+        var token = await R3TestData.ResourceTokenAsync(fixture.ResourceKey, fixture.Presented, fixture.AgentKey,
             fixture.R3Uri, fixture.R3S256, scope: "bookings.read");
         using var response = await fixture.PostTokenAsync(token);
         Assert.Equal(allow ? HttpStatusCode.OK : HttpStatusCode.BadRequest, response.StatusCode);
@@ -486,7 +486,7 @@ public class AccessEndpointR3Tests
         await using var app = builder.Build();
         Assert.Throws<InvalidOperationException>(() => app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
         {
-            Issuer = R3TestData.AsIssuer, SigningKeys = new Dictionary<string, IAAuthKey> { ["as"] = AAuthKey.Generate() }, AuditSink = null!,
+            Issuer = R3TestData.AsIssuer, SigningKeys = new AAuthSigningKeySet { ["as"] = AAuthKey.Generate() }, AuditSink = null!,
         }));
     }
 
@@ -522,7 +522,7 @@ public class AccessEndpointR3Tests
         var audit = new InMemoryR3AuditSink();
         var fixture = await R3AccessFixture.CreateAsync(requireProposalConsent: deferred, documentAccount: documentAccount, auditSink: audit);
         await using var app = fixture.App;
-        var resourceToken = R3TestData.ResourceToken(fixture.ResourceKey, fixture.Presented, fixture.AgentKey,
+        var resourceToken = await R3TestData.ResourceTokenAsync(fixture.ResourceKey, fixture.Presented, fixture.AgentKey,
             deferred ? fixture.ProposalUri : fixture.R3Uri, deferred ? fixture.ProposalS256 : fixture.R3S256, account: tokenAccount);
         using var initial = await fixture.PostTokenAsync(resourceToken);
         if (!accepted)
@@ -575,20 +575,20 @@ public class AccessEndpointR3Tests
         var childKey = AAuthKey.Generate();
         const string childId = "aauth:demo+child@ap.test";
         var boundKey = childSeconds == 0 ? fixture.AgentKey : childKey;
-        var personToken = R3TestData.PersonToken(fixture.PsKey, boundKey, agentTokenExpiresAt: clock.Now.AddSeconds(presentedSeconds));
-        var resourceToken = R3TestData.ResourceToken(fixture.ResourceKey, R3TestData.VerifyPersonToken(personToken, fixture.PsKey, boundKey),
+        var personToken = await R3TestData.PersonTokenAsync(fixture.PsKey, boundKey, agentTokenExpiresAt: clock.Now.AddSeconds(presentedSeconds));
+        var resourceToken = await R3TestData.ResourceTokenAsync(fixture.ResourceKey, R3TestData.VerifyPersonToken(personToken, fixture.PsKey, boundKey),
             boundKey, deferred ? fixture.ProposalUri : fixture.R3Uri, deferred ? fixture.ProposalS256 : fixture.R3S256, account: "workspace/17");
-        var extra = new JsonObject { ["agent_token"] = ShortAgent(fixture, clock, parentSeconds), ["presented_token"] = personToken };
+        var extra = new JsonObject { ["agent_token"] = await ShortAgentAsync(fixture, clock, parentSeconds), ["presented_token"] = personToken };
         if (childSeconds != 0)
-            extra["subagent_token"] = new AgentTokenBuilder
+            extra["subagent_token"] = await new AgentTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
                 Issuer = R3TestData.ApIssuer, Subject = childId, ParentAgent = R3TestData.AgentId,
                 Key = fixture.ApKey, KeyId = R3TestData.ApKid, ConfirmationKey = childKey,
                 IssuedAt = clock.Now.AddSeconds(childSeconds - 3600), Lifetime = TimeSpan.FromHours(1),
-            }.Build();
+            }.BuildAsync();
         if (upstream)
-            extra["upstream_token"] = UpstreamToken(fixture, clock: clock, expiresAt: clock.Now.AddSeconds(60),
+            extra["upstream_token"] = await UpstreamTokenAsync(fixture, clock: clock, expiresAt: clock.Now.AddSeconds(60),
                 account: "upstream-resource/other-namespace");
         var expectedExpiry = clock.Now.AddSeconds(Math.Min(upstream ? 60 : 120, presentedSeconds));
         using var initial = await fixture.PostTokenAsync(resourceToken, extra);
@@ -624,7 +624,7 @@ public class AccessEndpointR3Tests
         var fixture = await R3AccessFixture.CreateAsync(requireProposalConsent: true, timeProvider: clock, auditSink: audit);
         await using var app = fixture.App;
         using var initial = await fixture.PostTokenAsync(fixture.ProposalResourceToken,
-            new JsonObject { ["agent_token"] = ShortAgent(fixture, clock, 120) });
+            new JsonObject { ["agent_token"] = await ShortAgentAsync(fixture, clock, 120) });
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         await ApproveAsync(fixture, initial);
         if (!expireBeforeMint)
@@ -645,7 +645,7 @@ public class AccessEndpointR3Tests
         var clock = new IssuanceClock();
         var fixture = await R3AccessFixture.CreateAsync(timeProvider: clock, auditSink: new AdvancingAuditSink(clock));
         await using var app = fixture.App;
-        using var response = await fixture.PostTokenAsync(extra: new JsonObject { ["agent_token"] = ShortAgent(fixture, clock, 120) });
+        using var response = await fixture.PostTokenAsync(extra: new JsonObject { ["agent_token"] = await ShortAgentAsync(fixture, clock, 120) });
         // A fresh request names the expired parameter, not polling `expired` (#token-endpoint-error-codes).
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = (await response.Content.ReadFromJsonAsync<JsonObject>())!;
@@ -653,12 +653,12 @@ public class AccessEndpointR3Tests
         Assert.Null(body["auth_token"]);
     }
 
-    private static string ShortAgent(R3AccessFixture fixture, IssuanceClock clock, int seconds) => new AgentTokenBuilder
+    private static ValueTask<string> ShortAgentAsync(R3AccessFixture fixture, IssuanceClock clock, int seconds) => new AgentTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = R3TestData.ApIssuer, Subject = R3TestData.AgentId, Key = fixture.ApKey, KeyId = R3TestData.ApKid,
         ConfirmationKey = fixture.AgentKey, IssuedAt = clock.Now.AddSeconds(seconds - 3600), Lifetime = TimeSpan.FromHours(1),
-    }.Build();
+    }.BuildAsync();
 
     [Fact]
     public async Task RevokedSource_CannotDeliverApprovedProposal()
@@ -1272,7 +1272,7 @@ public class AccessEndpointR3Tests
             {
                 EgressPolicy = TestEgress.Policy,
                 Issuer = R3TestData.AsIssuer,
-                SigningKeys = new Dictionary<string, IAAuthKey> { [R3TestData.AsKid] = asKey },
+                SigningKeys = new AAuthSigningKeySet { [R3TestData.AsKid] = asKey },
                 Trust = { PersonServers = { Allowed = openPersonServerTrust ? null : new HashSet<string>(trustedPersonServers ?? [R3TestData.PsIssuer]) } },
                 // AS policy: book_trip requires per-call approval (r3 §Auth Token Extensions —
                 // the AS decides granted vs per-call, not the R3 document).
@@ -1291,7 +1291,7 @@ public class AccessEndpointR3Tests
             });
             await app.StartAsync();
 
-            var personToken = R3TestData.PersonToken(psKey, agentKey);
+            var personToken = await R3TestData.PersonTokenAsync(psKey, agentKey);
             var presented = R3TestData.VerifyPersonToken(personToken, psKey, agentKey);
             return new R3AccessFixture
             {
@@ -1301,26 +1301,26 @@ public class AccessEndpointR3Tests
                 ApKey = apKey,
                 ResourceKey = resourceKey,
                 AgentKey = agentKey,
-                AgentToken = R3TestData.AgentToken(apKey, agentKey),
+                AgentToken = await R3TestData.AgentTokenAsync(apKey, agentKey),
                 PersonToken = personToken,
                 Presented = presented,
-                ResourceToken = R3TestData.ResourceToken(resourceKey, presented, agentKey, resourceTokenUriOverride ?? r3Uri, resourceTokenS256Override ?? r3S256),
+                ResourceToken = await R3TestData.ResourceTokenAsync(resourceKey, presented, agentKey, resourceTokenUriOverride ?? r3Uri, resourceTokenS256Override ?? r3S256),
                 R3Uri = r3Uri,
                 R3S256 = r3S256,
                 ProposalUri = proposalUri,
                 ProposalS256 = proposalS256,
-                ProposalResourceToken = R3TestData.ResourceToken(resourceKey, presented, agentKey, proposalUri, proposalS256),
+                ProposalResourceToken = await R3TestData.ResourceTokenAsync(resourceKey, presented, agentKey, proposalUri, proposalS256),
             };
         }
 
         // A person token for this resource plus a resource token naming it, bound to agentKey.
-        public (string PersonToken, string ResourceToken) PersonRequest(bool proposal = false, string? missionS256 = null,
+        public async Task<(string PersonToken, string ResourceToken)> PersonRequestAsync(bool proposal = false, string? missionS256 = null,
             AAuthKey? agentKey = null, string? account = null, string? scope = null)
         {
             var key = agentKey ?? AgentKey;
-            var person = R3TestData.PersonToken(PsKey, key, missionS256);
+            var person = await R3TestData.PersonTokenAsync(PsKey, key, missionS256);
             var verified = R3TestData.VerifyPersonToken(person, PsKey, key);
-            return (person, R3TestData.ResourceToken(ResourceKey, verified, key,
+            return (person, await R3TestData.ResourceTokenAsync(ResourceKey, verified, key,
                 proposal ? ProposalUri : R3Uri, proposal ? ProposalS256 : R3S256, scope, account));
         }
 

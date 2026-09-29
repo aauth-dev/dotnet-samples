@@ -108,7 +108,7 @@ public class EventPersistenceTests : IDisposable
     }
 
     [Fact]
-    public void ResourceFailureRollsBackTicketAndPreparedDeliverySurvivesRestart()
+    public async Task ResourceFailureRollsBackTicketAndPreparedDeliverySurvivesRestart()
     {
         Store().SetState("receive", "work", "state");
         Store().IssueTicket(new("ticket", Jkt, "receive", "work", "state", Now.AddMinutes(5)));
@@ -122,8 +122,8 @@ public class EventPersistenceTests : IDisposable
         command.CommandText = "DROP TRIGGER fail_registration";
         command.ExecuteNonQuery();
         Assert.Equal(200, Store().Register(subscription, "ticket", Now).StatusCode);
-        var first = Store().PrepareDelivery(subscription.Provider, subscription.Eid, () => Envelope());
-        var retry = Store().PrepareDelivery(subscription.Provider, subscription.Eid, () => throw new InvalidOperationException("must not reissue"));
+        var first = await Store().PrepareDeliveryAsync(subscription.Provider, subscription.Eid, () => Task.FromResult(Envelope()));
+        var retry = await Store().PrepareDeliveryAsync(subscription.Provider, subscription.Eid, () => throw new InvalidOperationException("must not reissue"));
         Assert.Equal(first.Token, retry.Token);
         Assert.Equal(first.Body, retry.Body);
     }

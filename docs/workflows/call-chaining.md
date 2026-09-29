@@ -115,8 +115,7 @@ app.UseWhen(
         new ChallengeOptions
         {
             AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = conciergeKey,
-            ResourceKeyId = "orch-1",
+            ResourceSigningKeys = new AAuthSigningKeySet("orch-1", conciergeKey),
             ResourceIdentifier = conciergeUrl,
         }));
 
@@ -170,7 +169,7 @@ app.MapGet("/", async (HttpContext ctx) =>
     var presented = ctx.GetAAuthVerifiedAssertion()!;
     if (tokenType == AAuthTokenType.PersonToken)
         return ctx.ChallengeAAuth(
-            AAuthChallengeMiddleware.BuildResourceToken(challengeOptions, presented, scope: "concierge"));
+            await AAuthChallengeMiddleware.BuildResourceTokenAsync(challengeOptions, presented, scope: "concierge"));
 
     // Auth token → it is the upstream token for downstream requests
     var upstream = presented.CompactToken;
@@ -275,7 +274,7 @@ A PS that mints the downstream token by hand bounds it by the verified upstream
 token and copies its mission:
 
 ```csharp
-var token = new AuthTokenBuilder
+var token = await new AuthTokenBuilder
 {
     AgentTokenExpiresAt = verifiedAgent.ExpiresAt,
     AuthorizationExpiresAt = verifiedUpstream.ExpiresAt, // never outlives the upstream token
@@ -288,7 +287,7 @@ var token = new AuthTokenBuilder
     Key = psKey,
     KeyId = "ps-key-1",
     Scope = "downstream:read",
-}.Build();
+}.BuildAsync();
 ```
 
 ## AgentConsole Support
@@ -354,7 +353,7 @@ if (!result.IsValid)
     return AAuth.Server.AAuthProblemDetails.Create("invalid_upstream_token", result.Error);
 
 // The downstream person token is bounded by the upstream token and carries its mission.
-var personToken = new PersonTokenBuilder
+var personToken = await new PersonTokenBuilder
 {
     Issuer = psIssuer,
     Audience = downstreamResource,
@@ -365,7 +364,7 @@ var personToken = new PersonTokenBuilder
     MissionS256 = result.MissionS256,
     Tenant = result.Tenant,
     Key = psKey, KeyId = "ps-1",
-}.Build();
+}.BuildAsync();
 ```
 
 The validator performs §Upstream Token Verification steps 1–3:

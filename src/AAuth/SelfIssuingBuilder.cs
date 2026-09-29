@@ -9,7 +9,7 @@ namespace AAuth;
 
 /// <summary>
 /// Fluent sub-builder for configuring a self-issued agent identity.
-/// Returned by <see cref="AAuthClientBuilder.SelfIssuing(IAAuthKey)"/>.
+/// Returned by <see cref="AAuthClientBuilder.SelfIssuing(IAAuthSigner)"/>.
 /// </summary>
 /// <example>
 /// <code>
@@ -22,7 +22,7 @@ namespace AAuth;
 /// </example>
 public sealed class SelfIssuingBuilder
 {
-    private readonly IAAuthKey _key;
+    private readonly IAAuthSigner _key;
     private string? _issuer;
     private string? _subject;
     private string? _kid;
@@ -37,7 +37,7 @@ public sealed class SelfIssuingBuilder
     public SelfIssuingBuilder WithDevelopmentLoopback(params string[] origins) =>
         WithEgressPolicy(AAuth.Discovery.AAuthEgressPolicy.ForDevelopmentLoopback(origins));
 
-    internal SelfIssuingBuilder(IAAuthKey key)
+    internal SelfIssuingBuilder(IAAuthSigner key)
     {
         _key = key;
     }

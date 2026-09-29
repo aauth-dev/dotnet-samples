@@ -45,7 +45,7 @@ public sealed class AAuthPersonServerOptions
     /// The PS signing keys, keyed by <c>kid</c>. Published at the JWKS and used
     /// to sign minted auth tokens (the first entry signs).
     /// </summary>
-    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; set; }
+    public required AAuthSigningKeySet SigningKeys { get; set; }
 
     /// <summary>The auth token endpoint path (<c>auth_token_endpoint</c>). Default <c>/token</c>.</summary>
     public string TokenPath { get; set; } = "/token";
@@ -179,18 +179,11 @@ public static class AAuthPersonServerEndpoints
             }
         }
 
-        string signingKid = string.Empty;
-        IAAuthKey signingKey = null!;
-        foreach (var (kid, key) in options.SigningKeys)
-        {
-            signingKid = kid;
-            signingKey = key;
-            break;
-        }
+        _ = options.SigningKeys.Active;
 
         var issuer = options.Issuer;
         var inventory = app.MapAAuthIssuerRevocation(issuer, AuthTokenBuilder.PersonDwk,
-            signingKey, signingKid, options.RevocationPath, options.EgressPolicy, options.TimeProvider, revocation =>
+            options.SigningKeys, options.RevocationPath, options.EgressPolicy, options.TimeProvider, revocation =>
             {
                 // A PS answers an agent provider's revocation with an empty 200.
                 revocation.ReportDownstream = false;
@@ -214,7 +207,7 @@ public static class AAuthPersonServerEndpoints
             Issuer = options.Issuer,
             AuthTokenEndpoint = $"{issuer}{options.TokenPath}",
             PersonTokenEndpoint = $"{issuer}{options.PersonTokenPath}",
-            SigningKeys = new Dictionary<string, IAAuthKey>(options.SigningKeys),
+            SigningKeys = options.SigningKeys,
             InteractionEndpoint = options.InteractionEndpoint ?? interactionUrl,
             MissionEndpoint = options.MissionEndpoint,
             PermissionEndpoint = options.PermissionEndpoint,
@@ -268,23 +261,25 @@ public static class AAuthPersonServerEndpoints
         var selfVerifier = tokenVerifier.WithLocalIssuer(issuer, options.SigningKeys);
 
         Task<IResult> MintEntry(PersonPendingEntry entry) => entry.PersonToken
-            ? AuthTokenResponse.CreateTrackedAsync(() => MintPerson(
+            ? AuthTokenResponse.CreateTrackedAsync(ct => MintPerson(ct,
                 entry.ResourceUrl,
                 entry.Subject ?? throw new TokenVerificationException("Approved identity assertion is missing its directed subject."),
                 entry.Tenant, entry.AgentConfirmationKey!, entry.MissionS256,
                 entry.AgentTokenExpiresAt, entry.AuthorizationExpiresAt),
                 entry.ExpiresAt, inventory, entry.SourceTokens, "person_token", options.TimeProvider)
-            : AuthTokenResponse.CreateTrackedAsync(() => MintAuth(
+            : AuthTokenResponse.CreateTrackedAsync(ct => MintAuth(ct,
                 entry.ResourceUrl, entry.Scope, entry.AgentConfirmationKey!,
                 entry.PersonSubject ?? throw new TokenVerificationException("Pending request is missing its verified subject."),
                 entry.PersonTenant, entry.Roles, entry.Groups, entry.AdditionalClaims, entry.MissionS256,
                 entry.AgentTokenExpiresAt, entry.AuthorizationExpiresAt, entry.Account),
                 entry.ExpiresAt, inventory, entry.SourceTokens, options.TimeProvider);
 
-        string MintPerson(
+        ValueTask<string> MintPerson(CancellationToken cancellationToken,
             string resource, string subject, string? tenant, IAAuthKey confirmationKey, string? missionS256,
-            DateTimeOffset agentTokenExpiresAt, DateTimeOffset? authorizationExpiresAt) =>
-            new PersonTokenBuilder
+            DateTimeOffset agentTokenExpiresAt, DateTimeOffset? authorizationExpiresAt)
+        {
+            var (signingKid, signingKey) = options.SigningKeys.Active;
+            return new PersonTokenBuilder
             {
                 EgressPolicy = options.EgressPolicy,
                 Issuer = issuer,
@@ -298,17 +293,20 @@ public static class AAuthPersonServerEndpoints
                 TimeProvider = options.TimeProvider,
                 Key = signingKey,
                 KeyId = signingKid,
-            }.Build();
+            }.BuildAsync(cancellationToken);
+        }
 
         // The auth token's sub, tenant and mission_s256 are the verified resource
         // token's (copied from the presented token); the asserter only decides
         // consent and releases roles/groups/additional claims.
-        string MintAuth(
+        ValueTask<string> MintAuth(CancellationToken cancellationToken,
             string resourceUrl, string scope, IAAuthKey confirmationKey,
             string subject, string? tenant, IReadOnlyList<string>? roles, IReadOnlyList<string>? groups,
             IReadOnlyDictionary<string, JsonNode?>? additionalClaims, string? missionS256,
-            DateTimeOffset agentTokenExpiresAt, DateTimeOffset? authorizationExpiresAt, string? account = null) =>
-            new AuthTokenBuilder
+            DateTimeOffset agentTokenExpiresAt, DateTimeOffset? authorizationExpiresAt, string? account = null)
+        {
+            var (signingKid, signingKey) = options.SigningKeys.Active;
+            return new AuthTokenBuilder
             {
                 EgressPolicy = options.EgressPolicy,
                 Issuer = issuer,
@@ -328,7 +326,8 @@ public static class AAuthPersonServerEndpoints
                 Groups = groups,
                 AdditionalClaims = additionalClaims,
                 MissionS256 = missionS256,
-            }.Build();
+            }.BuildAsync(cancellationToken);
+        }
 
         // Shared front half of both PS token endpoints: an agent-token carrier,
         // a JSON body, and the verified agent / sub-agent / upstream context.
@@ -462,7 +461,7 @@ public static class AAuthPersonServerEndpoints
                     MissionS256 = request.MissionS256,
                 }, ct);
                 if (assertion.Kind != IdentityAssertionKind.Assert || string.IsNullOrWhiteSpace(assertion.Subject)) continue;
-                var (token, _) = await AuthTokenResponse.MintTrackedAsync(() => MintPerson(
+                var (token, _) = await AuthTokenResponse.MintTrackedAsync(ct => MintPerson(ct,
                     resource, assertion.Subject, assertion.Tenant, request.ConfirmationKey, request.MissionS256,
                     request.AgentTokenExpiresAt, ceiling), ceiling, inventory, sources, options.TimeProvider,
                     AuthTokenResponse.Expired, ct);
@@ -533,7 +532,7 @@ public static class AAuthPersonServerEndpoints
                 case IdentityAssertionKind.Assert:
                     if (string.IsNullOrWhiteSpace(assertion.Subject))
                         return AAuthProblemDetails.Create("server_error", "The identity asserter returned no directed subject.", statusCode: StatusCodes.Status500InternalServerError);
-                    return await AuthTokenResponse.CreateTrackedAsync(() => MintPerson(
+                    return await AuthTokenResponse.CreateTrackedAsync(ct => MintPerson(ct,
                         resource, assertion.Subject, assertion.Tenant, issuance.ConfirmationKey, missionS256,
                         issuance.AgentTokenExpiresAt, ceiling), ceiling, inventory, sources, "person_token",
                         options.TimeProvider, ctx.RequestAborted, MissionExpired(missionS256));
@@ -644,7 +643,7 @@ public static class AAuthPersonServerEndpoints
                         return Pending202Clarification(ctx, entry, options);
                     if (entry.Status == PersonPendingStatus.Allowed && entry.AuthToken is not null)
                     {
-                        return await AuthTokenResponse.CreateTrackedAsync(() => entry.AuthToken, entry.ExpiresAt,
+                        return await AuthTokenResponse.CreateTrackedAsync(_ => ValueTask.FromResult(entry.AuthToken), entry.ExpiresAt,
                             inventory, entry.SourceTokens, options.TimeProvider, ctx.RequestAborted);
                     }
                     if (entry.Status == PersonPendingStatus.Denied)
@@ -1101,7 +1100,7 @@ public static class AAuthPersonServerEndpoints
                         });
                         if (granted.Kind != IdentityAssertionKind.Assert)
                             return AAuthProblemDetails.Create("denied", granted.Reason, statusCode: StatusCodes.Status403Forbidden);
-                        var response = await AuthTokenResponse.CreateTrackedAsync(() => MintAuth(
+                        var response = await AuthTokenResponse.CreateTrackedAsync(ct => MintAuth(ct,
                             audience, requestedScope, issuance.ConfirmationKey, subject, tenant, granted.Roles,
                             granted.Groups, granted.AdditionalClaims, missionS256,
                             issuance.AgentTokenExpiresAt, ceiling, account), ceiling, inventory, sourceTokens, "auth_token",
@@ -1148,7 +1147,7 @@ public static class AAuthPersonServerEndpoints
             switch (assertion.Kind)
             {
                 case IdentityAssertionKind.Assert:
-                    return await AuthTokenResponse.CreateTrackedAsync(() => MintAuth(
+                    return await AuthTokenResponse.CreateTrackedAsync(ct => MintAuth(ct,
                         audience, requestedScope, issuance.ConfirmationKey, subject, tenant, assertion.Roles,
                         assertion.Groups, assertion.AdditionalClaims, missionS256: null,
                         issuance.AgentTokenExpiresAt, ceiling, account), ceiling, inventory, sourceTokens, "auth_token",
@@ -1437,7 +1436,7 @@ public static class AAuthPersonServerEndpoints
                     await RequireConsentAsync(null, entry.FederationCancellation.Token);
                     var token = await federation.FederateAsync(resourceAudience, fedRequest, entry.FederationCancellation.Token);
                     await ThrowIfMissionTerminatedAsync();
-                    var tracked = await AuthTokenResponse.CreateTrackedAsync(() => token, entry.ExpiresAt,
+                    var tracked = await AuthTokenResponse.CreateTrackedAsync(_ => ValueTask.FromResult(token), entry.ExpiresAt,
                         inventory, entry.SourceTokens, options.TimeProvider, entry.FederationCancellation.Token);
                     if (tracked is not IStatusCodeHttpResult { StatusCode: StatusCodes.Status200OK })
                         throw new AAuthInteractionDeniedException("Source authorization was revoked before federation completed.");
@@ -1526,7 +1525,7 @@ public static class AAuthPersonServerEndpoints
 
             if (entry.Status == PersonPendingStatus.Allowed)
             {
-                return await AuthTokenResponse.CreateTrackedAsync(() => entry.AuthToken!, entry.ExpiresAt,
+                return await AuthTokenResponse.CreateTrackedAsync(_ => ValueTask.FromResult(entry.AuthToken!), entry.ExpiresAt,
                     inventory, entry.SourceTokens, options.TimeProvider, ctx.RequestAborted);
             }
 
