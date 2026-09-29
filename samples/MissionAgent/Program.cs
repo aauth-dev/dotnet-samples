@@ -61,6 +61,7 @@ string personServer = "http://localhost:5100";
 string resourceUrl = "http://localhost:5002/trips";
 string subject = "aauth:mission-demo@ap.example";
 bool interactive = true;
+var dashboardOpened = false;
 // Scopes declared as within the mission's intent up front (§Agent Token Request,
 // gate 2a). A seeded (resource, scope) pair lets that resource access resolve
 // *silently* (reason = InScope) instead of prompting. By default the mission
@@ -341,20 +342,28 @@ GovernanceOptions GovernanceFor(string _) => new()
     PollerOptions = poller,
 };
 
-// Invoked when the PS asks the user to decide. In interactive mode we surface
-// the consent URL (and try to open it) and return — polling proceeds while the
-// user acts. In --auto mode the PS resolves the prompt itself, so this is just
-// informational.
+// Invoked when the PS asks the user to decide. Polling proceeds while the user
+// acts. Interactive mode opens the PS dashboard once; it lists every request
+// waiting for the user, so later prompts only print where to decide. In --auto
+// mode the PS resolves the prompt itself, so this is just informational.
 Task PromptUserAsync(Interaction interaction, CancellationToken ct)
 {
     var url = interaction.BuildUserUrl();
+    var hosted = url.StartsWith(personServer + "/interaction?", StringComparison.OrdinalIgnoreCase);
+    var dashboard = $"{personServer}/dashboard?code={Uri.EscapeDataString(interaction.Code)}";
     Console.WriteLine();
     Console.WriteLine("   >> The Person Server needs your decision.");
-    Console.WriteLine($"      Open: {url}");
+    if (hosted) Console.WriteLine($"      Dashboard: {dashboard}");
+    Console.WriteLine($"      {(hosted ? "Or directly" : "Open")}: {url}");
     if (interactive)
     {
         Console.WriteLine("      Waiting for you to Approve or Deny in the browser...");
-        TryOpenBrowser(url);
+        if (!hosted) TryOpenBrowser(url);
+        else if (!dashboardOpened)
+        {
+            dashboardOpened = true;
+            TryOpenBrowser(dashboard);
+        }
     }
     return Task.CompletedTask;
 }

@@ -320,6 +320,23 @@ PROCEEDED.
   - The SampleApp prompt could not be screenshotted while it re-renders every
     second; use a wait or disable animations.
 
+### [2026-09-29] [Phase 5] CLIs and Makefile
+
+PROCEEDED.
+- **CLI dashboard link.** The CLIs build the dashboard URL inline. They do
+  not reference `ConsentSupport`, which is a Razor library that pulls in the
+  ASP.NET Core framework. Each CLI prints the dashboard only when the
+  interaction is `{ps}/interaction?`.
+- **MissionAgent** opens the dashboard once per run (interactive mode). An
+  interaction that is not hosted on the PS still opens its own page.
+- **Banners.** The `demo`, `demo-keycloak` and `demo-mission` banners list
+  `PS dashboard: $(PS_URL)/dashboard`.
+- **Verification.**
+  - `MissionAgent` tests: 27 passed.
+  - Live check: `make demo-mission`, then `make agent-mission AUTO=1`, printed
+    `Dashboard: http://localhost:5100/dashboard?code=…` and the
+    `Or directly:` link.
+
 ## Open questions / inputs needed
 
 _None yet._

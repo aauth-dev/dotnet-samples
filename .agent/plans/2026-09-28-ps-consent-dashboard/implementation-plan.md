@@ -313,8 +313,8 @@ decision flows through one service. There is no user-visible change.
 
 **Definition of Done**
 
-- [ ] Both CLIs print the dashboard URL. MissionAgent opens it once.
-- [ ] `MissionAgentFlowTests` is green. Banners are updated.
+- [x] Both CLIs print the dashboard URL. MissionAgent opens it once.
+- [x] `MissionAgentFlowTests` is green. Banners are updated.
 
 ## Phase 6 — Samples, snippets and docs sweep
 

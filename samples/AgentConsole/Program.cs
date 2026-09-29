@@ -224,7 +224,10 @@ if (personServer is not null)
         opts.OnPoll = response => Console.WriteLine($"  [poll] {(int)response.StatusCode}");
         opts.OnInteractionRequired = (interaction, ct) =>
         {
-            Console.WriteLine($"  [interaction] User approval required: {interaction.BuildUserUrl()}");
+            var url = interaction.BuildUserUrl();
+            Console.WriteLine($"  [interaction] User approval required: {url}");
+            if (url.StartsWith(personServer.TrimEnd('/') + "/interaction?", StringComparison.OrdinalIgnoreCase))
+                Console.WriteLine($"  [interaction] Or decide on the PS dashboard: {personServer.TrimEnd('/')}/dashboard?code={Uri.EscapeDataString(interaction.Code)}");
             return Task.CompletedTask;
         };
     });
