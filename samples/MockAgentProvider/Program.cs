@@ -91,10 +91,20 @@ app.MapGet("/agents/{agentId}/jwks.json", (string agentId) =>
 //   against ephemeral key, issues token with ephemeral key as cnf.jwk.
 app.MapPost("/refresh", (HttpContext ctx) =>
 {
+    IResult SignatureFailure(AAuth.Errors.SignatureErrorCode code, string message)
+    {
+        ctx.Response.Headers[AAuth.Errors.SignatureError.HeaderName] = code == AAuth.Errors.SignatureErrorCode.InvalidInput
+            ? AAuth.Errors.SignatureError.Format(code, requiredInput: AAuth.HttpSig.AAuthSigningHandler.CoveredComponents.ToArray())
+            : AAuth.Errors.SignatureError.Format(code);
+        if (code == AAuth.Errors.SignatureErrorCode.UnsupportedScheme)
+            ctx.Response.Headers["Accept-Signature-Scheme"] = "hwk, jkt-jwt";
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", message, statusCode: 401);
+    }
+
     // Extract Signature-Key header — agent must sign the refresh request
     var signatureKeyHeader = ctx.Request.Headers["Signature-Key"].FirstOrDefault();
     if (string.IsNullOrEmpty(signatureKeyHeader))
-        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "Missing Signature-Key header - refresh must be signed", statusCode: 401);
+        return SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidInput, "Missing Signature-Key header - refresh must be signed");
 
     // Parse the scheme
     AAuth.HttpSig.SignatureKeyParser.ParsedSignatureKeyInfo parsedKey;
@@ -104,17 +114,17 @@ app.MapPost("/refresh", (HttpContext ctx) =>
     }
     catch
     {
-        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "Cannot parse Signature-Key header", statusCode: 400);
+        return SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidInput, "Cannot parse Signature-Key header");
     }
 
     if (parsedKey.Scheme is not ("hwk" or "jkt-jwt"))
-        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "Refresh requires hwk or jkt-jwt scheme", statusCode: 400);
+        return SignatureFailure(AAuth.Errors.SignatureErrorCode.UnsupportedScheme, "Refresh requires hwk or jkt-jwt scheme");
 
     // Verify the HTTP signature
     var sigInput = ctx.Request.Headers["Signature-Input"].FirstOrDefault();
     var sigHeader = ctx.Request.Headers["Signature"].FirstOrDefault();
     if (string.IsNullOrEmpty(sigInput) || string.IsNullOrEmpty(sigHeader))
-        return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", "Missing signature headers", statusCode: 401);
+        return SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidInput, "Missing signature headers");
 
     // Determine the signing key and the durable key for enrollment lookup
     IAAuthKey signingKey;
@@ -125,7 +135,7 @@ app.MapPost("/refresh", (HttpContext ctx) =>
     {
         // Single-key: the signing key IS the durable key
         if (parsedKey.ConfirmationKey is null)
-            return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "hwk scheme missing inline key", statusCode: 400);
+            return SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey, "hwk scheme missing inline key");
         signingKey = parsedKey.ConfirmationKey;
 
         var thumbprint = signingKey.ComputeJwkThumbprint();
@@ -137,8 +147,7 @@ app.MapPost("/refresh", (HttpContext ctx) =>
         try { naming = AAuth.HttpSig.NamingTokenVerifier.Verify(parsedKey.Jwt!, DateTimeOffset.UtcNow, TimeSpan.Zero); }
         catch (AAuth.HttpSig.AAuthVerificationException exception)
         {
-            ctx.Response.Headers[AAuth.Errors.SignatureError.HeaderName] = AAuth.Errors.SignatureError.Format(exception.Code);
-            return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", exception.Message, statusCode: 401);
+            return SignatureFailure(exception.Code, exception.Message);
         }
         record = agents.FindByKey(naming.DurableKey.ComputeJwkThumbprint());
         signingKey = naming.ConfirmationKey;
@@ -160,7 +169,7 @@ app.MapPost("/refresh", (HttpContext ctx) =>
     }
     catch (AAuth.HttpSig.AAuthVerificationException ex)
     {
-        return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", ex.Message, statusCode: 401);
+        return SignatureFailure(ex.Code, ex.Message);
     }
 
     if (record is null)

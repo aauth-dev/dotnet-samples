@@ -415,7 +415,7 @@ Phase rule: preserve original credential provenance; no blanket unsafe replay.
 - [ ] Refresh order, ownership, cancellation and recovery tests pass.
 - [x] Both primary apps exercise person and deferred flows with matching steps.
 - [ ] Agents reuse an approved mission person token instead of calling `/person`; mismatched resource, mission, key or expiry falls back.
-- [ ] MockAgentProvider refresh answers signature failures with `401` and `Signature-Error`.
+- [x] MockAgentProvider refresh answers signature failures with `401` and `Signature-Error`.
 
 ## Phase 6 - supervision, mission actions and delegation
 

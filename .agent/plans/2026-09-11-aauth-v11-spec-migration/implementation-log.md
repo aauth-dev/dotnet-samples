@@ -655,6 +655,27 @@ revoked_upstream_token`; the refreshed agent token is refused; another agent is
 unaffected. Conformance 1165 passed. The call-chaining docs have a
 compile-checked snippet.
 
+### [2026-09-28] [Phase 5] MockAgentProvider refresh signature failures (post-cutover item 4)
+
+RESOLVED. The sample AP's `/refresh` answered most signature failures with
+`400 invalid_request`, or with a 401 that had no `Signature-Error`. Every
+signature failure is now `401` with `Signature-Error`:
+
+- a missing or unparseable `Signature-Key`, `Signature-Input` or `Signature`
+  is `invalid_input`, with `required_input`;
+- a scheme other than hwk or jkt-jwt is `unsupported_scheme`, with
+  `Accept-Signature-Scheme: hwk, jkt-jwt`;
+- an hwk header without its key is `invalid_key`;
+- a naming-JWT or HTTP signature failure carries the verifier's code.
+
+An unknown enrolled key stays `400 invalid_grant`, because it is not a
+signature failure.
+
+Evidence: `MockAgentProviderRefreshTests` (unsigned, unsupported scheme,
+tampered signature). The tests isolate the AP's key directory and databases:
+with the defaults, a stale `~/.aauth/ap-keys` key from an earlier release made
+the host fail to start.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate
