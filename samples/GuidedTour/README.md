@@ -8,11 +8,6 @@ learning the spec for the first time. It runs the same SDK code that
 the signature base, the JWTs, and the request/response payloads at every
 hop.
 
-The separate [Document Release](../../docs/workflows/document-release.md) page
-at `/documents` executes resource permission before PS consent, followed by a
-signed download or terminal denial. Its shared session and Playwright cases are
-also used by SampleApp.
-
 ## What you'll see
 
 ![Tour Screenshot](tour-screenshot.png)
@@ -88,18 +83,36 @@ Server. You can also set the default in `appsettings.json`:
 The Generic Signature Keys flow exposes HWK, direct `jwks` and naming-JWT
 demonstrations. AAuth resource flows use `jwt`, including Inbox's two-party flow.
 
-Additional overview/navigation entries run shared scenarios:
+Flows 12–15 are capability flows. They run in the same `/tour` page, with the
+same step list, sequence diagram, payload inspector, **Run all** and consent
+links as the core flows ([TourSession.Capabilities.cs](TourSession.Capabilities.cs)).
+Each wire exchange is one step. After a token exchange the plan adapts to what
+the server answered. A `200` drops the consent steps, a `202
+requirement=interaction` adds direct-user / decide / poll steps (again when a
+poll reveals the next authority), and a `202 requirement=clarification` adds an
+answer step. A flow-specific picker selects the variant:
 
-- `/wallet-protocol`: AS clarification with answer/cancel, chaining an AS-issued grant,
-   and federated revocation/recovery. [Steps and sequence](../../docs/workflows/wallet-protocol.md)
-- `/catalog-gateway`: five steps covering the merged OpenAPI definition, renamed
-   colliding `list` operations, sibling rejection and recovery. [Catalog guide](../../docs/workflows/catalog-gateway.md)
-- `/events`: six steps for public/protected subscriptions, self-jwt delivery and
-   durable verified agent receipts. [Events guide](../../docs/workflows/events.md)
+* **Bookings Events** (11 public / 19 protected steps) — AsyncAPI channels,
+  AP `event_endpoint` and enrolment, an account-bound grant on the protected
+  channel, an AP subscribe token, registration, self-jwt delivery to the AP
+  inbox, verification with duplicate suppression, and acknowledgement.
+  [Events guide](../../docs/workflows/events.md)
+* **Wallet Protocol** (18–23 steps) — AS clarification (answered
+  automatically), chaining an AS-issued grant through the Concierge, or
+  federated revocation and recovery. [Steps and sequence](../../docs/workflows/wallet-protocol.md)
+* **Document Release** (11 steps) — the resource token names the owner's
+  permission page, so the owner releases before the PS asks for consent;
+  declining aborts with no document. [Document Release](../../docs/workflows/document-release.md)
+* **Travel Catalog** (16 steps) — the merged OpenAPI definition, an
+  operation-bound R3 grant, the sibling operation's `403`, and recovery with a
+  sibling grant. [Catalog guide](../../docs/workflows/catalog-gateway.md)
+
+The old `/events`, `/wallet-protocol`, `/documents` and `/catalog-gateway`
+routes redirect to the matching `/tour?flow=` link. SampleApp keeps its own
+pages for these scenarios.
 
 Bookings includes personal/work accounts and per-call proposals; Sub-agent
-uses distinct parent/worker keys and a four-party AS grant. Their app-local
-Playwright specs use the existing shared harness, as do the additional pages.
+uses distinct parent/worker keys and a four-party AS grant.
 
 Each Aria resource server serves its flow from isolated, per-mode endpoints.
 **Profile** (:5000) handles Identity-based access: `GET /pseudonymous` and

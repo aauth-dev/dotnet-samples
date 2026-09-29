@@ -7,7 +7,7 @@
 @inject IConfiguration Configuration
 @implements IDisposable
 
-<section class="catalog-view @(GuidedTour ? "guided-tour-flow" : null)" aria-label="Catalog walkthrough" data-step="@_session.Step">
+<section class="catalog-view" aria-label="Catalog walkthrough" data-step="@_session.Step">
     <SyntaxHighlight Trigger="_session.Step" />
     <header><h1>Travel Catalog</h1><output>@_session.Step / 5 complete</output></header>
     <details class="scenario-narrative" open>
@@ -40,29 +40,14 @@
     </div>
     @if (_session.ConsentUrl is { } consent) { <a class="catalog-consent" href="@consent" target="_blank" rel="noopener">Review catalog authorization</a> }
     @if (_error is not null) { <p role="alert">@_error</p> }
-    <div class="tour-sequence-layout">
-        <ol class="catalog-steps" aria-label="Protocol steps">
-            @for (var index = 0; index < CatalogDemoSession.Steps.Length; index++)
-            {
-                <li aria-current="@(index == _session.Step ? "step" : null)">@CatalogDemoSession.Steps[index]</li>
-            }
-        </ol>
-        <div class="tour-diagram"><ProtocolSequence Participants="CatalogParticipants" Messages="CatalogSequence" CompletedSteps="_session.Step" ShowPendingMessages="@(!GuidedTour)" /></div>
-        @if (GuidedTour)
+    <ol class="catalog-steps" aria-label="Protocol steps">
+        @for (var index = 0; index < CatalogDemoSession.Steps.Length; index++)
         {
-            <section class="tour-payload" aria-label="Selected step payload">
-                @if (_session.Result is { } payload)
-                {
-                    <h2>Step @_session.Step result</h2><pre>@payload</pre>
-                }
-                else
-                {
-                    <p class="hint">Run a step to see its payloads here.</p>
-                }
-            </section>
+            <li aria-current="@(index == _session.Step ? "step" : null)">@CatalogDemoSession.Steps[index]</li>
         }
-    </div>
-    @if (_session.Result is { } result) { <pre data-testid="catalog-result" class="@(GuidedTour ? "tour-result-source" : null)">@result</pre> }
+    </ol>
+    <ProtocolSequence Participants="CatalogParticipants" Messages="CatalogSequence" CompletedSteps="_session.Step" />
+    @if (_session.Result is { } result) { <pre data-testid="catalog-result">@result</pre> }
     <section aria-label="Recorded exchanges">
         @foreach (var exchange in _session.Exchanges)
         {
@@ -74,8 +59,6 @@
 </section>
 
 @code {
-    [Parameter] public bool GuidedTour { get; set; }
-
     private static readonly ProtocolParticipant[] CatalogParticipants =
     [
         new("agent", "Agent"), new("ap", "Agent Provider"), new("catalog", "Catalog"),

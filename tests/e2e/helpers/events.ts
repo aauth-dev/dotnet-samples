@@ -25,8 +25,7 @@ export function eventsWalkthroughTests() {
           await expect(root.locator(`[data-code-step="${step}"] code`)).toContainText(methods[step - 1]);
         }
         const diagram = root.getByRole('region', { name: 'Sequence diagram' });
-        if (new URL(page.url()).port === '5400') await expect(diagram.locator('[data-sequence-step]')).toHaveCount(0);
-        else for (const step of [1, 2, 3, 4, 5, 6])
+        for (const step of [1, 2, 3, 4, 5, 6])
           expect(await diagram.locator(`[data-sequence-step="${step}"]`).count()).toBeGreaterThan(0);
         await expect(diagram.locator('.sequence-participant')).toHaveText([
           'Agent', 'Bookings', 'Agent Provider', 'Person Server', 'User / Browser',

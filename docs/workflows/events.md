@@ -4,8 +4,10 @@
 
 Start the sample stack with `make demo`, then visit
 [SampleApp Events](http://localhost:5240/events) or
-[GuidedTour Events](http://localhost:5400/events). Both run the same six-step
-client against MockAgentProvider and Bookings:
+[GuidedTour Events](http://localhost:5400/tour?flow=Events) (flow 12). Both run the
+same six-phase client against MockAgentProvider and Bookings; the tour records
+each wire exchange as its own step (11 public, 19 protected) in the standard
+step list, sequence diagram and payload inspector:
 
 1. Discover resource metadata, AsyncAPI channels and AP `event_endpoint`.
 2. Enrol an agent. Select the public channel or obtain a protected subscription

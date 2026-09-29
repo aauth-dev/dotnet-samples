@@ -1,8 +1,7 @@
 @page "/documents"
-@rendermode InteractiveServer
-@inject IConfiguration Configuration
+@inject NavigationManager Navigation
 
-<PageTitle>Document Release</PageTitle>
-<CapabilityTourChrome CurrentValue="/documents" ResourceLabel="Documents"
-	ResourceUrl="@(Configuration["AAuth:Documents"] ?? "http://localhost:5007")" />
-<AAuth.Samples.Capabilities.DocumentWalkthrough GuidedTour="true" />
+@* Flow Documents now runs inside the standard tour; keep the old route as a redirect. *@
+@code {
+    protected override void OnInitialized() => Navigation.NavigateTo("/tour?flow=Documents", replace: true);
+}

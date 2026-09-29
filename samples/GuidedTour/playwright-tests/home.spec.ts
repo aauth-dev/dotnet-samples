@@ -24,14 +24,11 @@ const FLOWS = [
   'Mission',
   'MissionCallChain',
   'SubAgent',
+  'Events',
+  'WalletProtocol',
+  'Documents',
+  'Catalog',
 ] as const;
-
-const CAPABILITIES: Array<[string, string]> = [
-  ['Bookings Events', '/events'],
-  ['Wallet Protocol', '/wallet-protocol'],
-  ['Document Release', '/documents'],
-  ['Travel Catalog', '/catalog-gateway'],
-];
 
 const TOUR_MODES = Object.values(TourMode);
 
@@ -53,9 +50,9 @@ test('overview introduces Aria and indexes every flow', async ({ page }) => {
     'User / Browser', 'Original / Parent / Worker',
   ]);
 
-  // The original flows and new capability walkthroughs share one card index.
+  // Every flow, including the capability flows, deep-links into the tour.
   const cards = page.locator('.flow-card');
-  await expect(cards).toHaveCount(FLOWS.length + CAPABILITIES.length);
+  await expect(cards).toHaveCount(FLOWS.length);
 
   for (let i = 0; i < FLOWS.length; i++) {
     const card = cards.nth(i);
@@ -63,15 +60,6 @@ test('overview introduces Aria and indexes every flow', async ({ page }) => {
     await expect(card.locator('.flow-card__num')).toHaveText(String(i + 1));
     await expect(card.locator('.flow-card__title')).not.toBeEmpty();
     await expect(card.locator('.flow-card__what')).not.toBeEmpty();
-  }
-
-  for (let i = 0; i < CAPABILITIES.length; i++) {
-    const [title, href] = CAPABILITIES[i];
-    const card = cards.nth(FLOWS.length + i);
-    await expect(card).toContainText(title);
-    await expect(card).toHaveAttribute('href', href);
-    await expect(card.locator('.flow-card__num')).toHaveText(String(FLOWS.length + i + 1));
-    await expect(card.locator('.flow-card__what')).toContainText('Aria');
   }
 });
 

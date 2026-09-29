@@ -2,18 +2,22 @@
 
 ## Run the Scenarios
 
-Run `make demo` from the repository root. Open `/wallet-protocol` in
-[SampleApp](http://localhost:5240/wallet-protocol) or
-[GuidedTour](http://localhost:5400/wallet-protocol). Select a scenario, advance
-its numbered steps, and complete any consent link. Reset creates a fresh agent
-and session. `make demo-keycloak` uses the real configured IdP policy instead
+Run `make demo` from the repository root. Open
+[SampleApp](http://localhost:5240/wallet-protocol) and select a scenario,
+advance its numbered steps, and complete any consent link. Reset creates a
+fresh agent and session. The
+[GuidedTour](http://localhost:5400/tour?flow=WalletProtocol) runs the same
+scenarios as flow 13 with the standard step list, sequence diagram and payload
+inspector: one step per wire exchange, with consent, clarification and poll
+steps that adapt to what the PS and Access Server actually answer. `make demo-keycloak` uses the real configured IdP policy instead
 of the isolated stub consent page.
 
 Wallet remains a travel-wallet resource. These scenarios inspect and withdraw
-its grants; they do not implement payment settlement. Both apps use the same
-[WalletDemoSession](../../samples/CapabilitySupport/WalletDemoSession.cs),
-[displayed C#](../../samples/CapabilitySupport/WalletScenarioCode.cs) and
-[browser assertions](../../tests/e2e/helpers/wallet-protocol.ts).
+its grants; they do not implement payment settlement. SampleApp uses
+[WalletDemoSession](../../samples/CapabilitySupport/WalletDemoSession.cs) and
+[browser assertions](../../tests/e2e/helpers/wallet-protocol.ts); the tour's
+steps live in [TourSession.Capabilities.cs](../../samples/GuidedTour/TourSession.Capabilities.cs).
+Both show the same [displayed C#](../../samples/CapabilitySupport/WalletScenarioCode.cs).
 
 ## AS Clarification
 

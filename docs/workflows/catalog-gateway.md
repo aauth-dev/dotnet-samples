@@ -11,12 +11,13 @@ operations become `listDestinations` and `listExperiences`.
 
 ## Run the Catalog
 
-Run `make demo` and open `/catalog-gateway` in
-[SampleApp](http://localhost:5240/catalog-gateway) or
-[GuidedTour](http://localhost:5400/catalog-gateway). Catalog listens on
+Run `make demo` and open
+[SampleApp](http://localhost:5240/catalog-gateway) or the
+[GuidedTour](http://localhost:5400/tour?flow=Catalog) (flow 15). Catalog listens on
 `http://localhost:5006`; its one purpose is reading travel catalogs. Choose
-destinations or experiences and advance the five steps. Reset re-enrolls a new agent;
-catalog definitions and domain data remain immutable.
+destinations or experiences and advance the five steps. The tour breaks the same
+five steps into its standard per-exchange steps (16 with one consent). Reset
+re-enrolls a new agent; catalog definitions and domain data remain immutable.
 
 1. Discover `aauth-resource.json`, whose `r3_vocabularies` entry for
    `urn:aauth:vocabulary:openapi` points at the merged `/openapi.json`.

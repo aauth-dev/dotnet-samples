@@ -12,7 +12,10 @@ namespace GuidedTour;
 /// immediately. <see cref="Deferred"/> renders the 11-step user-consent
 /// path: exchange returns 202, the agent surfaces an interaction URL to its
 /// user, the user approves, and the agent polls until the PS mints the
-/// auth token.
+/// auth token. <see cref="Events"/>, <see cref="WalletProtocol"/>,
+/// <see cref="Documents"/> and <see cref="Catalog"/> are the capability flows;
+/// their step plans adapt to each deferred response (see
+/// <c>TourSession.Capabilities.cs</c>).
 /// </summary>
 public enum TourMode
 {
@@ -27,6 +30,10 @@ public enum TourMode
     Mission,
     MissionCallChain,
     SubAgent,
+    Events,
+    WalletProtocol,
+    Documents,
+    Catalog,
 }
 
 /// <summary>
@@ -87,6 +94,12 @@ public sealed class TourOptions
 
     /// <summary>Base URL of the Aria <b>Bookings</b> resource server (Rich Resource Requests, four-party R3).</summary>
     public string BookingsUrl { get; set; } = "http://localhost:5005";
+
+    /// <summary>Base URL of the <b>Travel Catalog</b> resource server (merged R3 OpenAPI definition).</summary>
+    public string CatalogUrl { get; set; } = "http://localhost:5006";
+
+    /// <summary>Base URL of the <b>Documents</b> resource server (resource permission before PS consent).</summary>
+    public string DocumentsUrl { get; set; } = "http://localhost:5007";
 
     /// <summary>
     /// Optional MockPersonServer URL. When set, the tour walks one of the

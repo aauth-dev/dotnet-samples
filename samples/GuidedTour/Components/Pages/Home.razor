@@ -63,29 +63,11 @@
                 <div class="flow-card__go" aria-hidden="true">→</div>
             </a>
         }
-        @foreach (var f in CapabilityFlows)
-        {
-            <a class="flow-card" href="@f.Href">
-                <div class="flow-card__num">@f.Number</div>
-                <div class="flow-card__body">
-                    <h3 class="flow-card__title">@f.Title</h3>
-                    <p class="flow-card__what">@f.What</p>
-                    <div class="flow-card__meta">
-                        @foreach (var badge in f.Badges)
-                        {
-                            <span class="flow-card__badge">@badge</span>
-                        }
-                    </div>
-                </div>
-                <div class="flow-card__go" aria-hidden="true">→</div>
-            </a>
-        }
     </section>
 </main>
 
 @code {
     private sealed record FlowCard(int Number, string Mode, string Title, string What, string[] Badges);
-    private sealed record CapabilityCard(int Number, string Href, string Title, string What, string[] Badges);
 
     private static readonly FlowCard[] Flows =
     {
@@ -122,21 +104,17 @@
         new(11, "SubAgent", "Sub-Agents — Parent-Mediated Workers",
             "Aria spins up a short-lived worker with its own key and identity. Three explicit decisions authorize the upstream caller, the worker's Wallet scope, and the federated grant before Aria hands the worker-bound token down.",
             new[] { "Original + Parent + Worker + PS + AS", "8 steps", "3 approvals", "live federation" }),
-    };
-
-    private static readonly CapabilityCard[] CapabilityFlows =
-    {
-        new(12, "/events", "Bookings Events — Availability Notification",
+        new(12, "Events", "Bookings Events — Availability Notification",
             "A sold-out reservation opens up. Aria subscribes through its Agent Provider, then verifies and acknowledges the signed notification without exposing a public webhook.",
-            new[] { "Agent + Bookings + AP", "6 steps", "public / protected" }),
-        new(13, "/wallet-protocol", "Wallet Protocol — Decisions and Recovery",
+            new[] { "Agent + Bookings + AP", "11 or 19 steps", "public / protected" }),
+        new(13, "WalletProtocol", "Wallet Protocol — Decisions and Recovery",
             "Aria handles three Wallet edge cases: answering an Access Server question, extending an existing grant through Concierge, and recovering after a grant is revoked.",
             new[] { "Agent + Wallet + PS + AS", "3 scenarios", "clarify / chain / revoke" }),
-        new(14, "/documents", "Document Release — Resource Permission First",
+        new(14, "Documents", "Document Release — Resource Permission First",
             "Aria requests a work travel brief. The document owner decides whether it may be released before the Person Server asks you to authorize the download.",
-            new[] { "Agent + Documents + PS", "4 steps", "approve / deny" }),
-        new(15, "/catalog-gateway", "Travel Catalog — Merged OpenAPI Definition",
+            new[] { "Agent + Documents + PS", "11 steps", "approve / deny" }),
+        new(15, "Catalog", "Travel Catalog — Merged OpenAPI Definition",
             "Aria compares destination and experience catalogs. Both backends define list, so the merged OpenAPI definition renames them and a grant for one cannot read the other.",
-            new[] { "Agent + Catalog + PS + R3 AS", "5 steps", "OpenAPI" }),
+            new[] { "Agent + Catalog + PS + R3 AS", "16 steps", "OpenAPI" }),
     };
 }

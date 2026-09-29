@@ -48,8 +48,13 @@ test('flow picker offers all fifteen flows and reacts to selection', async ({ pa
   }).toPass({ timeout: 20_000 });
   await expect(page.locator('details.flow-picker__desc')).toContainText('standing consent');
 
-  await flow.selectOption('/events');
-  await expect(page).toHaveURL(/\/events$/);
-  await expect(page.locator('select#flow-select')).toHaveValue('/events');
+  // Capability flows run in the same tour page with their own option picker.
+  await expect(async () => {
+    await flow.selectOption('Events');
+    await expect(page.locator('select#events-channel-select')).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
+  await expect(page).toHaveURL(/\/tour/);
+  await expect(page.locator('details.flow-picker__desc')).toContainText('Bookings');
+  await expect(page.locator('aside.steps .step').first()).toContainText('Discover Bookings metadata');
   await expect(page.locator('select#flow-select option')).toHaveCount(15);
 });

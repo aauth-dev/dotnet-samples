@@ -1,4 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { authenticateConsent } from './consent';
 import { waitForInteractive } from './blazor';
 
 /**
@@ -27,6 +28,10 @@ export const TourMode = {
   Mission: 'Mission',
   MissionCallChain: 'MissionCallChain',
   SubAgent: 'SubAgent',
+  Events: 'Events',
+  WalletProtocol: 'WalletProtocol',
+  Documents: 'Documents',
+  Catalog: 'Catalog',
 } as const;
 export type TourMode = (typeof TourMode)[keyof typeof TourMode];
 
@@ -82,6 +87,18 @@ const PLAN_STEPS: Record<TourMode, number> = {
   // person token (via the parent) and resource token, the parent-mediated
   // exchange, the handoff, and the worker's resource call.
   SubAgent: 8,
+  // Capability flows plan one consent cycle (direct user, decide, poll) after
+  // each exchange; the plan adapts at run time when a server grants at once
+  // (200) or asks again (a new interaction or a clarification).
+  // Events defaults to the protected channel: AP enrolment, the account-bound
+  // grant, subscribe, register, deliver, inbox, verify, acknowledge.
+  Events: 19,
+  // Wallet Protocol defaults to the AS clarification scenario: PS consent,
+  // the AS question, then PS and AS decisions.
+  WalletProtocol: 18,
+  Documents: 11,
+  // Two operation-bound grants; the PS remembers consent for the second.
+  Catalog: 16,
 };
 
 /** Select a flow in the `#flow-select` picker and wait for the timeline to reset. */
@@ -198,4 +215,94 @@ export async function readResponseJson(page: Page): Promise<unknown> {
     throw new Error(`No JSON object found in Response panel:\n${text}`);
   }
   return JSON.parse(text.slice(start, end + 1));
+}
+
+/**
+ * Drive the selected flow to its end, answering every consent link it surfaces.
+ * "Run all" parks on each user decision; `decide` handles the popup (PS, AS or
+ * resource page) and the loop resumes once the poll resolves. Returns the
+ * number of decisions made.
+ */
+export async function driveTour(
+  page: Page,
+  decide: (popup: Page, round: number) => Promise<void>,
+  maxDecisions = 8,
+): Promise<number> {
+  const primary = page.locator('button.primary');
+  const consent = page.locator('a.primary.approve');
+  let rounds = 0;
+  for (let turn = 0; turn < 60; turn++) {
+    await expect.poll(async () => {
+      if (await consent.isVisible()) return 'consent';
+      if (await page.getByText('Running…').count()) return 'busy';
+      return await primary.isVisible() ? 'ready' : 'busy';
+    }, { timeout: 150_000 }).not.toBe('busy');
+    if (await consent.isVisible()) {
+      if (++rounds > maxDecisions) throw new Error(`More than ${maxDecisions} user decisions were requested.`);
+      const [popup] = await Promise.all([page.context().waitForEvent('page'), consent.click()]);
+      await decide(popup, rounds);
+      await popup.close();
+      continue;
+    }
+    const label = (await primary.innerText()).trim();
+    if (label === 'Done' || label === 'Aborted') return rounds;
+    await page.getByRole('button', { name: 'Run all' }).click();
+    await expect(page.getByText('Running…')).toHaveCount(0, { timeout: 150_000 });
+  }
+  throw new Error('The flow did not finish.');
+}
+
+/**
+ * Decide on any consent popup the capability flows open: the Documents
+ * resource-permission interstitial and release page, then the PS or AS consent
+ * screen. `approve=false` declines at the first decision offered.
+ */
+export async function decideConsent(popup: Page, approve = true): Promise<void> {
+  for (let transition = 0; transition < 8; transition++) {
+    let state = 'pending';
+    await expect.poll(async () => {
+      if (await popup.getByRole('heading', { name: 'Authorization stopped', exact: true }).isVisible()) return state = 'stopped';
+      if (await popup.getByText(/^(Approved|Denied)/).first().isVisible()) return state = 'decided';
+      if (await popup.locator('button.demo-login').isVisible()) return state = 'login';
+      if (await popup.getByRole('button', { name: 'Continue to resource' }).isVisible()) return state = 'interstitial';
+      if (await popup.getByRole('button', { name: 'Release document' }).isVisible()) return state = 'release';
+      if (await popup.locator('button.approve').isVisible()) return state = 'consent';
+      return state = 'pending';
+    }, { timeout: 30_000 }).not.toBe('pending');
+    if (state === 'stopped' || state === 'decided') return;
+    if (state === 'login') await popup.locator('button.demo-login').click();
+    else if (state === 'interstitial') await popup.getByRole('button', { name: 'Continue to resource' }).click();
+    else if (state === 'release') {
+      await popup.getByRole('button', { name: approve ? 'Release document' : 'Decline release', exact: true }).click();
+      if (!approve) return;
+    } else {
+      await authenticateConsent(popup);
+      await popup.locator(approve ? 'button.approve' : 'button.deny').click();
+    }
+  }
+  throw new Error(`Consent popup did not settle: ${popup.url()}`);
+}
+
+/** Step-list titles of the executed steps, in order. */
+export async function doneTitles(page: Page): Promise<string[]> {
+  return (await doneSteps(page).locator('.step__title').allInnerTexts()).map((title) => title.trim());
+}
+
+/** Select the executed step whose title matches, and return its index. */
+export async function selectStepTitled(page: Page, title: RegExp): Promise<number> {
+  const titles = await doneTitles(page);
+  const index = titles.findIndex((entry) => title.test(entry));
+  if (index < 0) throw new Error(`No executed step matches ${title}: ${titles.join(' | ')}`);
+  await selectStep(page, index);
+  return index;
+}
+
+/** Parse the JSON payload rendered in the selected step's decoded-token panel. */
+export async function decodedTokenPayload(page: Page): Promise<Record<string, unknown>> {
+  const panel = page
+    .locator('section.payload article.inspector details.token')
+    .filter({ hasText: 'Decoded payload' });
+  await expect(panel).toBeVisible();
+  const text = await panel.locator('pre code').innerText();
+  return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) as Record<string, unknown>;
 }

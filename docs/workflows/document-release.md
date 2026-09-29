@@ -1,9 +1,10 @@
 # Document Release
 
-Both apps expose `/documents`: [GuidedTour](../../samples/GuidedTour/Components/Pages/Documents.razor)
-and [SampleApp](../../samples/SampleApp/Components/Pages/Documents.razor).
-The shared [session](../../samples/CapabilitySupport/DocumentDemoSession.cs) performs
+[SampleApp](../../samples/SampleApp/Components/Pages/Documents.razor) exposes `/documents`,
+where the shared [session](../../samples/CapabilitySupport/DocumentDemoSession.cs) performs
 real requests against the AP, PS and [Documents resource](../../samples/MockResourceServers/Documents/README.md).
+The GuidedTour runs the same flow as flow 14 (`/tour?flow=Documents`; `/documents`
+redirects there), recording each exchange as one of its 11 standard steps.
 Start the isolated local stack with `make demo`.
 
 ## Four Steps

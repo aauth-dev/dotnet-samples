@@ -7,7 +7,7 @@
 @inject IConfiguration Configuration
 @implements IDisposable
 
-<section class="wallet-walkthrough @(GuidedTour ? "guided-tour-flow" : null)" aria-label="Wallet protocol walkthrough" data-step="@_session.Step" data-flow="@_session.Flow">
+<section class="wallet-walkthrough" aria-label="Wallet protocol walkthrough" data-step="@_session.Step" data-flow="@_session.Flow">
     <SyntaxHighlight Trigger="@((_session.Flow, _session.Step))" />
     <header><h1>Wallet Protocol</h1><output aria-live="polite">@_session.Step / @_session.Steps.Length complete</output></header>
     <details class="scenario-narrative" open>
@@ -55,32 +55,17 @@
     }
     @if (_error is not null) { <p role="alert">@_error</p> }
     @if (_session.Cancelled) { <p role="status" data-testid="wallet-cancelled">Request cancelled. No auth token was issued.</p> }
-    <div class="tour-sequence-layout">
-        <ol class="wallet-steps" aria-label="Protocol steps">
-            @for (var index = 0; index < _session.Steps.Length; index++)
-            {
-                <li class="@(index < _session.Step ? "complete" : index == _session.Step ? "current" : "")"
-                    aria-current="@(index == _session.Step ? "step" : null)">@_session.Steps[index]</li>
-            }
-        </ol>
-        <div class="tour-diagram"><ProtocolSequence Participants="WalletParticipants" Messages="WalletSequence" CompletedSteps="_session.Step" ShowPendingMessages="@(!GuidedTour)" /></div>
-        @if (GuidedTour)
+    <ol class="wallet-steps" aria-label="Protocol steps">
+        @for (var index = 0; index < _session.Steps.Length; index++)
         {
-            <section class="tour-payload" aria-label="Selected step payload">
-                @if (_session.Result is { } payload)
-                {
-                    <h2>Step @_session.Step result</h2><pre>@payload</pre>
-                }
-                else
-                {
-                    <p class="hint">Run a step to see its payloads here.</p>
-                }
-            </section>
+            <li class="@(index < _session.Step ? "complete" : index == _session.Step ? "current" : "")"
+                aria-current="@(index == _session.Step ? "step" : null)">@_session.Steps[index]</li>
         }
-    </div>
+    </ol>
+    <ProtocolSequence Participants="WalletParticipants" Messages="WalletSequence" CompletedSteps="_session.Step" />
     @if (_session.Result is { } result)
     {
-        <section class="@(GuidedTour ? "tour-result-source" : null)" aria-label="Step result"><h2>Step @_session.Step result</h2><pre data-testid="wallet-result">@result</pre></section>
+        <section aria-label="Step result"><h2>Step @_session.Step result</h2><pre data-testid="wallet-result">@result</pre></section>
     }
     <section aria-label="Recorded exchanges">
         @foreach (var exchange in _session.Exchanges)
@@ -97,8 +82,6 @@
 </section>
 
 @code {
-    [Parameter] public bool GuidedTour { get; set; }
-
     private static readonly ProtocolParticipant[] ClarificationParticipants =
     [
         new("agent", "Agent"), new("ap", "Agent Provider"), new("wallet", "Wallet"),

@@ -89,3 +89,25 @@ details.aria-narrative[open] > summary {
     --bs-btn-active-bg: #00458f;
     --bs-btn-active-border-color: #00458f;
 }
+/* Highlighted code blocks: a dark panel (GitHub dark palette, all tokens ≥ 6:1
+   contrast) so snippets stand out from the light page. The variables feed the
+   shared syntax-highlight.css and the capability walkthroughs' scoped styles. */
+pre:has(> code[class*="language-"]) {
+    --fg: #e6edf3;
+    --code-bg: #0d1117;
+    --syntax-keyword: #ff7b72;
+    --syntax-type: #d2a8ff;
+    --syntax-string: #a5d6ff;
+    --syntax-comment: #8b949e;
+    --syntax-number: #79c0ff;
+    --syntax-literal: #79c0ff;
+    --syntax-attribute: #7ee787;
+    color: var(--fg);
+    background: var(--code-bg);
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}

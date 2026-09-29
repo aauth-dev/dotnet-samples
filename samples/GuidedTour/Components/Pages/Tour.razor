@@ -4,6 +4,7 @@
 @inject TourSession Session
 @inject Microsoft.Extensions.Options.IOptions<TourOptions> Options
 @inject TourAgentIdentity AgentIdentity
+@using AAuth.Samples.Capabilities
 
 <PageTitle>AAuth Guided Tour</PageTitle>
 
@@ -12,15 +13,15 @@
     <h1>AAuth Guided Tour</h1>
     <div class="config">
         <span class="hl-resource"><strong>@Session.ResourceDisplayName:</strong> @Session.ResourceBaseUrl</span>
-        @if (Session.IsCallChainMode)
+        @if (Session.IsCallChainMode || (Session.IsWalletProtocolMode && Session.WalletScenario == WalletFlow.AsGrantChaining))
         {
             <span class="hl-resource"><strong>Concierge:</strong> @Options.Value.ConciergeUrl</span>
         }
-        @if (Session.IsFederatedMode)
+        @if (Session.IsFederatedMode || Session.IsWalletProtocolMode)
         {
             <span class="hl-as"><strong>Access Server:</strong> @Options.Value.AccessServerUrl</span>
         }
-        @if (Session.IsRichRequestsMode)
+        @if (Session.IsRichRequestsMode || Session.IsCatalogMode || (Session.IsEventsMode && Session.EventsProtected))
         {
             <span class="hl-as"><strong>R3 Access Server:</strong> @Options.Value.R3AccessServerUrl</span>
         }
@@ -28,7 +29,7 @@
         {
             <span class="hl-ps"><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none)" : Options.Value.PersonServerUrl)</span>
         }
-        @if (Session.Mode is TourMode.Bootstrap or TourMode.SubAgent)
+        @if (Session.Mode is TourMode.Bootstrap or TourMode.SubAgent or TourMode.Events)
         {
             <span class="hl-agent"><strong>Agent Provider:</strong> @Options.Value.AgentProviderUrl</span>
         }
@@ -56,9 +57,50 @@
             </select>
         </label>
     }
+    @if (Session.IsEventsMode)
+    {
+        <label class="flow-picker__label" for="events-channel-select">
+            <span class="flow-picker__title">Subscription channel</span>
+            <select id="events-channel-select" value="@(Session.EventsProtected ? "protected" : "public")" @onchange="OnEventsChannelChanged" disabled="@_busy">
+                <option value="protected">Protected reservations — account-bound ticket</option>
+                <option value="public">Public availability — no person, no grant</option>
+            </select>
+        </label>
+        @if (Session.EventsProtected)
+        {
+            <label class="flow-picker__label" for="events-account-select">
+                <span class="flow-picker__title">Bookings account</span>
+                <select id="events-account-select" value="@Session.EventsAccount" @onchange="OnEventsAccountChanged" disabled="@_busy">
+                    <option value="personal">Personal reservations</option>
+                    <option value="work">Work reservations</option>
+                </select>
+            </label>
+        }
+    }
+    @if (Session.IsWalletProtocolMode)
+    {
+        <label class="flow-picker__label" for="wallet-scenario-select">
+            <span class="flow-picker__title">Wallet scenario</span>
+            <select id="wallet-scenario-select" value="@Session.WalletScenario" @onchange="OnWalletScenarioChanged" disabled="@_busy">
+                <option value="@WalletFlow.Clarification">AS clarification — explain, then approve</option>
+                <option value="@WalletFlow.AsGrantChaining">Chaining an AS-issued grant — Concierge</option>
+                <option value="@WalletFlow.Revocation">Federated revocation — cascade and recover</option>
+            </select>
+        </label>
+    }
+    @if (Session.IsCatalogMode)
+    {
+        <label class="flow-picker__label" for="catalog-service-select">
+            <span class="flow-picker__title">Catalog operation</span>
+            <select id="catalog-service-select" value="@Session.CatalogService" @onchange="OnCatalogServiceChanged" disabled="@_busy">
+                <option value="destinations">Destinations — listDestinations first</option>
+                <option value="experiences">Experiences — listExperiences first</option>
+            </select>
+        </label>
+    }
     @if (Session.IsRichRequestsMode)
     {
-        <a href="/events">Optional booking notifications: Events walkthrough</a>
+        <a href="/tour?flow=Events">Optional booking notifications: Events flow</a>
         <label class="flow-picker__label" for="bookings-account">
             <span class="flow-picker__title">Bookings account</span>
             <select id="bookings-account" value="@Session.BookingsAccount" @onchange="OnAccountChanged" disabled="@(_busy || Session.IsPolling)">
@@ -331,6 +373,58 @@
                     of AS claims requests. The final step checks worker success and parent-key rejection.
                 </text>
                 break;
+            case TourMode.Events:
+                <text>
+                    A reservation you wanted was unavailable, so Aria asks <strong>Bookings</strong> to
+                    notify it when a place opens. Because an agent cannot receive a public webhook, its
+                    <strong>Agent Provider</strong> acts as a durable inbox.<br /><br />
+                    Aria discovers the AsyncAPI channels and the AP's <code>event_endpoint</code>, then enrols
+                    with the AP. On the <strong>protected</strong> channel it first obtains an account-bound
+                    grant (person token, resource token, PS consent) so Bookings hands out a subscription ticket
+                    bound to its key; the <strong>public</strong> channel skips straight to the channel address.
+                    Aria then gets a single-use <code>aa-subscribe+jwt</code> from its AP, registers the
+                    subscription, and Bookings delivers a signed self-jwt event to the AP. Aria polls its inbox,
+                    verifies the event, ignores a resent copy, and acknowledges receipt.
+                    <em>AP token acquisition, inbox polling, acknowledgement and the notification trigger are
+                    local sample APIs, not standard endpoints.</em>
+                </text>
+                break;
+            case TourMode.WalletProtocol:
+                <text>
+                    Aria is finalizing a trip and needs to use your <strong>Wallet</strong> safely. Pick a
+                    scenario: the <strong>Access Server asks for clarification</strong> before it will grant a
+                    wallet review; the <strong>Concierge chains an AS-issued grant</strong> to reach the Wallet on
+                    your behalf; or you <strong>revoke</strong> a federated grant and Aria must recover with a
+                    fresh one.<br /><br />
+                    Each scenario starts from Aria's signed request and shows which authority makes the next
+                    decision — the Person Server, the Wallet's Access Server, or the Concierge — what goes over the
+                    wire, and why a denied, cancelled or revoked grant cannot be silently reused. Consent and
+                    clarification steps adapt to what each server actually answers.
+                </text>
+                break;
+            case TourMode.Documents:
+                <text>
+                    Aria needs a work travel brief from <strong>Documents</strong> to finish your itinerary. The
+                    document owner must first decide that this specific file may be released; only then may your
+                    Person Server ask you to authorize the download.<br /><br />
+                    The resource token carries <code>account=work</code> and an <code>interaction</code> URL for the
+                    owner's permission page. The PS sends you there <strong>before</strong> its own consent, so
+                    person consent can never override the resource owner's decision. Try both
+                    <strong>Release</strong> and <strong>Decline</strong>: no auth token or document is released
+                    when either authority says no.
+                </text>
+                break;
+            case TourMode.Catalog:
+                <text>
+                    Aria is comparing where to go and what to do there. The <strong>Travel Catalog</strong> serves a
+                    <strong>Destinations</strong> backend and an <strong>Experiences</strong> backend, and both
+                    expose an operation called <code>list</code>.<br /><br />
+                    R3 draft-11 removed the gateway vocabulary, so the Catalog publishes <strong>one</strong> merged
+                    OpenAPI definition and renames the colliding operations to <code>listDestinations</code> and
+                    <code>listExperiences</code>. Aria authorizes one operation through the <strong>R3 Access
+                    Server</strong>, proves the sibling rejects that grant, then obtains authorization for the sibling.
+                </text>
+                break;
         }
     </details>
 </section>
@@ -347,7 +441,7 @@
                 elapsed <strong>@ElapsedPolling()</strong>
             </div>
             <div class="polling__hint">
-                Waiting for you to complete the @(Session.IsFederatedMode ? "Access Server consent" : Session.IsRichRequestsMode ? "R3 Access Server consent" : Session.IsResourceManagedMode ? "Approve on the Inbox consent" : "Approve or Deny on the PS consent")
+                Waiting for you to complete the @(Session.IsCapabilityMode ? "decision in the consent" : Session.IsFederatedMode ? "Access Server consent" : Session.IsRichRequestsMode ? "R3 Access Server consent" : Session.IsResourceManagedMode ? "Approve on the Inbox consent" : "Approve or Deny on the PS consent")
                 tab. You can come back here anytime — the poll loop is live.
             </div>
         </div>
@@ -365,8 +459,8 @@
                          Lanes="@ActiveLanes"
                          IsPolling="@Session.IsPolling"
                          PollCount="@Session.PollCount"
-                         LoopGhostStep="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode || Session.IsResourceManagedMode) ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
-                         LoopAroundStepNumber="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode || Session.IsResourceManagedMode) ? Session.PollStepNumber : 0)"
+                         LoopGhostStep="@(HasPollLoop ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
+                         LoopAroundStepNumber="@(HasPollLoop ? Session.PollStepNumber : 0)"
                          CompletedLoopLabel="@CompletedLoopLabel()"
                          LoopCompletedKind="@CompletedLoopKind()" />
     </section>
@@ -479,7 +573,63 @@
         new("Access Server", "as", Actor.AccessServer),
     };
 
+    private static readonly SequenceDiagram.LaneDefinition[] EventsLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Bookings", "resource", Actor.Resource),
+        new("Agent Provider", "ap", Actor.AgentProvider),
+        new("Person Server", "ps", Actor.PersonServer),
+        new("R3 Access Server", "as", Actor.AccessServer),
+    };
+
+    private static readonly SequenceDiagram.LaneDefinition[] PublicEventsLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Bookings", "resource", Actor.Resource),
+        new("Agent Provider", "ap", Actor.AgentProvider),
+    };
+
+    private static readonly SequenceDiagram.LaneDefinition[] WalletProtocolLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Wallet", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+        new("Access Server", "as", Actor.AccessServer),
+    };
+
+    private static readonly SequenceDiagram.LaneDefinition[] WalletChainingLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Concierge", "resource2", Actor.Concierge),
+        new("Wallet", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+        new("Access Server", "as", Actor.AccessServer),
+    };
+
+    private static readonly SequenceDiagram.LaneDefinition[] DocumentsLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Documents", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+    };
+
+    private static readonly SequenceDiagram.LaneDefinition[] CatalogLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Catalog", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+        new("R3 Access Server", "as", Actor.AccessServer),
+    };
+
+    private bool HasPollLoop =>
+        Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode
+        || Session.IsMissionCallChainMode || Session.IsResourceManagedMode || Session.IsCapabilityMode;
+
     private SequenceDiagram.LaneDefinition[]? ActiveLanes =>
+        Session.IsEventsMode ? (Session.EventsProtected ? EventsLanes : PublicEventsLanes) :
+        Session.IsWalletProtocolMode ? (Session.WalletScenario == WalletFlow.AsGrantChaining ? WalletChainingLanes : WalletProtocolLanes) :
+        Session.IsDocumentsMode ? DocumentsLanes :
+        Session.IsCatalogMode ? CatalogLanes :
         Session.IsBootstrapMode ? BootstrapLanes :
         Session.IsSubAgentMode ? SubAgentLanes :
         Session.IsResourceManagedMode ? ResourceManagedLanes :
@@ -533,7 +683,7 @@
     }
 
     private StepRecord? PollStepRecord =>
-        (Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsResourceManagedMode)
+        (Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsResourceManagedMode || Session.IsCapabilityMode)
             ? Session.Steps.FirstOrDefault(s => s.Number == Session.PollStepNumber)
             : null;
 
@@ -627,7 +777,9 @@
                     // "Run all" cannot do user interaction on the user's
                     // behalf — surface the URL and stop so the user can
                     // click the consent link themselves.
-                    _error = Session.IsFederatedMode
+                    _error = Session.IsCapabilityMode
+                        ? "Stopped: the next step needs your decision in the browser. Click the consent link above, then return here."
+                        : Session.IsFederatedMode
                         ? "Stopped: the next step requires you to open the Access Server login (Keycloak) and sign in. Click the green link above."
                         : Session.IsRichRequestsMode
                         ? "Stopped: the next step requires you to open the R3 Access Server consent screen and approve this reservation. Click the green link above."
@@ -687,6 +839,37 @@
         catch (Exception exception) { _error = exception.Message; }
         finally { _busy = false; }
     }
+
+    private async Task OnCapabilityOptionChangedAsync(Action change)
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            change(); // the option setters reset the timeline
+            await Session.PrepareConsentStateAsync();
+            _selected = -1;
+        }
+        catch (Exception ex)
+        {
+            _error = $"{ex.GetType().Name}: {ex.Message}";
+        }
+        finally { _busy = false; }
+    }
+
+    private Task OnEventsChannelChanged(ChangeEventArgs e) =>
+        OnCapabilityOptionChangedAsync(() => Session.EventsProtected = e.Value?.ToString() != "public");
+
+    private Task OnEventsAccountChanged(ChangeEventArgs e) =>
+        OnCapabilityOptionChangedAsync(() => Session.EventsAccount = e.Value?.ToString() ?? "personal");
+
+    private Task OnWalletScenarioChanged(ChangeEventArgs e) =>
+        Enum.TryParse<WalletFlow>(e.Value?.ToString(), out var scenario)
+            ? OnCapabilityOptionChangedAsync(() => Session.WalletScenario = scenario)
+            : Task.CompletedTask;
+
+    private Task OnCatalogServiceChanged(ChangeEventArgs e) =>
+        OnCapabilityOptionChangedAsync(() => Session.CatalogService = e.Value?.ToString() ?? "destinations");
 
     private void OnSigningModeChanged(ChangeEventArgs e)
     {

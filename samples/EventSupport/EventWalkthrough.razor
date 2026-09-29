@@ -6,7 +6,7 @@
 @inject IConfiguration Configuration
 @implements IDisposable
 
-<section class="events-view @(GuidedTour ? "guided-tour-flow" : null)" aria-label="Events walkthrough" data-step="@_session.Step" data-channel="@(_session.Protected ? "protected" : "public")">
+<section class="events-view" aria-label="Events walkthrough" data-step="@_session.Step" data-channel="@(_session.Protected ? "protected" : "public")">
     <SyntaxHighlight Trigger="_session.Step" />
     <header class="events-heading">
         <img src="_content/EventSupport/bell.svg" alt="" width="28" height="28" />
@@ -59,33 +59,18 @@
     {
         <p class="events-error" role="alert">@_error</p>
     }
-    <div class="tour-sequence-layout">
-        <ol class="events-sequence" aria-label="Protocol steps">
-            @for (var index = 0; index < EventDemoSession.Steps.Length; index++)
-            {
-                <li class="@(index < _session.Step ? "complete" : index == _session.Step ? "current" : "")"
-                    data-protocol-step="@(index + 1)"
-                    aria-current="@(index == _session.Step ? "step" : null)">@EventDemoSession.Steps[index]</li>
-            }
-        </ol>
-        <div class="tour-diagram"><ProtocolSequence Participants="EventParticipants" Messages="ActiveSequence" CompletedSteps="_session.Step" ShowPendingMessages="@(!GuidedTour)" /></div>
-        @if (GuidedTour)
+    <ol class="events-sequence" aria-label="Protocol steps">
+        @for (var index = 0; index < EventDemoSession.Steps.Length; index++)
         {
-            <section class="tour-payload" aria-label="Selected step payload">
-                @if (_session.Payload is not null)
-                {
-                    <h2>Step @_session.Step result</h2><pre>@_session.Payload</pre>
-                }
-                else
-                {
-                    <p class="hint">Run a step to see its payloads here.</p>
-                }
-            </section>
+            <li class="@(index < _session.Step ? "complete" : index == _session.Step ? "current" : "")"
+                data-protocol-step="@(index + 1)"
+                aria-current="@(index == _session.Step ? "step" : null)">@EventDemoSession.Steps[index]</li>
         }
-    </div>
+    </ol>
+    <ProtocolSequence Participants="EventParticipants" Messages="ActiveSequence" CompletedSteps="_session.Step" />
     @if (_session.Payload is not null)
     {
-        <section class="events-receipt @(GuidedTour ? "tour-result-source" : null)" aria-label="Verified event">
+        <section class="events-receipt" aria-label="Verified event">
             <h2>Verified notification</h2>
             <dl><dt>Context</dt><dd>@_session.Context</dd><dt>Event ID</dt><dd>@_session.Eid</dd><dt>Duplicate</dt><dd>Ignored by issuer and event token jti</dd></dl>
             <pre data-testid="event-payload">@_session.Payload</pre>
@@ -114,8 +99,6 @@
 </section>
 
 @code {
-    [Parameter] public bool GuidedTour { get; set; }
-
     private static readonly ProtocolParticipant[] EventParticipants =
     [
         new("agent", "Agent"),

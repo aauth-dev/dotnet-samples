@@ -7,7 +7,7 @@
 @inject IConfiguration Configuration
 @implements IDisposable
 
-<section class="document-view @(GuidedTour ? "guided-tour-flow" : null)" aria-label="Document release walkthrough" data-step="@_session.Step">
+<section class="document-view" aria-label="Document release walkthrough" data-step="@_session.Step">
     <SyntaxHighlight Trigger="_session.Step" />
     <header><h1>Document Release</h1><output>@_session.Step / 4 complete</output></header>
     <details class="scenario-narrative" open>
@@ -33,29 +33,14 @@
     @if (_session.ConsentUrl is { } consent) { <a class="document-consent" href="@consent" target="_blank" rel="noopener">Review document authorization</a> }
     @if (_session.Denied) { <p data-testid="document-denied">Document release declined. No authorization issued.</p> }
     @if (_error is not null) { <p role="alert">@_error</p> }
-    <div class="tour-sequence-layout">
-        <ol aria-label="Protocol steps">
-            @for (var index = 0; index < DocumentDemoSession.Steps.Length; index++)
-            {
-                <li data-protocol-step="@(index + 1)" aria-current="@(index == _session.Step ? "step" : null)">@DocumentDemoSession.Steps[index]</li>
-            }
-        </ol>
-        <div class="tour-diagram"><ProtocolSequence Participants="DocumentParticipants" Messages="Sequence" CompletedSteps="_session.Step" ShowPendingMessages="@(!GuidedTour)" /></div>
-        @if (GuidedTour)
+    <ol aria-label="Protocol steps">
+        @for (var index = 0; index < DocumentDemoSession.Steps.Length; index++)
         {
-            <section class="tour-payload" aria-label="Selected step payload">
-                @if (_session.Result is { } payload)
-                {
-                    <h2>Step @_session.Step result</h2><pre>@payload</pre>
-                }
-                else
-                {
-                    <p class="hint">Run a step to see its payloads here.</p>
-                }
-            </section>
+            <li data-protocol-step="@(index + 1)" aria-current="@(index == _session.Step ? "step" : null)">@DocumentDemoSession.Steps[index]</li>
         }
-    </div>
-    @if (_session.Result is { } result) { <pre data-testid="document-result" class="@(GuidedTour ? "tour-result-source" : null)">@result</pre> }
+    </ol>
+    <ProtocolSequence Participants="DocumentParticipants" Messages="Sequence" CompletedSteps="_session.Step" />
+    @if (_session.Result is { } result) { <pre data-testid="document-result">@result</pre> }
     <section aria-label="Recorded exchanges">
         @foreach (var exchange in _session.Exchanges)
         {
@@ -73,8 +58,6 @@
 </section>
 
 @code {
-    [Parameter] public bool GuidedTour { get; set; }
-
     private static readonly ProtocolParticipant[] DocumentParticipants =
     [
         new("agent", "Agent"), new("ap", "Agent Provider"), new("resource", "Documents"),

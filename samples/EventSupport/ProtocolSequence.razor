@@ -14,7 +14,7 @@
             {
                 <span class="sequence-lifeline" style="left: @(Format(center))%" aria-hidden="true"></span>
             }
-            @foreach (var message in VisibleMessages)
+            @foreach (var message in Messages)
             {
                 @RenderMessage(message)
             }
@@ -31,13 +31,6 @@
 
     [Parameter]
     public int CompletedSteps { get; set; }
-
-    [Parameter]
-    public bool ShowPendingMessages { get; set; } = true;
-
-    private IEnumerable<ProtocolMessage> VisibleMessages => ShowPendingMessages
-        ? Messages
-        : Messages.Where(message => message.Step <= CompletedSteps);
 
     private double[] LaneCenters()
     {

@@ -23,7 +23,7 @@ namespace GuidedTour;
 /// agent key, token state, and step list. Steps are executed one at a time
 /// via <see cref="RunNextAsync"/>; the UI rerenders after each call.
 /// </summary>
-public sealed class TourSession : IAsyncDisposable
+public sealed partial class TourSession : IAsyncDisposable
 {
     private readonly TourOptions _options;
     private readonly TourAgentIdentity _selfIdentity;
@@ -172,7 +172,10 @@ public sealed class TourSession : IAsyncDisposable
         Mode is TourMode.ResourceManaged ? _options.InboxUrl.TrimEnd('/') :
         Mode is TourMode.Mission or TourMode.MissionCallChain ? _options.TripsUrl.TrimEnd('/') :
         Mode is TourMode.Federated ? _options.WalletUrl.TrimEnd('/') :
-        Mode is TourMode.RichRequests ? _options.BookingsUrl.TrimEnd('/') :
+        Mode is TourMode.RichRequests or TourMode.Events ? _options.BookingsUrl.TrimEnd('/') :
+        Mode is TourMode.WalletProtocol ? _options.WalletUrl.TrimEnd('/') :
+        Mode is TourMode.Documents ? _options.DocumentsUrl.TrimEnd('/') :
+        Mode is TourMode.Catalog ? _options.CatalogUrl.TrimEnd('/') :
         _options.CalendarUrl.TrimEnd('/');
 
     /// <summary>The display name of the resource server the current flow targets.</summary>
@@ -181,7 +184,10 @@ public sealed class TourSession : IAsyncDisposable
         Mode is TourMode.ResourceManaged ? "Inbox" :
         Mode is TourMode.Mission or TourMode.MissionCallChain ? "Trips" :
         Mode is TourMode.Federated ? "Wallet" :
-        Mode is TourMode.RichRequests ? "Bookings" :
+        Mode is TourMode.RichRequests or TourMode.Events ? "Bookings" :
+        Mode is TourMode.WalletProtocol ? "Wallet" :
+        Mode is TourMode.Documents ? "Documents" :
+        Mode is TourMode.Catalog ? "Catalog" :
         "Calendar";
 
     /// <summary>
@@ -310,6 +316,7 @@ public sealed class TourSession : IAsyncDisposable
             if (IsCallChainMode) return _callChainPending ? 15 : 9;
             if (IsFederatedMode) return _federatedPending ? 12 : 9;
             if (IsRichRequestsMode) return 16;         // always full; no pending flag
+            if (IsCapabilityMode) return CapPlan.Count;
             return IsDeferredMode ? 11 : 8;
         }
     }
@@ -333,6 +340,7 @@ public sealed class TourSession : IAsyncDisposable
             if (IsCallChainMode) return _callChainPending ? CallChainConsentPlan : CallChainPlan;
             if (IsFederatedMode) return _federatedPending ? FederatedConsentPlan : FederatedPlan;
             if (IsRichRequestsMode) return RichRequestsPlan;
+            if (IsCapabilityMode) return CapabilityPlan;
             return IsDeferredMode ? DeferredPlan : AutonomousPlan;
         }
     }
@@ -585,7 +593,9 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>The step number at which user approval occurs in deferred mode.</summary>
     public int UserApprovalStepNumber =>
-        IsResourceManagedMode
+        IsCapabilityMode
+            ? NextCapStepNumber(CapKind.Approval)
+        : IsResourceManagedMode
             ? ResourceManagedApprovalStep
         : IsMissionCallChainMode
             ? (Steps.Count <= MissionChainCreatePollStep ? MissionChainCreateApprovalStep
@@ -602,7 +612,9 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>The step number at which polling occurs in deferred mode.</summary>
     public int PollStepNumber =>
-        IsResourceManagedMode
+        IsCapabilityMode
+            ? NextCapStepNumber(CapKind.Poll)
+        : IsResourceManagedMode
             ? ResourceManagedPollStep
         : IsMissionCallChainMode
             ? (Steps.Count <= MissionChainCreatePollStep ? MissionChainCreatePollStep
@@ -667,7 +679,9 @@ public sealed class TourSession : IAsyncDisposable
     /// for the call-chain hop-2 (chained) poll.
     /// </summary>
     public Actor PollLoopTarget =>
-        IsResourceManagedMode
+        IsCapabilityMode
+            ? (_capCycle?.PollTarget ?? Actor.PersonServer)
+        : IsResourceManagedMode
             ? Actor.Resource
         : (IsCallChainPending && PollStepNumber == CallChainHop2PollStep)
             ? Actor.Concierge
@@ -678,7 +692,9 @@ public sealed class TourSession : IAsyncDisposable
     /// and the UI should expose the "Approve as user" action button.
     /// </summary>
     public bool AwaitingUserApproval =>
-        (IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode || IsRichRequestsMode)
+        IsCapabilityMode
+            ? NextCapKind == CapKind.Approval && !_userApproved && !_aborted
+        : (IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode || IsRichRequestsMode)
         && Steps.Count + 1 == UserApprovalStepNumber && !_userApproved;
 
     /// <summary>The user-facing interaction URL captured from the latest interaction requirement.</summary>
@@ -783,6 +799,7 @@ public sealed class TourSession : IAsyncDisposable
         _workerScenario = null;
         WorkerConsentUrl = null;
         WorkerConsentRound = 0;
+        ResetCapabilityState();
     }
 
     /// <summary>
@@ -854,6 +871,7 @@ public sealed class TourSession : IAsyncDisposable
         _pollingCts?.Dispose();
         _pollingCts = null;
         _pollingTask = null;
+        ResetCapabilityState();
     }
 
     /// <summary>Run the next pending step and capture its <see cref="StepRecord"/>.</summary>
@@ -879,6 +897,12 @@ public sealed class TourSession : IAsyncDisposable
         if (IsSubAgentMode)
         {
             await RunLiveWorkerStepAsync(ct);
+            return;
+        }
+
+        if (IsCapabilityMode)
+        {
+            await RunCapabilityStepAsync(ct);
             return;
         }
 
@@ -1241,7 +1265,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task RecordUserApprovalOpenedAsync(CancellationToken ct = default)
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode || IsRichRequestsMode)) { return Task.CompletedTask; }
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode || IsRichRequestsMode || IsCapabilityMode)) { return Task.CompletedTask; }
         if (Steps.Count + 1 != UserApprovalStepNumber)
         {
             throw new InvalidOperationException(
@@ -1250,6 +1274,12 @@ public sealed class TourSession : IAsyncDisposable
 
         var userUrl = UserInteractionUrl ?? "(no interaction URL captured)";
         _userApproved = true;
+
+        if (IsCapabilityMode)
+        {
+            RecordCapabilityApproval(userUrl);
+            return Task.CompletedTask;
+        }
 
         if (IsResourceManagedMode)
         {
@@ -1473,6 +1503,15 @@ public sealed class TourSession : IAsyncDisposable
         if (IsResourceManagedMode) { return; }
         if (string.IsNullOrWhiteSpace(_options.PersonServerUrl)) { return; }
         using var client = new SampleHttpClient();
+
+        // Capability flows demonstrate their consent screens: clear standing
+        // consent so each exchange genuinely asks the user again.
+        if (IsCapabilityMode)
+        {
+            try { await client.PostAsync($"{_options.PersonServerUrl!.TrimEnd('/')}/admin/reset", null, ct); }
+            catch { /* /admin/* only exists on MockPersonServer — swallow. */ }
+            return;
+        }
 
         // Call-chain mode is a genuine multi-hop deferred demo: BOTH hops
         // (Agent → Concierge, and the Concierge's chained Concierge →
@@ -2718,7 +2757,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task StartPendingPollAsync()
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode || IsRichRequestsMode) || _pendingUrl is null)
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode || IsRichRequestsMode || IsCapabilityMode) || _pendingUrl is null)
         {
             return Task.CompletedTask;
         }
@@ -2771,7 +2810,8 @@ public sealed class TourSession : IAsyncDisposable
                 try
                 {
                     var poll =
-                        missionCreatePoll ? StepMissionPollCreateAsync(ct)
+                        IsCapabilityMode ? CapPollAsync(ct)
+                        : missionCreatePoll ? StepMissionPollCreateAsync(ct)
                         : missionElevatedPoll ? StepMissionElevatedPollAsync(ct)
                         : missionPermissionPoll ? StepMissionPollPermissionAsync(ct)
                         : missionChainCreatePoll ? StepMissionPollCreateAsync(ct)
