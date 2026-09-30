@@ -143,6 +143,12 @@ app.MapAAuthAuthorizationEndpoint("/authorize", async (ctx, request) =>
 // Only that verified decision context can approve the stored interaction.
 ```
 
+> **Known non-conformance (remediation Phase 3).** The authorization endpoint
+> above accepts any AAuth signature. Draft-11 requires a person token there
+> (§Authorization Endpoint), and a request without one is answered with
+> `requirement=person-token`. Don't copy the `/authorize` mapping until Phase 3
+> lands. See the [remediation plan](../../.agent/plans/2026-09-30-v11-compliance-remediation/implementation-plan.md).
+
 ## DI Registration
 
 ### Agent-Side

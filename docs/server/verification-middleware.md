@@ -28,12 +28,14 @@ builder.Services.AddAAuthResource(o =>
 
 var app = builder.Build();
 
-app.UseAAuthVerification(options => options.ResourceIdentifier = "https://resource.example");
+app.UseAAuthVerification();
 ```
 
 The options start with the registered `MetadataClient`'s egress policy, then apply
 any `services.Configure<AAuthVerificationOptions>(...)` registrations, then the
-delegate passed here.
+delegate passed here. `AddAAuthResource` sets `ResourceIdentifier` to its
+`Issuer` unless you set one explicitly, so auth-token and person-token `aud` is
+always checked against this resource.
 
 ## What It Verifies
 
@@ -50,8 +52,9 @@ delegate passed here.
 ```csharp
 public sealed class AAuthVerificationOptions
 {
-    // The resource's own identifier (used for audience checks).
-    // When null, audience validation is skipped entirely.
+    // The resource's own identifier; auth-token and person-token `aud` must equal it.
+    // AddAAuthResource derives it from its Issuer. When no identifier is known,
+    // auth and person tokens are rejected (Signature-Error: invalid_request).
     public string? ResourceIdentifier { get; init; }
 
     public IReadOnlyList<string> AcceptedSchemes { get; init; } = ["jwt"];
@@ -76,7 +79,7 @@ public sealed class AAuthVerificationOptions
 | Scheme Policy | `ResourceIdentifier` | Effect |
 |:--:|:--:|:--|
 | Default `jwt` | set | Issuer JWT, audience, confirmation binding and HTTP signature |
-| Default `jwt` | `null` | Issuer JWT and HTTP signature; deployment must bind audience |
+| Default `jwt` | `null` | Agent tokens verify; auth and person tokens are rejected with `invalid_request` |
 | Explicit generic schemes | any | Scheme-specific verified resolution; JWT trust remains mandatory |
 
 > **Auth-token issuer trust is open by default, narrowed by policy.** This is a

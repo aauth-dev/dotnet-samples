@@ -41,6 +41,7 @@ builder.Services.AddAAuthResource(options =>
     options.Issuer = "https://resource.example";
 });
 
+// Auth-token and person-token `aud` is checked against the Issuer above.
 app.UseAAuthVerification();
 ```
 

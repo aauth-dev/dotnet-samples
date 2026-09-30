@@ -58,6 +58,10 @@ public static class AAuthResourceServiceCollectionExtensions
             throw new InvalidOperationException("AAuthResourceOptions.Issuer must be set.");
         services.TryAddSingleton(Microsoft.Extensions.Options.Options.Create(options));
 
+        // Identity once per role: the low-level UseAAuthVerification() pipeline takes its
+        // auth/person-token audience from this resource's issuer unless one is set explicitly.
+        services.PostConfigure<AAuthVerificationOptions>(verification => verification.ResourceIdentifier ??= options.Issuer);
+
         // Register AAuthVerifier as singleton.
         services.TryAddSingleton(sp => new AAuthVerifier
         {

@@ -42,7 +42,7 @@ public class CalendarFlowTests : IAsyncLifetime
 {
     private const string CalendarHost = "calendar.test";
     private const string PsHost = "ps.test";
-    private const string ApHost = "ap.test";
+    private const string ApHost = "ap.example";
     private static readonly string CalendarIssuer = $"https://{CalendarHost}";
     private static readonly string PsIssuer = $"https://{PsHost}";
     private static readonly string ApIssuer = $"https://{ApHost}";
@@ -144,7 +144,7 @@ public class CalendarFlowTests : IAsyncLifetime
         var key = AAuthKey.Generate();
         var token = await new AgentTokenBuilder
         {
-            EgressPolicy = TestEgress.Policy, Issuer = ApIssuer, Subject = "aauth:revocation@ap.test",
+            EgressPolicy = TestEgress.Policy, Issuer = ApIssuer, Subject = "aauth:revocation@ap.example",
             Key = ApKey, KeyId = ApKeyId, ConfirmationKey = key, PersonServer = PsIssuer,
             TokenId = "calendar-revocation",
         }.BuildAsync();
@@ -211,7 +211,7 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
+            Subject = "aauth:demo@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
@@ -288,7 +288,7 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
+            Subject = "aauth:demo@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
@@ -336,7 +336,7 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
+            Subject = "aauth:demo@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
@@ -362,7 +362,7 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
+            Subject = "aauth:demo@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
@@ -384,7 +384,7 @@ public class CalendarFlowTests : IAsyncLifetime
     public async Task RoleFlow_Returns403_WhenAgentLacksRole()
     {
         // A non-admin demo agent (the mock PS only asserts the calendar.owner
-        // role for `aauth:demo@...` agents) completes the three-party flow
+        // role for the exact agent `aauth:demo@ap.example`) completes the three-party flow
         // and receives a valid auth token WITHOUT the role. The role policy
         // on /events/admin must therefore reject it with 403 — exercising
         // role-based DENIAL, not just the success path.
@@ -393,7 +393,7 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:guest@ap.test",
+            Subject = "aauth:guest@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
@@ -421,7 +421,7 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
+            Subject = "aauth:demo@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
@@ -526,7 +526,7 @@ public class CalendarFlowTests : IAsyncLifetime
         consentCalendar = calendar;
 
         var agentKey = AAuthKey.Generate();
-        const string AgentId = "aauth:consent@ap.test";
+        const string AgentId = "aauth:consent@ap.example";
         var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
@@ -661,7 +661,7 @@ public class CalendarFlowTests : IAsyncLifetime
         consentCalendar = calendar;
 
         var agentKey = AAuthKey.Generate();
-        const string AgentId = "aauth:denier@ap.test";
+        const string AgentId = "aauth:denier@ap.example";
         var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,

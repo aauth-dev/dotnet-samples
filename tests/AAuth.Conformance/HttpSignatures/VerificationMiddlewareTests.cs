@@ -24,6 +24,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -145,14 +146,14 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         }.BuildAsync();
     }
 
-    private async Task<string> BuildAuthTokenAsync(string? account = null)
+    private async Task<string> BuildAuthTokenAsync(string? account = null, string audience = ResourceId)
     {
         return await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
-            Audience = ResourceId,
+            Audience = audience,
             PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = _psKey,
@@ -165,7 +166,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(false, "personal", null, true, false)]
+    [InlineData(false, "personal", null, false, false)]
     [InlineData(true, null, null, true, false)]
     [InlineData(true, "personal", "personal", true, true)]
     [InlineData(true, null, "personal", false, false)]
@@ -204,6 +205,111 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             Assert.Equal(account, (string?)body["account"]);
             Assert.Equal(accountVerified, (bool)body["accountVerified"]!);
         }
+    }
+
+    // SDK-01 negative control: a bare UseAAuthVerification() takes the auth-token
+    // audience from AddAAuthResource(Issuer), never from the token's own `aud`.
+    [Theory]
+    [InlineData(ResourceId, true)]
+    [InlineData("http://localhost:5001", false)]
+    public async Task AuthTokenAudience_DerivesFromAddAAuthResourceIssuer_ForBareUseAAuthVerification(string resourceIssuer, bool accepted)
+    {
+        await using var app = await StartResourceAsync(builder => builder.Services.AddAAuthResource(options =>
+        {
+            options.Issuer = resourceIssuer;
+            options.EgressPolicy = TestEgress.Policy;
+        }), configure: null);
+        using var response = await SendAsync(app, await BuildAuthTokenAsync());
+        Assert.Equal(accepted ? HttpStatusCode.OK : HttpStatusCode.Unauthorized, response.StatusCode);
+        if (!accepted)
+            Assert.Equal("error=invalid_jwt", string.Join(",", response.Headers.GetValues("Signature-Error")));
+    }
+
+    // SDK-01 negative control: with no resource identifier anywhere, an auth token
+    // for another resource is not accepted by comparing `aud` with itself.
+    [Fact]
+    public async Task AuthTokenWithoutResourceIdentifier_IsRejected_NotSelfAudienced()
+    {
+        await using var app = await StartResourceAsync(_ => { }, options => options.EgressPolicy = TestEgress.Policy);
+        using var response = await SendAsync(app, await BuildAuthTokenAsync(audience: "http://localhost:5001"));
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("error=invalid_request", string.Join(",", response.Headers.GetValues("Signature-Error")));
+    }
+
+    // SDK-01 negative control for person tokens: `aud` is checked against the
+    // derived resource identifier, and rejected when no identifier is known.
+    [Theory]
+    [InlineData(true, ResourceId, true)]
+    [InlineData(true, "http://localhost:5001", false)]
+    [InlineData(false, "http://localhost:5001", false)]
+    public async Task PersonTokenAudience_IsBoundToResourceIdentity(bool resourceRegistered, string audience, bool accepted)
+    {
+        await using var app = await StartResourceAsync(builder =>
+        {
+            if (resourceRegistered)
+                builder.Services.AddAAuthResource(options =>
+                {
+                    options.Issuer = ResourceId;
+                    options.EgressPolicy = TestEgress.Policy;
+                });
+        }, configure: null);
+        var personToken = await new PersonTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            Issuer = PsIssuer,
+            Audience = audience,
+            Subject = "pairwise-sub",
+            ConfirmationKey = _agentKey,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            Key = _psKey,
+            KeyId = "ps-key-1",
+        }.BuildAsync();
+        using var response = await SendAsync(app, personToken);
+        Assert.Equal(accepted ? HttpStatusCode.OK : HttpStatusCode.Unauthorized, response.StatusCode);
+        if (!accepted)
+            Assert.Equal(resourceRegistered ? "error=invalid_jwt" : "error=invalid_request",
+                string.Join(",", response.Headers.GetValues("Signature-Error")));
+    }
+
+    [Fact]
+    public async Task ExplicitResourceIdentifier_IsNotOverwrittenByAddAAuthResource()
+    {
+        await using var app = await StartResourceAsync(builder => builder.Services.AddAAuthResource(options =>
+        {
+            options.Issuer = "http://localhost:5001";
+            options.EgressPolicy = TestEgress.Policy;
+        }), options => options.ResourceIdentifier = ResourceId);
+        using var response = await SendAsync(app, await BuildAuthTokenAsync());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private async Task<WebApplication> StartResourceAsync(Action<WebApplicationBuilder> register, Action<AAuthVerificationOptions>? configure)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(new MetadataClient(_metadataHost!.GetTestClient(), policy: TestEgress.Policy,
+            transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
+        builder.Services.AddSingleton(new JwksClient(_metadataHost!.GetTestClient(), policy: TestEgress.Policy,
+            transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
+        register(builder);
+        builder.Services.TryAddSingleton(new AAuthVerifier());
+        var app = builder.Build();
+        app.UseAAuthVerification(options =>
+        {
+            options.EgressPolicy = TestEgress.Policy;
+            configure?.Invoke(options);
+        });
+        app.MapGet("/protected", () => Results.Ok());
+        await app.StartAsync();
+        return app;
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(WebApplication app, string token)
+    {
+        using var client = new AAuthClientBuilder(_agentKey).UseJwt(token)
+            .WithEgressPolicy(TestEgress.Policy)
+            .WithInnerHandler(app.GetTestServer().CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly).Build();
+        return await client.GetAsync(ResourceId + "/protected");
     }
 
     private async Task<HttpRequestMessage> SignRequest(string token)

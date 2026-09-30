@@ -42,9 +42,16 @@ public sealed class SampleIdentityClaimsAsserter : IIdentityClaimsAsserter
         _demoUserClaims = demoUserClaims;
     }
 
-    /// <summary>Demo "admin" agents (id <c>aauth:demo@…</c>) receive the demo roles/groups.</summary>
-    public static bool IsAdminAgent(string agentId) =>
-        agentId.StartsWith("aauth:demo@", StringComparison.Ordinal);
+    /// <summary>
+    /// The exact agent identifiers the demo treats as "admin" (AgentConsole). Matching is
+    /// exact and ordinal: a prefix test would let <c>aauth:demo@attacker.example</c> claim
+    /// the demo roles. A production PS resolves the bound principal's directory membership.
+    /// </summary>
+    public static IReadOnlySet<string> AdminAgents { get; } =
+        new HashSet<string>(StringComparer.Ordinal) { "aauth:demo@ap.example" };
+
+    /// <summary>Demo "admin" agents receive the demo roles/groups.</summary>
+    public static bool IsAdminAgent(string agentId) => AdminAgents.Contains(agentId);
 
     public Task<IdentityAssertion> AssertAsync(
         IdentityAssertionRequest request, CancellationToken cancellationToken = default)

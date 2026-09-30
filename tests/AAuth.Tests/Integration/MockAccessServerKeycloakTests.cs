@@ -36,10 +36,10 @@ public class MockAccessServerKeycloakTests
 {
     private const string AsIssuer = "https://as.test";
     private const string PsIssuer = "https://ps.test";
-    private const string ApIssuer = "https://ap.test";
+    private const string ApIssuer = "https://ap.example";
     private const string ResourceUrl = "https://wallet.test";
-    private const string AdminAgentId = "aauth:demo@ap.test";  // admin by demo convention.
-    private const string GuestAgentId = "aauth:guest@ap.test"; // non-admin.
+    private const string AdminAgentId = "aauth:demo@ap.example";  // admin by demo convention.
+    private const string GuestAgentId = "aauth:guest@ap.example"; // non-admin.
 
     private const string PsKid = "ps-1";
     private const string ApKid = "ap-1";
@@ -300,8 +300,8 @@ public class MockAccessServerKeycloakTests
             {
                 "ps.test/.well-known/aauth-person.json" => Metadata(PsIssuer),
                 "ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
-                "ap.test/.well-known/aauth-agent.json" => Metadata(ApIssuer),
-                "ap.test/.well-known/jwks.json" => Jwks(ApKey, ApKid),
+                "ap.example/.well-known/aauth-agent.json" => Metadata(ApIssuer),
+                "ap.example/.well-known/jwks.json" => Jwks(ApKey, ApKid),
                 "wallet.test/.well-known/aauth-resource.json" => Metadata(ResourceUrl),
                 "wallet.test/.well-known/jwks.json" => Jwks(ResourceKey, ResourceKid),
                 _ => null,

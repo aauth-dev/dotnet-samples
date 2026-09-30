@@ -301,7 +301,14 @@ The pinned source is commit `178e9e68b6578e4d6f7d0bf30f33b4c38833e3a1`,
 published 2026-09-25. Person tokens and all five resource access modes, presented-token
 exchanges, `mission_s256` missions (with updates, resources and expiry),
 parent-mediated sub-agents, call chaining through the person's PS, `{jti, exp}`
-revocation with cascades, and `202` auth-token delivery are implemented. Optional
+revocation with cascades, and `202` auth-token delivery are implemented.
+
+> **Compliance remediation in progress (2026-09-30).** A
+> [draft-11 audit](.agent/plans/2026-09-30-v11-compliance-audit/research.md) found
+> that these features are not yet fully conformant: revocation cascades,
+> `202` delivery polling, mission expiry on pending paths, call-chaining
+> provenance, R3 per-call single use, and four-party trust. See the
+> [remediation plan](.agent/plans/2026-09-30-v11-compliance-remediation/implementation-plan.md). Optional
 `accept_signature_algs` advertisement, `aauth-resource` links, Budgets, R3
 release gating, X.509/cached carriers and third-party login hosting are not
 implemented. Platform attestation, production stores/policies and native push

@@ -25,7 +25,20 @@ access mode, `presented_token` exchanges, `mission_s256` missions with updates
 and expiry, parent-mediated sub-agents and call chaining through the person's
 PS, `{jti, exp}` revocation with cascades, and `202` auth-token delivery.
 Signature Keys draft-09 and the R3 and Events editor's copies at the draft-11
-tag are included. Bootstrap draft-02 remains informational. Budgets and
+tag are included.
+
+> **Update (2026-09-30):** a
+> [draft-11 compliance audit](../.agent/plans/2026-09-30-v11-compliance-audit/research.md)
+> found gaps in several of these claims. The [remediation](../.agent/plans/2026-09-30-v11-compliance-remediation/implementation-plan.md) is in
+> progress. Until each owning phase lands, treat these as not yet conformant:
+> - revocation cascades (a revoked person token can still be presented to an
+>   AS while a request is pending);
+> - `202` auth-token delivery polling (`Retry-After`, `slow_down` and polling
+>   status codes);
+> - mission `expires_at` on pending paths;
+> - upstream-token provenance in call chaining;
+> - R3 per-call single use without an explicit gate;
+> - four-party issuer trust. Bootstrap draft-02 remains informational. Budgets and
 `accept_signature_algs` advertisement are not implemented. No snapshot bytes
 changed during migration.
 

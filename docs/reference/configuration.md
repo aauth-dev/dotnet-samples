@@ -36,7 +36,7 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `ResourceIdentifier` | `string?` | `null` | Resource's own identifier for `aud` checks. When `null`, audience validation is skipped. |
+| `ResourceIdentifier` | `string?` | `AddAAuthResource` `Issuer` | Resource's own identifier; auth-token and person-token `aud` must equal it. With no identifier, auth and person tokens are rejected (`invalid_request`). |
 | `AcceptedSchemes` | `IReadOnlyList<string>` | `["jwt"]` | Schemes accepted by this verification role; generic signing is an explicit opt-in. |
 | `SignatureLabel` | `string` | `"sig"` | Matching dictionary member selected from all three signature fields. |
 | `RequiredComponents` | `IReadOnlyCollection<string>` | `[]` | Additional required covered components. |

@@ -143,6 +143,13 @@ ID, venue, date, party size, deposit, and cancellation policy.
 
 ## Vocabulary and API contracts
 
+> **Known non-conformance (remediation Phase 6).** On its own,
+> `R3Enforcement.Evaluate` returns `Granted` every time the same per-call auth
+> token is presented. R3 requires a per-call grant to be used once. Until
+> Phase 6 lands, run the execution through `IAAuthSingleUseGate.ExecuteOnceAsync`
+> keyed by the auth token's `jti`, as the Bookings sample does. See the
+> [remediation plan](../../.agent/plans/2026-09-30-v11-compliance-remediation/implementation-plan.md).
+
 All seven standard vocabularies have validated operation shapes. OpenAPI
 operation identity is the vocabulary plus `operationId`; WSDL may add an optional
 `service` member. `R3OperationIdentity` also includes the vocabulary and every

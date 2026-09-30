@@ -73,7 +73,7 @@ var accessServer = builder.Services.AddAAuthAccessServer(configure: options =>
         options.SigningKeys = new AAuthSigningKeySet(AsKid, AAuthKey.Generate());
         options.DefaultScope = AsScope;
         options.InteractionLoginPath = "/interaction/login";
-        // Demo convention: an agent whose id starts with `aauth:demo@` is treated
+        // Demo convention: the exact agent id `aauth:demo@ap.example` is treated
         // as holding the admin role. A production AS would receive the principal's
         // directory membership via the PS's §Claims Required push.
         options.DeriveAgentClaims = agentId => IsAdminAgent(agentId)
@@ -333,11 +333,12 @@ app.Run();
 static string InteractionHtml(string title, string body) =>
     ConsentHtml.Page(title, $"<h1>{System.Net.WebUtility.HtmlEncode(title)}</h1><p>{System.Net.WebUtility.HtmlEncode(body)}</p>");
 
-// Demo convention shared with MockPersonServer: an agent whose id starts with
-// `aauth:demo@` is treated as holding the admin role. A production AS would
-// receive the principal's directory membership via the PS's claim push.
+// Demo convention shared with MockPersonServer: the exact agent identifier
+// `aauth:demo@ap.example` is treated as holding the admin role. The match is exact,
+// never a prefix, so `aauth:demo@attacker.example` gets nothing. A production AS
+// would receive the principal's directory membership via the PS's claim push.
 static bool IsAdminAgent(string agentId) =>
-    agentId.StartsWith("aauth:demo@", StringComparison.Ordinal);
+    string.Equals(agentId, "aauth:demo@ap.example", StringComparison.Ordinal);
 
 // -----------------------------------------------------------------------
 // Access Server consent-screen HTML. Mirrors the MockPersonServer consent

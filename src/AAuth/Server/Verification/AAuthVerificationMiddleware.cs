@@ -234,19 +234,14 @@ public sealed class AAuthVerificationMiddleware
                 {
                     if (!await IsTrustedAsync(context, resolution.VerifiedToken.Issuer, AAuthTrustedParty.AuthTokenIssuer, typ).ConfigureAwait(false))
                         throw new TokenVerificationException("Auth token issuer is not trusted by policy.");
-                    var audience = _options.ResourceIdentifier ?? SignatureKeyParser.Text(resolution.VerifiedToken.Payload, "aud")
-                        ?? throw new TokenVerificationException("Auth token requires aud.");
-                    _tokenVerifier.VerifyAuthToken(parsedInfo.Jwt, resolution.IssuerKey!, audience, publicKey,
-                        accountExpectation: _options.ResourceIdentifier is null ? null
-                            : new AccountExpectation(_options.ExpectedAccount?.Invoke(context)));
+                    _tokenVerifier.VerifyAuthToken(parsedInfo.Jwt, resolution.IssuerKey!, RequireResourceIdentifier(typ), publicKey,
+                        accountExpectation: new AccountExpectation(_options.ExpectedAccount?.Invoke(context)));
                 }
                 else if (typ == PersonTokenBuilder.TokenType)
                 {
                     if (!await IsTrustedAsync(context, resolution.VerifiedToken.Issuer, AAuthTrustedParty.PersonServer, typ).ConfigureAwait(false))
                         throw new TokenVerificationException("Person token issuer is not trusted by policy.");
-                    var audience = _options.ResourceIdentifier ?? SignatureKeyParser.Text(resolution.VerifiedToken.Payload, "aud")
-                        ?? throw new TokenVerificationException("Person token requires aud.");
-                    _tokenVerifier.VerifyPersonToken(parsedInfo.Jwt, resolution.IssuerKey!, audience, publicKey);
+                    _tokenVerifier.VerifyPersonToken(parsedInfo.Jwt, resolution.IssuerKey!, RequireResourceIdentifier(typ), publicKey);
                 }
                 // Other token types require different trust chains and are not
                 // verified at this layer.
@@ -325,8 +320,7 @@ public sealed class AAuthVerificationMiddleware
             Tenant = personServer is null ? null : SignatureKeyParser.Text(trustedPayload, "tenant"),
             Scopes = scopes,
             Account = tokenType == AuthTokenBuilder.TokenType ? AccountBinding.Read(trustedPayload) : null,
-            AccountVerified = tokenType == AuthTokenBuilder.TokenType && _options.ResourceIdentifier is not null
-                && AccountBinding.Read(trustedPayload) is not null,
+            AccountVerified = tokenType == AuthTokenBuilder.TokenType && AccountBinding.Read(trustedPayload) is not null,
             Roles = roles,
             Groups = groups,
             // For jkt-jwt the stable pseudonym is the DURABLE key's thumbprint
@@ -396,6 +390,14 @@ public sealed class AAuthVerificationMiddleware
             ? endpoint.IsTrustedAsync(trust, context.RequestAborted)
             : _options.Trust.IsTrustedAsync(trust, context.RequestAborted);
     }
+
+    // §Auth Token Verification step 2 / §Person Token Verification: `aud` MUST match
+    // this resource's own identifier. The expected audience never comes from the token.
+    private string RequireResourceIdentifier(string tokenType)
+        => _options.ResourceIdentifier is { Length: > 0 } resource ? resource
+            : throw new TokenVerificationException(SignatureErrorCode.InvalidRequest,
+                $"AAuthVerificationOptions.ResourceIdentifier is required to verify {tokenType}; " +
+                "configure AddAAuthResource(options.Issuer) or set ResourceIdentifier.");
 
     private void WriteFailure(HttpContext context, SignatureErrorCode code, IReadOnlyCollection<string>? requiredComponents = null)
     {

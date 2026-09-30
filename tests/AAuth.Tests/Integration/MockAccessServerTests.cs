@@ -33,9 +33,9 @@ public class MockAccessServerTests : IDisposable
 {
     private const string AsIssuer = "https://as.test";
     private const string PsIssuer = "https://ps.test";
-    private const string ApIssuer = "https://ap.test";
+    private const string ApIssuer = "https://ap.example";
     private const string ResourceUrl = "https://wallet.test";
-    private const string AgentId = "aauth:demo@ap.test";
+    private const string AgentId = "aauth:demo@ap.example";
 
     private const string PsKid = "ps-1";
     private const string ApKid = "ap-1";
@@ -321,7 +321,7 @@ public class MockAccessServerTests : IDisposable
     public async Task Token_GrantsElevatedScope_ForAdminAgent()
     {
         // The default stub policy grants wallet.charge to an admin agent
-        // (the demo convention: agent id starts with "aauth:demo@").
+        // (the demo convention: the exact agent id "aauth:demo@ap.example").
         var agentKey = AAuthKey.Generate();
         var agentToken = await BuildAgentTokenAsync(agentKey, AgentId);
         var resourceToken = await BuildResourceTokenAsync(agentKey, audience: AsIssuer, agent: AgentId, scope: "wallet.charge");
@@ -348,7 +348,7 @@ public class MockAccessServerTests : IDisposable
     {
         // A non-admin agent requesting wallet.charge is denied by the stub
         // policy (no wallet.payer role) → 403 denied.
-        const string GuestId = "aauth:guest@ap.test";
+        const string GuestId = "aauth:guest@ap.example";
         var agentKey = AAuthKey.Generate();
         var agentToken = await BuildAgentTokenAsync(agentKey, GuestId);
         var resourceToken = await BuildResourceTokenAsync(agentKey, audience: AsIssuer, agent: GuestId, scope: "wallet.charge");
@@ -571,8 +571,8 @@ public class MockAccessServerTests : IDisposable
                 "other-ps.test/.well-known/aauth-person.json" => Metadata("https://other-ps.test"),
                 "ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
                 "other-ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
-                "ap.test/.well-known/aauth-agent.json" => Metadata(ApIssuer),
-                "ap.test/.well-known/jwks.json" => Jwks(ApKey, ApKid),
+                "ap.example/.well-known/aauth-agent.json" => Metadata(ApIssuer),
+                "ap.example/.well-known/jwks.json" => Jwks(ApKey, ApKid),
                 "wallet.test/.well-known/aauth-resource.json" => Metadata(ResourceUrl),
                 "wallet.test/.well-known/jwks.json" => Jwks(ResourceKey, ResourceKid),
                 _ => null,

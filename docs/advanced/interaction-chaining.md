@@ -15,6 +15,11 @@ and the host's `ResourceInteractionSessions` configuration contract.
 
 ## Spec Requirement (§Interaction Chaining)
 
+> **Known non-conformance (remediation Phase 5).** Draft-11 requires the
+> intermediary to return its **own** interaction code, not the downstream one
+> (§Interaction Chaining). The pattern below forwards the downstream URL and code,
+> and will be replaced. See the [remediation plan](../../.agent/plans/2026-09-30-v11-compliance-remediation/implementation-plan.md).
+
 The intermediary returns its own pending `Location` while forwarding the
 downstream interaction URL/code. The browser approves at that downstream server.
 The sample aborts the downstream exchange on interaction and re-drives it when

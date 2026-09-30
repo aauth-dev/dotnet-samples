@@ -1,0 +1,508 @@
+---
+description: Decisions, deviations and open questions for the draft-11 compliance remediation.
+---
+
+# Implementation log — draft-11 compliance remediation
+
+Rulings Q1–Q32 are the Phase 0 decision gate. Each cites the design (`Rnn`),
+the red-team file (`RT-n`) and the spec line it rests on. Defaults are
+`PROCEEDED` (revert if you disagree). Rulings that reverse an earlier
+API-surface decision say so explicitly.
+
+## Decisions taken
+
+### [2026-09-30] [Phase 0] Q1 — Signature `created` (SDK-16)
+
+PROCEEDED (default: wait for the next free second; owner review requested).
+
+The producer never emits a future `created` (L2234). It keeps its per-key record
+of the last-used second for each `(method, authority, path)`. On a collision it
+awaits the next free wall-clock second, honours the request's cancellation
+token, and emits the current time. No `nonce` or `tag` is added: the profile
+defines none (L2272). The SDK verifier keeps its signature-base replay key.
+
+**Supersedes** API-surface log L933-L939, *"Signatures take a unique created
+per target"*. The invariant (no duplicate replay tuple) stays; the mechanism
+changes.
+
+Consequence: one identical-target request per second per key. Requests that
+differ only in query collide too, because `@query` is not covered.
+
+Rejected alternative (RT-4): relax the SDK verifier's replay rejection so no
+waiting is needed. Third-party verifiers may still apply the spec tuple cache,
+so producers that emit duplicate tuples remain non-interoperable. Revert to
+"no wait + relaxed verifier" only by owner decision.
+
+### [2026-09-30] [Phase 0] Q2 — Loopback server identifiers (A04-05, R16 UNSOUND)
+
+PROCEEDED (default: keep a Development-only exception).
+
+Production `ServerId` validation is strict: https, host only, no port or path
+(L1946-L1970). The explicitly configured development egress policy keeps
+admitting `http://localhost:port` / `127.0.0.1` issuers, with a startup warning
+naming the relaxation. Conformance tests assert that production policy rejects
+them.
+
+Logged deliberate deviation. A04-05 is regraded INFO. Migrating samples and e2e
+to local TLS with host aliases is out of scope (see plan).
+
+### [2026-09-30] [Phase 0] Q3 — Untrusted signer or issuer response
+
+RESOLVED.
+
+A verified Signature-Key or JWT whose issuer or key fails trust policy answers
+`401` with `Signature-Error: error=invalid_key`. Signature-Key §5.4.7
+(L2044-L2048) defines `invalid_key` as a key that "does not meet the server's
+trust requirements".
+
+`403` is used only after identity is accepted, for authorization denials such
+as account or role. Such responses carry no `Signature-Error` or
+`Accept-Signature-*` headers (SK §5.3, L1936-L1944).
+
+This overrides R03's `403 access_denied` and R11's `issuer_mismatch`
+(`issuer_mismatch` is reserved for metadata issuer mismatch). Scope-only
+shortfalls go through step-up (Q8).
+
+### [2026-09-30] [Phase 0] Q4 — Auth-token topology and `dwk` (SDK-02, A17-002)
+
+PROCEEDED.
+
+- `AAuthResourceOptions.AccessServer` is the single four-party declaration (C5).
+- **Four-party.** When `AccessServer` is set, the SDK's default auth-token trust
+  is `{AccessServer}` and `ExpectedAuthTokenDwk = aauth-access.json`.
+- **Three-party.** When it is unset, open PS trust is kept and the default is
+  pinned to `ExpectedAuthTokenDwk = aauth-person.json` (RT-1).
+- **Mixed mode.** It requires both `ExpectedAuthTokenDwk = null` and an explicit
+  `TokenDwk`-aware `IAAuthTrustPolicy`.
+- **`AAuthTrust.Any` with `AccessServer` set.** Startup fails unless mixed mode
+  is declared.
+- **The PS verifying an AS response.** It pins `aauth-access.json` and the AS
+  issuer.
+- **Ownership.** R02 owns the option. R14 threads `expectedDwk` through the
+  companion verifier seam so app-specific JWT resolution cannot bypass the pin.
+
+### [2026-09-30] [Phase 0] Q5 — One token inventory model (R05, R06, R10, R04)
+
+PROCEEDED.
+
+`IJtiStore` gains, as one breaking cutover:
+
+- provenance records (R05);
+- typed source dependencies (R06);
+- agent–person binding revocation links (R10).
+
+There are no parallel stores. Records are written atomically with grant
+registration. Registering an unseen upstream token never creates provenance.
+
+Records are pruned at `exp + skew`, with per-agent distinct-resource quotas.
+Exceeding a quota answers `429` before minting. A missing record (for example
+after in-memory store loss) fails closed as `invalid_upstream_token`. The
+in-memory default warns outside Development (C12).
+
+### [2026-09-30] [Phase 0] Q6 — Single-use key (SDK-03)
+
+PROCEEDED.
+
+The retained-result key is `(auth token iss, jti)`. Both the 202 held-invocation
+path and the R3 401 per-call path use it, so one per-call auth token executes at
+most once across both. `R3Enforcement` returns an execute-once `SingleUse`
+handle. A missing gate, `jti` or `exp` yields `single_use_required`, never
+`Granted`.
+
+### [2026-09-30] [Phase 0] Q7 — Revocation guard around outbound presentation (SDK-05)
+
+PROCEEDED.
+
+A guarded outbound primitive does three things:
+
+1. rechecks source dependencies immediately before send;
+2. links a revocation-aware cancellation token through the HTTP call;
+3. atomically flips the pending entry to terminal `revoked` on guard failure.
+
+It wraps every federation send, including each 202/402 continuation that R07
+adds, and every local mint.
+
+### [2026-09-30] [Phase 0] Q8 — Scope step-up
+
+RESOLVED. This closes the API-surface log open item L954-L959.
+
+When a valid auth token lacks a required scope, `RequireAAuth(scope:)` and
+`UseAAuth` answer `401 requirement=auth-token` with a new resource token bound
+to the presented auth token. The spec permits this (L640), and agents must
+handle it. Lower-level named MVC policies stay `403`. Roles and claims do not
+step up.
+
+### [2026-09-30] [Phase 0] Q9 — Polling and token error tables (SDK-12, SDK-13, A19-HIGH-003, A19-HIGH-004)
+
+PROCEEDED.
+
+- Only codes registered for each endpoint are emitted (L2574), through
+  closed-table helpers that own each code's status.
+- An unknown or consumed pending id answers `410 invalid_code`.
+- `expired` is `408` on first observation, then `410`.
+- `unknown_pending`, `unknown_interaction`, `request_withdrawn`,
+  `untrusted_*` and `policy_error` are removed.
+
+### [2026-09-30] [Phase 0] Q10 — Poll core preserves re-exchange (SDK-11, R11 UNSOUND)
+
+RESOLVED.
+
+The internal poll core returns requirement-bearing responses (`202` or `401`
+with `AAuth-Requirement: auth-token` and a fresh resource token) to
+`ChallengeHandler`. That handler re-exchanges and resumes polling the same
+`Location` (L660-L663). A dedicated regression test is required.
+
+### [2026-09-30] [Phase 0] Q11 — `updated_request` bounds (SDK-06)
+
+PROCEEDED.
+
+Bounds and sources are recomputed from the replacement pair, capped by agent,
+mission and upstream. They may grow relative to the original pair; the PS may
+deny an expansive update as policy. Tests cover longer-lived, shorter-lived and
+revoked replacements.
+
+### [2026-09-30] [Phase 0] Q12 — Agent-asserted input validation (A12-02, A12-03, A13-05)
+
+PROCEEDED.
+
+- `platform` must be a value from the vendored registry. Unknown values are
+  rejected.
+- `device` must be printable Unicode (runes), 64 or fewer, with
+  control/format/surrogate/private-use characters rejected.
+- An empty `capabilities: []` is distinct from omitting it.
+- A non-positive clarification `timeout` is malformed.
+
+One shared validator serves the agent (producer) and the PS (consumer).
+Capability constants move to `AAuthConstants` with no aliases (C1, C7).
+
+### [2026-09-30] [Phase 0] Q13 — Mission store and evaluator (SDK-14, A16-001, A16-003, A16-004)
+
+PROCEEDED.
+
+- `IMissionStore` is keyed by `(PersonServer, s256)`.
+- `TerminateAsync(ps, s256, reason)` replaces `SetStateAsync`. It is
+  idempotent and keeps the first reason.
+- One `MissionStatusEvaluator` serves every decision path. A mission past
+  `expires_at` auto-terminates with reason `expired`, and that takes
+  precedence over generic deferred expiry.
+- Absent, wrong-agent and wrong-PS lookups return an identical
+  `mission_not_found` response, backed by contract tests (spy store) and
+  custom-store guidance.
+
+Reasons remain `AAuthConstants.MissionTerminationReasons` strings (API-surface
+Q18).
+
+### [2026-09-30] [Phase 0] Q14 — Agent–person binding and pairwise subjects (SDK-07, A11-03, A11-04)
+
+PROCEEDED.
+
+- `IdentityAssertion` carries an `AAuthPersonKey`, which is never emitted.
+- `IAgentPersonBindingStore.BindOrVerifyAsync` runs atomically with enrollment
+  and provenance writes before any token or claim leaves the PS. A store
+  failure means deny.
+- `NeedsConsent` may omit the key only until approval; nothing is minted
+  without it.
+- The default pairwise `sub` is HMAC(person key, resource) over a key ring with
+  key ids, at a collision-safe length. Derived subjects are persisted with their
+  key version. Production requires a configured secret; Development uses an
+  ephemeral secret with a warning.
+- First issuance for a new resource requires approval and a metadata fetch. A
+  fetch failure answers `400 invalid_request`.
+
+### [2026-09-30] [Phase 0] Q15 — Governance `ps` check (A15-002)
+
+PROCEEDED.
+
+PS governance endpoints (mission, permission, audit, interaction) reject agent
+tokens whose `ps` is absent or names another PS, because an agent with a PS
+MUST carry `ps` (L459). The check never applies to resource authorization or
+token issuance: `ps` is informational there (L523). API docs and tests state
+this scope.
+
+### [2026-09-30] [Phase 0] Q16 — Governance mapping and relay (SDK-09, SDK-10)
+
+PROCEEDED.
+
+- `.WithGovernance()` declares the governance paths once, and
+  `MapAAuthPersonServer()` maps them.
+- `MapAAuthGovernance()` remains a primitive. It derives from the same
+  declaration and fails fast on conflicting paths.
+- `interaction_endpoint` is omitted unless governance is enabled or it is
+  explicitly set.
+- Relay results are mutually exclusive: `Answered`, `Pending` (202 +
+  `Location`) or `Unavailable` (424). Setting both or none throws.
+- The default relay answers `Unavailable` for every type. A `question` with no
+  channel answers `424 interaction_unavailable` so the agent can ask directly.
+  This is an interpretation: the interaction-errors table defines only that
+  code (L1183-L1190).
+
+### [2026-09-30] [Phase 0] Q17 — Federation collapse and payment (A17-001, A17-003)
+
+PROCEEDED.
+
+- **Collapse.** Declared explicitly as resource issuer + linked AS role name +
+  expected AS issuer. A mismatched or missing linked AS fails closed; there is
+  no silent three-party fallback.
+- **Payment.** `IAAuthPaymentSettler` receives only the payment challenge, the
+  AS origin and the pending URL, never JWTs. A PS billing cache is keyed by AS
+  issuer and scheme. With no settler registered, or when settlement is declined,
+  the pending request ends with the registered terminal polling error
+  `403 denied`, whose `detail` says payment settlement is unavailable.
+
+  This overrides R07's proposed `402 payment_required`: the polling table
+  (L2617-L2640) has no payment code, and Q9 forbids unregistered codes.
+
+### [2026-09-30] [Phase 0] Q18 — Two-key refresh (SDK-15)
+
+PROCEEDED.
+
+Automatic `TwoKey` mode is removed from `AgentProviderTokenRefresher` (C1). The
+docs and API inventory state that the SDK offers no automatic two-key refresh.
+`AgentProviderClient.RefreshTwoKeyAsync` stays, documented as: rebuild the
+client with the returned `EphemeralKey` and `AgentToken` together.
+
+### [2026-09-30] [Phase 0] Q19 — Agent-token lifetime (A05-02, A06-03)
+
+PROCEEDED.
+
+SDK producers reject a lifetime over 24 h at build time. Consumed AP tokens
+longer than 24 h log a warning and are not rejected: the spec says SHOULD NOT,
+so rejecting them would be an interop failure not required by the finding.
+
+### [2026-09-30] [Phase 0] Q20 — Auth-token response verification (A10-01)
+
+PROCEEDED.
+
+Verification is on by default in the builder and DI, through the shared cached
+`JwksClient` and egress policy. Structural and context checks (`typ`, `dwk`,
+`iss`, `aud`, `cnf`, `sub`) are always on. Only signature verification can be
+opted out, and only on the primitive, as a documented policy choice.
+
+### [2026-09-30] [Phase 0] Q21 — PS-first interaction relay (A13-04, A07-004)
+
+PROCEEDED.
+
+Only resource-response interactions are relayed to the PS `interaction_endpoint`
+first (L2404-L2412), falling back on `424`. PS-originated token-exchange
+interactions are never relayed back to the PS. This lands after R12 (Phase 8).
+
+### [2026-09-30] [Phase 0] Q22–Q24 — JWT and verification hygiene (R14)
+
+PROCEEDED.
+
+- **Q22.** Any `crit` is rejected, because no extension is implemented.
+- **Q23.** `ISignatureTokenVerifier` gains issuer-key resolution, used only when
+  `iss`/`dwk` are absent. `exp` has zero skew everywhere. A missing key answers
+  `unknown_key` when the identity is known, otherwise `invalid_jwt`.
+- **Q24.** `ChallengeOptions.AllowedSignatureKeySchemes` is removed (C1):
+  `AAuthVerificationOptions.AcceptedSchemes` is the single scheme gate. The
+  `Signature-Error` writer is internal and central. TLS is pinned to 1.2/1.3 on
+  the SDK transport.
+
+### [2026-09-30] [Phase 0] Q25 — Authorization endpoint (SDK-08, SDK-18, SMP-04)
+
+PROCEEDED.
+
+- A person token is required. When it is missing, the endpoint answers
+  `requirement=person-token`.
+- R3 plugs in through an extension seam, with no core→R3 reference.
+- A non-JSON body answers `400 invalid_request`.
+- The Inbox (two-party) sample removes `/authorize`.
+
+### [2026-09-30] [Phase 0] Q26 — Metadata typed fields and Events endpoint (A04-04, A04-06)
+
+PROCEEDED.
+
+Typed metadata fields win: `AdditionalMetadata` must not shadow a typed field
+(startup error). `additional_signature_components` is typed (R13), validated by
+R16, and seeds first-request signing.
+
+AP `event_endpoint` derives from a single `MapAAuthEventEndpoint`. Mapping more
+than one fails unless `EventEndpoint` is set explicitly. `false` values of
+`localhost_callback_allowed` are omitted from metadata.
+
+### [2026-09-30] [Phase 0] Q27 — Events (A24-01, A24-02, A24-03)
+
+PROCEEDED.
+
+- Stores return a typed outcome, and the SDK maps it to a status: `Exhausted`,
+  `Unknown` and `Expired` → 404; `Duplicate` → the same 202.
+- `Content-Length: 0` with no content type means no body.
+- A subscription body is optional.
+
+### [2026-09-30] [Phase 0] Q28 — Conformance claims
+
+PROCEEDED.
+
+In Phase 1, R19 corrects README and `SPEC-VERSION.md` pessimistically: the
+claims for cascades, 202 delivery, R3 per-call and mission expiry are marked
+"remediation in progress". Positive claims are restored only in Phase 12, after
+the owning phase gates pass.
+
+### [2026-09-30] [Phase 0] Q29 — SMP-01 early patch
+
+PROCEEDED.
+
+In Phase 1, the demo admin grant matches the exact subject and key thumbprint.
+Phase 7 (R10) adds the agent-token issuer.
+
+### [2026-09-30] [Phase 0] Q30 — S09-02 ownership
+
+RESOLVED. The tour's `AAuth-Capabilities` on signed requests is assigned to
+Phase 10 (R15 behaviour) and applied to the tour in Phase 11 (R18).
+
+### [2026-09-30] [Phase 0] Q31 — Generic Signature-Key lessons (S07-01, DOC-02)
+
+PROCEEDED.
+
+The GuidedTour and `docs/signing-modes/agent-identity-jwks-uri.md` keep the
+`hwk`/`jwks_uri`/`jwks` lessons only as clearly labelled generic (non-AAuth)
+Signature-Key demos against `RequireGenericSignature()`. AAuth agent identity
+defaults to `jwt`. `jkt-jwt` is described only as the AP key-refresh
+ceremony (L2196).
+
+### [2026-09-30] [Phase 0] Q32 — Sample credential output
+
+PROCEEDED. Token-bearing sample output is redacted by default. The GuidedTour
+has one explicit local-only setting to show raw values.
+
+### [2026-09-30] [Phase 0] Q1 — Owner ruling
+
+RESOLVED (owner). The owner chose "wait for the next free second, with limits
+on the cost". This supersedes the Q1 `PROCEEDED` entry above and keeps its
+mechanism, adding these limits:
+
+- **Scope.** The wait applies only to a collision of the exact replay tuple:
+  same key, second, method, authority and path. Different paths, hosts,
+  methods or agents never wait.
+- **Cancellation.** A request cancelled while waiting is never sent.
+- **Visibility.**
+  - `AAuthDiagnostics` emits a debug log and a counter named
+    `aauth.signing.created_wait` (with a duration measurement) whenever a
+    request is delayed.
+  - `docs/reference/configuration.md` and the signing-mode docs describe the
+    one-identical-request-per-second-per-key behaviour.
+- **Upstream.** The limitation is raised with the spec author. Ask for a
+  profile nonce, or for `@query` in the replay tuple (see *Open questions*).
+
+### [2026-09-30] [Phase 0] Q2 — Owner ruling
+
+RESOLVED (owner). The owner chose "keep the exception, but lock it down". This
+supersedes the Q2 `PROCEEDED` entry above.
+
+1. **Loopback only.**
+   `AAuthEgressPolicy.ForDevelopmentLoopback` admits only `localhost` and
+   `127.0.0.1` origins with an explicit port, from the exact list given.
+   Wildcards and other hosts are rejected when the policy is built.
+2. **Never in Production.** The DI registrations (`AddAAuthResource`,
+   `AddAAuthPersonServer`, `AddAAuthAccessServer`, `AddAAuthAgent`, the
+   discovery registration) resolve `IHostEnvironment`. Startup fails when a
+   policy admitting loopback origins is used and `IsProduction()` is true.
+3. **Loud when active.** A startup warning lists every admitted loopback
+   origin and states that this is a development-only relaxation of
+   #server-identifiers (L1946-L1970).
+4. **Strict by default.** `AAuthEgressPolicy.Production` stays strict.
+   Conformance tests assert that it rejects `http://localhost:5002` as an
+   issuer, identifier and metadata URL.
+5. **Documented.** The exception is listed in `aauth-spec/SPEC-VERSION.md` as a
+   deliberate development-only deviation.
+
+Migrating the samples to local https names stays out of scope. No sample code
+changes are required, for example the Trips `Program.cs` keeps
+`http://localhost:5002`.
+
+### [2026-09-30] [Phase 0] Baseline
+
+RESOLVED. The starting commit is `30b8015`, plus the owner's uncommitted
+MockPersonServer edits (`ConsentDashboard.cs`, `ConsentRegistry.cs`,
+`MissionGovernance.cs`, `Program.cs`). By owner instruction these are included
+in the baseline and never modified or committed by this plan.
+
+Gates:
+
+- The build has no errors or warnings.
+- Tests:
+  - AAuth.Tests: 1766 passed.
+  - AAuth.Conformance: 1287 passed.
+  - AAuth.R3.Tests: 330 passed.
+  - AAuth.Events.Tests: 83 passed.
+- e2e: typecheck clean; Playwright 78 passed, 1 skipped (Keycloak).
+
+`ApiSurface` snapshot: the committed map at `30b8015`
+(`.agent/plans/2026-09-11-aauth-v11-spec-migration/api-surface-map.md`,
+205 files, +910/-408 against `v0.10.0-alpha.1`). The tool reported the map as
+stale at baseline only because of the owner's sample edits
+(`ConsentRegistry.DropPending`, `MissionPendingEntry.S256 { set; }`).
+
+### [2026-09-30] [Phase 1] Critical and immediate safety fixes
+
+RESOLVED.
+
+- **R01 (SDK-01).**
+  - `AddAAuthResource` post-configures
+    `AAuthVerificationOptions.ResourceIdentifier ??= Issuer`.
+  - `AAuthVerificationMiddleware` no longer falls back to the token's own
+    `aud`. A new `RequireResourceIdentifier` answers `invalid_request` when
+    no identifier is known.
+  - `AccountVerified` no longer depends on an optional identifier.
+  - There is no public signature change, only XML docs.
+- **Negative controls** (`tests/AAuth.Conformance/HttpSignatures/VerificationMiddlewareTests.cs`):
+  - `AuthTokenAudience_DerivesFromAddAAuthResourceIssuer_ForBareUseAAuthVerification`;
+  - `AuthTokenWithoutResourceIdentifier_IsRejected_NotSelfAudienced`;
+  - `PersonTokenAudience_IsBoundToResourceIdentity`;
+  - `ExplicitResourceIdentifier_IsNotOverwrittenByAddAAuthResource`;
+  - the `AccountProof` row with no identifier now expects rejection.
+
+  Three of these failed on the unfixed code and pass after the fix.
+- **SMP-01.** The demo admin grant is an exact agent-id match
+  (`SampleIdentityClaimsAsserter.AdminAgents = { "aauth:demo@ap.example" }`),
+  applied in the PS asserter, `ConsentBridgePersonPendingStore` via
+  `IsAdminAgent`, and the Federated AS. New test:
+  `tests/AAuth.Tests/Integration/SampleIdentityClaimsAsserterTests.cs`.
+  - Three integration test files moved their test AP from `ap.test` to
+    `ap.example`, so the exact admin id stays issuable (the verifier binds
+    the agent-id domain to the AP issuer).
+- **Docs.**
+  - DOC-03: `verification-middleware.md`, `multi-scheme-verification.md` and
+    the `configuration.md` `ResourceIdentifier` row.
+  - Known-non-conformance callouts for DOC-04 (`resource-managed-access.md`),
+    DOC-05 (`interaction-chaining.md`) and DOC-06
+    (`rich-resource-requests.md`).
+  - Pessimistic claims (Q28) in `README.md` and `SPEC-VERSION.md`.
+  - The docs inventory was refreshed.
+- **Gates.**
+  - The build is clean.
+  - Tests: AAuth.Tests 1770, Conformance 1294, R3 330, Events 83.
+  - The snippet, link and inventory gates pass.
+  - ApiSurface: +912/-409, one new sample member (`AdminAgents`).
+  - e2e: typecheck clean; Playwright 78 passed, 1 skipped.
+
+## Deviations from plan
+
+### [2026-09-30] [Phase 1] SMP-01 matches the exact agent id, not id plus key
+
+PROCEEDED. Q29 said "exact subject and key thumbprint". Demo agent keys are
+ephemeral, so a pinned thumbprint would never match. The SDK verifier already
+binds the agent-id domain to the agent provider's issuer
+(`TokenVerifier.cs:664`). An exact id therefore implies the AP
+(`https://ap.example`), which closes the `aauth:demo@attacker.example`
+scenario. R10 (Phase 7) adds the SDK issuer and binding seam.
+
+The stale comment at `samples/MockPersonServer/Program.cs:50`
+("``aauth:demo@...``") is in an owner-edited file and is left for the Phase 11
+sample sweep.
+
+## Open questions / inputs needed
+
+### [2026-09-30] [Phase 0] Owner review requested on Q1 and Q2
+
+RESOLVED (owner, 2026-09-30); superseded by the Q1 and Q2 owner-ruling
+entries under *Decisions taken*.
+
+### [2026-09-30] [Phase 0] Upstream issue: replay tuple and `created`
+
+OPEN (send pending). The owner asked for the Q1 limitation to be raised with
+Dick Hardt (spec author) through the AAuth connector MCP. The connector returned
+an OAuth challenge (HTTP 401) and its tools left the session before the message
+could be sent. The draft message is kept in the session files. Send it once the
+connector is re-authenticated, then record the reply here.

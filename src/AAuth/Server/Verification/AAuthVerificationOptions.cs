@@ -34,8 +34,10 @@ public sealed class AAuthVerificationOptions
     public AAuthTrustOptions Trust { get; set; } = new();
 
     /// <summary>
-    /// This resource's own identifier — used for <c>aud</c> validation on auth tokens.
-    /// When null, audience is not validated by the middleware (caller must check).
+    /// This resource's own identifier, which auth-token and person-token <c>aud</c> must
+    /// equal. <c>AddAAuthResource</c> derives it from <see cref="AAuth.AAuthResourceOptions.Issuer"/>
+    /// when unset. When no identifier is known, auth and person tokens are rejected
+    /// (<c>invalid_request</c>); agent tokens and generic signature schemes still verify.
     /// </summary>
     public string? ResourceIdentifier { get; set; }
     public Func<Microsoft.AspNetCore.Http.HttpContext, string?>? ExpectedAccount { get; set; }
