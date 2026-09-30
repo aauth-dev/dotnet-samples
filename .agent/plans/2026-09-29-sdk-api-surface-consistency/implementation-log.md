@@ -869,6 +869,47 @@ PROCEEDED.
   Events 83 (snippet, link and docs-inventory tests included); e2e typecheck
   clean; full Playwright 78 passed, 1 skipped.
 
+### [2026-09-30] [Phase 12] Independent internal review
+
+PROCEEDED.
+- **Review.** A fresh read-only subagent reviewed `src/` since `9d5a182`
+  against P1–P6, R0, every phase's DoD, research.md and the spec rows for
+  Phases 1, 5 and 6. It reported no P0, P1, P2 or P3 findings. Its coverage:
+  R0 precedence through `AAuthSeams.Resolve<T>`, per-endpoint trust read by the
+  verification middleware, no `Func<DateTimeOffset>` clocks left, async signing
+  on every builder, token-cache single-flight locking, the
+  `AgentTokenSourceHandler` fix, factory ownership, `ValidateOnStart`
+  validators, egress policy on outbound channels, and no private-key material
+  in logs or exceptions.
+- **Citations re-derived.** Termination reasons (v11 L1520–L1526: `completed`,
+  `revoked`, `expired`, `superseded`, `administrative`) and the revocation
+  cascade and records (v11 L2750–L2758, "The cascade is by agent identity")
+  match the quoted text. The reviewer labelled its R3 entitlement citation
+  "v11 L725–L730" without naming the file. In the core protocol draft those
+  lines are the Resource Token section. In `aauth-spec/v11/draft-hardt-aauth-r3.md`,
+  L725 matches: "The resource MUST reject any request that is not signed by
+  a party entitled to that document." Draft-11 changes the entitled PS to the
+  resource token's `ps` (R3 changelog L827), which is what `R3Challenge`
+  entitles.
+- **Own spot checks.** Every `new HttpClient(` in `src` either attaches the
+  egress policy or wraps `AAuthHttpTransport.CreateHandler(policy)`, except
+  `AAuthSigningHandler.CreateClient`. That low-level helper predates this
+  initiative (it is in `9d5a182`) and sends only to caller-chosen URLs, so it
+  is P3 and not changed. `AAuthTrustRule.EvaluateAsync` fails closed: an
+  allow-list that does not contain the issuer returns `false` before any
+  predicate runs. The builder's exchange channel always uses
+  `AAuthHttpTransport.CreateHandler(_egressPolicy)`.
+- **Rulings on open items.**
+  - Scope step-up answers 403 (Phase 10a): ruled conformant, not changed.
+    v11 L641 makes it optional: "A resource MAY return
+    `requirement=auth-token` with a new resource token to a request that
+    already carries an auth token". Changing it is a wire-behaviour change,
+    which the plan's Out of scope table freezes for this initiative.
+  - Async signature-key providers: remain as ruled in the Phase 7 deviation.
+- **Final gates.** Build clean; unit and conformance suites green (Phase 11
+  run, code unchanged since); full Playwright `--retries=0` 78 passed,
+  1 skipped; Keycloak profile `federated-deferred` 1 passed.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 10] Teaching panes and dashboard URLs move to Phase 11

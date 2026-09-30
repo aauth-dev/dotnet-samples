@@ -652,9 +652,9 @@ and the spec rows cited for Phases 1, 5, and 6. Findings are severity-graded
 
 ### Definition of Done
 
-- [ ] Review report recorded in the log.
-- [ ] All P0/P1 findings fixed or ruled.
-- [ ] A final gate run is green, including the Keycloak profile and full
+- [x] Review report recorded in the log.
+- [x] All P0/P1 findings fixed or ruled.
+- [x] A final gate run is green, including the Keycloak profile and full
       Playwright `--retries=0`.
 
 ## Out of scope
