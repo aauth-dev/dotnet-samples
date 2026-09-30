@@ -6,6 +6,8 @@ namespace AAuth.Server;
 
 internal static class AAuthSourceGuard
 {
+    private static readonly TimeSpan RaceRecheckInterval = TimeSpan.FromMilliseconds(25);
+
     public static async Task<AAuthSourceGuardFailure?> CheckAsync(
         IJtiStore inventory,
         IReadOnlyCollection<TokenRegistration> sources,
@@ -39,7 +41,58 @@ internal static class AAuthSourceGuard
     {
         if (await CheckAsync(inventory, sources, timeProvider, cancellationToken).ConfigureAwait(false) is { } failure)
             return (default, failure);
-        return (await action(cancellationToken).ConfigureAwait(false), null);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        AAuthSourceGuardFailure? observedFailure = null;
+        var actionTask = action(linked.Token).AsTask();
+        var monitorTask = MonitorAsync();
+        try
+        {
+            var completed = await Task.WhenAny(actionTask, monitorTask).ConfigureAwait(false);
+            if (completed == monitorTask)
+            {
+                await monitorTask.ConfigureAwait(false);
+                if (observedFailure is { } racedFailure)
+                {
+                    linked.Cancel();
+                    _ = ObserveAsync(actionTask);
+                    return (default, racedFailure);
+                }
+            }
+
+            var value = await actionTask.ConfigureAwait(false);
+            if (await CheckAsync(inventory, sources, timeProvider, cancellationToken).ConfigureAwait(false) is { } postFailure)
+                return (default, postFailure);
+            return (value, null);
+        }
+        catch (OperationCanceledException) when (observedFailure is { } racedFailure)
+        {
+            return (default, racedFailure);
+        }
+        finally
+        {
+            linked.Cancel();
+            _ = ObserveAsync(monitorTask);
+        }
+
+        async Task MonitorAsync()
+        {
+            while (true)
+            {
+                await Task.Delay(RaceRecheckInterval, linked.Token).ConfigureAwait(false);
+                if (await CheckAsync(inventory, sources, timeProvider, linked.Token).ConfigureAwait(false) is not { } current)
+                    continue;
+                observedFailure = current;
+                linked.Cancel();
+                return;
+            }
+        }
+    }
+
+    private static async Task ObserveAsync(Task task)
+    {
+        try { await task.ConfigureAwait(false); }
+        catch (OperationCanceledException) { }
+        catch { }
     }
 }
 

@@ -229,8 +229,10 @@ directly: where an AS issued a grant against a token of the PS's (a presented
 person token or an upstream token), the PS revokes that token at the AS, and
 the AS revokes the auth tokens it issued against it. The source guard rechecks
 dependencies before pending responses, before local minting, and immediately
-before PS→AS federation; a pending dependency revocation terminates polling as
-`403 revoked` with `detail` naming the dependency, so a fresh agent token cannot
+before PS→AS federation. While that federation HTTP call is in flight, the guard
+keeps rechecking the same inventory and cancels the linked send token if a
+source is revoked; a pending dependency revocation terminates polling as `403
+revoked` with `detail` naming the dependency, so a fresh agent token cannot
 revive consent tied to a revoked predecessor.
 
 The PS also records, for each agent token it accepts, the `sub` it carried, and

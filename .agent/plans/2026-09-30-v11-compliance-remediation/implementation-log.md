@@ -862,6 +862,27 @@ Gates after the e2e-regression fixes (see the entry above):
 - e2e: full Playwright 78 passed, 1 skipped.
 - Keycloak profile: `federated-deferred` 1 passed; container removed.
 
+### [2026-09-30] [Phase 5] Revocation race during federation
+
+RESOLVED (Q7).
+
+`AAuthSourceGuard.CheckThenActAsync` now keeps rechecking the single
+`IJtiStore` inventory while the guarded outbound action is running. If any
+source dependency is revoked or expires after the immediate pre-send check but
+before the PS→AS `FederateAsync` call returns, the guard cancels the linked
+send token and returns the same terminal guard failure path used by pre-send
+revocation. The PS federation task then marks the pending entry `revoked` /
+`expired` with dependency detail and does not relay or mint the AS result.
+`CreateTrackedAsync` remains the post-answer backstop for races at result
+registration.
+
+Negative control:
+`DeferredFederationTests::RevokedPresentedTokenCancelsInFlightFederationSend`
+blocks the AS token endpoint, revokes the presented person token while that
+HTTP call is in flight, and asserts the AS request is cancelled, no AS pending
+entry is created, and the agent sees `403 revoked` with `detail` naming the
+presented token.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 1] SMP-01 matches the exact agent id, not id plus key
@@ -876,6 +897,19 @@ scenario. R10 (Phase 7) adds the SDK issuer and binding seam.
 The stale comment at `samples/MockPersonServer/Program.cs:50`
 ("``aauth:demo@...``") is in an owner-edited file and is left for the Phase 11
 sample sweep.
+
+### [2026-09-30] [Phase 5] In-flight revocation uses polling, not notification
+
+PROCEEDED. `AAuthSourceGuard.CheckThenActAsync` re-reads the source
+dependencies from `IJtiStore` every 25 ms while the guarded action runs. On a
+revocation it cancels the linked token. Because `IJtiStore` has no
+revocation-notification contract, this polling keeps Q5's single inventory
+model intact.
+
+Cost: a durable store sees about 40 lookups per second for each in-flight
+federation send. A push-based revocation notification on `IJtiStore` is the
+refinement, and is left to a durable-store initiative (see the plan's out of
+scope).
 
 ## Open questions / inputs needed
 

@@ -317,7 +317,7 @@ This phase has the highest blast radius. It defines the single inventory model
 - [x] A person token revoked while a four-party request is pending is never
       sent to the AS (spy AS). The agent then sees `403 revoked` with a
       detail.
-- [ ] A revocation that races the send is cancelled through the linked token.
+- [x] A revocation that races the send is cancelled through the linked token.
 - [x] An upstream AS auth token with no PS provenance record is rejected with
       `invalid_upstream_token`. A matching record plus a revoked
       binding/agent token is rejected with `revoked_upstream_token`.

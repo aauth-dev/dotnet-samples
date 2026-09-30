@@ -420,6 +420,41 @@ public class DeferredFederationTests
         Assert.Equal(HttpStatusCode.OK, result.StatusCode);
     }
 
+    [Fact]
+    public async Task RevokedPresentedTokenCancelsInFlightFederationSend()
+    {
+        var asserter = new ConsentAsserter(IdentityAssertion.NeedsConsent());
+        await using var fixture = await Fixture.CreateAsync("block-token", asserter);
+        var body = await fixture.BodyAsync("read");
+        var presented = (string)body["presented_token"]!;
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", body);
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        var requirement = Interaction.FromRequirement(AAuthRequirementHeader.Parse(
+            initial.Headers.GetValues("AAuth-Requirement").Single()))!;
+
+        asserter.Verdict = IdentityAssertion.Assert("approved");
+        using var browser = fixture.PersonApp.GetTestClient();
+        browser.BaseAddress = new Uri(Fixture.PsIssuer);
+        using var decision = await TestConsentBrowser.DecideAsync(browser,
+            "/interaction?code=" + requirement.Code, "/interaction/approve");
+        Assert.Equal(HttpStatusCode.NoContent, decision.StatusCode);
+
+        await fixture.Blocker!.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var payload = Payload(presented);
+        await fixture.Inventory.RevokeAsync(
+            new TokenKey(Fixture.PsIssuer, (string)payload["jti"]!),
+            DateTimeOffset.FromUnixTimeSeconds((long)payload["exp"]!));
+
+        using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        var problem = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("revoked", (string?)problem["error"]);
+        Assert.Contains("presented", (string?)problem["detail"], StringComparison.OrdinalIgnoreCase);
+        await fixture.Blocker.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, fixture.Blocker.Requests);
+        Assert.Null(fixture.Store.Last);
+    }
+
     [Theory]
     [InlineData("agent_token")]
     [InlineData("resource_token")]
@@ -1151,6 +1186,37 @@ public class DeferredFederationTests
                 : base.SendAsync(request, cancellationToken);
     }
 
+    private sealed class BlockingTokenEndpoint
+    {
+        private int _requests;
+        public int Requests => Volatile.Read(ref _requests);
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task InvokeAsync(HttpContext context, Func<Task> next)
+        {
+            if (context.Request.Path != "/token")
+            {
+                await next();
+                return;
+            }
+
+            Interlocked.Increment(ref _requests);
+            Started.TrySetResult();
+            try
+            {
+                await Release.Task.WaitAsync(context.RequestAborted);
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                Cancelled.TrySetResult();
+                throw;
+            }
+            await next();
+        }
+    }
+
     [Fact]
     public async Task PsCanTriageLocallyWithoutRelayingToAgent()
     {
@@ -1252,6 +1318,7 @@ public class DeferredFederationTests
         public required IJtiStore Inventory;
         public required Discovery DiscoveryTransport;
         public required Logs Logs { get; init; }
+        public BlockingTokenEndpoint? Blocker { get; init; }
         public DirectCapture? DirectRequest;
         public AccessPendingEntry AsEntry => Store.Last!;
 
@@ -1383,6 +1450,8 @@ public class DeferredFederationTests
                 if (context.Request.Path != "/token") { await next(); return; }
                 await context.Response.WriteAsJsonAsync(new { auth_token = "not.a.token" });
             });
+            var blocker = outcome == "block-token" ? new BlockingTokenEndpoint() : null;
+            if (blocker is not null) access.Use(blocker.InvokeAsync);
             access.MapAAuthAccessServer();
             var accessSessions = new BrowserConsentSessions("as-consent-tests", "test-person", isolatedDemoAccess: _ => true);
             access.MapMethods("/interaction/login", ["GET", "POST"], async (HttpContext context) =>
@@ -1487,11 +1556,13 @@ public class DeferredFederationTests
                 Inventory = inventory,
                 DiscoveryTransport = discoveryTransport,
                 Logs = logs,
+                Blocker = blocker,
             };
         }
 
         public async ValueTask DisposeAsync()
         {
+            Blocker?.Release.TrySetResult();
             Agent.Dispose(); Ps.Dispose(); await PersonApp.DisposeAsync(); await AccessApp.DisposeAsync();
         }
     }
