@@ -407,10 +407,17 @@ public class DeferredFederationTests
             Assert.Null(revoked.Failure);
         }
         using var answer = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location, new { action = "clarification_response", clarification_response = "resource policy approved" });
+        if (revoke)
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, answer.StatusCode);
+            var revokedBody = (await answer.Content.ReadFromJsonAsync<JsonObject>())!;
+            Assert.Equal("revoked", (string?)revokedBody["error"]);
+            Assert.Contains("upstream", (string?)revokedBody["detail"], StringComparison.OrdinalIgnoreCase);
+            return;
+        }
         Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);
         using var result = await fixture.Ps.GetAsync(initial.Headers.Location);
-        Assert.Equal(revoke ? HttpStatusCode.Forbidden : HttpStatusCode.OK, result.StatusCode);
-        if (revoke) Assert.Equal("revoked", (string?)(await result.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Equal(HttpStatusCode.OK, result.StatusCode);
     }
 
     [Theory]

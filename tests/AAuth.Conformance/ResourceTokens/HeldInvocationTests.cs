@@ -43,11 +43,13 @@ public sealed class HeldInvocationTests
     }
 
     // Stands in for verification: headers name the token type, jti, exp, key and scope.
-    private static async Task<(WebApplication App, HttpClient Client, Func<int> Executions)> StartAsync(Clock clock)
+    private static async Task<(WebApplication App, HttpClient Client, Func<int> Executions, InMemoryJtiStore Inventory)> StartAsync(Clock clock)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddAAuthHeldInvocations(options => options.TimeProvider = clock);
+        var inventory = new InMemoryJtiStore(clock);
+        builder.Services.AddSingleton<IJtiStore>(inventory);
         var app = builder.Build();
         var executions = 0;
         app.Use(async (context, next) =>
@@ -78,7 +80,7 @@ public sealed class HeldInvocationTests
                 Task.FromResult(HeldInvocationResult.Json(new { order = ++executions }, StatusCodes.Status201Created)));
         app.MapAAuthHeldInvocations();
         await app.StartAsync();
-        return (app, app.GetTestClient(), () => executions);
+        return (app, app.GetTestClient(), () => executions, inventory);
     }
 
     private static HttpRequestMessage Poll(Uri location, Clock clock, string jti, string? jkt = null, string scope = "orders.write",
@@ -97,7 +99,7 @@ public sealed class HeldInvocationTests
     public async Task Hold_AnswersPendingUntilAuthToken()
     {
         var clock = new Clock();
-        var (app, client, executions) = await StartAsync(clock);
+        var (app, client, executions, _) = await StartAsync(clock);
         await using var _ = app;
 
         using var held = await client.PostAsJsonAsync("/orders", new { item = "hotel" });
@@ -111,11 +113,31 @@ public sealed class HeldInvocationTests
         Assert.Equal(0, executions());
     }
 
+    [Fact(DisplayName = "§Deferred Delivery — revoked held resource token terminates with revoked detail")]
+    public async Task RevokedHeldResourceToken_TerminatesPending()
+    {
+        var clock = new Clock();
+        var (app, client, executions, inventory) = await StartAsync(clock);
+        await using var _ = app;
+        using var held = await client.PostAsJsonAsync("/orders", new { item = "hotel" });
+        var payload = TokenVerifier.DecodeJsonSegment(ResourceToken.Split('.')[1], "payload");
+        await inventory.RevokeAsync(new TokenKey((string)payload["iss"]!, (string)payload["jti"]!),
+            DateTimeOffset.FromUnixTimeSeconds((long)payload["exp"]!));
+
+        using var poll = await client.GetAsync(held.Headers.Location);
+
+        Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
+        var body = (await poll.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("revoked", (string?)body["error"]);
+        Assert.Contains("resource", (string?)body["detail"], StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, executions());
+    }
+
     [Fact(DisplayName = "§Deferred Delivery — first observed held expiry is 408, then the pending id is gone")]
     public async Task ExpiredHeldInvocation_FirstObservationIs408Then410()
     {
         var clock = new Clock();
-        var (app, client, executions) = await StartAsync(clock);
+        var (app, client, executions, _) = await StartAsync(clock);
         await using var _ = app;
         using var held = await client.PostAsJsonAsync("/orders", new { item = "hotel" });
 
@@ -134,7 +156,7 @@ public sealed class HeldInvocationTests
     public async Task RepeatedAuthToken_ReturnsRetainedResult()
     {
         var clock = new Clock();
-        var (app, client, executions) = await StartAsync(clock);
+        var (app, client, executions, _) = await StartAsync(clock);
         await using var _ = app;
         using var held = await client.PostAsJsonAsync("/orders", new { item = "hotel" });
         var location = held.Headers.Location!;
@@ -159,7 +181,7 @@ public sealed class HeldInvocationTests
     public async Task ConcurrentPolls_ExecuteOnce()
     {
         var clock = new Clock();
-        var (app, client, executions) = await StartAsync(clock);
+        var (app, client, executions, _) = await StartAsync(clock);
         await using var _ = app;
         using var held = await client.PostAsJsonAsync("/orders", new { item = "hotel" });
 
@@ -177,7 +199,7 @@ public sealed class HeldInvocationTests
     public async Task ForeignKeyOrMissingScope_DoesNotExecute(string variant)
     {
         var clock = new Clock();
-        var (app, client, executions) = await StartAsync(clock);
+        var (app, client, executions, _) = await StartAsync(clock);
         await using var _ = app;
         using var held = await client.PostAsJsonAsync("/orders", new { item = "hotel" });
 

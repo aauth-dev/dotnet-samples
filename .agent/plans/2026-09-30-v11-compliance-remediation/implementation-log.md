@@ -768,6 +768,36 @@ Gates:
 - The inventory, snippet and link gates pass.
 - e2e: full Playwright 78 passed, 1 skipped.
 
+### [2026-09-30] [Phase 5] R06 — Source guard, pending revocation and step-up
+
+RESOLVED (Q5/Q7/Q8).
+
+- `TokenRegistration` now carries source metadata for the single inventory
+  model. PS/AS pending entries store typed registrations rather than parallel
+  `TokenKey` lists, and tracked issuance checks those dependencies before
+  minting.
+- A shared source guard runs before pending responses, local mint, held
+  invocation polling, AS callbacks, and the final PS→AS federation send. On
+  pending failure it returns terminal `403 revoked` / `408 expired` with
+  dependency detail; the PS federation path cancels the linked HTTP token and
+  flips the entry to terminal state.
+- Revoked auth-token verification still returns `401 Signature-Error:
+  error=revoked_jwt` and now also includes `AAuth-Requirement:
+  requirement=person-token`.
+- `RequireAAuth(scope:)` / `UseAAuth` now step up a valid auth token missing
+  the endpoint scope with `401 requirement=auth-token` and a resource token
+  bound to the presented auth token. Named scope policies, roles and claims
+  remain ordinary `403` authorization denials.
+- Negative controls landed in `RevocationLifecycleTests`,
+  `HeldInvocationTests`, `ChallengeMiddlewareTests`,
+  `ReplayDetectionMiddlewareTests`, `ChallengeHandlerTests`, and
+  `TrackedIssuanceTests`.
+- Samples checked for stale insufficient-scope `403` assumptions. Calendar
+  prose/comments were updated; owner-edited `samples/MockPersonServer/*` was
+  not touched. Broader e2e/sample wording (including MissionAgent cache and
+  mission gate hand-walk notes) remains for Phase 11 unless orchestrator e2e
+  finds breakage.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 1] SMP-01 matches the exact agent id, not id plus key

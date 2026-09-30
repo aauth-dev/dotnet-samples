@@ -44,8 +44,10 @@ always checked against this resource.
     verify the expected token type, issuer signature and claims before using `cnf.jwk`.
 3. Verify the HTTP signature in covered-component order, including `expires`,
     key binding and required additional fields. Ignore the signature `alg` parameter.
-4. Apply issuer and endpoint authorization policy. A 403 has no signature-error
-    or signature-negotiation headers.
+4. Apply issuer and endpoint authorization policy. A valid auth token that is
+   missing the endpoint scope is stepped up with `401 requirement=auth-token`;
+   other authorization denials are 403s with no signature-error or
+   signature-negotiation headers.
 
 ## Options
 
@@ -154,7 +156,8 @@ app.MapGet("/pseudonymous", handler).RequireGenericSignature();
 app.MapGet("/identified", handler).RequireGenericSignature(identified: true);
 
 // Three-party (jwt) — full issuer + audience verification, plus a per-endpoint
-// challenge requesting the scope this route protects.
+// challenge requesting the scope this route protects. A narrower auth token can
+// be stepped up with a new resource token for that scope.
 app.MapGet("/events", handler).RequireAAuth(scope: "calendar.read");
 app.MapGet("/events/write", handler).RequireAAuth(scope: "calendar.write");
 ```

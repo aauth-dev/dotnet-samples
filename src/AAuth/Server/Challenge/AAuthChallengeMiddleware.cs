@@ -122,9 +122,20 @@ public sealed class AAuthChallengeMiddleware
             return;
         }
 
-        // Auth token already present → pass through.
+        // Auth token already present but narrower than endpoint scope: step up
+        // with a resource token bound to that auth token. Role/claim denials
+        // still flow to ASP.NET authorization as 403.
         if (tokenType == AAuthTokenType.AuthToken)
         {
+            var requiredScope = RequiredScope(context);
+            if (!string.IsNullOrEmpty(requiredScope)
+                && context.Features.Get<AAuthVerificationResult>() is { } verified
+                && !verified.Scopes.Contains(requiredScope)
+                && context.Features.Get<AAuthVerifiedAssertion>() is { } authToken)
+            {
+                await IssueChallenge(context, authToken, parsedInfo, requiredScope).ConfigureAwait(false);
+                return;
+            }
             await _next(context).ConfigureAwait(false);
             return;
         }
@@ -141,7 +152,7 @@ public sealed class AAuthChallengeMiddleware
         if (tokenType == AAuthTokenType.PersonToken
             && context.Features.Get<AAuthVerifiedAssertion>() is { } presented)
         {
-            await IssueChallenge(context, presented, parsedInfo).ConfigureAwait(false);
+            await IssueChallenge(context, presented, parsedInfo, RequiredScope(context)).ConfigureAwait(false);
             return;
         }
 
@@ -203,12 +214,14 @@ public sealed class AAuthChallengeMiddleware
     private async Task IssueChallenge(
         HttpContext context,
         AAuthVerifiedAssertion presented,
-        SignatureKeyParser.ParsedSignatureKeyInfo? parsedInfo)
+        SignatureKeyParser.ParsedSignatureKeyInfo? parsedInfo,
+        string? requestedScope)
     {
         var definitions = _options.ScopeDescriptions
             ?? context.RequestServices?.GetService<AAuthResourceMetadataOptions>()?.ScopeDescriptions;
         IReadOnlyCollection<string>? identityScopes = null;
-        var requestedScopes = (_options.DefaultScopes ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        requestedScope ??= _options.DefaultScopes;
+        var requestedScopes = (requestedScope ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (requestedScopes.Any(scope => definitions?.ContainsKey(scope) != true))
         {
             var metadata = context.RequestServices!.GetRequiredService<MetadataClient>();
@@ -216,7 +229,7 @@ public sealed class AAuthChallengeMiddleware
             identityScopes = (person["scopes_supported"] as System.Text.Json.Nodes.JsonArray)?
                 .Select(scope => scope?.GetValue<string>() ?? "").ToArray();
         }
-        var resourceToken = await BuildResourceTokenAsync(_options, presented, _options.DefaultScopes,
+        var resourceToken = await BuildResourceTokenAsync(_options, presented, requestedScope,
             _options.RequestedAccount?.Invoke(context), definitions, identityScopes,
             cancellationToken: context.RequestAborted);
 
@@ -224,4 +237,8 @@ public sealed class AAuthChallengeMiddleware
         context.Response.Headers[AAuthRequirementHeader.Name] =
             AAuthRequirementHeader.FormatAuthToken(resourceToken);
     }
+
+    private string? RequiredScope(HttpContext context)
+        => context.GetEndpoint()?.Metadata.GetMetadata<AAuth.Server.Endpoints.AAuthEndpointRequirement>()?.Scope
+            ?? _options.DefaultScopes;
 }

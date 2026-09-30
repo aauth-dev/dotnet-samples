@@ -88,7 +88,31 @@ public class RevocationLifecycleTests
         Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
         var body = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
         Assert.Equal("revoked", (string?)body["error"]);
+        Assert.Contains("upstream", (string?)body["detail"], StringComparison.OrdinalIgnoreCase);
         Assert.False(body.ContainsKey("auth_token"));
+    }
+
+    [Fact]
+    public async Task FourPartyApproval_DoesNotFederateRevokedPresentedToken()
+    {
+        await using var graph = await Graph.CreateAsync(consent: true);
+        var agent = await graph.AgentTokenAsync(FirstProvider, "agent");
+        var personToken = await graph.PersonTokenAsync(agent, FirstResource);
+        using var initial = await graph.RequestAsync(agent, FirstResource, federated: true, personToken: personToken);
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+
+        using var ps = graph.Signed(Person, AuthTokenBuilder.PersonDwk);
+        Assert.Equal(HttpStatusCode.OK, (await Revoke(ps, Person, personToken)).StatusCode);
+        graph.Pending.MarkAllowed(initial.Headers.Location!.ToString().Split('/').Last(), "person");
+
+        using var client = graph.AgentClient(agent);
+        using var result = await client.GetAsync(Person + initial.Headers.Location);
+
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        var body = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("revoked", (string?)body["error"]);
+        Assert.Contains("presented", (string?)body["detail"], StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, graph.AccessTokenRequests);
     }
 
     [Theory]
@@ -286,6 +310,7 @@ public class RevocationLifecycleTests
         Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
         var body = await poll.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("revoked", (string?)body!["error"]);
+        Assert.Contains("agent", (string?)body["detail"], StringComparison.OrdinalIgnoreCase);
         Assert.False(body.ContainsKey("auth_token"));
     }
 
@@ -382,6 +407,7 @@ public class RevocationLifecycleTests
         public List<(string Resource, TokenKey Token)> Revocations { get; } = [];
         public InMemoryJtiStore PersonInventory { get; } = new();
         public Dictionary<string, string> Failing { get; } = new();
+        public int AccessTokenRequests { get; private set; }
 
         public static async Task<Graph> CreateAsync(bool consent = false)
         {
@@ -621,6 +647,8 @@ public class RevocationLifecycleTests
                             ["auth_token_endpoint"] = issuer + "/token", ["revocation_endpoint"] = issuer + "/revoke" };
                     return new(HttpStatusCode.OK) { Content = JsonContent.Create(document) };
                 }
+                if (issuer == Access && request.RequestUri.AbsolutePath == "/token")
+                    graph.AccessTokenRequests++;
                 if (!graph._hosts.TryGetValue(issuer, out var host)) return new(HttpStatusCode.NotFound);
                 using var transport = new HttpMessageInvoker(host.GetTestServer().CreateHandler());
                 return await transport.SendAsync(request, cancellationToken);

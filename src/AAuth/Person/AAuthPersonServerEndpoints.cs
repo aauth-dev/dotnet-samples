@@ -394,10 +394,45 @@ public static class AAuthPersonServerEndpoints
                 : null;
         }
 
+        async Task<IResult?> PendingSourceFailureAsync(PersonPendingEntry entry, System.Threading.CancellationToken ct)
+        {
+            if (await AAuthSourceGuard.CheckAsync(inventory, entry.SourceTokens, options.TimeProvider, ct) is not { } failure)
+                return null;
+            entry.FederationCancellation.Cancel();
+            entry.Status = PersonPendingStatus.Denied;
+            entry.Error = failure.IsRevoked ? "revoked" : "expired";
+            entry.ErrorStatus = failure.IsRevoked ? StatusCodes.Status403Forbidden : StatusCodes.Status408RequestTimeout;
+            entry.ErrorDetail = failure.Detail();
+            return failure.ToPendingResult();
+        }
+
+        async Task<bool> TerminateFederationOnSourceFailureAsync(PersonPendingEntry entry, AAuthSourceGuardFailure failure)
+        {
+            await entry.Lifecycle.Gate.WaitAsync();
+            try
+            {
+                if (entry.Lifecycle.Cancelled || entry.Lifecycle.Delivered)
+                    return false;
+                entry.FederationCancellation.Cancel();
+                entry.Status = PersonPendingStatus.Denied;
+                entry.Error = failure.IsRevoked ? "revoked" : "expired";
+                entry.ErrorStatus = failure.IsRevoked ? StatusCodes.Status403Forbidden : StatusCodes.Status408RequestTimeout;
+                entry.ErrorDetail = failure.Detail();
+                return true;
+            }
+            finally
+            {
+                entry.FirstAnswer.TrySetResult();
+                entry.Lifecycle.Gate.Release();
+            }
+        }
+
         async Task<(IReadOnlyList<TokenRegistration>? Sources, IResult? Failure)> RegisterSourcesAsync(
-            AgentIssuanceContext issuance, TokenVerifier.VerifiedToken? presented, string? missionS256, System.Threading.CancellationToken ct)
+            AgentIssuanceContext issuance, TokenVerifier.VerifiedToken? resource, TokenVerifier.VerifiedToken? presented,
+            string? missionS256, System.Threading.CancellationToken ct)
         {
             var registrations = new List<TokenRegistration>(issuance.SourceTokens);
+            if (resource is not null) registrations.Add(TokenRegistration.FromVerified(resource, TokenCredential.Resource));
             if (presented is not null) registrations.Add(TokenRegistration.FromVerified(presented, TokenCredential.Presented));
             // A chained request neither uses nor establishes a binding (#agent-person-binding).
             if (issuance.Upstream is null) registrations.Add(AgentPersonBinding.Registration(issuer, issuance.AgentIssuer, issuance.AgentId));
@@ -419,7 +454,6 @@ public static class AAuthPersonServerEndpoints
                 registrations.Add(RevocationRecords.Registration(RevocationRecords.Mission(issuer, missionS256)));
         }
 
-        static IReadOnlyList<TokenKey> Keys(IReadOnlyList<TokenRegistration> sources) => sources.Select(source => source.Token).ToArray();
         IResult? MissionExpired(string? missionS256) => missionS256 is null ? null
             : GovernanceEndpoints.MissionTerminated(AAuthConstants.MissionTerminationReasons.Expired);
 
@@ -445,7 +479,7 @@ public static class AAuthPersonServerEndpoints
             var tokens = new Dictionary<string, string>(StringComparer.Ordinal);
             if (request.PersonServer != issuer || request.SourceTokens.Count == 0 || !MissionReference.IsValid(request.MissionS256))
                 return tokens;
-            IReadOnlyList<TokenKey> sources;
+            IReadOnlyList<TokenRegistration> sources;
             try
             {
                 var agentIssuer = request.SourceTokens[0].Token.Issuer;
@@ -454,7 +488,8 @@ public static class AAuthPersonServerEndpoints
                     AgentPersonBinding.Registration(issuer, agentIssuer, request.AgentId),
                 };
                 AddCascadeIndexes(registrations, agentIssuer, request.AgentId, request.MissionS256);
-                sources = await TokenRegistration.RegisterAsync(inventory, registrations, ct);
+                await TokenRegistration.RegisterAsync(inventory, registrations, ct);
+                sources = registrations;
                 await inventory.RecordSubjectAsync(request.SourceTokens[0].Token, request.AgentId, ct);
             }
             catch (TokenVerificationException) { return tokens; }
@@ -518,7 +553,7 @@ public static class AAuthPersonServerEndpoints
             }
             var ceiling = missionExpiresAt is { } missionExpiry ? Earliest(issuance!.ExpiresAt, missionExpiry) : issuance!.ExpiresAt;
 
-            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented: null, missionS256, ctx.RequestAborted);
+            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, resource: null, presented: null, missionS256, ctx.RequestAborted);
             if (sourceFailure is not null) return sourceFailure;
             var sources = registered!;
 
@@ -557,7 +592,7 @@ public static class AAuthPersonServerEndpoints
                         issuance.AgentTokenExpiresAt, missionS256, ceiling);
                     entry.PersonToken = true;
                     BindOwner(ctx, entry);
-                    entry.SourceTokens = Keys(sources);
+                    entry.SourceTokens = sources;
                     entry.UpstreamAuthorization = issuance.Upstream;
                     entry.Prompt = prompt;
                     entry.Capabilities = capabilities;
@@ -623,6 +658,8 @@ public static class AAuthPersonServerEndpoints
             {
                 if (entry.ExpiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
                     return AuthTokenResponse.Expired();
+                if (await PendingSourceFailureAsync(entry, ctx.RequestAborted) is { } sourceFailure)
+                    return sourceFailure;
                 if (entry.MissionS256 is { } pendingMission
                     && await app.Services.GetRequiredService<IMissionStore>().GetAsync(pendingMission)
                         is { State: MissionState.Terminated })
@@ -665,7 +702,7 @@ public static class AAuthPersonServerEndpoints
                         {
                             ctx.Response.Headers.Location = entry.ErrorLocation;
                         }
-                        return ExchangeFailure(entry.Error ?? "denied", null, entry.ErrorStatus ?? StatusCodes.Status403Forbidden);
+                        return ExchangeFailure(entry.Error ?? "denied", entry.ErrorDetail, entry.ErrorStatus ?? StatusCodes.Status403Forbidden);
                     }
                     // §Deferred Responses: AAuth-Requirement is present only when the person
                     // must act. Waiting on the AS (e.g. after a clarification answer) asks
@@ -707,6 +744,8 @@ public static class AAuthPersonServerEndpoints
                 {
                     return AAuth.Server.AAuthProblemDetails.Polling(PollingErrorCode.Abandoned);
                 }
+                if (await PendingSourceFailureAsync(entry, ctx.RequestAborted) is { } sourceFailure)
+                    return sourceFailure;
 
                 JsonObject? body;
                 try { body = await TokenRequestBody.ReadAsync(ctx.Request, tokenVerifier); }
@@ -1029,7 +1068,7 @@ public static class AAuthPersonServerEndpoints
                 { return ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode); }
             }
 
-            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented, missionS256, ctx.RequestAborted);
+            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, resource, presented, missionS256, ctx.RequestAborted);
             if (sourceFailure is not null) return sourceFailure;
             var sourceTokens = registered!;
 
@@ -1042,7 +1081,7 @@ public static class AAuthPersonServerEndpoints
                 entry.PresentedToken = presentedTokenJwt;
                 entry.PersonSubject = subject;
                 entry.PersonTenant = tenant;
-                entry.SourceTokens = Keys(sourceTokens);
+                entry.SourceTokens = sourceTokens;
                 entry.UpstreamAuthorization = issuance.Upstream;
                 entry.Prompt = prompt;
                 entry.Capabilities = capabilities;
@@ -1227,7 +1266,7 @@ public static class AAuthPersonServerEndpoints
                 catch (AAuthTokenExchangeException ex)
                 { return ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode); }
             }
-            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented, federatedMission, ctx.RequestAborted);
+            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, resource, presented, federatedMission, ctx.RequestAborted);
             if (sourceFailure is not null) return sourceFailure;
             var sourceTokens = registered!;
 
@@ -1237,7 +1276,7 @@ public static class AAuthPersonServerEndpoints
                 issuance.AgentTokenExpiresAt, federatedMission, ceiling);
             entry.ResourceContext = federatedContext;
             entry.UpstreamAuthorization = issuance.Upstream;
-            entry.SourceTokens = Keys(sourceTokens);
+            entry.SourceTokens = sourceTokens;
             entry.Prompt = prompt;
             entry.Capabilities = capabilities;
             entry.AgentAsserted = agentAsserted;
@@ -1261,10 +1300,18 @@ public static class AAuthPersonServerEndpoints
                     throw new AAuthTokenExchangeException("mission_terminated", null, 403, true);
             }
 
+            async Task ThrowIfSourceInvalidAsync(System.Threading.CancellationToken ct)
+            {
+                if (await AAuthSourceGuard.CheckAsync(inventory, entry.SourceTokens, options.TimeProvider, ct) is { } failure)
+                    throw new AAuthTokenExchangeException(failure.IsRevoked ? "revoked" : "expired",
+                        failure.Detail(), failure.IsRevoked ? StatusCodes.Status403Forbidden : StatusCodes.Status408RequestTimeout, true);
+            }
+
             string? consentedResourceToken = null;
             string? missionConsentedResourceToken = null;
             async Task<IdentityAssertion> RequireConsentAsync(IReadOnlyList<string>? requiredClaims, System.Threading.CancellationToken ct)
             {
+                await ThrowIfSourceInvalidAsync(ct);
                 if (entry.ResourceInteraction is { } resourceInteraction
                     && !await resourceInteraction.Completion.Task.WaitAsync(ct))
                     throw new AAuthTokenExchangeException(resourceInteraction.Error!, null, resourceInteraction.ErrorStatus, true);
@@ -1359,6 +1406,7 @@ public static class AAuthPersonServerEndpoints
             async Task ApplyReplacementAsync(string replacementResourceToken, string replacementPresentedToken,
                 System.Threading.CancellationToken ct)
             {
+                await ThrowIfSourceInvalidAsync(ct);
                 var (replacement, replacementPresented) = await VerifyPairAsync(replacementResourceToken, replacementPresentedToken,
                     resourceAudience, entry.ResourceKeyThumbprint!, ct);
                 RequireSameRequest(entry.ResourceContext!, replacement.Payload);
@@ -1442,6 +1490,7 @@ public static class AAuthPersonServerEndpoints
                 // same asserter, projecting only the requested claims (never `sub`).
                 OnClaimsRequired = async (claimsRequirement, ct) =>
                 {
+                    await ThrowIfSourceInvalidAsync(ct);
                     var asserted = await RequireConsentAsync(claimsRequirement.RequiredClaims, ct);
                     return new ClaimsResponse { Claims = ProjectClaims(asserted, claimsRequirement.RequiredClaims) };
                 },
@@ -1453,9 +1502,17 @@ public static class AAuthPersonServerEndpoints
                 {
                     entry.FederationCancellation.CancelAfter(entry.PendingExpiresAt - options.TimeProvider.GetUtcNow());
                     await RequireConsentAsync(null, entry.FederationCancellation.Token);
-                    var token = await federation.FederateAsync(resourceAudience, fedRequest, entry.FederationCancellation.Token);
+                    var (token, guardFailure) = await AAuthSourceGuard.CheckThenActAsync(inventory, entry.SourceTokens,
+                        options.TimeProvider,
+                        ct => new ValueTask<string>(federation.FederateAsync(resourceAudience, fedRequest, ct)),
+                        entry.FederationCancellation.Token);
+                    if (guardFailure is { } failed)
+                    {
+                        await TerminateFederationOnSourceFailureAsync(entry, failed);
+                        return;
+                    }
                     await ThrowIfMissionTerminatedAsync();
-                    var tracked = await AuthTokenResponse.CreateTrackedAsync(_ => ValueTask.FromResult(token), entry.ExpiresAt,
+                    var tracked = await AuthTokenResponse.CreateTrackedAsync(_ => ValueTask.FromResult(token!), entry.ExpiresAt,
                         inventory, entry.SourceTokens, options.TimeProvider, entry.FederationCancellation.Token);
                     if (tracked is not IStatusCodeHttpResult { StatusCode: StatusCodes.Status200OK })
                         throw new AAuthInteractionDeniedException("Source authorization was revoked before federation completed.");
@@ -1494,6 +1551,7 @@ public static class AAuthPersonServerEndpoints
                 {
                     entry.Error = ex.ErrorCode;
                     entry.ErrorStatus = ex.StatusCode;
+                    entry.ErrorDetail = ex.Detail;
                     entry.Status = PersonPendingStatus.Denied;
                 }
                 catch (AAuthPaymentRequiredException ex)
@@ -1552,7 +1610,7 @@ public static class AAuthPersonServerEndpoints
             {
                 ctx.Response.Headers.Location = entry.ErrorLocation;
             }
-            return ExchangeFailure(entry.Error ?? "denied", null, entry.ErrorStatus ?? StatusCodes.Status403Forbidden);
+            return ExchangeFailure(entry.Error ?? "denied", entry.ErrorDetail, entry.ErrorStatus ?? StatusCodes.Status403Forbidden);
         }
     }
 

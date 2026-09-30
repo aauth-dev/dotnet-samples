@@ -220,15 +220,18 @@ Register `IJtiStore` in DI to supply a durable inventory and `RevocationClient`
 transport. Defaults are in-memory inventory and a server-signed, pinned HTTP
 transport.
 
-The PS records the verified parent and child source tokens, retains their keys
-through consent and federation, and records grants with each exact resource
-recipient. A revocation is recorded first; the recipient then revokes each
-grant it issued at that grant's resource, signing as itself. A PS never revokes
-an AS-issued grant directly: where an AS issued a grant against a token of the
-PS's (a presented person token or an upstream token), the PS revokes that token
-at the AS, and the AS revokes the auth tokens it issued against it. Deferred
-delivery rechecks the original source, so a fresh agent token cannot revive
-consent tied to a revoked predecessor.
+The PS records typed source dependencies (agent, resource, presented,
+upstream, sub-agent, binding, and mission index) through consent and
+federation, and records grants with each exact resource recipient. A revocation
+is recorded first; the recipient then revokes each grant it issued at that
+grant's resource, signing as itself. A PS never revokes an AS-issued grant
+directly: where an AS issued a grant against a token of the PS's (a presented
+person token or an upstream token), the PS revokes that token at the AS, and
+the AS revokes the auth tokens it issued against it. The source guard rechecks
+dependencies before pending responses, before local minting, and immediately
+before PS→AS federation; a pending dependency revocation terminates polling as
+`403 revoked` with `detail` naming the dependency, so a fresh agent token cannot
+revive consent tied to a revoked predecessor.
 
 The PS also records, for each agent token it accepts, the `sub` it carried, and
 indexes every token it issues by that agent identity and by its mission. An agent

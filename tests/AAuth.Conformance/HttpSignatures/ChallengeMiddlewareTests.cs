@@ -202,7 +202,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         }.BuildAsync();
     }
 
-    private ValueTask<string> BuildAuthTokenAsync()
+    private ValueTask<string> BuildAuthTokenAsync(string? scope = ResourceScope, string? role = null)
     {
         return new AuthTokenBuilder
         {
@@ -215,7 +215,8 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             Key = _psKey,
             KeyId = "ps-key-1",
             Subject = "pairwise-sub",
-            Scope = ResourceScope,
+            Scope = scope,
+            Roles = role is null ? null : [role],
             IssuedAt = FixedClock,
         }.BuildAsync();
     }
@@ -393,6 +394,26 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         var token = await BuildAuthTokenAsync();
         var response = await SendSigned(_challengeHost!, token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Auth Token Required — narrower auth token gets scope step-up")]
+    public async Task AuthTokenMissingEndpointScope_StepUpChallenge()
+    {
+        var token = await BuildAuthTokenAsync("data:read-basic");
+        var response = await SendSigned(_challengeHost!, token);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var headerValue = Assert.Single(response.Headers.GetValues(AAuthRequirementHeader.Name));
+        var requirement = AAuthRequirementHeader.Parse(headerValue);
+        Assert.Equal(AAuthRequirementHeader.AuthTokenRequirement, requirement.Requirement);
+        Assert.NotNull(requirement.ResourceToken);
+
+        var resource = JsonNode.Parse(Base64UrlDecode(requirement.ResourceToken!.Split('.')[1]))!.AsObject();
+        var auth = JsonNode.Parse(Base64UrlDecode(token.Split('.')[1]))!.AsObject();
+        Assert.Equal(ResourceScope, (string?)resource["scope"]);
+        Assert.Equal((string?)auth["jti"], (string?)resource["presented_jti"]);
+        Assert.Equal(PsIssuer, (string?)resource["ps"]);
+        Assert.Equal("pairwise-sub", (string?)resource["sub"]);
     }
 
     [Fact(DisplayName = "UseAAuth — per-endpoint trust override beats the resource-wide trust")]

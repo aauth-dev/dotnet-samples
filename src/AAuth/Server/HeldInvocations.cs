@@ -332,6 +332,14 @@ internal sealed class AAuthHeldInvocations(IOptions<AAuthHeldInvocationOptions> 
             return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
         var now = _options.TimeProvider.GetUtcNow();
         var assertion = context.Features.Get<AAuthVerifiedAssertion>();
+        if (context.RequestServices.GetService<IJtiStore>() is { } inventory)
+        {
+            var resource = TokenRegistration.FromPayload(TokenVerifier.DecodeJsonSegment(entry.ResourceToken.Split('.')[1], "payload"))
+                with { Credential = TokenCredential.Resource };
+            if (await AAuthSourceGuard.CheckAsync(inventory, [resource], _options.TimeProvider, context.RequestAborted)
+                    .ConfigureAwait(false) is { IsRevoked: true } sourceFailure)
+                return sourceFailure.ToPendingResult();
+        }
         if (verified is not { TokenType: AAuthTokenType.AuthToken, IssuerVerified: true }
             || assertion is null || (string?)assertion.Token.Payload["jti"] is not { Length: > 0 } jti)
         {

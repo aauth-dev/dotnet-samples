@@ -192,7 +192,8 @@ public static class R3AccessTokenEndpoint
             }
 
             IReadOnlyList<TokenRegistration> sourceRegistrations =
-                [.. issuance.SourceTokens, TokenRegistration.FromVerified(verifiedPresented, TokenCredential.Presented)];
+                [.. issuance.SourceTokens, TokenRegistration.FromVerified(verifiedResource, TokenCredential.Resource),
+                    TokenRegistration.FromVerified(verifiedPresented, TokenCredential.Presented)];
             try
             {
                 await TokenRegistration.RegisterAsync(inventory, sourceRegistrations, context.RequestAborted);
@@ -333,6 +334,9 @@ public static class R3AccessTokenEndpoint
                     case R3PendingStatus.Allowed:
                         if (entry.Issuance.ExpiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
                             return AuthTokenResponse.Expired();
+                        if (await AAuthSourceGuard.CheckAsync(inventory, entry.Issuance.SourceTokens, options.TimeProvider, context.RequestAborted)
+                                .ConfigureAwait(false) is { } sourceFailure)
+                            return sourceFailure.ToPendingResult();
                         if (entry.AuthToken is null)
                         {
                             // Mint-once gate: concurrent polls of the same approval must not
@@ -351,7 +355,7 @@ public static class R3AccessTokenEndpoint
                             }
                         }
                         return await AuthTokenResponse.CreateTrackedAsync(_ => ValueTask.FromResult(entry.AuthToken), entry.Issuance.ExpiresAt,
-                            inventory, entry.Issuance.SourceTokens.Select(source => source.Token).ToArray(), options.TimeProvider, context.RequestAborted);
+                            inventory, entry.Issuance.SourceTokens, options.TimeProvider, context.RequestAborted);
                     case R3PendingStatus.Denied:
                         return AAuth.Server.AAuthProblemDetails.Create("denied", statusCode: StatusCodes.Status403Forbidden);
                     default:

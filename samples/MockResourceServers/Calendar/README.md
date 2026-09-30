@@ -23,9 +23,10 @@ Port: `http://localhost:5001`. Trusts the Person Server at
 
 `/events/admin` enforces a role the PS asserts in the auth token's `roles`
 claim. If the PS issues a token **without** that role, the policy returns an
-unrecoverable **403** — there is no automatic step-up re-challenge in this
-sample. The mock PS asserts `calendar.owner` only for `aauth:demo@…` agents, so a
-non-admin agent deliberately exercises the 403 path.
+unrecoverable **403**. Scope shortfalls on `/events/write` step up with a new
+auth-token challenge; role shortfalls do not. The mock PS asserts
+`calendar.owner` only for `aauth:demo@…` agents, so a non-admin agent
+deliberately exercises the 403 path.
 
 ## Running
 

@@ -43,6 +43,13 @@ app.MapGet("/data", () => Results.Ok("data"))
 Because of the level check, a signature-only or agent-token-only (PoP) request can
 never satisfy a scope requirement, even if it somehow carried a matching scope claim.
 
+When `.RequireAAuth(scope: ...)` or `UseAAuth` sees a valid auth token that is
+too narrow for the endpoint scope, the SDK answers `401` with
+`AAuth-Requirement: requirement=auth-token` and a new resource token bound to
+the presented auth token. The agent exchanges that resource token and retries
+with the stepped-up grant. If the auth token already carries the scope but a
+role or application policy fails, the response remains an authorization `403`.
+
 ### Named policies (building block)
 
 MVC controllers and other call sites that can't use the per-route `.RequireAAuth`
@@ -67,7 +74,9 @@ public sealed class ReadDataController : ControllerBase
 
 The `AddAAuthScopePolicy(name, scope)` helper is a shortcut for the same
 registration. Prefer `.RequireAAuth(scope: ...)` for minimal-API endpoints; reach
-for named policies only where the endpoint extension is unavailable.
+for named policies only where the endpoint extension is unavailable. Named
+policies are lower-level ASP.NET authorization policies; by themselves they
+return `403` for a missing scope rather than minting a step-up resource token.
 
 ## Role-Based Policies
 

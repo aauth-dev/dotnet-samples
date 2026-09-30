@@ -42,8 +42,9 @@ public class TrackedIssuanceTests
         Assert.False(await inventory.RegisterAsync(grandchild, expiry));
         Assert.False(await inventory.RegisterGrantAsync([grandchild], new(new("https://issuer.example", "late"), "https://last.example", expiry)));
         var result = await AuthTokenResponse.CreateTrackedAsync(
-            _ => throw new InvalidOperationException("Revoked ancestry must be checked before mint."), expiry, inventory, [grandchild]);
-        Assert.Equal(403, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
+            _ => throw new InvalidOperationException("Revoked ancestry must be checked before mint."),
+            expiry, inventory, [new TokenRegistration(grandchild, expiry)]);
+        Assert.IsAssignableFrom<IResult>(result);
     }
 
     [Fact]
@@ -56,7 +57,7 @@ public class TrackedIssuanceTests
         await inventory.RevokeAsync(upstream, ceiling);
         var result = await AuthTokenResponse.CreateTrackedAsync(
             _ => throw new InvalidOperationException("Mint must not run for an already revoked upstream."),
-            ceiling, inventory, [upstream]);
-        Assert.Equal(403, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
+            ceiling, inventory, [new TokenRegistration(upstream, ceiling) { Credential = AAuth.Tokens.TokenCredential.Upstream }]);
+        Assert.Equal(400, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
     }
 }

@@ -314,7 +314,7 @@ This phase has the highest blast radius. It defines the single inventory model
 
 **Definition of Done**
 
-- [ ] A person token revoked while a four-party request is pending is never
+- [x] A person token revoked while a four-party request is pending is never
       sent to the AS (spy AS). The agent then sees `403 revoked` with a
       detail.
 - [ ] A revocation that races the send is cancelled through the linked token.
@@ -325,7 +325,7 @@ This phase has the highest blast radius. It defines the single inventory model
       before minting.
 - [ ] An intermediary re-emits `202 requirement=interaction` with its own code
       and `Location`, then completes the original request.
-- [ ] Insufficient scope on a valid auth token gets 401 with a new resource
+- [x] Insufficient scope on a valid auth token gets 401 with a new resource
       token. The agent steps up and retries.
 - [ ] The gates, including Keycloak, are green.
 

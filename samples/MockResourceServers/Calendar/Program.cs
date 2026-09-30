@@ -18,7 +18,7 @@ using AAuth.Server.Verification;
 //
 // /events/admin enforces a role the PS asserts in the auth token's `roles`
 // claim. If the PS issues a token WITHOUT that role, the policy returns an
-// unrecoverable 403 — there is no automatic step-up re-challenge in this sample.
+// unrecoverable 403. Scope shortfalls step up; role shortfalls do not.
 // ---------------------------------------------------------------------------
 
 var builder = WebApplication.CreateBuilder(args);

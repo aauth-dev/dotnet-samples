@@ -146,8 +146,12 @@ token that was revoked before the first request is a `400`
 the `Signature-Key` header has no body code: when it fails, the response is
 `401` with `Signature-Error`, and a revoked agent, person, or auth token is
 reported as `revoked_jwt` (see [Signature Errors](#signature-errors-resource--agent)).
+For a revoked auth token, resources also include
+`AAuth-Requirement: requirement=person-token` so the agent can recover without
+asking a PS or AS to exchange a resource token bound to the revoked auth token.
 A request that is already pending reports a revocation while polling instead
-(`403 revoked`, see [Polling Errors](#polling-errors-deferred-consent)).
+(`403 revoked` with `detail` naming the resource, presented, upstream, or
+agent dependency; see [Polling Errors](#polling-errors-deferred-consent)).
 
 When the PS returns a non-success status with a structured AAuth error body
 (`{ "error": ..., "detail": ... }`), the exchange throws a typed

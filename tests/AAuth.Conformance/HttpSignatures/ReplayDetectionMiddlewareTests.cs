@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Errors;
+using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Server.Verification;
@@ -123,6 +124,9 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
         Assert.Equal(
             "error=revoked_jwt",
             response.Headers.GetValues(SignatureError.HeaderName).First());
+        var requirement = AAuthRequirementHeader.Parse(Assert.Single(response.Headers.GetValues(AAuthRequirementHeader.Name)));
+        Assert.Equal(AAuthRequirementHeader.PersonTokenRequirement, requirement.Requirement);
+        Assert.Null(requirement.ResourceToken);
     }
 
     [Fact]

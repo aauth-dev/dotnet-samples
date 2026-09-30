@@ -343,11 +343,12 @@ public static class AAuthAccessServerEndpoints
             var requestedScope = (string?)resource.Payload["scope"] is { } scopeClaim && !string.IsNullOrWhiteSpace(scopeClaim)
                 ? scopeClaim : options.DefaultScope;
 
-            IReadOnlyList<TokenRegistration> sourceRegistrations = [.. issuance.SourceTokens, TokenRegistration.FromVerified(presented, TokenCredential.Presented)];
-            IReadOnlyList<TokenKey> sourceTokens;
+            IReadOnlyList<TokenRegistration> sourceRegistrations =
+                [.. issuance.SourceTokens, TokenRegistration.FromVerified(resource, TokenCredential.Resource),
+                    TokenRegistration.FromVerified(presented, TokenCredential.Presented)];
             try
             {
-                sourceTokens = await TokenRegistration.RegisterAsync(inventory, sourceRegistrations, ctx.RequestAborted);
+                await TokenRegistration.RegisterAsync(inventory, sourceRegistrations, ctx.RequestAborted);
             }
             catch (TokenVerificationException ex) { return AAuthProblemDetails.SourceRevoked(ex); }
 
@@ -380,7 +381,7 @@ public static class AAuthAccessServerEndpoints
                     requiredClaims, ceiling);
                 entry.OriginPersonServerHost = personServer;
                 entry.UpstreamAuthorization = issuance.Upstream;
-                entry.SourceTokens = sourceTokens;
+                entry.SourceTokens = sourceRegistrations;
                 entry.OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt;
                 entry.ResourceContext = resourceContext;
                 return entry;
@@ -457,11 +458,8 @@ public static class AAuthAccessServerEndpoints
 
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
-                // A pending request started against a resource token its resource then
-                // withdrew terminates with polling error `revoked` (#token-revocation).
-                if (entry.ResourceContext is { } pendingResource
-                    && await inventory.IsRevokedAsync(TokenRegistration.FromPayload(pendingResource).Token, ctx.RequestAborted))
-                    return AAuthProblemDetails.Create("revoked", "The resource token was revoked.", statusCode: StatusCodes.Status403Forbidden);
+                if (await PendingSourceFailureAsync(entry, ctx.RequestAborted) is { } sourceFailure)
+                    return sourceFailure;
                 if (entry.Status == AccessPendingStatus.Review)
                 {
                     var review = await EvaluatePendingAsync(entry, ctx);
@@ -523,6 +521,9 @@ public static class AAuthAccessServerEndpoints
 
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
+                if (await PendingSourceFailureAsync(entry, ctx.RequestAborted) is { } sourceFailure)
+                    return sourceFailure;
+
                 JsonObject pushed;
                 try
                 {
@@ -698,6 +699,15 @@ public static class AAuthAccessServerEndpoints
             if (question.TimeoutSeconds is { } timeout) body["timeout"] = timeout;
             if (question.Options is { } choices) body["options"] = new JsonArray(choices.Select(choice => (JsonNode?)JsonValue.Create(choice)).ToArray());
             return Results.Json(body, statusCode: StatusCodes.Status202Accepted);
+        }
+
+        async Task<IResult?> PendingSourceFailureAsync(AccessPendingEntry entry, System.Threading.CancellationToken ct)
+        {
+            if (await AAuthSourceGuard.CheckAsync(inventory, entry.SourceTokens, options.TimeProvider, ct) is not { } failure)
+                return null;
+            entry.Status = AccessPendingStatus.Denied;
+            entry.DenyReason = failure.Detail();
+            return failure.ToPendingResult();
         }
 
         async Task<IResult?> EvaluatePendingAsync(AccessPendingEntry entry, HttpContext ctx)

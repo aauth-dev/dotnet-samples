@@ -118,7 +118,7 @@ public sealed class PersonPendingEntry
     public string? OwnerIssuer { get; set; }
     public string? OwnerSubject { get; set; }
     public string? OwnerKeyThumbprint { get; set; }
-    public IReadOnlyList<AAuth.Server.TokenKey> SourceTokens { get; set; } = [];
+    public IReadOnlyList<AAuth.Server.TokenRegistration> SourceTokens { get; set; } = [];
     public AAuth.Server.DeferredState Lifecycle { get; } = new();
     public AAuth.Server.BrowserInteraction Browser { get; } = new();
     public string? ResourceKeyThumbprint { get; set; }
@@ -255,6 +255,9 @@ public sealed class PersonPendingEntry
 
     /// <summary>The HTTP status to surface for <see cref="Error"/>, if any.</summary>
     public int? ErrorStatus { get; set; }
+
+    /// <summary>Optional detail to surface alongside <see cref="Error"/>.</summary>
+    public string? ErrorDetail { get; set; }
 
     /// <summary>A <c>Location</c> to surface alongside <see cref="Error"/> (e.g. payment), if any.</summary>
     public string? ErrorLocation { get; set; }

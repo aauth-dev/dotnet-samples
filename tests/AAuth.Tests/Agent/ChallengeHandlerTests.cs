@@ -232,6 +232,40 @@ public class ChallengeHandlerTests
         }
     }
 
+    [Fact(DisplayName = "ChallengeHandler — auth-token step-up re-exchanges and retries successfully")]
+    public async Task AuthTokenStepUp_ReExchangesAndRetries()
+    {
+        const string authJti = "auth-jti-step-up";
+        var narrowAuthToken = await BuildAuthTokenAsync(authJti);
+        var elevatedAuthToken = await BuildAuthTokenAsync("auth-jti-elevated");
+        var stepUpResourceToken = await BuildResourceTokenAsync(presentedJti: authJti);
+        var posts = 0;
+        var exchangeHandler = new CapturingExchangeHandler(_ => posts++, elevatedAuthToken);
+        var exchangeHttp = new InProcessHttpClient(new AAuthSigningHandler(SigningKey, () => AgentToken)
+        {
+            InnerHandler = exchangeHandler,
+        });
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var holder = new AAuthTokenHolder(narrowAuthToken);
+        var challengeHandler = new ChallengeHandler(
+            new TokenExchangeClient(exchangeHttp, metaClient), holder,
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
+            personServer: PsUrl, onInteractionRequired: null, pollerOptions: null)
+        {
+            InnerHandler = new AAuthSigningHandler(SigningKey, () => holder.Current)
+            {
+                InnerHandler = new MockResourceHandler(stepUpResourceToken),
+            },
+        };
+        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+
+        using var response = await client.GetAsync("/data");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(elevatedAuthToken, holder.Current);
+        Assert.Equal(1, posts);
+    }
+
     [Fact(DisplayName = "ChallengeHandler — a 202 requirement=auth-token is completed by signed GETs of the pending URL, never by resending the body")]
     public async Task DeferredAuthToken_PollsPendingUrlWithoutResendingBody()
     {

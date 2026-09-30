@@ -98,7 +98,7 @@ public sealed class AccessPendingEntry
     /// poll or push into another PS's entry.
     /// </summary>
     public string? OriginPersonServerHost { get; set; }
-    public IReadOnlyList<AAuth.Server.TokenKey> SourceTokens { get; set; } = [];
+    public IReadOnlyList<AAuth.Server.TokenRegistration> SourceTokens { get; set; } = [];
 
     /// <summary>Identity claims known when the decision was parked.</summary>
     public JsonObject? Claims { get; init; }

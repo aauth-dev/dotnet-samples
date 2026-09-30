@@ -265,6 +265,7 @@ public class MockPersonServerFederationTests
         private readonly InteractiveAsState? _interactive;
         private DateTimeOffset _agentTokenExpiresAt;
         private DateTimeOffset _presentedExpiresAt;
+        private DateTimeOffset _resourceExpiresAt;
         private string _subject = "";
 
         public FederatedStub(AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null)
@@ -287,8 +288,10 @@ public class MockPersonServerFederationTests
                 _agentTokenExpiresAt = new TokenVerifier { EgressPolicy = TestEgress.Policy }.Verify((string)body!["agent_token"]!, _agentKey,
                     AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk).ExpiresAt;
                 var presented = DecodePayload((string)body["presented_token"]!);
+                var resource = DecodePayload((string)body["resource_token"]!);
                 _subject = (string)presented["sub"]!;
                 _presentedExpiresAt = DateTimeOffset.FromUnixTimeSeconds((long)presented["exp"]!);
+                _resourceExpiresAt = DateTimeOffset.FromUnixTimeSeconds((long)resource["exp"]!);
                 // Interactive AS: defer with a 202 requirement=interaction.
                 if (_interactive is not null)
                 {
@@ -370,7 +373,7 @@ public class MockPersonServerFederationTests
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = _agentTokenExpiresAt,
-            AuthorizationExpiresAt = _presentedExpiresAt,
+            AuthorizationExpiresAt = _presentedExpiresAt < _resourceExpiresAt ? _presentedExpiresAt : _resourceExpiresAt,
             Issuer = AsIssuer,
             Audience = ResourceUrl,
             PersonServer = PsIssuer,

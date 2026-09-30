@@ -260,7 +260,7 @@ public sealed class AAuthVerificationMiddleware
             var tokenKey = new TokenKey(revocableToken.Issuer, revocableJti);
             if (await inventory.IsRevokedAsync(tokenKey, context.RequestAborted).ConfigureAwait(false))
             {
-                WriteFailure(context, SignatureErrorCode.RevokedJwt);
+                WriteFailure(context, SignatureErrorCode.RevokedJwt, tokenType: presentedTyp);
                 return;
             }
             if (revocableToken.ExpiresAt > _options.TimeProvider.GetUtcNow()
@@ -400,7 +400,8 @@ public sealed class AAuthVerificationMiddleware
                 $"AAuthVerificationOptions.ResourceIdentifier is required to verify {tokenType}; " +
                 "configure AddAAuthResource(options.Issuer) or set ResourceIdentifier.");
 
-    private void WriteFailure(HttpContext context, SignatureErrorCode code, IReadOnlyCollection<string>? requiredComponents = null)
+    private void WriteFailure(HttpContext context, SignatureErrorCode code,
+        IReadOnlyCollection<string>? requiredComponents = null, string? tokenType = null)
     {
         var requiredInput = AAuthSigningHandler.CoveredComponents.Concat(requiredComponents ?? _options.RequiredComponents).Distinct().ToArray();
         AAuthProblemDetails.SignatureFailure(code,
@@ -409,6 +410,9 @@ public sealed class AAuthVerificationMiddleware
             acceptedSchemes: code == SignatureErrorCode.UnsupportedScheme ? _options.AcceptedSchemes : null,
             statusCode: _options.GenericSignatureKeys ? StatusCodes.Status400BadRequest : StatusCodes.Status401Unauthorized)
             .ExecuteAsync(context).GetAwaiter().GetResult();
+        if (code == SignatureErrorCode.RevokedJwt && tokenType == AuthTokenBuilder.TokenType)
+            context.Response.Headers[AAuth.Headers.AAuthRequirementHeader.Name] =
+                AAuth.Headers.AAuthRequirementHeader.FormatPersonToken();
     }
 
 

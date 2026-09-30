@@ -12,8 +12,11 @@ public sealed record TokenRegistration(TokenKey Token, DateTimeOffset ExpiresAt)
     /// <summary>The request parameter that carried the token; <see langword="null"/> for the <c>Signature-Key</c> token.</summary>
     public TokenCredential? Credential { get; init; }
 
+    /// <summary>The JWT <c>typ</c> of the source token when it was verified.</summary>
+    public string? TokenType { get; init; }
+
     public static TokenRegistration FromVerified(TokenVerifier.VerifiedToken token, TokenCredential? credential = null)
-        => FromPayload(token.Payload) with { Credential = credential };
+        => FromPayload(token.Payload) with { Credential = credential, TokenType = token.TokenType };
 
     public static async Task<IReadOnlyList<TokenKey>> RegisterAsync(IJtiStore inventory,
         IReadOnlyCollection<TokenRegistration> tokens, CancellationToken cancellationToken = default)
