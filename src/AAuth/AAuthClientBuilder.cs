@@ -626,7 +626,7 @@ public sealed class AAuthClientBuilder
             var handler = new AAuthSigningHandler(_key, _provider!)
             {
                 InnerHandler = CreateTransport(),
-                Capabilities = _interactionHandling ? MergeCapabilities("interaction") : _capabilities,
+                Capabilities = _capabilities,
                 OnSignatureBase = _onSignatureBase,
             };
             partial = handler;
@@ -686,9 +686,7 @@ public sealed class AAuthClientBuilder
         var outerSigner = new AAuthSigningHandler(_key, resourceProvider)
         {
             InnerHandler = CreateTransport(),
-            Capabilities = _interactionHandling
-                ? MergeCapabilities("auth-token", "interaction")
-                : MergeCapabilities("auth-token"),
+            Capabilities = MergeCapabilities("auth-token"),
             OnSignatureBase = _onSignatureBase,
         };
         partial = outerSigner;
@@ -819,7 +817,7 @@ public sealed class AAuthClientBuilder
         var signingHandler = new AAuthSigningHandler(_key, provider)
         {
             InnerHandler = CreateTransport(),
-            Capabilities = _interactionHandling ? MergeCapabilities("interaction") : _capabilities,
+            Capabilities = _capabilities,
             OnSignatureBase = _onSignatureBase,
         };
         partial = signingHandler;
@@ -915,18 +913,6 @@ public sealed class AAuthClientBuilder
         var list = new List<string>(_capabilities);
         if (!list.Contains(required))
             list.Add(required);
-        return list;
-    }
-
-    private IReadOnlyList<string> MergeCapabilities(string required1, string required2)
-    {
-        var list = _capabilities is null || _capabilities.Count == 0
-            ? new List<string>()
-            : new List<string>(_capabilities);
-        if (!list.Contains(required1))
-            list.Add(required1);
-        if (!list.Contains(required2))
-            list.Add(required2);
         return list;
     }
 }

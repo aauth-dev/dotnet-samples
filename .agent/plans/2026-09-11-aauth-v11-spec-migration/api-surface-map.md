@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 198 changed public-source files, 856 added/replacement declarations, 399 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 202 changed public-source files, 873 added/replacement declarations, 401 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -1360,11 +1360,30 @@ Concept/decision: [agent-clients](#agent-clients). Source: [AAuthAgentFactory.cs
 
 Public owners: `AAuth.Agent.AAuthAgentDescriptor`, `AAuth.Agent.AAuthAgent`, `AAuth.Agent.IAAuthAgentFactory`, `AAuth.Agent`.
 
+### src/AAuth/Agent/AAuthCallbackHandlers.cs
+
+Concept/decision: [agent-clients](#agent-clients). Source: [AAuthCallbackHandlers.cs](../../../src/AAuth/Agent/AAuthCallbackHandlers.cs).
+
+```diff
++ AAuth.Agent.IAAuthClarificationHandler: Task < ClarificationResponse > OnClarificationRequiredAsync ( ClarificationRequirement clarification , CancellationToken cancellationToken )
++ AAuth.Agent.IAAuthDeferredObserver: Task OnApprovalPendingAsync ( CancellationToken cancellationToken )
++ AAuth.Agent.IAAuthDeferredObserver: void OnPoll ( HttpResponseMessage response )
++ AAuth.Agent.IAAuthInteractionHandler: Task OnInteractionRequiredAsync ( Interaction interaction , CancellationToken cancellationToken )
++ AAuth.Agent: public interface IAAuthClarificationHandler
++ AAuth.Agent: public interface IAAuthDeferredObserver
++ AAuth.Agent: public interface IAAuthInteractionHandler
+```
+
+Public owners: `AAuth.Agent.IAAuthClarificationHandler`, `AAuth.Agent.IAAuthDeferredObserver`, `AAuth.Agent.IAAuthInteractionHandler`, `AAuth.Agent`.
+
 ### src/AAuth/Agent/AAuthRequestOptions.cs
 
 Concept/decision: [resource-managed](#resource-managed). Source: [AAuthRequestOptions.cs](../../../src/AAuth/Agent/AAuthRequestOptions.cs).
 
 ```diff
++ AAuth.Agent.AAuthRequestOptions: public static readonly HttpRequestOptionsKey < IAAuthClarificationHandler > ClarificationHandler = new ( "AAuth.ClarificationHandler" ) ;
++ AAuth.Agent.AAuthRequestOptions: public static readonly HttpRequestOptionsKey < IAAuthDeferredObserver > DeferredObserver = new ( "AAuth.DeferredObserver" ) ;
++ AAuth.Agent.AAuthRequestOptions: public static readonly HttpRequestOptionsKey < IAAuthInteractionHandler > InteractionHandler = new ( "AAuth.InteractionHandler" ) ;
 + AAuth.Agent.AAuthRequestOptions: public static readonly HttpRequestOptionsKey < System . Collections . Generic . IReadOnlyDictionary < string , string > > MissionPersonTokens = new ( "AAuth.MissionPersonTokens" ) ;
 + AAuth.Agent.AAuthRequestOptions: public static readonly HttpRequestOptionsKey < string > MissionS256 = new ( "AAuth.MissionS256" ) ;
 + AAuth.Agent.AAuthRequestOptions: public static string ? GetMissionS256 ( HttpRequestMessage request )
@@ -1537,6 +1556,18 @@ Concept/decision: [governance](#governance). Source: [PermissionRequest.cs](../.
 ```
 
 Public owners: `AAuth.Agent.Governance.PermissionRequest`, `AAuth.Agent.Governance`.
+
+### src/AAuth/Agent/InteractionHandler.cs
+
+Concept/decision: [agent-clients](#agent-clients). Source: [InteractionHandler.cs](../../../src/AAuth/Agent/InteractionHandler.cs).
+
+```diff
+- AAuth.Agent.InteractionHandler: public InteractionHandler ( Func < string , string , CancellationToken , Task > ? onInteractionRequired = null , Func < CancellationToken , Task > ? onApprovalPending = null , TimeSpan ? pollingTimeout = null , TimeSpan ? defaultPollInterval = null , TimeSpan ? minPollInterval = null , int ? preferWaitSeconds = null , Action < HttpResponseMessage > ? onPoll = null )
++ AAuth.Agent.InteractionHandler: public InteractionHandler ( Func < Interaction , CancellationToken , Task > ? onInteractionRequired = null , Func < CancellationToken , Task > ? onApprovalPending = null , TimeSpan ? pollingTimeout = null , TimeSpan ? defaultPollInterval = null , TimeSpan ? minPollInterval = null , int ? preferWaitSeconds = null , Action < HttpResponseMessage > ? onPoll = null )
++ AAuth.Agent.InteractionHandler: public InteractionHandler ( IAAuthInteractionHandler ? interactionHandler , IAAuthDeferredObserver ? observer , TimeSpan ? pollingTimeout = null , TimeSpan ? defaultPollInterval = null , TimeSpan ? minPollInterval = null , int ? preferWaitSeconds = null )
+```
+
+Public owners: `AAuth.Agent.InteractionHandler`, `AAuth.Agent`.
 
 ### src/AAuth/Agent/Mission.cs
 
@@ -2134,6 +2165,19 @@ Concept/decision: [server-contracts](#server-contracts). Source: [ClaimsResponse
 
 Public owners: `AAuth.Headers.ClaimsResponse`, `AAuth.Headers`.
 
+### src/AAuth/Headers/Interaction.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [Interaction.cs](../../../src/AAuth/Headers/Interaction.cs).
+
+```diff
++ AAuth.Headers.Interaction: public InteractionSource Source { get ; init ; }
++ AAuth.Headers.InteractionSource: PersonServer
++ AAuth.Headers.InteractionSource: Resource
++ AAuth.Headers: public enum InteractionSource
+```
+
+Public owners: `AAuth.Headers.InteractionSource`, `AAuth.Headers.Interaction`, `AAuth.Headers`.
+
 ### src/AAuth/HttpSig/AAuthHttpClientExtensions.cs
 
 Concept/decision: [signatures](#signatures). Source: [AAuthHttpClientExtensions.cs](../../../src/AAuth/HttpSig/AAuthHttpClientExtensions.cs).
@@ -2188,6 +2232,17 @@ Concept/decision: [signatures](#signatures). Source: [DefaultSignatureKeyResolve
 Public signatures unchanged (3); behavior reviewed under signatures.
 
 Public owners: `AAuth.HttpSig.DefaultSignatureKeyResolver`, `AAuth.HttpSig`.
+
+### src/AAuth/HttpSig/InteractionHandlingOptions.cs
+
+Concept/decision: [signatures](#signatures). Source: [InteractionHandlingOptions.cs](../../../src/AAuth/HttpSig/InteractionHandlingOptions.cs).
+
+```diff
+- AAuth.HttpSig.InteractionHandlingOptions: public Func < string , string , CancellationToken , Task > ? OnInteractionRequired { get ; set ; }
++ AAuth.HttpSig.InteractionHandlingOptions: public Func < AAuth . Headers . Interaction , CancellationToken , Task > ? OnInteractionRequired { get ; set ; }
+```
+
+Public owners: `AAuth.HttpSig.InteractionHandlingOptions`, `AAuth.HttpSig`.
 
 ### src/AAuth/HttpSig/NamingTokenVerifier.cs
 

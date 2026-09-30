@@ -523,19 +523,19 @@ This is the highest-blast-radius client change.
 
 ### Definition of Done
 
-- [ ] Tests:
-  - [ ] `InteractionHandlerResolutionTests`:
+- [x] Tests:
+  - [x] `InteractionHandlerResolutionTests`:
     - per-request beats explicit, explicit beats keyed, keyed beats unkeyed;
     - with no handler, the `interaction` capability is not declared.
-  - [ ] Per-user routing: two concurrent requests through one agent reach
+  - [x] Per-user routing: two concurrent requests through one agent reach
         two different handlers.
-  - [ ] Clarification handler round limit.
-  - [ ] PS-initiated and resource-initiated interaction reach the same
+  - [x] Clarification handler round limit.
+  - [x] PS-initiated and resource-initiated interaction reach the same
         handler, with the correct `Source`.
-- [ ] Concierge's chaining behaviour (throwing
+- [x] Concierge's chaining behaviour (throwing
       `AAuthInteractionChainedException`, capabilities empty) is expressed as
       a registered handler plus an explicit empty capability list.
-- [ ] Gates pass.
+- [x] Gates pass.
 
 ## Phase 9 — Typed clients, token cache, lifetime (F-C3, F-C5, F-C7; Q7, Q8)
 

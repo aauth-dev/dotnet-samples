@@ -132,10 +132,10 @@ builder.Services.AddAAuthAgent("interactive", options =>
     options.Challenge.OnInteractionRequired = ShowConsentAsync;
     options.Challenge.PollingTimeout = TimeSpan.FromMinutes(3);
     // A resource returning 202 + requirement=interaction surfaces here.
-    options.Interaction.OnInteractionRequired = async (url, code, ct) =>
+    options.Interaction.OnInteractionRequired = async (interaction, ct) =>
     {
         // Present URL and code to user
-        logger.LogInformation("Approve at {Url} with code {Code}", url, code);
+        logger.LogInformation("Approve at {Url} with code {Code}", interaction.BuildUserUrl(), interaction.Code);
     };
     options.Interaction.PollingTimeout = TimeSpan.FromMinutes(3);
 });
@@ -168,7 +168,7 @@ The optional `configure` callback, or `.Configure(...)`, runs after binding:
 
 ```csharp
 builder.Services.AddAAuthAgent("calendar", builder.Configuration.GetSection("AAuth:Agents:calendar"))
-    .Configure(options => options.Interaction.OnInteractionRequired = (url, code, ct) => SurfaceToUser(url));
+    .Configure(options => options.Interaction.OnInteractionRequired = (interaction, ct) => SurfaceToUser(interaction.BuildUserUrl()));
 ```
 
 ```json
@@ -518,7 +518,7 @@ instances, which binding ignores.
 | `HandleChallenges` | `bool?` | `null` | Overrides `401` challenge handling, on by default when `PersonServer` or call chaining is set |
 | `Challenge` | `ChallengeHandlingOptions` | defaults | PS interaction and clarification callbacks, `Prompt`, `Capabilities`, polling (callbacks are code-only) |
 | `HandleInteractions` | `bool?` | `null` | Overrides resource `202` handling, on by default when an `Interaction` callback is set |
-| `Interaction` | `InteractionHandlingOptions` | defaults | Resource `202` callbacks (`OnInteractionRequired` with URL + code, `OnApprovalPending`) and polling (callbacks are code-only) |
+| `Interaction` | `InteractionHandlingOptions` | defaults | Resource `202` callbacks (`OnInteractionRequired` with an `Interaction`, `OnApprovalPending`) and polling (callbacks are code-only) |
 | `Capabilities` | `string[]?` | `null` | `AAuth-Capabilities` declared on every signed request |
 | `Mission` | `Mission?` | `null` | *Code-only.* The agent's approved mission; person tokens carry its `mission_s256` |
 | `UpstreamTokenProvider` | `Func<string?>?` | `null` | *Code-only.* Returns the upstream auth token to chain |

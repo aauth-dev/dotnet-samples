@@ -98,7 +98,7 @@ using var chain = AAuthClientBuilder.SelfIssuing(identity.Key).WithEgressPolicy(
     .WithChallengeHandling(o =&gt; o.OnInteractionRequired =
         (i, ct) =&gt; SurfaceInteractionAsync(i, ct))
     .WithInteractionHandling(o =&gt; o.OnInteractionRequired =
-        (url, code, ct) =&gt; SurfaceInteraction(url))
+        (interaction, ct) =&gt; SurfaceInteraction(interaction.BuildUserUrl()))
     .Build();
 
 // "/mission" is the Concierge's mission-aware twin of "/": it chains to
@@ -458,7 +458,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
             })
             .WithInteractionHandling(opts =>
             {
-                opts.OnInteractionRequired = (userUrl, code, ct) => SurfaceInteraction(PersonServerConsent.FromUserUrl(userUrl, code), ct);
+                opts.OnInteractionRequired = (interaction, ct) => SurfaceInteraction(PersonServerConsent.FromUserUrl(interaction.BuildUserUrl(), interaction.Code), ct);
                 opts.PollingTimeout = TimeSpan.FromMinutes(2);
                 opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
             })

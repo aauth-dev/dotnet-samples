@@ -73,10 +73,10 @@ public class InboxFlowTests : IAsyncLifetime
             .WithResourceManagedAccess()
             .WithInteractionHandling(opts =>
             {
-                opts.OnInteractionRequired = async (url, code, ct) =>
+                opts.OnInteractionRequired = async (interaction, ct) =>
                 {
                     using var resp = await TestConsentBrowser.DecideAsync(approver,
-                        "/consent?code=" + code, "/consent/approve");
+                        "/consent?code=" + interaction.Code, "/consent/approve");
                     resp.EnsureSuccessStatusCode();
                 };
                 opts.DefaultPollInterval = TimeSpan.FromMilliseconds(50);

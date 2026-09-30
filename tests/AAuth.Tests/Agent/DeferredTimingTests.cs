@@ -165,7 +165,7 @@ public class DeferredTimingTests
         using var handler = new BlockingHandler(path.Contains("callback", StringComparison.Ordinal), entered, completion);
         using var http = path.StartsWith("handler", StringComparison.Ordinal)
             ? new InProcessHttpClient(new InteractionHandler(
-                onInteractionRequired: (_, _, _) => { entered.TrySetResult(); return completion.Task; },
+                onInteractionRequired: (_, _) => { entered.TrySetResult(); return completion.Task; },
                 pollingTimeout: TimeSpan.FromSeconds(10), minPollInterval: TimeSpan.Zero)
             {
                 EgressPolicy = TestEgress.Policy, TransportContract = AAuthTransportContract.InProcessOnly,

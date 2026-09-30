@@ -270,14 +270,20 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.Signature, $"{Label}=:{Convert.ToBase64String(signature)}:");
 
         // Emit capabilities header if configured
-        if (Capabilities is { Count: > 0 })
+        IReadOnlyList<string>? capabilities = request.Options.TryGetValue(RequestCapabilitiesKey, out var added)
+            ? (Capabilities ?? []).Concat(added).Distinct(StringComparer.Ordinal).ToArray()
+            : Capabilities;
+        if (capabilities is { Count: > 0 })
         {
             request.Headers.Remove(AAuthCapabilitiesHeader.Name);
             request.Headers.TryAddWithoutValidation(
                 AAuthCapabilitiesHeader.Name,
-                AAuthCapabilitiesHeader.Format(Capabilities));
+                AAuthCapabilitiesHeader.Format(capabilities));
         }
     }
+
+    // Capabilities an outer handler declares for this request only, e.g. `interaction` when a handler resolves.
+    internal static readonly HttpRequestOptionsKey<IReadOnlyList<string>> RequestCapabilitiesKey = new("AAuth.RequestCapabilities");
 
     private static void AppendComponent(StringBuilder sb, string name, string value)
     {

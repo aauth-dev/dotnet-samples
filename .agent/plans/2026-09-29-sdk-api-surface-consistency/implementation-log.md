@@ -575,7 +575,64 @@ PROCEEDED.
   - ApiSurface: +856/-399 cumulative. Docs inventory refreshed; e2e typecheck clean.
   - Full Playwright: 78 passed, 1 skipped, `--retries=0`.
 
+### [2026-09-30] [Phase 8] Client callbacks
+
+PROCEEDED.
+- **Interfaces** (`src/AAuth/Agent/AAuthCallbackHandlers.cs`):
+  `IAAuthInteractionHandler`, `IAAuthClarificationHandler`,
+  `IAAuthDeferredObserver` (approval pending, poll; default no-op members).
+  Delegates adapt to them internally.
+- **`Interaction.Source`** (`InteractionSource.PersonServer | Resource`). The
+  resource path passes the `Interaction` (with `Source = Resource`); the
+  `(url, code)` callback shape is deleted, so `InteractionHandlingOptions`,
+  `ChallengeHandlingOptions` and `GovernanceOptions` share one callback shape.
+- **Per-request override:** `AAuthRequestOptions.InteractionHandler`,
+  `ClarificationHandler`, `DeferredObserver`, honoured by `InteractionHandler`
+  and `ChallengeHandler`. The DI composer resolves options delegate, then the
+  handler keyed by agent name, then unkeyed (R0), and turns interaction
+  handling on when a handler or observer resolves.
+- **Capabilities:** the builder no longer declares `interaction` statically.
+  `InteractionHandler` declares it per request when a handler resolves (new
+  internal `AAuthSigningHandler.RequestCapabilitiesKey`). The PS exchange
+  keeps inferring from the resolved callbacks; an explicit list overrides.
+- **Concierge:** a registered `ChainInteractionHandler` throws
+  `AAuthInteractionChainedException`; the chain uses it with
+  `Capabilities = []`.
+- **Tests.** `InteractionHandlerResolutionTests` (4 precedence cases, capability
+  inference, concurrent per-user routing); in `ChallengeClarificationSeamTests`,
+  a per-request clarification handler beating the configured one up to the
+  round limit, and PS- and resource-initiated interactions reaching one handler
+  with their `Source`. A subagent migrated samples, tests and docs (two tests now
+  configure a callback to keep asserting `interaction`; one new test asserts its
+  absence). Fixed a pre-existing flake in
+  `PersonTokenEndpoint_LifetimeIsCappedByEveryBound("agent")`: the agent token is
+  minted after the test's `now`.
+- **Gates.**
+  - Build clean.
+  - Test projects: AAuth.Tests 1750, AAuth.Conformance 1274, AAuth.R3.Tests 330,
+    AAuth.Events.Tests 83.
+  - ApiSurface: +873/-401 cumulative. Docs inventory refreshed; e2e typecheck clean.
+  - Full Playwright: 78 passed, 1 skipped, `--retries=0`.
+
 ## Deviations from plan
+
+### [2026-09-30] [Phase 8] One callback shape, not one shared callback type
+
+PROCEEDED. The plan says the three option types share "one callback set". They
+now share one shape per callback (`Func<Interaction, …>`, the clarification
+`Func`, `OnApprovalPending`, `OnPoll`) and one interface per concern, but each
+keeps its own members: `InteractionHandlingOptions` has no clarification and the
+governance options have no approval/poll hooks, so a common base type would
+carry members that do nothing there.
+
+### [2026-09-30] [Phase 7] Async signature-key providers not taken
+
+PROCEEDED, open for Phase 12. The Phase 3 entry proposed async agent-side token
+factories for Phase 7. Phase 7's scope (registration, factory, configuration) does
+not need them: DI agents resolve keys once through `IKeyStore` and sign through
+`IAAuthSigner.SignAsync`. Only a per-request naming JWT minted by a remote durable
+key is still sync-over-async (`Func<string>`, `ISignatureKeyProvider`). The Phase 12
+review decides whether that justifies an async provider contract.
 
 ### [2026-09-30] [Phase 7] DI-path flow tests use a loopback Kestrel host
 

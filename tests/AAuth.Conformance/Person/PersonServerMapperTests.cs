@@ -309,7 +309,9 @@ public class PersonServerMapperTests
             "upstream" => now.AddMinutes(7).ToUnixTimeSeconds(),
             _ => now.AddMinutes(5).ToUnixTimeSeconds(),
         };
-        Assert.InRange(expires, ceiling - 5, ceiling);
+        // The agent token is minted after `now`, so its exp may fall a second later.
+        var upper = bound == "agent" ? DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds() : ceiling;
+        Assert.InRange(expires, ceiling - 5, upper);
         await host.StopAsync();
     }
 

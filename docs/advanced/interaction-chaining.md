@@ -176,8 +176,8 @@ using var client = AAuthClientBuilder.SelfIssuing(agentKey)
     })
     .WithInteractionHandling(opts =>        // hop 2: intermediary's chained 202
     {
-        opts.OnInteractionRequired = (userUrl, code, _) =>
-            SurfaceToUser(userUrl);
+        opts.OnInteractionRequired = (interaction, _) =>
+            SurfaceToUser(interaction.BuildUserUrl());
     })
     .Build();
 

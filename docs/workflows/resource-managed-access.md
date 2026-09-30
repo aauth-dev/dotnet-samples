@@ -58,9 +58,9 @@ using var client = AAuthClientBuilder.Enrolled(enrollment.Key)
     .WithResourceManagedAccess()
     .WithInteractionHandling(options =>
     {
-        options.OnInteractionRequired = (url, code, ct) =>
+        options.OnInteractionRequired = (interaction, ct) =>
         {
-            Console.WriteLine($"Approve at: {url}");
+            Console.WriteLine($"Approve at: {interaction.BuildUserUrl()}");
             return Task.CompletedTask;
         };
     })
@@ -155,9 +155,9 @@ builder.Services.AddAAuthAgent("resource-managed", options =>
     options.Signer = key!;
     options.AgentToken = agentToken; // already-held aa-agent+jwt bound to key
     options.EnableResourceManagedAccess = true; // capture + replay AAuth-Access
-    options.Interaction.OnInteractionRequired = async (url, code, ct) =>
+    options.Interaction.OnInteractionRequired = async (interaction, ct) =>
     {
-        await Surface(url);
+        await Surface(interaction.BuildUserUrl());
     };
     options.Interaction.PollingTimeout = TimeSpan.FromMinutes(3);
 });

@@ -321,12 +321,14 @@ public sealed class ChallengeHandler : DelegatingHandler
         Account = AAuthRequestOptions.GetAccount(request),
         PresentedToken = presentedToken,
         MissionS256 = upstreamToken is null ? missionS256 : null,
-        OnInteractionRequired = _onInteractionRequired,
+        OnInteractionRequired = request.Options.TryGetValue(AAuthRequestOptions.InteractionHandler, out var interaction)
+            ? interaction.OnInteractionRequiredAsync : _onInteractionRequired,
         PollerOptions = _pollerOptions,
         UpstreamToken = upstreamToken,
         Capabilities = Capabilities,
         Prompt = Prompt,
-        OnClarificationRequired = OnClarificationRequired,
+        OnClarificationRequired = request.Options.TryGetValue(AAuthRequestOptions.ClarificationHandler, out var clarification)
+            ? clarification.OnClarificationRequiredAsync : OnClarificationRequired,
         MaxClarificationRounds = MaxClarificationRounds,
     };
 

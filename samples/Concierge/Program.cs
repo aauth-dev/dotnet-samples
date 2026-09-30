@@ -39,6 +39,8 @@ var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:concierge@localho
 
 builder.Services.AddSingleton(conciergeKey);
 builder.Services.AddSingleton<PendingStore>();
+// No user to relay to: a downstream interaction is chained back to the caller (§Interaction Chaining).
+builder.Services.AddSingleton<IAAuthInteractionHandler, ChainInteractionHandler>();
 
 // Resource role: verifier, token verifier, discovery clients (pooled handler), JTI store, and the
 // published metadata — no manual HttpClient/discovery wiring.
@@ -160,10 +162,9 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string 
         .WithCallChaining(upstreamToken)
         .WithChallengeHandling(opts =>
         {
-            // No user to relay to → chain instead of relay. The throw unwinds
-            // the exchange before DeferredPoller blocks; the endpoint catches it.
-            opts.OnInteractionRequired = (interaction, _)
-                => throw new AAuthInteractionChainedException(interaction);
+            // The registered handler throws to unwind the exchange before
+            // DeferredPoller blocks; the endpoint catches it.
+            opts.OnInteractionRequired = ctx.RequestServices.GetRequiredService<IAAuthInteractionHandler>().OnInteractionRequiredAsync;
             // Do NOT declare the "interaction" capability: we cannot relay an
             // interaction to a user, we chain it (§AAuth-Capabilities).
             opts.Capabilities = Array.Empty<string>();
@@ -329,4 +330,13 @@ async Task<IResult> HandlePendingAsync(HttpContext ctx, string id, PendingStore 
 app.Run();
 
 // Marker type for WebApplicationFactory in tests.
-namespace Concierge { public class Entry; }
+namespace Concierge
+{
+    public class Entry;
+
+    internal sealed class ChainInteractionHandler : IAAuthInteractionHandler
+    {
+        public Task OnInteractionRequiredAsync(AAuth.Headers.Interaction interaction, CancellationToken cancellationToken)
+            => throw new AAuthInteractionChainedException(interaction);
+    }
+}

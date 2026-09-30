@@ -108,7 +108,7 @@ public sealed class ClientCompositionTests
         var transport = new CaptureTransport();
         using var client = AAuthClientBuilder.SelfIssuing(_key)
             .As("https://ap.example", "aauth:agent@ap.example")
-            .WithResourceManagedAccess().WithInteractionHandling()
+            .WithResourceManagedAccess().WithInteractionHandling(options => options.OnInteractionRequired = (_, _) => Task.CompletedTask)
             .WithInnerHandler(transport, AAuthTransportContract.InProcessOnly).Build();
         using var first = await client.GetAsync("https://resource.example/messages");
         using var second = await client.GetAsync("https://resource.example/messages");

@@ -46,7 +46,7 @@ public static class AAuthAgentServiceCollectionExtensions
         // Composed from the service provider at first resolve; the pipeline (and its token
         // caches) lives as long as the container.
         var httpClient = services.AddHttpClient(name)
-            .ConfigurePrimaryHttpMessageHandler(sp => AAuthAgentComposer.CreateBuilder(AAuthAgentComposer.Options(sp, name), sp)
+            .ConfigurePrimaryHttpMessageHandler(sp => AAuthAgentComposer.CreateBuilder(AAuthAgentComposer.Options(sp, name), sp, name)
                 .BuildHandler())
             .SetHandlerLifetime(Timeout.InfiniteTimeSpan);
         return new AAuthAgentBuilder(services, name, httpClient);
@@ -134,7 +134,7 @@ public sealed class AAuthAgentBuilder
     public AAuthAgentBuilder WithGovernance(GovernanceOptions? defaultOptions = null)
     {
         Services.TryAddKeyedSingleton(Name, (sp, key) =>
-            AAuthAgentComposer.CreateBuilder(AAuthAgentComposer.Options(sp, (string)key!), sp).BuildGovernance(defaultOptions));
+            AAuthAgentComposer.CreateBuilder(AAuthAgentComposer.Options(sp, (string)key!), sp, (string)key!).BuildGovernance(defaultOptions));
         return this;
     }
 }
@@ -201,9 +201,13 @@ internal static class AAuthAgentComposer
 
     public static IKeyStore KeyStore(IServiceProvider services) => services.GetService<IKeyStore>() ?? FileKeyStore.Default();
 
-    public static AAuthClientBuilder CreateBuilder(AAuthAgentOptions options, IServiceProvider services)
+    public static AAuthClientBuilder CreateBuilder(AAuthAgentOptions options, IServiceProvider services, string name)
     {
         var egress = Egress(options);
+        // R0: a delegate on the options, then a handler keyed by agent name, then an unkeyed one.
+        var interactionHandler = Handler<IAAuthInteractionHandler>(services, name);
+        var clarificationHandler = Handler<IAAuthClarificationHandler>(services, name);
+        var observer = Handler<IAAuthDeferredObserver>(services, name);
         var signer = options.Signer ?? LoadSigner(services, options.KeyHandle!);
         AAuthClientBuilder builder;
         if (options.SelfIssued.Issuer is { } issuer)
@@ -242,10 +246,21 @@ internal static class AAuthAgentComposer
         if (upstream is not null) builder.WithCallChaining(upstream);
 
         if (options.HandleChallenges ?? (options.PersonServer is not null || upstream is not null))
-            builder.WithChallengeHandling(target => CopyInto(options.Challenge, target));
+            builder.WithChallengeHandling(target =>
+            {
+                CopyInto(options.Challenge, target);
+                target.OnInteractionRequired ??= interactionHandler is null ? null : interactionHandler.OnInteractionRequiredAsync;
+                target.OnClarificationRequired ??= clarificationHandler is null ? null : clarificationHandler.OnClarificationRequiredAsync;
+            });
         if (options.HandleInteractions ?? (options.Interaction.OnInteractionRequired is not null
-            || options.Interaction.OnApprovalPending is not null))
-            builder.WithInteractionHandling(target => CopyInto(options.Interaction, target));
+            || options.Interaction.OnApprovalPending is not null || interactionHandler is not null || observer is not null))
+            builder.WithInteractionHandling(target =>
+            {
+                CopyInto(options.Interaction, target);
+                target.OnInteractionRequired ??= interactionHandler is null ? null : interactionHandler.OnInteractionRequiredAsync;
+                target.OnApprovalPending ??= observer is null ? null : observer.OnApprovalPendingAsync;
+                target.OnPoll ??= observer is null ? null : observer.OnPoll;
+            });
         if (options.EnableResourceManagedAccess) builder.WithResourceManagedAccess(options.AAuthAccessStore);
         return builder;
     }
@@ -254,6 +269,9 @@ internal static class AAuthAgentComposer
     private static IAAuthSigner LoadSigner(IServiceProvider services, string keyHandle)
         => KeyStore(services).LoadAsync(keyHandle).GetAwaiter().GetResult()
             ?? throw new InvalidOperationException($"AAuthAgentOptions.KeyHandle '{keyHandle}' was not found in the key store.");
+
+    private static T? Handler<T>(IServiceProvider services, string name) where T : class
+        => services.GetKeyedService<T>(name) ?? services.GetService<T>();
 
     private static void CopyInto<T>(T source, T target)
     {

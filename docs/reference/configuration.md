@@ -218,7 +218,7 @@ Server `Retry-After` headers override `DefaultPollInterval` (clamped to `MinPoll
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `OnInteractionRequired` | `Func<string, string, CancellationToken, Task>?` | `null` | Callback for 202+interaction (URL, code) |
+| `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | `null` | Callback for 202+interaction (`Source = Resource`; show `BuildUserUrl()`) |
 | `OnApprovalPending` | `Func<CancellationToken, Task>?` | `null` | Callback for 202+approval |
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Maximum polling time |
 | `DefaultPollInterval` | `TimeSpan` | 5 seconds | Interval between polls |
@@ -421,7 +421,7 @@ remains `~/.aauth/ap-keys`.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `OnInteractionRequired` | `Func<string, string, CancellationToken, Task>?` | null | Interaction URL + code callback |
+| `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | null | Resource interaction callback; declares the `interaction` capability |
 | `OnApprovalPending` | `Func<CancellationToken, Task>?` | null | Approval polling callback |
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Max polling time |
 

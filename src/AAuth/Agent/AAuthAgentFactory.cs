@@ -91,7 +91,7 @@ internal sealed class AAuthAgentFactory(IServiceProvider services) : IAAuthAgent
         if (validation.Failed)
             throw new Microsoft.Extensions.Options.OptionsValidationException(descriptor.Name, typeof(AAuthAgentOptions),
                 validation.Failures ?? []);
-        return new AAuthAgent(descriptor.Name, AAuthAgentComposer.CreateBuilder(descriptor, services).Build(), owned: true);
+        return new AAuthAgent(descriptor.Name, AAuthAgentComposer.CreateBuilder(descriptor, services, descriptor.Name).Build(), owned: true);
     }
 
     public AAuthAgent Create(string name, IAAuthSigner signer, Action<AAuthClientBuilder> configure)

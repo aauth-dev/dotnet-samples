@@ -4,6 +4,16 @@ using AAuth;
 
 namespace AAuth.Headers;
 
+/// <summary>Who asked for a user interaction.</summary>
+public enum InteractionSource
+{
+    /// <summary>The Person Server, while resolving a token exchange or a governance request.</summary>
+    PersonServer,
+
+    /// <summary>A resource answering <c>202</c> with <c>requirement=interaction</c>.</summary>
+    Resource,
+}
+
 /// <summary>
 /// Typed projection of an <c>AAuth-Requirement: requirement=interaction</c>
 /// header (AAuth protocol §User Interaction). Carries the user-facing
@@ -19,6 +29,9 @@ namespace AAuth.Headers;
 /// </remarks>
 public sealed record Interaction(string Url, string Code)
 {
+    /// <summary>Who asked for the interaction: the Person Server (token exchange) or a resource.</summary>
+    public InteractionSource Source { get; init; }
+
     /// <summary>Requirement type: <c>interaction</c>.</summary>
     public const string RequirementType = "interaction";
 

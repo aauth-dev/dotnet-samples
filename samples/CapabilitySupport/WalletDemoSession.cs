@@ -191,9 +191,9 @@ public sealed class WalletDemoSession(string provider, string person, string wal
         using var client = new AAuthClientBuilder(_key).UseJwt(_authToken!).WithEgressPolicy(SampleEgress.Policy)
             .WithInteractionHandling(options =>
             {
-                options.OnInteractionRequired = async (url, code, _) =>
+                options.OnInteractionRequired = async (interaction, _) =>
                 {
-                    Consent = ConsentSupport.PersonServerConsent.FromUserUrl(url, code);
+                    Consent = ConsentSupport.PersonServerConsent.FromUserUrl(interaction.BuildUserUrl(), interaction.Code);
                     if (Changed is not null) await Changed();
                 };
                 options.PollingTimeout = TimeSpan.FromMinutes(2);

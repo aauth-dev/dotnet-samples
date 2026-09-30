@@ -70,7 +70,7 @@ using var client = AAuthClientBuilder.SelfIssuing(key).WithEgressPolicy(SampleEg
     .WithInteractionHandling(opts =&gt;
     {   // hop 2: Concierge's chained 202
         opts.OnInteractionRequired =
-            (userUrl, code, ct) =&gt; Surface(userUrl);
+            (interaction, ct) =&gt; Surface(interaction.BuildUserUrl());
     })
     .Build();
 
@@ -272,8 +272,8 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
                 })
                 .WithInteractionHandling(opts =>
                 {
-                    opts.OnInteractionRequired = (userUrl, code, ct) =>
-                        SurfaceInteraction(PersonServerConsent.FromUserUrl(userUrl, code));
+                    opts.OnInteractionRequired = (interaction, ct) =>
+                        SurfaceInteraction(PersonServerConsent.FromUserUrl(interaction.BuildUserUrl(), interaction.Code));
                     opts.PollingTimeout = TimeSpan.FromMinutes(2);
                     opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
                 })

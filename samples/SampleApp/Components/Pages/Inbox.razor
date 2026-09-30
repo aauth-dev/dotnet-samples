@@ -47,7 +47,7 @@ using var client = AAuthClientBuilder.Enrolled(Enrollment.Key)
     .WithResourceManagedAccess()
     .WithInteractionHandling(o =&gt;
     {
-        o.OnInteractionRequired = (url, code, ct) =&gt;
+        o.OnInteractionRequired = (interaction, ct) =&gt;
         {
             // Show the user the Inbox consent URL.
             return Task.CompletedTask;
@@ -189,11 +189,11 @@ app.MapAAuthInteractionPoll().RequireAAuthSignature();</code></pre>
                 .WithResourceManagedAccess()
                 .WithInteractionHandling(o =>
                 {
-                    o.OnInteractionRequired = async (url, code, ct) =>
+                    o.OnInteractionRequired = async (interaction, ct) =>
                     {
                         // Surface the Inbox's own consent URL to the user, then
                         // keep polling until they approve.
-                        _consentUrl = url;
+                        _consentUrl = interaction.BuildUserUrl();
                         await InvokeAsync(StateHasChanged);
                     };
                     o.DefaultPollInterval = TimeSpan.FromSeconds(1);

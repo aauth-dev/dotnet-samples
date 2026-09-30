@@ -256,11 +256,11 @@ if (resourceManaged)
         .WithInteractionHandling(opts =>
         {
             opts.MinPollInterval = TimeSpan.FromMilliseconds(200);
-            opts.OnInteractionRequired = (consentUrl, code, ct) =>
+            opts.OnInteractionRequired = (interaction, ct) =>
             {
                 Console.WriteLine();
                 Console.WriteLine("  [interaction] The resource needs your approval. Open:");
-                Console.WriteLine($"    {consentUrl}");
+                Console.WriteLine($"    {interaction.BuildUserUrl()}");
                 Console.WriteLine("  Waiting for approval (polling)...");
                 return Task.CompletedTask;
             };

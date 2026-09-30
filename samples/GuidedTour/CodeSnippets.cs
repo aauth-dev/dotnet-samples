@@ -284,9 +284,9 @@ internal static class CodeSnippets
             .WithResourceManagedAccess()
             .WithInteractionHandling(o =>
             {
-                o.OnInteractionRequired = (url, code, ct) =>
+                o.OnInteractionRequired = (interaction, ct) =>
                 {
-                    Console.WriteLine($"Approve at: {url}");
+                    Console.WriteLine($"Approve at: {interaction.BuildUserUrl()}");
                     return Task.CompletedTask;
                 };
             })

@@ -29,36 +29,56 @@ public sealed class InteractionHandler : DelegatingHandler
     private const string ApprovalRequirement = "approval";
     private static readonly TimeSpan BackoffIncrement = TimeSpan.FromSeconds(5);
 
-    private readonly Func<string, string, CancellationToken, Task>? _onInteractionRequired;
-    private readonly Func<CancellationToken, Task>? _onApprovalPending;
+    private readonly IAAuthInteractionHandler? _interactionHandler;
+    private readonly IAAuthDeferredObserver? _observer;
     private readonly TimeSpan _pollingTimeout;
     private readonly TimeSpan _defaultPollInterval;
     private readonly TimeSpan _minPollInterval;
     private readonly int? _preferWaitSeconds;
-    private readonly Action<HttpResponseMessage>? _onPoll;
 
     public InteractionHandler(
-        Func<string, string, CancellationToken, Task>? onInteractionRequired = null,
+        Func<Interaction, CancellationToken, Task>? onInteractionRequired = null,
         Func<CancellationToken, Task>? onApprovalPending = null,
         TimeSpan? pollingTimeout = null,
         TimeSpan? defaultPollInterval = null,
         TimeSpan? minPollInterval = null,
         int? preferWaitSeconds = null,
         Action<HttpResponseMessage>? onPoll = null)
+        : this(DelegateInteractionHandler.From(onInteractionRequired), DelegateDeferredObserver.From(onApprovalPending, onPoll),
+            pollingTimeout, defaultPollInterval, minPollInterval, preferWaitSeconds)
     {
-        _onInteractionRequired = onInteractionRequired;
-        _onApprovalPending = onApprovalPending;
+    }
+
+    /// <summary>
+    /// Handle deferred resource responses with the given handler and observer; a request's
+    /// <see cref="AAuthRequestOptions.InteractionHandler"/> and <see cref="AAuthRequestOptions.DeferredObserver"/>
+    /// override them.
+    /// </summary>
+    public InteractionHandler(IAAuthInteractionHandler? interactionHandler, IAAuthDeferredObserver? observer,
+        TimeSpan? pollingTimeout = null, TimeSpan? defaultPollInterval = null, TimeSpan? minPollInterval = null,
+        int? preferWaitSeconds = null)
+    {
+        _interactionHandler = interactionHandler;
+        _observer = observer;
         _pollingTimeout = pollingTimeout ?? TimeSpan.FromMinutes(5);
         _defaultPollInterval = defaultPollInterval ?? TimeSpan.FromSeconds(5);
         _minPollInterval = minPollInterval ?? TimeSpan.FromMilliseconds(100);
         _preferWaitSeconds = preferWaitSeconds;
-        _onPoll = onPoll;
     }
+
+    private IAAuthInteractionHandler? InteractionFor(HttpRequestMessage request)
+        => request.Options.TryGetValue(AAuthRequestOptions.InteractionHandler, out var handler) ? handler : _interactionHandler;
+
+    private IAAuthDeferredObserver? ObserverFor(HttpRequestMessage request)
+        => request.Options.TryGetValue(AAuthRequestOptions.DeferredObserver, out var observer) ? observer : _observer;
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
         if (TransportContract is null) throw new InvalidOperationException("Interaction handlers require an explicit inner transport contract.");
+        // Capabilities follow the handlers that resolve for this request (#aauth-capabilities).
+        if (InteractionFor(request) is not null)
+            request.Options.Set(AAuth.HttpSig.AAuthSigningHandler.RequestCapabilitiesKey, [Interaction.RequirementType]);
         var response = await AAuth.Discovery.AAuthHttpTransport.SendBoundedAsync(EgressPolicy, request,
             token => base.SendAsync(request, token), cancellationToken).ConfigureAwait(false);
 
@@ -89,6 +109,8 @@ public sealed class InteractionHandler : DelegatingHandler
         var transportContract = TransportContract
             ?? throw new InvalidOperationException("Interaction handlers require an explicit inner transport contract.");
         var started = TimeProvider.GetTimestamp();
+        var interactionHandler = InteractionFor(request);
+        var observer = ObserverFor(request);
         string? handledInteraction = null;
         var approvalNotified = false;
         async Task<bool> DispatchAsync(HttpResponseMessage current)
@@ -105,19 +127,20 @@ public sealed class InteractionHandler : DelegatingHandler
                     if (interaction is null) throw new HttpRequestException("Invalid interaction requirement.");
                     var userUrl = interaction.BuildUserUrl();
                     if (userUrl == handledInteraction) return true;
-                    if (_onInteractionRequired is null)
+                    if (interactionHandler is null)
                         throw new AAuthInteractionDeniedException(
-                            "Server requires user interaction but no OnInteractionRequired callback is configured.");
+                            "Server requires user interaction but no interaction handler is configured.");
                     await AAuth.Discovery.AAuthHttpTransport.AdmitInteractionAsync(EgressPolicy, transportContract,
                         interaction.Url, cancellationToken).ConfigureAwait(false);
-                    await _onInteractionRequired(userUrl, interaction.Code, cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
+                    await interactionHandler.OnInteractionRequiredAsync(interaction with { Source = InteractionSource.Resource },
+                        cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
                     handledInteraction = userUrl;
                     return true;
                 }
                 if (parsed.Requirement == ApprovalRequirement)
                 {
-                    if (!approvalNotified && _onApprovalPending is not null)
-                        await _onApprovalPending(cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
+                    if (!approvalNotified && observer is not null)
+                        await observer.OnApprovalPendingAsync(cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
                     approvalNotified = true;
                     return true;
                 }
@@ -191,7 +214,7 @@ public sealed class InteractionHandler : DelegatingHandler
             var pollResponse = await AAuth.Discovery.AAuthHttpTransport.SendBoundedAsync(EgressPolicy, pollRequest,
                 token => base.SendAsync(pollRequest, token), cancellationToken).ConfigureAwait(false);
 
-            try { _onPoll?.Invoke(pollResponse); }
+            try { observer?.OnPoll(pollResponse); }
             catch { pollResponse.Dispose(); throw; }
 
             if (pollResponse.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
