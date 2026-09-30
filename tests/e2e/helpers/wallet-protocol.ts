@@ -101,8 +101,9 @@ export function walletProtocolTests() {
           expect(result.downstream.sub).not.toBe(result.upstream.sub);
           expect(result.downstream).not.toHaveProperty('agent');
           expect(result.downstream).not.toHaveProperty('act');
-          // Concierge -> Wallet: person-token requirement, auth-token challenge, success.
-          expect(result.exchanges.map((entry: { status: number }) => entry.status)).toEqual([401, 401, 200]);
+          // The repeated read reuses the Concierge's cached Wallet grant for this upstream
+          // token: one signed request, no new challenge.
+          expect(result.exchanges.map((entry: { status: number }) => entry.status)).toEqual([200]);
           await expect(root).toContainText('HTTP 401');
         } else {
           // draft-11: an agent is not a server revoker; the PS revokes its person

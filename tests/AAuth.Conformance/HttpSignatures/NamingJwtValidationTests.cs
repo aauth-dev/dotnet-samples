@@ -99,11 +99,12 @@ public class NamingJwtValidationTests : IAsyncLifetime
         var namingJwt = await BuildNamingJwtAsync(exp: FixedClock.AddMinutes(5), jti: fixedJti);
 
         // First request succeeds
-        var response1 = await SendSignedRequest(namingJwt);
+        var signed = await SignAsync(namingJwt);
+        var response1 = await RelayAsync(signed);
         Assert.Equal(HttpStatusCode.OK, response1.StatusCode);
 
-        // Second request with same jti is rejected
-        var response2 = await SendSignedRequest(namingJwt);
+        // Replaying the same signed request is rejected
+        var response2 = await RelayAsync(signed);
         Assert.Equal(HttpStatusCode.Unauthorized, response2.StatusCode);
     }
 
@@ -223,6 +224,9 @@ public class NamingJwtValidationTests : IAsyncLifetime
     }
 
     private async Task<HttpResponseMessage> SendSignedRequest(string namingJwt)
+        => await RelayAsync(await SignAsync(namingJwt));
+
+    private async Task<HttpRequestMessage> SignAsync(string namingJwt)
     {
         // Sign a request targeting the test server's host
         var capture = new CaptureHandler();
@@ -235,8 +239,11 @@ public class NamingJwtValidationTests : IAsyncLifetime
         };
         using var signingClient = new InProcessHttpClient(signingHandler);
         await signingClient.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost/jkt-jwt"));
-        var signed = capture.Captured!;
+        return capture.Captured!;
+    }
 
+    private async Task<HttpResponseMessage> RelayAsync(HttpRequestMessage signed)
+    {
         // Relay the signed headers to the test server
         var relay = new HttpRequestMessage(HttpMethod.Get, "http://localhost/jkt-jwt");
         foreach (var h in signed.Headers)

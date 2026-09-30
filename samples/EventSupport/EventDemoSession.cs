@@ -14,6 +14,8 @@ namespace AAuth.Samples.Events;
 public sealed class EventDemoSession : IDisposable
 {
     private readonly HttpClient _http;
+    private readonly IAAuthAgentFactory _agents;
+    private AAuthAgent? _agent;
     private readonly EventsProtocol _protocol;
     private readonly SqliteEventStore _store;
     private readonly AAuthKey _key;
@@ -40,9 +42,10 @@ public sealed class EventDemoSession : IDisposable
     public static readonly string[] Steps = ["Discover event channels", "Obtain subscription URL",
         "Acquire subscribe token", "Register subscription", "Deliver sample event", "Verify inbox event"];
 
-    public EventDemoSession(string directory, string provider = "http://localhost:5301",
+    public EventDemoSession(IAAuthAgentFactory agents, string directory, string provider = "http://localhost:5301",
         string resource = "http://localhost:5005", string person = "http://localhost:5100", HttpClient? http = null)
     {
+        _agents = agents;
         _http = http ?? new SampleHttpClient();
         _provider = provider.TrimEnd('/'); _resource = resource.TrimEnd('/'); _person = person.TrimEnd('/');
         _protocol = new EventsProtocol(_http, [new EventsSignatureTokenVerifier(true), new EventsSignatureTokenVerifier(false)]);
@@ -80,15 +83,17 @@ public sealed class EventDemoSession : IDisposable
                 {
                     try
                     {
-                        using var client = new AAuthClientBuilder(_key).WithEgressPolicy(AAuthHttpTransport.GetPolicy(_http)).UseJwt(_agentToken!)
+                        // One agent for the session's enrolled identity; the factory composes it once.
+                        _agent ??= _agents.Create("event-agent", _key, builder => builder.UseJwt(enrolled.AgentToken!)
+                            .WithEgressPolicy(AAuthHttpTransport.GetPolicy(_http))
                             .WithChallengeHandling(_person, options => options.OnInteractionRequired = async (interaction, _) =>
                             {
                                 Consent = interaction;
                                 if (Changed is not null) await Changed();
-                            }).Build();
+                            }));
                         using var search = new HttpRequestMessage(HttpMethod.Get, _resource + "/search_availability?account=" + Uri.EscapeDataString(Account));
                         search.Options.Set(AAuthRequestOptions.Account, Account);
-                        using var response = await client.SendAsync(search, cancellationToken);
+                        using var response = await _agent.HttpClient.SendAsync(search, cancellationToken);
                         var json = await ReadAsync(response, cancellationToken);
                         _subscriptionUrl = json["notifications"]!["subscribe_url"]!.GetValue<string>();
                         if (json["account"]?.GetValue<string>() != Account) throw new InvalidOperationException("Authorized account mismatch.");
@@ -180,7 +185,11 @@ public sealed class EventDemoSession : IDisposable
         return JsonNode.Parse(text)?.AsObject() ?? throw new InvalidOperationException("Missing JSON response.");
     }
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        _agent?.Dispose();
+        _http.Dispose();
+    }
 }
 
 public sealed record EventDemoEvidence(int Step, string Exchange, int StatusCode, string Json);

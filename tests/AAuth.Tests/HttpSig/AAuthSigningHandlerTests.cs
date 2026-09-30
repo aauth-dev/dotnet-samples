@@ -29,6 +29,30 @@ public class AAuthSigningHandlerTests
     }
 
     [Fact]
+    public async Task SendAsync_IdenticalRequestsInOneSecond_TakeDistinctCreated()
+    {
+        // §Freshness and Replay: a verifier may reject a repeated (key, created, method, authority,
+        // path); with a cached token, identical requests in one second must not collide.
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero));
+        using var first = new InProcessHttpClient(new AAuthSigningHandler(key, () => "abc.def.ghi", clock) { InnerHandler = capture });
+        using var second = new InProcessHttpClient(new AAuthSigningHandler(key, () => "abc.def.ghi", clock) { InnerHandler = capture });
+
+        string Created() => Regex.Match(string.Join(",", capture.Captured!.Headers.GetValues("Signature-Input")), @"created=(\d+)").Groups[1].Value;
+        await first.GetAsync("https://resource.example/api/data");
+        var a = Created();
+        await second.GetAsync("https://resource.example/api/data");
+        var b = Created();
+        await first.GetAsync("https://resource.example/api/other");
+        var other = Created();
+
+        Assert.Equal(clock.GetUtcNow().ToUnixTimeSeconds().ToString(), a);
+        Assert.Equal((long.Parse(a) + 1).ToString(), b);
+        Assert.Equal(a, other);
+    }
+
+    [Fact]
     public async Task SendAsync_AddsAllThreeSignatureHeaders()
     {
         var key = AAuthKey.Generate();

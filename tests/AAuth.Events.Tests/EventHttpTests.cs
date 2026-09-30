@@ -85,7 +85,10 @@ public class EventHttpTests
         using var http = AAuthHttpTransport.AttachPolicy(new HttpClient(loss), policy, AAuthTransportContract.EnforcesEgressPolicy);
         try
         {
-            using var session = new EventDemoSession(directory, host.Issuer, host.Issuer, host.Issuer, http) { Protected = false };
+            await using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddAAuthAgentFactory().BuildServiceProvider();
+            using var session = new EventDemoSession(
+                Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<AAuth.Agent.IAAuthAgentFactory>(services),
+                directory, host.Issuer, host.Issuer, host.Issuer, http) { Protected = false };
             for (var step = 0; step < 4; step++) await session.NextAsync();
             await Assert.ThrowsAsync<HttpRequestException>(() => session.NextAsync());
             Assert.Equal(4, session.Step);

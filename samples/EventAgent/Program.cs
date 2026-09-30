@@ -1,7 +1,11 @@
+using AAuth.Agent;
 using AAuth.Samples.Events;
+using Microsoft.Extensions.DependencyInjection;
 
+// The session creates its agent through the factory once it has enrolled.
+await using var services = new ServiceCollection().AddAAuthAgentFactory().BuildServiceProvider();
 var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aauth", "event-agent");
-using var session = new EventDemoSession(directory)
+using var session = new EventDemoSession(services.GetRequiredService<IAAuthAgentFactory>(), directory)
 {
     Protected = args.Contains("--protected", StringComparer.Ordinal),
     Account = args.Contains("--work", StringComparer.Ordinal) ? "work" : "personal"

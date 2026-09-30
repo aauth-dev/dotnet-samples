@@ -9,6 +9,9 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 const string Usage = "Usage: AgentConsole <url> --ap <agent-provider-url> [--sub <agent-id>] " +
     "[--ps <person-server-url>] [--signing-mode jwt|hwk|jwks|jkt-jwt] " +
@@ -173,70 +176,83 @@ Console.WriteLine();
 
 Console.WriteLine($"Signature scheme: {signingMode}");
 
-// Build the HTTP client using the fluent AAuthClientBuilder.
-var builder = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy);
-
-// Configure signing mode
-switch (signingMode)
+// A generic host owns the agent. The jwt mode is a registered agent: the SDK refreshes its
+// agent token at the AP with the durable key and handles challenges, chaining and
+// resource-managed access from options. The other schemes demonstrate a Signature-Key mode
+// itself, so they compose the builder primitive and the factory owns the result.
+var hostBuilder = Host.CreateApplicationBuilder();
+hostBuilder.Logging.ClearProviders();
+hostBuilder.Services.AddSingleton(keyStore);
+hostBuilder.Services.AddAAuthAgentFactory();
+if (signingMode is "jwt")
 {
-    case "hwk":
-        builder.UseHwk();
-        break;
-    case "jwks":
-        var jwksUrl = agentJwksUri ?? $"{apUrl.TrimEnd('/')}/agents/{subject}/jwks.json";
-        // Per spec, the receiver looks up the key in the JWKS by `kid`.
-        // The AP chooses the kid and returns it as `key_id` at enrollment.
-        // If the AP didn't provide one, jwks_uri mode cannot work — the agent
-        // has no way to know what kid the AP published the key under.
-        if (agentTokenKid is null)
-            throw new InvalidOperationException(
-                "Cannot use direct jwks: the AP did not return a key_id at enrollment.");
-        builder.UseJwks(jwksUrl, agentTokenKid);
-        break;
-    case "jkt-jwt":
-        // Two-key refresh: do initial refresh to get ephemeral key + naming JWT.
-        // The durable key signs the naming JWT; the ephemeral key signs HTTP requests.
-        var twoKeyResult = await apClient.RefreshTwoKeyAsync(refreshEndpoint, localKeyHandle);
-        // Rebuild the builder with the ephemeral key (not the durable key)
-        builder = new AAuthClientBuilder(twoKeyResult.EphemeralKey).WithEgressPolicy(SampleEgress.Policy);
-        // TODO: In a long-running client, the naming JWT (5-min expiry) and ephemeral key
-        // must be regenerated on refresh. For this single-request demo, the initial pair suffices.
-        var currentNamingJwt = await NamingJwtBuilder.BuildAsync(key, twoKeyResult.EphemeralKey);
-        builder.UseJktJwt(() => currentNamingJwt);
-        break;
-    default: // "jwt"
-        builder = AAuthClientBuilder.Enrolled(key)
-            .WithEgressPolicy(SampleEgress.Policy)
-            .RefreshingFrom(refreshEndpoint, localKeyHandle)
-            .WithKeyStore(keyStore)
-            .ToBuilder();
-        break;
-}
-
-// Three-party flows add automatic challenge handling
-if (personServer is not null)
-{
-    builder.WithChallengeHandling(personServer, opts =>
+    hostBuilder.Services.AddAAuthAgent("console", options =>
     {
-        if (preferWaitSeconds is not null)
-            opts.PreferWaitSeconds = preferWaitSeconds;
-        opts.MinPollInterval = TimeSpan.FromMilliseconds(200);
-        opts.OnPoll = response => Console.WriteLine($"  [poll] {(int)response.StatusCode}");
-        opts.OnInteractionRequired = (interaction, ct) =>
+        options.KeyHandle = localKeyHandle;
+        options.AgentProvider.RefreshEndpoint = refreshEndpoint;
+        options.EgressPolicy = SampleEgress.Policy;
+        if (personServer is not null)
         {
-            var url = interaction.BuildUserUrl();
-            Console.WriteLine($"  [interaction] User approval required: {url}");
-            if (url.StartsWith(personServer.TrimEnd('/') + "/interaction?", StringComparison.OrdinalIgnoreCase))
-                Console.WriteLine($"  [interaction] Or decide on the PS dashboard: {personServer.TrimEnd('/')}/dashboard?code={Uri.EscapeDataString(interaction.Code)}");
-            return Task.CompletedTask;
-        };
+            // Three-party flows add automatic challenge handling.
+            options.PersonServer = personServer;
+            options.Challenge.PreferWaitSeconds = preferWaitSeconds;
+            options.Challenge.MinPollInterval = TimeSpan.FromMilliseconds(200);
+            options.Challenge.OnPoll = response => Console.WriteLine($"  [poll] {(int)response.StatusCode}");
+            options.Challenge.OnInteractionRequired = (interaction, ct) =>
+            {
+                var url = interaction.BuildUserUrl();
+                Console.WriteLine($"  [interaction] User approval required: {url}");
+                if (url.StartsWith(personServer.TrimEnd('/') + "/interaction?", StringComparison.OrdinalIgnoreCase))
+                    Console.WriteLine($"  [interaction] Or decide on the PS dashboard: {personServer.TrimEnd('/')}/dashboard?code={Uri.EscapeDataString(interaction.Code)}");
+                return Task.CompletedTask;
+            };
+        }
+        // Call chaining: pass the upstream token to downstream exchanges.
+        if (upstreamToken is not null) options.UpstreamTokenProvider = () => upstreamToken;
+        if (resourceManaged)
+        {
+            // Resource-managed (two-party) opaque-token flow: capture/replay AAuth-Access
+            // and drive the resource's own consent handshake.
+            options.EnableResourceManagedAccess = true;
+            options.HandleInteractions = true;
+            options.Interaction.MinPollInterval = TimeSpan.FromMilliseconds(200);
+            options.Interaction.OnInteractionRequired = (interaction, ct) =>
+            {
+                Console.WriteLine();
+                Console.WriteLine("  [interaction] The resource needs your approval. Open:");
+                Console.WriteLine($"    {interaction.BuildUserUrl()}");
+                Console.WriteLine("  Waiting for approval (polling)...");
+                return Task.CompletedTask;
+            };
+        }
     });
 }
+using var host = hostBuilder.Build();
+var agents = host.Services.GetRequiredService<IAAuthAgentFactory>();
 
-// Call chaining: pass upstream token to downstream exchanges
-if (upstreamToken is not null)
+using var agent = signingMode switch
 {
-    builder.WithCallChaining(upstreamToken);
+    "hwk" => agents.Create("console", key, builder => builder.WithEgressPolicy(SampleEgress.Policy).UseHwk()),
+    "jwks" => agents.Create("console", key, builder => builder.WithEgressPolicy(SampleEgress.Policy)
+        // Per spec, the receiver looks up the key in the JWKS by `kid`. The AP chooses the kid
+        // and returns it as `key_id` at enrollment; without it jwks_uri mode cannot work.
+        .UseJwks(agentJwksUri ?? $"{apUrl.TrimEnd('/')}/agents/{subject}/jwks.json",
+            agentTokenKid ?? throw new InvalidOperationException(
+                "Cannot use direct jwks: the AP did not return a key_id at enrollment."))),
+    "jkt-jwt" => await JktJwtAgentAsync(),
+    _ => agents.Get("console"),
+};
+var client = agent.HttpClient;
+
+// Two-key refresh: the durable key signs the naming JWT; the ephemeral key signs HTTP requests.
+// In a long-running client the naming JWT (5-min expiry) and ephemeral key must be regenerated
+// on refresh. For this single-request demo, the initial pair suffices.
+async Task<AAuthAgent> JktJwtAgentAsync()
+{
+    var twoKeyResult = await apClient.RefreshTwoKeyAsync(refreshEndpoint, localKeyHandle);
+    var currentNamingJwt = await NamingJwtBuilder.BuildAsync(key, twoKeyResult.EphemeralKey);
+    return agents.Create("console", twoKeyResult.EphemeralKey, builder => builder
+        .WithEgressPolicy(SampleEgress.Policy).UseJktJwt(() => currentNamingJwt));
 }
 
 if (preferWaitSeconds is not null)
@@ -247,27 +263,6 @@ if (upstreamToken is not null)
 {
     Console.WriteLine("Upstream token provided for call chaining.");
 }
-
-// Resource-managed (two-party) opaque-token flow: capture/replay AAuth-Access
-// and drive the resource's own consent handshake.
-if (resourceManaged)
-{
-    builder.WithResourceManagedAccess()
-        .WithInteractionHandling(opts =>
-        {
-            opts.MinPollInterval = TimeSpan.FromMilliseconds(200);
-            opts.OnInteractionRequired = (interaction, ct) =>
-            {
-                Console.WriteLine();
-                Console.WriteLine("  [interaction] The resource needs your approval. Open:");
-                Console.WriteLine($"    {interaction.BuildUserUrl()}");
-                Console.WriteLine("  Waiting for approval (polling)...");
-                return Task.CompletedTask;
-            };
-        });
-}
-
-using var client = builder.Build();
 
 // If the target URL has no path (or just "/"), append the signing-mode-specific
 // path. The identity-based modes target the Aria Profile server, whose paths

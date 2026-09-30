@@ -57,6 +57,29 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     private readonly ISignatureKeyProvider _signatureKeyProvider;
     private readonly TimeProvider _time;
 
+    // §Freshness and Replay: a verifier MAY reject a second signature with the same key, created,
+    // @method, @authority and @path, and the profile defines no nonce. Requests that would collide
+    // (a cached token re-sent within the same second, concurrent identical calls) therefore take
+    // the next free second, still inside every verifier's created window. Shared per key, since
+    // several handlers (resource, exchange, typed clients) sign with one key.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IAAuthSigner, Dictionary<string, long>> LastCreated = new();
+
+    private long NextCreated(string method, string authority, string path)
+    {
+        var now = _time.GetUtcNow().ToUnixTimeSeconds();
+        var issued = LastCreated.GetOrCreateValue(_key);
+        var target = method + " " + authority + path;
+        lock (issued)
+        {
+            var created = issued.TryGetValue(target, out var last) && last >= now ? last + 1 : now;
+            issued[target] = created;
+            if (issued.Count > 1024)
+                foreach (var stale in issued.Where(entry => entry.Value < now).Select(entry => entry.Key).ToList())
+                    issued.Remove(stale);
+            return created;
+        }
+    }
+
     /// <summary>
     /// Optional observability hook. When set, the canonical RFC 9421
     /// signature base string is passed to this callback every time a
@@ -205,7 +228,6 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         var signatureKey = _signatureKeyProvider is JwtSignatureKeyProvider jwtProvider
             ? jwtProvider.GetSignatureKeyHeader(request) : _signatureKeyProvider.GetSignatureKeyHeader();
         request.Options.Set(SigningKeyContext, _key);
-        var created = _time.GetUtcNow().ToUnixTimeSeconds();
 
         var method = request.Method.Method;
         // RFC 9421 §2.2.3 / RFC 3986 §3.2.2: @authority MUST be lowercase.
@@ -217,6 +239,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         // UriFormat.UriEscaped guarantees the wire form. GetComponents omits
         // the leading '/', so re-add it.
         var path = "/" + request.RequestUri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
+        var created = NextCreated(method, authority, path);
 
         // Additional covered components required by the resource (from its
         // metadata or a prior invalid_input error). Resolve each to its

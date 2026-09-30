@@ -18,7 +18,8 @@ public static class EventDemoCode
         }
         """;
     public const string SubscriptionUrl = """
-        public static async Task<(string Agent, string AgentToken, string SubscriptionUrl)> ObtainSubscriptionUrlAsync(AAuthKey key,
+        public static async Task<(string Agent, string AgentToken, string SubscriptionUrl)> ObtainSubscriptionUrlAsync(
+            IAAuthAgentFactory agents, AAuthKey key,
             string provider, string person, string resource, string account, bool protectedChannel,
             string publicSubscriptionUrl, AAuthEgressPolicy policy,
             Func<Interaction, CancellationToken, Task> showConsent, CancellationToken cancellationToken)
@@ -27,13 +28,14 @@ public static class EventDemoCode
                 .WithKey(key).WithKeyStore(new InMemoryKeyStore()).WithPersonServer(person)
                 .WithEgressPolicy(policy).EnrolAsync(cancellationToken);
             if (!protectedChannel) return (enrolled.AgentId!, enrolled.AgentToken!, publicSubscriptionUrl);
-            using var agent = new AAuthClientBuilder(key).UseJwt(enrolled.AgentToken!)
+            // One agent for the enrolled identity, created once and reused for the session.
+            using var agent = agents.Create("event-agent", key, builder => builder.UseJwt(enrolled.AgentToken!)
                 .WithEgressPolicy(policy).WithChallengeHandling(person,
-                    options => options.OnInteractionRequired = showConsent).Build();
+                    options => options.OnInteractionRequired = showConsent));
             using var request = new HttpRequestMessage(HttpMethod.Get,
                 resource + "/search_availability?account=" + Uri.EscapeDataString(account));
             request.Options.Set(AAuthRequestOptions.Account, account);
-            using var response = await agent.SendAsync(request, cancellationToken);
+            using var response = await agent.HttpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
             var result = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken);
             return (enrolled.AgentId!, enrolled.AgentToken!, result!["notifications"]!["subscribe_url"]!.GetValue<string>());

@@ -690,7 +690,55 @@ AgentConsole/EventSupport, the consent-dashboard seams, and teaching panes).
   Events 83. ApiSurface +904/-405. Docs inventory refreshed. Playwright
   `sample-app` project: 35 passed, 1 skipped, `--retries=0`.
 
+### [2026-09-30] [Phase 10b] Concierge, consoles and events on DI agents
+
+PROCEEDED (Phase 10 part 2 of 4).
+- **Concierge:** one `AddAAuthAgent("downstream")` (self-issued, `ChainFromHttpContext`,
+  `HandleInteractions = false`, `Challenge.Capabilities = []`, the registered
+  `ChainInteractionHandler`). `ChainCaptureHandler` is the agent's inner handler
+  and records into a per-inbound-request `AsyncLocal` capture.
+  `RunChainAsync` lost its upstream parameter (the pending routes re-verify the
+  same token).
+- **MissionAgent:** generic host; the enrolled agent is registered with
+  `KeyHandle` + `AgentProvider.RefreshEndpoint`; governance runs on the keyed
+  client with defaults from `Challenge`, so the per-call `GovernanceFor(...)` is
+  gone. Resource calls set `AAuthRequestOptions.MissionS256`.
+- **AgentConsole:** generic host; jwt mode is a registered agent (challenges,
+  chaining, resource-managed access from options); hwk/jwks/jkt-jwt are the
+  signing-mode lessons and are created through `IAAuthAgentFactory` from the
+  builder.
+- **EventSupport:** `EventDemoSession` takes `IAAuthAgentFactory` and creates
+  its agent once after enrolment; the Events code pane matches.
+- **SDK fix (found by the tour e2e):** identical requests with a cached token in
+  one second produced byte-identical signatures, which the resource replay
+  cache (§Freshness and Replay) rejected as `invalid_jwt`. `AAuthSigningHandler`
+  now gives each (key, method, authority, path) a unique `created`, taking the
+  next second on collision. The jkt-jwt replay test now replays the same signed
+  request.
+- **Manual runs:** `make demo-mission` + `MissionAgent --auto` completed all ten
+  steps; `AgentConsole <trips> --ps` (jwt) returned 200.
+- **Tests.** New `SendAsync_IdenticalRequestsInOneSecond_TakeDistinctCreated`.
+  The wallet-protocol e2e now expects the repeated delegated read to reuse the
+  Concierge's cached grant (`[200]`).
+- **Gates.** Build clean. AAuth.Tests 1751, AAuth.Conformance 1286, R3 330,
+  Events 83. ApiSurface +907/-408. Docs inventory refreshed. Full Playwright:
+  78 passed, 1 skipped, `--retries=0`.
+
 ## Deviations from plan
+
+### [2026-09-30] [Phase 10b] Signatures take a unique created per target
+
+PROCEEDED. Not in the plan; required by Phase 9 caching. The profile has no
+nonce, so two requests with the same key, token, method, authority and path in
+one second were indistinguishable to a replay cache. The signer now bumps
+`created` to the next free second for that target (shared across handlers using
+one key), staying well inside the verifier's 60-second window.
+
+### [2026-09-30] [Phase 10b] MissionAgent clears its cache per showcase step
+
+PROCEEDED. Each step must reach the PS to print its gate decision, and the
+elevated step would otherwise meet the 403 scope gap logged in 10a. A real agent
+would keep its tokens.
 
 ### [2026-09-30] [Phase 10a] Demo pages clear the token cache per run
 

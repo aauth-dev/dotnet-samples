@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 204 changed public-source files, 904 added/replacement declarations, 405 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 205 changed public-source files, 907 added/replacement declarations, 408 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -226,6 +226,17 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [WalletScenarioCode
 
 Public owners: `AAuth.Samples.Capabilities.WalletScenarioCode`, `AAuth.Samples.Capabilities`.
 
+### samples/Concierge/ChainCaptureHandler.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [ChainCaptureHandler.cs](../../../samples/Concierge/ChainCaptureHandler.cs).
+
+```diff
+- Concierge.ChainCaptureHandler: public List < ChainExchange > Exchanges { get ; } = [ ]
++ Concierge.ChainCaptureHandler: public static List < ChainExchange > Begin ( )
+```
+
+Public owners: `Concierge.ChainCaptureHandler`, `Concierge`.
+
 ### samples/Concierge/Program.cs
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [Program.cs](../../../samples/Concierge/Program.cs).
@@ -368,6 +379,28 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [EventDemoCode.cs](
             return result;
         }
         """ ;
+- AAuth.Samples.Events.EventDemoCode: public const string SubscriptionUrl = """
+        public static async Task<(string Agent, string AgentToken, string SubscriptionUrl)> ObtainSubscriptionUrlAsync(AAuthKey key,
+            string provider, string person, string resource, string account, bool protectedChannel,
+            string publicSubscriptionUrl, AAuthEgressPolicy policy,
+            Func<Interaction, CancellationToken, Task> showConsent, CancellationToken cancellationToken)
+        {
+            var enrolled = await AAuthClientBuilder.Bootstrap(provider + "/enrol")
+                .WithKey(key).WithKeyStore(new InMemoryKeyStore()).WithPersonServer(person)
+                .WithEgressPolicy(policy).EnrolAsync(cancellationToken);
+            if (!protectedChannel) return (enrolled.AgentId!, enrolled.AgentToken!, publicSubscriptionUrl);
+            using var agent = new AAuthClientBuilder(key).UseJwt(enrolled.AgentToken!)
+                .WithEgressPolicy(policy).WithChallengeHandling(person,
+                    options => options.OnInteractionRequired = showConsent).Build();
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                resource + "/search_availability?account=" + Uri.EscapeDataString(account));
+            request.Options.Set(AAuthRequestOptions.Account, account);
+            using var response = await agent.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var result = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken);
+            return (enrolled.AgentId!, enrolled.AgentToken!, result!["notifications"]!["subscribe_url"]!.GetValue<string>());
+        }
+        """ ;
 + AAuth.Samples.Events.EventDemoCode: public const string Delivery = """
         public static async Task TriggerSampleEventAsync(EventsProtocol protocol, string resource,
             string eid, IAAuthSigner agentKey, string agentToken, string? account, CancellationToken cancellationToken)
@@ -473,6 +506,30 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [EventDemoCode.cs](
             return result;
         }
         """ ;
++ AAuth.Samples.Events.EventDemoCode: public const string SubscriptionUrl = """
+        public static async Task<(string Agent, string AgentToken, string SubscriptionUrl)> ObtainSubscriptionUrlAsync(
+            IAAuthAgentFactory agents, AAuthKey key,
+            string provider, string person, string resource, string account, bool protectedChannel,
+            string publicSubscriptionUrl, AAuthEgressPolicy policy,
+            Func<Interaction, CancellationToken, Task> showConsent, CancellationToken cancellationToken)
+        {
+            var enrolled = await AAuthClientBuilder.Bootstrap(provider + "/enrol")
+                .WithKey(key).WithKeyStore(new InMemoryKeyStore()).WithPersonServer(person)
+                .WithEgressPolicy(policy).EnrolAsync(cancellationToken);
+            if (!protectedChannel) return (enrolled.AgentId!, enrolled.AgentToken!, publicSubscriptionUrl);
+            // One agent for the enrolled identity, created once and reused for the session.
+            using var agent = agents.Create("event-agent", key, builder => builder.UseJwt(enrolled.AgentToken!)
+                .WithEgressPolicy(policy).WithChallengeHandling(person,
+                    options => options.OnInteractionRequired = showConsent));
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                resource + "/search_availability?account=" + Uri.EscapeDataString(account));
+            request.Options.Set(AAuthRequestOptions.Account, account);
+            using var response = await agent.HttpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var result = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken);
+            return (enrolled.AgentId!, enrolled.AgentToken!, result!["notifications"]!["subscribe_url"]!.GetValue<string>());
+        }
+        """ ;
 ```
 
 Public owners: `AAuth.Samples.Events.EventDemoCode`, `AAuth.Samples.Events`.
@@ -482,8 +539,10 @@ Public owners: `AAuth.Samples.Events.EventDemoCode`, `AAuth.Samples.Events`.
 Concept/decision: [sample-runtime](#sample-runtime). Source: [EventDemoSession.cs](../../../samples/EventSupport/EventDemoSession.cs).
 
 ```diff
+- AAuth.Samples.Events.EventDemoSession: public EventDemoSession ( string directory , string provider = "http://localhost:5301" , string resource = "http://localhost:5005" , string person = "http://localhost:5100" , HttpClient ? http = null )
 - AAuth.Samples.Events.EventDemoSession: public string ? ConsentUrl { get ; private set ; }
 + AAuth.Samples.Events.EventDemoSession: public AAuth . Headers . Interaction ? Consent { get ; private set ; }
++ AAuth.Samples.Events.EventDemoSession: public EventDemoSession ( IAAuthAgentFactory agents , string directory , string provider = "http://localhost:5301" , string resource = "http://localhost:5005" , string person = "http://localhost:5100" , HttpClient ? http = null )
 + AAuth.Samples.Events.EventDemoSession: public string ? ConsentUrl
 ```
 

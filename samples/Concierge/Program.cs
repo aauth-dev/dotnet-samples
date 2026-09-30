@@ -25,6 +25,7 @@ var builder = WebApplication.CreateBuilder(args);
 var conciergeKey = AAuthKey.Generate();
 const string ConciergeKid = "concierge-1";
 const string ConciergeScope = "concierge";
+const string DownstreamAgent = "downstream";
 var conciergeUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5200";
 // The plain call chain hops to the Calendar (three-party). The mission-governed
 // chain hops to the mission-aware Trips so a mission in the upstream auth token
@@ -41,6 +42,26 @@ builder.Services.AddSingleton(conciergeKey);
 builder.Services.AddSingleton<PendingStore>();
 // No user to relay to: a downstream interaction is chained back to the caller (§Interaction Chaining).
 builder.Services.AddSingleton<IAAuthInteractionHandler, ChainInteractionHandler>();
+
+// The downstream agent: one registration for every inbound request. It self-issues its agent
+// token (iss = conciergeUrl, §Call Chaining Identity), chains the verified upstream auth token of
+// the current request (ChainFromHttpContext), and routes each exchange to the PS that token names.
+// The registered ChainInteractionHandler chains a downstream consent back to the caller, so the
+// agent declares no `interaction` capability (§AAuth-Capabilities).
+builder.Services.AddAAuthAgent(DownstreamAgent, options =>
+{
+    options.Signer = conciergeKey;
+    options.SelfIssued.Issuer = conciergeUrl;
+    options.SelfIssued.Subject = agentId;
+    options.SelfIssued.KeyId = ConciergeKid;
+    options.PersonServer = psUrl;
+    options.ChainFromHttpContext = true;
+    options.HandleInteractions = false;
+    options.Challenge.Capabilities = [];
+    options.EgressPolicy = SampleEgress.Policy;
+    options.InnerHandler = new ChainCaptureHandler { InnerHandler = AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+    options.TransportContract = AAuthTransportContract.EnforcesEgressPolicy;
+});
 
 // Resource role: verifier, token verifier, discovery clients (pooled handler), JTI store, and the
 // published metadata — no manual HttpClient/discovery wiring.
@@ -148,28 +169,13 @@ app.UseWhen(ctx => IsWalletPath(ctx.Request.Path), branch => branch.UseAAuthInte
         challenge.ScopeDescriptions = new Dictionary<string, string> { ["wallet.read"] = "Read the travel wallet through the concierge" };
     }));
 
-async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string downstreamBase, string downstreamPath)
+async Task<IResult> RunChainAsync(HttpContext ctx, string downstreamBase, string downstreamPath)
 {
-    // Self-issued agent token (iss = conciergeUrl) satisfies §Upstream Token
-    // Verification step 3 — the PS can match upstream_token.aud against iss.
-    // The downstream person token and auth token requests carry the upstream
-    // token as `upstream_token` and go to the PS it names (§Call Chaining).
-    var capture = new ChainCaptureHandler { InnerHandler = AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
-    using var downstream = AAuthClientBuilder.SelfIssuing(conciergeKey).WithEgressPolicy(SampleEgress.Policy)
-        .As(conciergeUrl, agentId)
-        .WithKid(ConciergeKid)
-        .WithPersonServer(psUrl)
-        .WithCallChaining(upstreamToken)
-        .WithChallengeHandling(opts =>
-        {
-            // The registered handler throws to unwind the exchange before
-            // DeferredPoller blocks; the endpoint catches it.
-            opts.OnInteractionRequired = ctx.RequestServices.GetRequiredService<IAAuthInteractionHandler>().OnInteractionRequiredAsync;
-            // Do NOT declare the "interaction" capability: we cannot relay an
-            // interaction to a user, we chain it (§AAuth-Capabilities).
-            opts.Capabilities = Array.Empty<string>();
-        })
-        .WithInnerHandler(capture, AAuthTransportContract.EnforcesEgressPolicy).Build();
+    // The registered agent chains this request's upstream auth token (the one the pending
+    // routes re-verify, equal to the parked entry's) into its person token and auth token
+    // requests (§Call Chaining). A chained consent unwinds as AAuthInteractionChainedException.
+    var exchanges = ChainCaptureHandler.Begin();
+    var downstream = ctx.RequestServices.GetRequiredService<IHttpClientFactory>().CreateClient(DownstreamAgent);
 
     using var response = await downstream.GetAsync($"{downstreamBase.TrimEnd('/')}{downstreamPath}", ctx.RequestAborted);
     response.EnsureSuccessStatusCode();
@@ -200,7 +206,7 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string 
             action = "call-chained to downstream with upstream_token",
         },
         downstream = downstreamJson,
-        exchanges = capture.Exchanges,
+        exchanges,
     });
 }
 
@@ -224,7 +230,7 @@ app.MapGet("/wallet", async (HttpContext context, PendingStore pending) =>
     if (upstream is null) return AAuthProblemDetails.Create("invalid_request", statusCode: 403);
     try
     {
-        return await RunChainAsync(context, upstream, walletUrl, "/wallet");
+        return await RunChainAsync(context, walletUrl, "/wallet");
     }
     catch (AAuthInteractionChainedException ex)
     {
@@ -244,7 +250,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
 
     try
     {
-        return await RunChainAsync(ctx, upstreamToken, downstreamUrl, "/events");
+        return await RunChainAsync(ctx, downstreamUrl, "/events");
     }
     catch (AAuthInteractionChainedException ex)
     {
@@ -268,7 +274,7 @@ app.MapGet("/mission", async (HttpContext ctx, PendingStore pending) =>
 
     try
     {
-        return await RunChainAsync(ctx, upstreamToken, missionDownstreamUrl, "/trips");
+        return await RunChainAsync(ctx, missionDownstreamUrl, "/trips");
     }
     catch (AAuthInteractionChainedException ex)
     {
@@ -318,7 +324,8 @@ async Task<IResult> HandlePendingAsync(HttpContext ctx, string id, PendingStore 
             entry.Lifecycle.Cancel();
             return Results.NoContent();
         }
-        try { return await RunChainAsync(ctx, entry.UpstreamToken, entry.DownstreamBase, entry.DownstreamPath); }
+        // entry.Matches(...) above proved this request re-presents the parked upstream token.
+        try { return await RunChainAsync(ctx, entry.DownstreamBase, entry.DownstreamPath); }
         catch (AAuthInteractionChainedException) { return ReEmitChainedInteraction(ctx, entry); }
         catch (AAuthInteractionDeniedException)
         {

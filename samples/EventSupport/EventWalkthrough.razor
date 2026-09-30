@@ -4,6 +4,7 @@
 @using Microsoft.Extensions.Configuration
 @using AAuth.Samples.Shared
 @inject IConfiguration Configuration
+@inject AAuth.Agent.IAAuthAgentFactory Agents
 
 @code {
     /// <summary>The Person Server; defaults to <c>AAuth:PersonServer</c>.</summary>
@@ -155,7 +156,7 @@
     private void CreateSession()
     {
         var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aauth", "event-ui", Guid.NewGuid().ToString("N"));
-        _session = new EventDemoSession(directory,
+        _session = new EventDemoSession(Agents, directory,
             Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
             Configuration["AAuth:Bookings"] ?? "http://localhost:5005",
             PersonServerUrl);

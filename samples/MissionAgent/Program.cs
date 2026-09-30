@@ -16,6 +16,9 @@ using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Tokens;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 // =============================================================================
 // MissionAgent — a console showcase of the AAuth *mission* model and the
@@ -139,19 +142,30 @@ var enrolment = await apClient.EnrolWithKeyAsync(apUrl, null, enrolEndpoint, dur
 subject = enrolment.AgentId ?? throw new InvalidOperationException("AP did not return its assigned identity.");
 AAuthKey key = enrolment.Key;
 string localKeyHandle = enrolment.LocalKeyHandle;
-string agentToken = enrolment.AgentToken;
 Console.WriteLine($"   agent id        : {subject}");
 Console.WriteLine($"   key thumbprint  : {key.ComputeJwkThumbprint()}");
 Console.WriteLine($"   person server   : {personServer}");
 
-// Signed channel for agent-token requests: the resource challenge, the token
-// exchange, and every governance call (mission/permission/audit/interaction)
-// flow over this handler, which signs each request and carries the agent token
-// in the Signature-Key header (§HTTP Message Signatures).
-var agentHandler = new AAuthSigningHandler(key, () => agentToken) { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
-using var signedClient = new SampleHttpClient(agentHandler) { Timeout = Timeout.InfiniteTimeSpan };
-using var metadata = new MetadataClient(apHttp);
-var governance = new AAuthGovernanceClient(signedClient, metadata, personServer);
+// Register the enrolled agent in a generic host. The SDK refreshes its agent token at the
+// AP with the durable key (KeyHandle), handles every resource challenge, and exposes typed
+// Person Server clients signed as the agent. Governance calls share the challenge settings:
+// PromptUserAsync relays each consent, with a generous budget so a human has time to click.
+var hostBuilder = Host.CreateApplicationBuilder();
+hostBuilder.Logging.ClearProviders();
+hostBuilder.Services.AddSingleton(keyStore);
+hostBuilder.Services.AddAAuthAgent("mission-agent", options =>
+{
+    options.KeyHandle = localKeyHandle;
+    options.AgentProvider.RefreshEndpoint = refreshEndpoint;
+    options.PersonServer = personServer;
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Challenge.OnInteractionRequired = PromptUserAsync;
+    options.Challenge.PollingTimeout = TimeSpan.FromMinutes(5);
+});
+using var host = hostBuilder.Build();
+var agent = host.Services.GetRequiredService<IAAuthAgentFactory>().Get("mission-agent");
+var tokenCache = host.Services.GetRequiredKeyedService<IAAuthTokenCache>("mission-agent");
+var governance = agent.Governance;
 
 // Tell the mock PS how to resolve prompts. Interactive mode holds each prompt
 // open until you decide in the browser; --auto resolves via scripted defaults.
@@ -178,9 +192,6 @@ if (missionApprovedScopes.Count > 0)
     Console.WriteLine($"   mission-approved: {string.Join(", ", missionApprovedScopes.Select(s => $"{resourceOrigin} / {s}"))} (in scope — no prompt)");
 }
 
-// Generous polling budget so a human has time to click Approve.
-var poller = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(5) };
-
 Section("2. Propose a mission");
 // The user approves a durable statement of intent plus the tools the agent may
 // use. The PS returns the signed approval blob and its s256 thumbprint, which
@@ -196,7 +207,7 @@ var session = await governance.ProposeMissionAsync(new MissionProposal(
         addToCalendarTool,
         new MissionTool("compare_options", "Compare flight and hotel options"),
     },
-}, GovernanceFor("Approve this mission and its tools"));
+});
 // The session wraps the approved mission and auto-threads its mission_s256
 // and the bound PS into every later governed call.
 var mission = session.Mission;
@@ -273,9 +284,7 @@ Console.WriteLine($"   add_to_calendar : {(preApproved.IsGranted ? "granted" : "
 Section("7. Request a permission for a NON-pre-approved tool");
 // `cancel_booking` is not an approved tool, so the PS is consulted and the user
 // is prompted to decide. The session threads the mission claim automatically.
-var adHoc = await session.RequestPermissionAsync(
-    new MissionAction("cancel_booking"),
-    options: GovernanceFor("Permission to cancel an existing booking"));
+var adHoc = await session.RequestPermissionAsync(new MissionAction("cancel_booking"));
 Console.WriteLine($"   cancel_booking  : {(adHoc.IsGranted ? "granted" : "denied")} ({adHoc.Reason})");
 
 Section("8. Report an action to the audit endpoint");
@@ -288,14 +297,12 @@ Console.WriteLine("   recorded add_to_calendar = success");
 Section("9. Ask the user a question");
 var answer = await session.AskQuestionAsync(
     "Want me to keep going for another hour?",
-    description: "The mission's hour is nearly up.",
-    options: GovernanceFor("A question from your agent"));
+    description: "The mission's hour is nearly up.");
 Console.WriteLine($"   user answered   : {answer ?? "(no answer)"}");
 
 Section("10. Propose mission completion (terminates the mission)");
 var terminated = await session.ProposeCompletionAsync(
-    "Trip planned: 3 flights compared, 2 hotels shortlisted, 1 itinerary saved.",
-    GovernanceFor("Your agent says the mission is done"));
+    "Trip planned: 3 flights compared, 2 hotels shortlisted, 1 itinerary saved.");
 Console.WriteLine($"   mission ended   : {terminated}");
 
 Console.WriteLine();
@@ -303,44 +310,25 @@ Console.WriteLine("Done. The Person Server governed every step under the mission
 return 0;
 
 // ---------------------------------------------------------------------------
-// Resource access: one mission-aware client handles the whole leg.
+// Resource access: the registered agent handles the whole leg.
 // ---------------------------------------------------------------------------
 async Task<JsonObject?> AccessMissionResourceAsync(string url)
 {
-    // A real agent rotates its short-lived agent token; we refresh here to
-    // model that. Replay detection is keyed on the per-request signature, so the
-    // token itself stays reusable (§HTTP Message Signatures — replay).
-    agentToken = await apClient.RefreshAsync(refreshEndpoint, localKeyHandle);
-
-    // One mission-aware client does the whole resource-access leg:
-    //   • WithMission requests person tokens with the mission's mission_s256,
-    //     so resource and auth tokens carry it (#missions);
-    //   • WithChallengeHandling drives the 401 -> token-exchange -> retry cycle
-    //     and surfaces any out-of-scope consent prompt via OnInteractionRequired.
-    // An out-of-scope exchange the user denies throws
-    // AAuthInteractionDeniedException, exactly as the manual flow did.
-    using var client = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
-        .UseJwt(() => agentToken)
-        .WithPersonServer(personServer)
-        .WithMission(mission)
-        .WithChallengeHandling(o =>
-        {
-            o.OnInteractionRequired = PromptUserAsync;
-            o.PollingTimeout = poller.MaxTotalWait;
-        })
-        .Build();
-
-    using var ok = await client.GetAsync(url);
+    // The agent's client drives the 401 -> token-exchange -> retry cycle, refreshing its
+    // agent token at the AP as needed. Naming the mission on the request makes the person
+    // token carry its mission_s256, so resource and auth tokens carry it too (#missions);
+    // an out-of-scope consent reaches PromptUserAsync. A denied exchange throws
+    // AAuthInteractionDeniedException.
+    // Showcase only: forget earlier tokens so every step reaches the PS and prints its gate
+    // decision. A real agent keeps them; the step-5 scope would then need the resource to
+    // step up the cached trips.read token (the SDK's resources answer 403 today).
+    tokenCache.Clear();
+    using var request = new HttpRequestMessage(HttpMethod.Get, url);
+    request.Options.Set(AAuthRequestOptions.MissionS256, mission.S256);
+    using var ok = await agent.HttpClient.SendAsync(request);
     ok.EnsureSuccessStatusCode();
     return await ok.Content.ReadFromJsonAsync<JsonObject>();
 }
-
-// Build governance options that prompt interactively (or stay scripted).
-GovernanceOptions GovernanceFor(string _) => new()
-{
-    OnInteractionRequired = PromptUserAsync,
-    PollerOptions = poller,
-};
 
 // Invoked when the PS asks the user to decide. Polling proceeds while the user
 // acts. Interactive mode opens the PS dashboard once; it lists every request
@@ -370,7 +358,7 @@ Task PromptUserAsync(Interaction interaction, CancellationToken ct)
 
 async Task ScriptAsync(JsonObject body)
 {
-    using var resp = await signedClient.PostAsJsonAsync($"{personServer}/admin/mission-script", body);
+    using var resp = await agent.HttpClient.PostAsJsonAsync($"{personServer}/admin/mission-script", body);
     resp.EnsureSuccessStatusCode();
 }
 
