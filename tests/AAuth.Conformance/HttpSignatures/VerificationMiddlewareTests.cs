@@ -535,6 +535,9 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         var token = await BuildAuthTokenAsync(); // Issuer = PsIssuer, NOT in PS allow-list
         var response = await SendSigned(token);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        // Q3: an issuer that fails trust policy is a key that does not meet the
+        // server's trust requirements (Signature-Key §5.4.7), not a malformed JWT.
+        Assert.Equal("error=invalid_key", string.Join(",", response.Headers.GetValues("Signature-Error")));
     }
 
     // Rebuild the resource host with custom verification options (the trust-policy

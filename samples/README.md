@@ -11,7 +11,7 @@ R3) live under [MockAccessServers/](MockAccessServers/).
 | [Calendar](MockResourceServers/Calendar/) | 5001 | PS-Asserted (three-party) resource server — `/events` (`calendar.read`), `/events/write` (`calendar.write`), `/events/admin` (role `calendar.owner`) |
 | [Trips](MockResourceServers/Trips/) | 5002 | Mission-aware resource server — `/trips` (`trips.read`), `/trips/book` (`trips.book`) |
 | [Wallet](MockResourceServers/Wallet/) | 5003 | Federated (four-party) resource server — `/wallet` (`wallet.read`), `/wallet/charge` (`wallet.charge`) |
-| [Inbox](MockResourceServers/Inbox/) | 5004 | Resource-Managed (two-party) resource server — manages authorization itself via its own consent page; issues an opaque `AAuth-Access` token (`GET /messages`, `POST /authorize`) |
+| [Inbox](MockResourceServers/Inbox/) | 5004 | Resource-Managed (two-party) resource server — manages authorization itself via its own consent page; issues an opaque `AAuth-Access` token (`GET /messages`) |
 | [Bookings](MockResourceServers/Bookings/) | 5005 | Rich Resource Requests (R3, four-party) resource server — dining & experiences reservations via the **OpenAPI** vocabulary; `searchAvailability`/`holdReservation` → `r3_granted`, `confirmReservation` → `r3_per_call` (per-call proposal) |
 | [Catalog](MockResourceServers/Catalog/README.md) | 5006 | Travel catalog reads through one merged OpenAPI definition with renamed colliding operation IDs |
 | [Documents](MockResourceServers/Documents/README.md) | 5007 | Resource release permission before PS consent, with account-bound signed download |
@@ -70,7 +70,7 @@ using var client = new AAuthClientBuilder(key)
 
 Injected clients require `AAuthHttpTransport.AttachPolicy` and an explicit
 transport contract. `EnforcesEgressPolicy` is a caller obligation to enforce
-DNS/address admission and connection pinning and disable proxies and redirects;
+DNS/address admission and connection pinning, TLS 1.2-or-later, and disabled proxies and redirects;
 attaching it cannot repair an opaque handler. `InProcessOnly` is for fixtures
 that perform no network I/O or forwarding. Cross-origin JWKS links require
 an explicit source/target origin pair in `AAuthEgressPolicy`.
@@ -231,7 +231,6 @@ dotnet run --project samples/MockResourceServers/Inbox
 | Path | Mode | Verification / Policy |
 |------|------|-----------------------|
 | `/messages` | Resource-managed (reactive) | Verified agent JWT and HTTP proof; first call returns `202` for Inbox consent, then requires the key/account-bound opaque `AAuth-Access` credential |
-| `/authorize` | Resource-managed (proactive) | Signed `POST { "scope" }` — same consent path (§Authorization Endpoint Request) |
 
 The Inbox manages authorization **itself** (two-party, no PS/AS) and issues an
 opaque `AAuth-Access` token bound to the agent's signature. See

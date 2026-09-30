@@ -22,10 +22,9 @@ namespace AAuth.Conformance.ResourceTokens;
 /// <summary>
 /// End-to-end conformance for the resource-managed (two-party) <c>AAuth-Access</c>
 /// flow over a real ASP.NET Core pipeline (§AAuth-Access Response Header,
-/// §Resource-Managed Authorization, §Authorization Endpoint Request): a signed
-/// agent calls the proactive <c>authorization_endpoint</c>, the resource issues
-/// an opaque token, the agent captures and replays it as
-/// <c>Authorization: AAuth</c> (bound to its signature), and the resource
+/// §Resource-Managed Authorization): a signed agent completes a pending
+/// resource-managed interaction, captures the resource's opaque token, replays it
+/// as <c>Authorization: AAuth</c> (bound to its signature), and the resource
 /// resolves it. Identity-based (hwk) signing, no PS/AS.
 /// </summary>
 public class ResourceManagedFlowTests : IAsyncLifetime
@@ -51,22 +50,6 @@ public class ResourceManagedFlowTests : IAsyncLifetime
         // Two-party: HTTP-signature-only verification (no issuer / PS).
         app.UseAAuthVerification(options => options.AcceptedSchemes = AAuthVerificationOptions.Generic().AcceptedSchemes);
         app.MapAAuthInteractionPoll("/pending/{code}");
-
-        // Proactive authorization_endpoint: authorize on identity, issue a token.
-        app.MapAAuthAuthorizationEndpoint("/authorize", async (ctx, req) =>
-        {
-            if (req.Account is not null && req.Account is not ("personal" or "work"))
-                return AAuthProblemDetails.Create("invalid_account", statusCode: 400);
-            var info = new OpaqueTokenInfo
-            {
-                Account = req.Account,
-                AgentJkt = ctx.GetAAuthVerification()?.Jkt ?? "unknown",
-                Scope = req.Scope,
-                Expiration = DateTimeOffset.UtcNow.AddMinutes(10),
-            };
-            await ctx.IssueAAuthAccessAsync(_resourceStore, info);
-            return Results.Ok(new { authorized = true });
-        });
 
         // Protected resource: requires a resolved opaque token.
         app.MapGet("/messages", async (HttpContext ctx) =>
@@ -101,39 +84,15 @@ public class ResourceManagedFlowTests : IAsyncLifetime
             .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(_host!.GetTestServer().CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
-    [Theory]
-    [InlineData("null")]
-    [InlineData("42")]
-    [InlineData("[]")]
-    [InlineData("{}")]
-    [InlineData("\"\"")]
-    [InlineData("\"missing\"")]
-    public async Task AuthorizationEndpoint_MalformedOrUnknownAccountCannotIssue(string account)
+    [Fact]
+    public async Task AccountGrant_DeferredCannotCrossAccounts()
     {
         using var client = BuildAgent();
-        using var response = await client.PostAsJsonAsync(ResourceBase + "/authorize", new JsonObject
-        {
-            ["scope"] = "inbox.read", ["account"] = JsonNode.Parse(account),
-        });
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.False(response.Headers.Contains(AAuthConstants.Headers.AAuthAccess));
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task AccountGrant_DirectAndDeferredCannotCrossAccounts(bool deferred)
-    {
-        using var client = BuildAgent();
-        using var request = new HttpRequestMessage(deferred ? HttpMethod.Get : HttpMethod.Post, ResourceBase + "/authorize");
+        using var request = new HttpRequestMessage(HttpMethod.Get, ResourceBase + "/pending/test");
         request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, "personal");
-        if (deferred)
-        {
-            var entry = _pendingStore.Park("inbox.read", _agentKey.ComputeJwkThumbprint(), TimeSpan.FromMinutes(5), "personal");
-            _pendingStore.Approve(entry.Code);
-            request.RequestUri = new Uri(ResourceBase + "/pending/" + entry.Code);
-        }
-        else request.Content = JsonContent.Create(new { scope = "inbox.read", account = "personal" });
+        var entry = _pendingStore.Park("inbox.read", _agentKey.ComputeJwkThumbprint(), TimeSpan.FromMinutes(5), "personal");
+        _pendingStore.Approve(entry.Code);
+        request.RequestUri = new Uri(ResourceBase + "/pending/" + entry.Code);
         using var issued = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, issued.StatusCode);
         var token = issued.Headers.GetValues(AAuthConstants.Headers.AAuthAccess).Single();
@@ -147,17 +106,17 @@ public class ResourceManagedFlowTests : IAsyncLifetime
         }
     }
 
-    [Fact(DisplayName = "§Authorization Endpoint Request — proactive issue → agent replay → resource resolve")]
-    public async Task ProactiveAuthorize_IssuesAndAgentReplays()
+    [Fact(DisplayName = "§Resource-Managed Authorization — poll issue → agent replay → resource resolve")]
+    public async Task ApprovedPoll_IssuesAndAgentReplays()
     {
         using var client = BuildAgent();
 
-        // 1. Proactive POST authorization_endpoint → resource issues AAuth-Access;
-        //    the agent's AAuthAccessHandler captures it.
-        var authResp = await client.PostAsJsonAsync($"{ResourceBase}/authorize", new { scope = "inbox.read" });
-        Assert.Equal(HttpStatusCode.OK, authResp.StatusCode);
-        Assert.Equal("application/json", authResp.Content.Headers.ContentType?.MediaType);
-        Assert.True(authResp.Headers.Contains(AAuthConstants.Headers.AAuthAccess));
+        var entry = _pendingStore.Park("inbox.read", _agentKey.ComputeJwkThumbprint(), TimeSpan.FromMinutes(5));
+        _pendingStore.Approve(entry.Code);
+        var approved = await client.GetAsync($"{ResourceBase}/pending/{entry.Code}");
+        Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
+        Assert.Equal("application/json", approved.Content.Headers.ContentType?.MediaType);
+        Assert.True(approved.Headers.Contains(AAuthConstants.Headers.AAuthAccess));
 
         // 2. GET /messages → agent replays Authorization: AAuth (bound to its
         //    signature) → resource resolves the opaque token.
@@ -175,20 +134,6 @@ public class ResourceManagedFlowTests : IAsyncLifetime
         // No prior authorization → no token to replay → resource rejects.
         var msgResp = await client.GetAsync($"{ResourceBase}/messages");
         Assert.Equal(HttpStatusCode.Unauthorized, msgResp.StatusCode);
-    }
-
-    [Fact(DisplayName = "§Authorization Endpoint Request — missing scope is rejected")]
-    public async Task AuthorizationEndpoint_MissingScope_Returns400()
-    {
-        using var client = BuildAgent();
-
-        var resp = await client.PostAsJsonAsync($"{ResourceBase}/authorize", new { });
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
-        Assert.Equal("application/problem+json", resp.Content.Headers.ContentType?.MediaType);
-        var body = await resp.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("invalid_request", (string?)body!["error"]);
-        Assert.Equal("scope is required", (string?)body["detail"]);
-        Assert.False(body.ContainsKey("error_description"));
     }
 
     [Fact]
@@ -232,20 +177,4 @@ public class ResourceManagedFlowTests : IAsyncLifetime
         Assert.False(body.ContainsKey("detail"));
     }
 
-    [Theory]
-    [InlineData("{", "application/json", HttpStatusCode.BadRequest, "malformed JSON body")]
-    [InlineData("scope=inbox.read", "text/plain", HttpStatusCode.UnsupportedMediaType, "Content-Type must be application/json")]
-    public async Task AuthorizationEndpoint_InvalidBody_ReturnsProblemDetails(
-        string content, string contentType, HttpStatusCode status, string detail)
-    {
-        using var client = BuildAgent();
-        using var response = await client.PostAsync($"{ResourceBase}/authorize",
-            new StringContent(content, System.Text.Encoding.UTF8, contentType));
-        Assert.Equal(status, response.StatusCode);
-        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("invalid_request", (string?)body!["error"]);
-        Assert.Equal(detail, (string?)body["detail"]);
-        Assert.False(body.ContainsKey("error_description"));
-    }
 }

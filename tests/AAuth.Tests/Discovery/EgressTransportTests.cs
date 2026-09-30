@@ -3,6 +3,8 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Reflection;
+using System.Security.Authentication;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -46,6 +48,19 @@ public class EgressTransportTests
     {
         using var handler = AAuthHttpTransport.CreateHandler();
         Assert.False(handler is DelegatingHandler);
+    }
+
+    [Fact]
+    public void OwnedTransportPinsTls12AndTls13()
+    {
+        using var handler = AAuthHttpTransport.CreateHandler();
+        var innerInvoker = handler.GetType().GetField("_inner", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(handler);
+        var sockets = Assert.IsType<SocketsHttpHandler>(typeof(HttpMessageInvoker)
+            .GetField("_handler", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(innerInvoker));
+
+        Assert.Equal(SslProtocols.Tls12 | SslProtocols.Tls13, sockets.SslOptions.EnabledSslProtocols);
     }
 
     [Fact]

@@ -245,6 +245,8 @@ accepts a builder callback.
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://my-resource.example";
+    // Set for four-party resources. Omit for three-party PS-asserted access.
+    options.AccessServer = "https://as.example";
     options.SigningKeys["key-1"] = resourceKey;
 });
 builder.Services.AddAAuthAuthentication();
@@ -262,11 +264,16 @@ app.MapGet("/data", (HttpContext ctx) => Results.Ok(ctx.GetAAuthVerification()!.
     .RequireAAuth(scope: "data:read");
 ```
 
-> `Trust.AuthTokenIssuers` is optional. Leave it unset (or assign `AAuthTrust.Any` to its
-> `Predicate`) to accept any *verifiable* Person Server — the spec default — with claims
-> namespaced by `iss`; set `Allowed` or `Predicate` to
-> restrict. Leaving it unset while issuer verification is on logs an open-trust
-> `Warning` at startup.
+> `Trust.AuthTokenIssuers` is optional only for the default three-party
+> PS-asserted mode (`AccessServer` unset). In that mode, leaving it unset (or
+> assigning `AAuthTrust.Any` to its `Predicate`) accepts any *verifiable* Person
+> Server with claims namespaced by `iss`; leaving it unset logs an open-trust
+> `Warning` at startup. When `AAuthResourceOptions.AccessServer` is set, the SDK
+> derives AS-only auth-token trust and pins auth-token `dwk` to
+> `aauth-access.json`. A direct PS-issued `aauth-person.json` auth token is
+> rejected. Explicit mixed deployments must set
+> `AAuthVerificationOptions.ExpectedAuthTokenDwk = null` and use an
+> `IAAuthTrustPolicy` that checks `AAuthTrustContext.TokenDwk`.
 
 ### With Scope Descriptions (Published in Metadata)
 
@@ -288,8 +295,9 @@ builder.Services.AddAAuthResource(options =>
 
 Advertise the resource's proactive authorization endpoint for agents to start
 authorization without first receiving a resource challenge. This does not select
-an Access Server: configure `AccessServer` on the challenge options to
-set the resource token's AS recipient (unset means the presented token's PS).
+an Access Server: configure `AAuthResourceOptions.AccessServer` to set the
+resource token's AS recipient and the matching AS-issued auth-token verification
+default (unset means three-party PS-asserted access).
 
 ```csharp
 builder.Services.AddAAuthResource(options =>
@@ -940,4 +948,3 @@ and its `AAuthTransportContract` together:
 
 See [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver)
 and [Federated Access](../workflows/federated-access.md#access-server-side-code).
-

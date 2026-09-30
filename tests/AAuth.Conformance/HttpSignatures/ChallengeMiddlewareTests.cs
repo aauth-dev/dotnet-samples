@@ -91,8 +91,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             options.ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey);
             options.ResourceIdentifier = ResourceId;
             options.DefaultScopes = ResourceScope;
-            options.AllowedSignatureKeySchemes = new HashSet<string> { "jwt" };
-        });
+        }, acceptedSchemes: [AAuthConstants.Schemes.Jwt]);
 
         // Start a resource server with AgentTokenRequired mode (§Agent Token Required).
         _agentTokenRequiredHost = await StartResourceServer(options =>
@@ -159,7 +158,8 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
     }
 
     private async Task<IHost> StartResourceServer(Action<ChallengeOptions> configureChallenge,
-        IReadOnlySet<string>? trustedAuthTokenIssuers = null, IReadOnlySet<string>? trustedPersonServers = null)
+        IReadOnlySet<string>? trustedAuthTokenIssuers = null, IReadOnlySet<string>? trustedPersonServers = null,
+        IReadOnlyCollection<string>? acceptedSchemes = null)
     {
         var challengeOptions = new ChallengeOptions();
         configureChallenge(challengeOptions);
@@ -176,7 +176,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         app.UseAAuthVerification(options =>
         {
             options.EgressPolicy = TestEgress.Policy;
-            options.AcceptedSchemes = challengeOptions.AllowedSignatureKeySchemes?.ToArray() ?? ["jwt", "hwk"];
+            options.AcceptedSchemes = acceptedSchemes?.ToArray() ?? ["jwt", "hwk"];
             options.ResourceIdentifier = ResourceId;
             options.Trust.AuthTokenIssuers.Allowed = trustedAuthTokenIssuers ?? new HashSet<string> { PsIssuer };
             options.Trust.PersonServers.Allowed = trustedPersonServers;
@@ -460,12 +460,24 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Agent Token Required — passes an auth token through (identity established)")]
-    public async Task AgentTokenRequired_PassesAuthToken()
+    [Fact(DisplayName = "§Agent Token Required — challenges an auth token with requirement=agent-token")]
+    public async Task AgentTokenRequired_ChallengesAuthToken()
     {
         var token = await BuildAuthTokenAsync();
         var response = await SendSigned(_agentTokenRequiredHost!, token);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(AAuthRequirementHeader.AgentTokenRequirement,
+            AAuthRequirementHeader.Parse(response.Headers.GetValues(AAuthRequirementHeader.Name).Single()).Requirement);
+    }
+
+    [Fact(DisplayName = "§Agent Token Required — challenges a person token with requirement=agent-token")]
+    public async Task AgentTokenRequired_ChallengesPersonToken()
+    {
+        var token = await BuildPersonTokenAsync();
+        var response = await SendSigned(_agentTokenRequiredHost!, token);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(AAuthRequirementHeader.AgentTokenRequirement,
+            AAuthRequirementHeader.Parse(response.Headers.GetValues(AAuthRequirementHeader.Name).Single()).Requirement);
     }
 
     [Fact(DisplayName = "§Agent Token Required — challenges a non-agent-token credential with a bare requirement=agent-token")]
@@ -628,5 +640,31 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         var payload = DecodeResourceTokenPayload(response);
         Assert.False(payload.ContainsKey("mission_s256"));
         Assert.False(payload.ContainsKey("mission"));
+    }
+
+    [Fact(DisplayName = "§Resource Token — helper rejects an agent-token assertion")]
+    public async Task BuildResourceTokenAsync_RejectsAgentTokenAssertion()
+    {
+        var assertion = new AAuthVerifiedAssertion("agent.jwt", new TokenVerifier.VerifiedToken(
+            new JsonObject(),
+            new JsonObject
+            {
+                ["sub"] = AgentId,
+                ["jti"] = "agent-token-1",
+                ["exp"] = FixedClock.AddMinutes(5).ToUnixTimeSeconds(),
+            },
+            ApIssuer,
+            AgentTokenBuilder.TokenType), _agentKey);
+        var options = new ChallengeOptions
+        {
+            EgressPolicy = TestEgress.Policy,
+            AccessMode = AAuthAccessMode.RequireAuthToken,
+            ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey),
+            ResourceIdentifier = ResourceId,
+            DefaultScopes = ResourceScope,
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await AAuthChallengeMiddleware.BuildResourceTokenAsync(options, assertion, ResourceScope));
     }
 }

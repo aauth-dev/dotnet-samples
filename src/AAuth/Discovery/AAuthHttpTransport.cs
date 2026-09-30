@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Security.Authentication;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -14,7 +15,7 @@ public enum AAuthTransportContract
 {
     /// <summary>The injected transport does no network I/O, including forwarding. Intended for in-process fixtures only.</summary>
     InProcessOnly,
-    /// <summary>The caller enforces this policy's DNS/address admission and connection pinning, disables proxies and redirects, and bounds headers and connection time.</summary>
+    /// <summary>The caller enforces this policy's DNS/address admission and connection pinning, TLS 1.2-or-later, disables proxies and redirects, and bounds headers and connection time.</summary>
     EnforcesEgressPolicy,
 }
 
@@ -76,6 +77,7 @@ public static class AAuthHttpTransport
                 MaxResponseHeadersLength = 32,
                 ConnectTimeout = policy.RequestTimeout,
                 PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+                SslOptions = new() { EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 },
                 ConnectCallback = async (context, cancellationToken) =>
                 {
                     var uri = policy.ValidateUrl(context.InitialRequestMessage.RequestUri!.OriginalString);

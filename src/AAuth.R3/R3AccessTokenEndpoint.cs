@@ -111,7 +111,15 @@ public static class R3AccessTokenEndpoint
             }
             catch (Exception ex) when (ex is R3FetchVerificationException or AAuth.HttpSig.AAuthVerificationException)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", ex.Message, statusCode: StatusCodes.Status401Unauthorized);
+                var code = ex switch
+                {
+                    AAuth.HttpSig.AAuthVerificationException signature => signature.Code,
+                    R3FetchVerificationException fetch => fetch.Code,
+                    _ => AAuth.Errors.SignatureErrorCode.InvalidSignature,
+                };
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(code,
+                    acceptedSchemes: code == AAuth.Errors.SignatureErrorCode.UnsupportedScheme
+                        ? [AAuthConstants.Schemes.JwksUri] : null);
             }
 
             if (!await options.IsCallerTrustedPersonServerAsync(context, caller))
@@ -246,8 +254,7 @@ public static class R3AccessTokenEndpoint
             // No-op unless an IJtiStore is registered (preserves prior behaviour).
             if (!await R3DocumentEndpoint.TryRecordMintSignatureAsync(context, caller.KeyThumbprint))
             {
-                context.Response.Headers[AAuth.Errors.SignatureError.HeaderName] = AAuth.Errors.SignatureError.Format(AAuth.Errors.SignatureErrorCode.InvalidSignature);
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", "replayed request signature", statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidSignature);
             }
 
             try
@@ -289,7 +296,15 @@ public static class R3AccessTokenEndpoint
             }
             catch (Exception ex) when (ex is R3FetchVerificationException or AAuth.HttpSig.AAuthVerificationException)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", ex.Message, statusCode: StatusCodes.Status401Unauthorized);
+                var code = ex switch
+                {
+                    AAuth.HttpSig.AAuthVerificationException signature => signature.Code,
+                    R3FetchVerificationException fetch => fetch.Code,
+                    _ => AAuth.Errors.SignatureErrorCode.InvalidSignature,
+                };
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(code,
+                    acceptedSchemes: code == AAuth.Errors.SignatureErrorCode.UnsupportedScheme
+                        ? [AAuthConstants.Schemes.JwksUri] : null);
             }
 
             var entry = pendingStore.Get(id);

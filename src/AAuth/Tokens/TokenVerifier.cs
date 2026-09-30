@@ -288,12 +288,13 @@ public sealed class TokenVerifier
         ArgumentNullException.ThrowIfNull(httpSignatureKey);
         var thumbprint = httpSignatureKey.ComputeJwkThumbprint();
         return VerifyWithIssuerKeyAsync(jwt, PersonTokenBuilder.TokenType, metadata, jwks,
-            key => VerifyPersonToken(jwt, key, expectedAudience, thumbprint), cancellationToken);
+            key => VerifyPersonToken(jwt, key, expectedAudience, thumbprint), cancellationToken, PersonTokenBuilder.PersonDwk);
     }
 
     /// <summary>
-    /// Verify an auth token using JWKS discovery (dual-dwk supported).
-    /// Resolves the issuer's JWKS from the token's <c>dwk</c> and verifies PoP binding.
+    /// Verify an auth token using JWKS discovery.
+    /// Resolves the issuer's JWKS from <paramref name="expectedDwk"/> when set,
+    /// otherwise from the token's <c>dwk</c>, and verifies PoP binding.
     /// </summary>
     public Task<VerifiedToken> VerifyAuthTokenWithJwksAsync(
         string jwt,
@@ -301,6 +302,7 @@ public sealed class TokenVerifier
         JwksClient jwks,
         string expectedAudience,
         IAAuthKey httpSignatureKey,
+        string? expectedDwk = null,
         string? expectedMaxScope = null,
         CancellationToken cancellationToken = default,
         AccountExpectation? accountExpectation = null)
@@ -308,8 +310,9 @@ public sealed class TokenVerifier
         ArgumentNullException.ThrowIfNull(httpSignatureKey);
         var thumbprint = httpSignatureKey.ComputeJwkThumbprint();
         return VerifyWithIssuerKeyAsync(jwt, AuthTokenBuilder.TokenType, metadata, jwks,
-            key => VerifyAuthToken(jwt, key, expectedAudience, thumbprint, null, expectedMaxScope, accountExpectation),
-            cancellationToken);
+            key => VerifyAuthToken(jwt, key, expectedAudience, thumbprint, expectedDwk, expectedMaxScope, accountExpectation),
+            cancellationToken,
+            expectedDwk);
     }
 
     /// <summary>
@@ -345,9 +348,9 @@ public sealed class TokenVerifier
             presented = typ switch
             {
                 PersonTokenBuilder.TokenType => await VerifyWithIssuerKeyAsync(presentedToken, typ, metadata, jwks,
-                    key => VerifyPersonToken(presentedToken, key, resourceIssuer, agentJkt), cancellationToken).ConfigureAwait(false),
+                    key => VerifyPersonToken(presentedToken, key, resourceIssuer, agentJkt), cancellationToken, PersonTokenBuilder.PersonDwk).ConfigureAwait(false),
                 AuthTokenBuilder.TokenType => await VerifyWithIssuerKeyAsync(presentedToken, typ, metadata, jwks,
-                    key => VerifyAuthToken(presentedToken, key, resourceIssuer, agentJkt, null, null, null), cancellationToken).ConfigureAwait(false),
+                    key => VerifyAuthToken(presentedToken, key, resourceIssuer, agentJkt, null, null, null), cancellationToken, expectedDwk: null).ConfigureAwait(false),
                 _ => throw new TokenVerificationException("presented_token must be a person token or an auth token."),
             };
         }
@@ -379,7 +382,8 @@ public sealed class TokenVerifier
     // Resolve the issuer key named by the token's iss/dwk/kid, verify, and retry
     // once after a forced JWKS refresh only if the key material rotated.
     private async Task<VerifiedToken> VerifyWithIssuerKeyAsync(string jwt, string tokenType,
-        MetadataClient metadata, JwksClient jwks, Func<IAAuthKey, VerifiedToken> verify, CancellationToken cancellationToken)
+        MetadataClient metadata, JwksClient jwks, Func<IAAuthKey, VerifiedToken> verify, CancellationToken cancellationToken,
+        string? expectedDwk)
     {
         ArgumentException.ThrowIfNullOrEmpty(jwt);
         ArgumentNullException.ThrowIfNull(metadata);
@@ -391,8 +395,11 @@ public sealed class TokenVerifier
         if ((string?)header["typ"] != tokenType)
             throw new TokenVerificationException($"Unexpected 'typ' (expected '{tokenType}', got '{(string?)header["typ"]}').");
         var dwk = (string?)payload["dwk"] ?? throw new TokenVerificationException("Token is missing 'dwk'.");
-        if (tokenType == PersonTokenBuilder.TokenType ? dwk != PersonTokenBuilder.PersonDwk
-            : dwk is not (AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk))
+        if (expectedDwk is not null && dwk != expectedDwk)
+            throw new TokenVerificationException($"Unexpected 'dwk' (expected '{expectedDwk}', got '{dwk}').");
+        var discoveryDwk = expectedDwk ?? dwk;
+        if (tokenType == PersonTokenBuilder.TokenType ? discoveryDwk != PersonTokenBuilder.PersonDwk
+            : discoveryDwk is not (AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk))
             throw new TokenVerificationException($"Unexpected 'dwk' '{dwk}' for {tokenType}.");
         var iss = (string?)payload["iss"] ?? throw new TokenVerificationException("Token is missing 'iss'.");
         if (!metadata.Policy.IsValidIdentifier(iss))
@@ -403,7 +410,7 @@ public sealed class TokenVerifier
         if (LocalIssuerKeys?.Invoke(iss, kid) is { } localKey)
             return verify(localKey);
 
-        var metadataUrl = metadata.GetUrl(iss, dwk);
+        var metadataUrl = metadata.GetUrl(iss, discoveryDwk);
         JsonObject metadataDoc;
         try { metadataDoc = await metadata.FetchAsync(metadataUrl, cancellationToken).ConfigureAwait(false); }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -628,6 +635,7 @@ public sealed class TokenVerifier
 
     internal static void ValidateStructure(JsonObject header, JsonObject payload, string? tokenType, AAuthEgressPolicy policy)
     {
+        ValidateJoseProtectedHeader(header);
         foreach (var name in new[] { "alg", "typ", "kid" }) RequireText(header, name);
         RequireText(payload, "iss");
         RequireText(payload, "dwk");
@@ -712,6 +720,64 @@ public sealed class TokenVerifier
         else if (payload["cnf"] is not JsonObject confirmation || confirmation["jwk"] is not JsonObject)
             throw new TokenVerificationException("JWT requires 'cnf.jwk'.");
     }
+
+    internal static void ValidateAssertionStructure(JsonObject header, JsonObject payload, string? tokenType,
+        AAuthEgressPolicy policy, bool requireIssuerMetadata, bool requireConfirmationKey)
+    {
+        ValidateJoseProtectedHeader(header);
+        RequireText(header, "alg");
+        RequireText(header, "typ");
+        if (requireIssuerMetadata) RequireText(header, "kid");
+        if (requireIssuerMetadata)
+        {
+            RequireText(payload, "iss");
+            RequireText(payload, "dwk");
+        }
+        if (!TryGetUnixTime(payload, "exp", out var seconds)
+            || seconds < DateTimeOffset.MinValue.ToUnixTimeSeconds()
+            || seconds > DateTimeOffset.MaxValue.ToUnixTimeSeconds())
+            throw new TokenVerificationException("JWT requires a valid integer 'exp' timestamp.");
+        if (payload.ContainsKey("iat")
+            && (!TryGetUnixTime(payload, "iat", out var issued)
+                || issued < DateTimeOffset.MinValue.ToUnixTimeSeconds()
+                || issued > DateTimeOffset.MaxValue.ToUnixTimeSeconds()))
+            throw new TokenVerificationException("JWT requires a valid integer 'iat' timestamp.");
+        if (payload.ContainsKey("cnf") && payload["cnf"] is not JsonObject)
+            throw new TokenVerificationException("JWT claim 'cnf' must be an object.");
+        if (requireConfirmationKey && (payload["cnf"] is not JsonObject confirmation || confirmation["jwk"] is not JsonObject))
+            throw new TokenVerificationException("JWT requires 'cnf.jwk'.");
+        if (requireIssuerMetadata && !policy.IsValidIdentifier(SignatureKeyParser.Text(payload, "iss")))
+            throw new TokenVerificationException("JWT 'iss' must be a valid server identifier.");
+    }
+
+    internal static void ValidateJoseProtectedHeader(JsonObject header)
+    {
+        if (!header.TryGetPropertyValue("crit", out var crit) || crit is null)
+            return;
+
+        if (crit is not JsonArray critical || critical.Count == 0)
+            throw new TokenVerificationException("JWT 'crit' must be a non-empty array of unsupported critical headers.");
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in critical)
+        {
+            if (item is not JsonValue value || !value.TryGetValue<string>(out var name)
+                || string.IsNullOrWhiteSpace(name)
+                || !seen.Add(name)
+                || !header.ContainsKey(name)
+                || IsRegisteredJoseHeader(name))
+            {
+                throw new TokenVerificationException("JWT 'crit' contains an unsupported critical header.");
+            }
+        }
+
+        throw new TokenVerificationException("JWT critical JOSE headers are not supported.");
+    }
+
+    private static bool IsRegisteredJoseHeader(string name) => name is
+        "alg" or "jku" or "jwk" or "kid" or "x5u" or "x5c" or "x5t" or "x5t#S256" or
+        "typ" or "cty" or "crit" or "enc" or "zip" or "epk" or "apu" or "apv" or
+        "iv" or "tag" or "p2s" or "p2c";
 
     private static string RequireText(JsonObject document, string name, bool allowEmpty = false)
     {

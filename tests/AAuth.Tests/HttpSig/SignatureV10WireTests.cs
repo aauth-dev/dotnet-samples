@@ -167,8 +167,10 @@ public class SignatureV10WireTests
     {
         public string Scheme => "self-jwt";
         public string TokenType => "test-event+jwt";
-        public Task<TokenVerifier.VerifiedToken> VerifyAsync(string jwt, IAAuthKey key, TokenVerifier verifier, CancellationToken ct) =>
-            Task.FromResult(verifier.Verify(jwt, key, TokenType, "aauth-agent.json"));
+        public ValueTask<IAAuthKey?> ResolveIssuerKeyAsync(SignatureTokenIssuerKeyContext context, CancellationToken ct) =>
+            ValueTask.FromResult<IAAuthKey?>(null);
+        public Task<TokenVerifier.VerifiedToken> VerifyAsync(SignatureTokenVerificationContext context, CancellationToken ct) =>
+            Task.FromResult(context.TokenVerifier.Verify(context.Jwt, context.IssuerKey, TokenType, "aauth-agent.json"));
     }
 
     private sealed class DiscoveryHandler(IAAuthKey issuerKey, IAAuthKey httpKey) : HttpMessageHandler

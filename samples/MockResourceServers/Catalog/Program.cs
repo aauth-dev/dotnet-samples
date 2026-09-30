@@ -35,6 +35,7 @@ var descriptions = catalog.Keys.ToDictionary(service => service, service => docu
 builder.Services.AddAAuthResource(options =>
 {
     options.EgressPolicy = SampleEgress.Policy; options.Issuer = issuer;
+    options.AccessServer = access;
     options.Name = "Travel Catalog"; options.SigningKeys[kid] = key;
     options.AdditionalMetadata = metadata.ToDictionary(field => field.Key, field => field.Value);
 });
@@ -58,6 +59,7 @@ app.UseWhen(context => context.Request.Path.StartsWithSegments("/catalog"), bran
     options.EgressPolicy = SampleEgress.Policy;
     options.ResourceIdentifier = issuer;
     options.AcceptedSchemes = ["jwt"];
+    options.ExpectedAuthTokenDwk = AAuthConstants.DwkFiles.Access;
     options.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { access };
     options.Trust.PersonServers.Allowed = new HashSet<string> { person };
 }));

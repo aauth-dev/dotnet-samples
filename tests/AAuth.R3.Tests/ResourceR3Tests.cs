@@ -144,10 +144,8 @@ public class ResourceR3Tests
             unsigned.BaseAddress = new Uri(R3TestData.ResourceIssuer);
             var response = await unsigned.GetAsync("/r3/doc");
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-            Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-            var error = await response.Content.ReadFromJsonAsync<JsonObject>();
-            Assert.Equal("invalid_signature", (string?)error!["error"]);
             Assert.Equal("error=invalid_signature", response.Headers.GetValues("Signature-Error").Single());
+            Assert.Empty(await response.Content.ReadAsByteArrayAsync());
         }
         finally
         {

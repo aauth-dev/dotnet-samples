@@ -35,9 +35,14 @@ identifier and role metadata. A generic deployment can enable other schemes.
 hardware provenance or an external issuer identity. AP refresh binds the verified
 durable key to enrollment. Platform attestation remains an application policy.
 
-`self-jwt` requires an explicitly registered `ISignatureTokenVerifier` for the
-expected token type. It forbids `cnf`; the discovered issuer key verifies both
-signatures. Unknown token types are rejected, not reported as issuer-verified.
+`jwt` and `self-jwt` companion token types require an explicitly registered
+`ISignatureTokenVerifier`. A companion `jwt` can provide an application-specific
+issuer key when `iss` or `dwk` is absent; when both are present the SDK uses
+normal metadata/JWKS discovery before invoking the companion claim verifier.
+`self-jwt` still requires `iss`, `dwk` and `kid` and forbids `cnf`; the
+discovered issuer key verifies both signatures. Unknown token types are
+rejected, not reported as issuer-verified. All JWT carriers reject unsupported
+JOSE `crit`, and `exp` has zero tolerance.
 
 `SelfIssuing(...).As(...)` provisions an agent token using the `jwt` carrier.
 It does not select `self-jwt`. Enrollment/refresh describes how a credential is

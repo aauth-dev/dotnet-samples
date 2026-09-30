@@ -18,6 +18,13 @@ public sealed class AAuthResourceOptions
     public string Issuer { get; set; } = null!;
 
     /// <summary>
+    /// Optional Access Server issuer for four-party authorization. When set,
+    /// resource-token challenges are directed to this AS and auth-token
+    /// verification defaults to AS-issued <c>aauth-access.json</c> tokens from it.
+    /// </summary>
+    public string? AccessServer { get; set; }
+
+    /// <summary>
     /// Signing keys keyed by <c>kid</c>. These are served via the JWKS endpoint
     /// and used to sign resource tokens / challenges.
     /// </summary>
@@ -114,7 +121,7 @@ public sealed class AAuthResourceOptions
     /// <summary>
     /// Optional resource-owned <c>authorization_endpoint</c> URL for proactive
     /// authorization, published in resource metadata. This does not select the
-    /// PS/AS resource-token recipient; use <see cref="Server.Challenge.ChallengeOptions.AccessServer"/>.
+    /// PS/AS resource-token recipient; use <see cref="AccessServer"/>.
     /// When absent, the resource issues challenges for authorization instead.
     /// </summary>
     public string? AuthorizationEndpoint { get; set; }

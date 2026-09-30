@@ -42,11 +42,4 @@ public sealed class ChallengeOptions
     /// </summary>
     public string? DefaultScopes { get; set; }
     public IReadOnlyDictionary<string, string>? ScopeDescriptions { get; set; }
-
-    /// <summary>
-    /// Optional filter on allowed Signature-Key schemes. When set, requests using
-    /// schemes not in this set are rejected with 401 before challenge logic runs.
-    /// When null, all schemes are accepted.
-    /// </summary>
-    public IReadOnlySet<string>? AllowedSignatureKeySchemes { get; set; }
 }

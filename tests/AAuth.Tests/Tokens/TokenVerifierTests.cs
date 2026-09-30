@@ -15,6 +15,10 @@ namespace AAuth.Tests.Tokens;
 
 public class TokenVerifierTests
 {
+    public static IEnumerable<object[]> BuiltInTokenTypes =>
+        new[] { AgentTokenBuilder.TokenType, ResourceTokenBuilder.TokenType, AuthTokenBuilder.TokenType, PersonTokenBuilder.TokenType }
+            .Select(type => new object[] { type });
+
     [Theory]
     [MemberData(nameof(TestTokens.InvalidRequiredClaims), MemberType = typeof(TestTokens))]
     public async Task RawBuiltInMandatoryClaimsRejectBeforeDiscovery(string type, string claim, string mutation)
@@ -33,7 +37,28 @@ public class TokenVerifierTests
             verifier.VerifyWithJwksAsync(jwt, metadata, jwks, type, dwk, null))).Code);
         if (type == AuthTokenBuilder.TokenType)
             Assert.Equal(AAuth.Errors.SignatureErrorCode.InvalidJwt, (await Assert.ThrowsAsync<TokenVerificationException>(() =>
-                verifier.VerifyAuthTokenWithJwksAsync(jwt, metadata, jwks, "https://resource.example", key, "aauth:wire@issuer.example"))).Code);
+                verifier.VerifyAuthTokenWithJwksAsync(jwt, metadata, jwks, "https://resource.example", key,
+                    expectedMaxScope: "aauth:wire@issuer.example"))).Code);
+    }
+
+    [Theory]
+    [MemberData(nameof(BuiltInTokenTypes))]
+    public async Task Verify_RejectsCriticalJoseHeaderForBuiltInTokens(string type)
+    {
+        var key = AAuthKey.Generate();
+        var jwt = await TestTokens.RawAsync(key, type, (header, _) =>
+        {
+                header["crit"] = new JsonArray("x");
+                header["x"] = true;
+        });
+        var verifier = new TokenVerifier { TimeProvider = new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(1800000000)) };
+        var dwk = type == AgentTokenBuilder.TokenType ? AgentTokenBuilder.AgentDwk
+                : type == ResourceTokenBuilder.TokenType ? ResourceTokenBuilder.ResourceDwk
+                : AuthTokenBuilder.PersonDwk;
+
+        var failure = Assert.Throws<TokenVerificationException>(() => verifier.Verify(jwt, key, type, dwk));
+
+        Assert.Equal(AAuth.Errors.SignatureErrorCode.InvalidJwt, failure.Code);
     }
 
     private sealed class NoDiscovery : HttpMessageHandler

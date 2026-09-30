@@ -222,7 +222,20 @@ app.MapGet("/data", (HttpContext ctx) => Results.Ok(new { ok = true }))
     .RequireAAuth(scope: "read");
 ```
 
-The single `UseAAuth` middleware (placed after `UseRouting()`) reads each endpoint's `.RequireAAuth(...)` requirement: it verifies the HTTP signature and, when an auth token is required, automatically returns `401` with an `AAuth-Requirement` header carrying a resource token. The optional `Trust.AuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from; leave it unset (or assign `AAuthTrust.Any` to its `Predicate`) to accept any *verifiable* Person Server — the spec default — with claims namespaced by issuer.
+The single `UseAAuth` middleware (placed after `UseRouting()`) reads each endpoint's `.RequireAAuth(...)` requirement: it verifies the HTTP signature and, when an auth token is required, automatically returns `401` with an `AAuth-Requirement` header carrying a resource token. With no Access Server configured, this is the three-party PS-asserted mode: leave `Trust.AuthTokenIssuers` unset (or assign `AAuthTrust.Any` to its `Predicate`) to accept any *verifiable* Person Server, with claims namespaced by issuer.
+
+For four-party resources, declare the AS once on the resource registration:
+
+```csharp
+builder.Services.AddAAuthResource(options =>
+{
+    options.Issuer = "https://resource.example";
+    options.AccessServer = "https://as.example";
+    options.SigningKeys["key-1"] = resourceKey;
+});
+```
+
+That single `AccessServer` value directs resource-token challenges to the AS and makes auth-token verification fail closed by default: the resource accepts AS-issued `aauth-access.json` auth tokens from that AS, not direct PS-issued `aauth-person.json` auth tokens. Mixed PS/AS acceptance is an advanced low-level configuration that must set `ExpectedAuthTokenDwk = null` and provide a trust policy that checks `AAuthTrustContext.TokenDwk`.
 
 ### Self-Hosted Agent (Server-Side)
 

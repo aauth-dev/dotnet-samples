@@ -583,6 +583,133 @@ Gates:
 The committed ApiSurface map is still generated in the working tree only. It
 includes the owner's uncommitted sample edits, so it is left unstaged.
 
+### [2026-09-30] [Phase 3] R14 — JWT and verification hygiene
+
+RESOLVED (Q3, Q22–Q24).
+
+- **SDK-17 / Q22.** JWT protected headers now reject unsupported `crit` on the
+  built-in token verifier path, generic/companion `jwt`, `self-jwt` and
+  `jkt-jwt`.
+- **A01-H01 / Q23.** `ISignatureTokenVerifier` is now context-based, with
+  `ResolveIssuerKeyAsync` for companion `jwt` assertions whose `iss` or `dwk`
+  is absent. The contexts carry `ExpectedDwk` so R02 can enforce role-DWK
+  pinning through app-specific JWT issuer-key resolution.
+- **A01-M02 / Q23.** Companion `jwt`, `self-jwt` and `jkt-jwt` expiration uses
+  zero skew; `ClockSkew` remains only for optional future-`iat` tolerance.
+- **A03-HIGH-001 / Q24.** `ChallengeOptions.AllowedSignatureKeySchemes` was
+  removed. `AAuthVerificationOptions.AcceptedSchemes` is the single scheme
+  gate, and unsupported schemes emit `Signature-Error:
+  error=unsupported_scheme` with `Accept-Signature-Scheme`.
+- **A19-HIGH-001 / Q24.** SDK-owned signature/authentication 401 paths now use
+  the central `AAuthProblemDetails.SignatureFailure` writer. Requirement
+  challenges remain `AAuth-Requirement`; 403 policy denials remain body
+  problem details without signature headers.
+- **A21-TLS-01 / Q24.** SDK-owned `SocketsHttpHandler` is pinned to
+  TLS 1.2/1.3; injected transports document the caller's TLS-floor obligation.
+- **Q3.** Trust-policy denial in `AAuthVerificationMiddleware` now maps to
+  `401 Signature-Error: error=invalid_key`. R03 can build on the same central
+  writer for remaining authorization-endpoint changes.
+
+Public API delta: removed `ChallengeOptions.AllowedSignatureKeySchemes`;
+replaced `ISignatureTokenVerifier.VerifyAsync(string, IAAuthKey,
+TokenVerifier, CancellationToken)` with `ResolveIssuerKeyAsync(...)` and
+`VerifyAsync(SignatureTokenVerificationContext, ...)`; added
+`SignatureTokenIssuerKeyContext` and `SignatureTokenVerificationContext`; added
+optional `services` / `expectedDwk` parameters to
+`DefaultSignatureKeyResolver`.
+
+### [2026-09-30] [Phase 3] R02 — Four-party trust and dwk pinning
+
+RESOLVED (Q4; SDK-02 / A09-HIGH-001, A17-002, D09-01, D10-05).
+
+- Added `AAuthResourceOptions.AccessServer` as the single high-level
+  four-party declaration and projected it into resource metadata options for
+  `UseAAuth`, `UseAAuthVerification`, and `MapAAuthResource` composition.
+- Four-party resource composition now derives AS-only auth-token trust when no
+  auth-token issuer policy is configured and pins auth-token verification to
+  `aauth-access.json`. Three-party resource composition keeps open
+  PS-asserted issuer trust but pins auth tokens to `aauth-person.json`.
+- Explicit mixed mode is limited to `ExpectedAuthTokenDwk = null` plus a
+  policy path capable of inspecting `AAuthTrustContext.TokenDwk`. Combining
+  `AAuthTrust.Any` with `AccessServer` fails at startup.
+- `TokenVerifier.VerifyAuthTokenWithJwksAsync` and the default Signature-Key
+  JWT resolver now thread the expected auth-token `dwk`; `AuthTokenResponseValidator`
+  pins AS responses to `aauth-access.json`.
+- Four-party Wallet/Catalog/Bookings sample resources now declare
+  `AAuthResourceOptions.AccessServer`; manual sample verification paths pin
+  AS-issued auth tokens to `aauth-access.json`. README and DI docs now describe
+  three-party open trust as the caveated default and four-party AS-derived trust
+  as the `AccessServer` behavior.
+
+Public API delta: added `AAuthResourceOptions.AccessServer`,
+`AAuthResourceMetadataOptions.AccessServer`,
+`AAuthVerificationOptions.ExpectedAuthTokenDwk`, and
+`AAuthTrustContext.TokenDwk`; added `expectedDwk` to
+`TokenVerifier.VerifyAuthTokenWithJwksAsync`.
+
+### [2026-09-30] [Phase 3] R03 — Authorization endpoint and access-mode gating
+
+RESOLVED (Q25; SDK-08, SDK-18, A07-001/A09-MED-002, A09-HIGH-003, A08-03, SMP-04, DOC-04).
+
+- The core authorization endpoint now requires a verified person token and
+  challenges missing-token, verified agent-token, and verified auth-token
+  callers with
+  `401 AAuth-Requirement: requirement=person-token`. Non-JSON and malformed
+  JSON bodies return `400 invalid_request`.
+- Added a core `IAAuthAuthorizationEndpointExtension` seam and an
+  AAuth.R3 registration (`AddAAuthR3AuthorizationEndpoint`) so R3
+  `r3_operations` bodies without `scope` satisfy the authorization claim
+  without a core→R3 project reference.
+- `AgentTokenRequired` now accepts only `aa-agent+jwt`; person and auth tokens
+  receive a bare `requirement=agent-token`.
+- `AAuthChallengeMiddleware.BuildResourceTokenAsync` now rejects presented
+  agent-token assertions before minting a resource token.
+- The Inbox two-party sample no longer maps or advertises `/authorize`; its
+  README, sample index, Guided Tour text, SampleApp snippet, and
+  resource-managed workflow docs now describe only the reactive
+  `202 interaction` path.
+
+Public API delta: added `IAAuthAuthorizationEndpointExtension`,
+`AAuthAuthorizationExtensionResult`,
+`AAuthAuthorizationExtensionException`, `AAuthAccessMode.PersonTokenRequired`,
+`AAuthAuthorizationRequest.Features`, nullable `AAuthAuthorizationRequest.Scope`,
+`RouteHandlerBuilder.RequireAAuthPersonToken`,
+`R3AuthorizationEndpointExtensions.AddAAuthR3AuthorizationEndpoint`, and
+`R3AuthorizationEndpointExtensions.GetR3Operations`.
+
+### [2026-09-30] [Phase 3] Gates and wrap-up
+
+RESOLVED. R14, R02 and R03 landed through implementation agents; see the
+entries above.
+
+Orchestrator follow-ups:
+
+- **Concierge.** The wallet branch declares
+  `ExpectedAuthTokenDwk = aauth-access.json`. That branch is four-party, and
+  the new three-party default pin (Q4) rejected the Access Server's grant in
+  the e2e run.
+- **Q3 control.** `VerificationMiddlewareTests` now asserts
+  `Signature-Error: error=invalid_key` on a trust-policy denial.
+- **Restored coverage.** R03 had deleted agent-signed authorization-endpoint
+  tests. `AuthorizationEndpointTests` restores the missing-scope and
+  malformed-`account` coverage for person-token callers.
+
+Gates:
+
+- The build is clean.
+- Tests: AAuth.Tests 1786, Conformance 1335, R3 332, Events 89.
+- The inventory, snippet and link gates pass.
+- ApiSurface: +967/-414.
+- e2e: full Playwright 78 passed, 1 skipped.
+- Keycloak profile (`KEYCLOAK_E2E=1`, Keycloak 26.0): `federated-deferred`
+  1 passed; container removed.
+
+Observation (pre-existing, not caused by this plan): running
+`wallet-protocol.spec.ts` on its own makes "AS clarification is answered
+before the approved review" time out waiting for Person Server consent. It
+does the same at the Phase 2 commit with the owner's MockPersonServer edits,
+and it passes in the full-suite order.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 1] SMP-01 matches the exact agent id, not id plus key

@@ -58,6 +58,9 @@ public static class AAuthResourceServiceCollectionExtensions
             throw new InvalidOperationException("AAuthResourceOptions.Issuer must be set.");
         if (!AAuthUrl.IsHttpsOrLoopback(options.Issuer, options.EgressPolicy))
             throw new InvalidOperationException("AAuthResourceOptions.Issuer must be an absolute https URL (loopback http allowed for development).");
+        if (!string.IsNullOrEmpty(options.AccessServer)
+            && !AAuthUrl.IsHttpsOrLoopback(options.AccessServer, options.EgressPolicy))
+            throw new InvalidOperationException("AAuthResourceOptions.AccessServer must be an absolute https URL (loopback http allowed for development).");
         services.TryAddSingleton(Microsoft.Extensions.Options.Options.Create(options));
 
         // Identity once per role: the low-level UseAAuthVerification() pipeline takes its
@@ -92,7 +95,8 @@ public static class AAuthResourceServiceCollectionExtensions
             {
                 var jwksClient = sp.GetRequiredService<JwksClient>();
                 return new DefaultSignatureKeyResolver(jwksClient, sp.GetRequiredService<MetadataClient>(),
-                    tokenVerifiers: sp.GetServices<ISignatureTokenVerifier>());
+                    tokenVerifiers: sp.GetServices<ISignatureTokenVerifier>(),
+                    services: sp);
             });
         }
 
@@ -115,6 +119,7 @@ public static class AAuthResourceServiceCollectionExtensions
         {
             EgressPolicy = options.EgressPolicy,
             Issuer = options.Issuer,
+            AccessServer = options.AccessServer,
             SigningKeys = options.SigningKeys,
             Name = options.Name,
             Description = options.Description,

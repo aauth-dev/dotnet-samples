@@ -231,7 +231,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `IInteractionPendingStore` / `InMemoryInteractionPendingStore` | Owner/key/account-bound pending state; decisions use authenticated browser sessions, not the correlation code alone |
 | `AAuthInteractionCode` | Single-use interaction code (Crockford base32) |
 | `IOpaqueTokenStore` / `InMemoryOpaqueTokenStore` | Opaque access-token store (mint/validate); read a request's token via `ResolveAAuthAccessAsync` |
-| `HttpContext.IssueAAuthAccessAsync` / `InteractionRequiredAAuth`, `MapAAuthAuthorizationEndpoint` | Low-level building blocks `AddAAuthResourceManaged` wires for you |
+| `HttpContext.IssueAAuthAccessAsync` / `InteractionRequiredAAuth`, `MapAAuthInteractionPoll` | Low-level building blocks `AddAAuthResourceManaged` wires for you |
 
 ### `AAuth` — Diagnostics
 

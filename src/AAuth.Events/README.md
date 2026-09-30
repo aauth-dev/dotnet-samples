@@ -14,7 +14,7 @@ See the [Events workflow](../../docs/workflows/events.md) and the
 ## Verification
 
 Register `services.AddAAuthEvents(o => o.EgressPolicy = …)`: it adds the Events
-`ISignatureTokenVerifier` instances and a singleton `EventsProtocol` built from
+context-based `ISignatureTokenVerifier` instances and a singleton `EventsProtocol` built from
 `AAuthEventsOptions` (`EgressPolicy`, `TimeProvider`, and an optional
 `InnerHandler` with its `TransportContract`). Register the host's durable
 `IAgentProviderEventStore` or `IResourceEventStore`; `MapAAuthEventEndpoint(path)`
@@ -31,8 +31,9 @@ Events URL policy or cryptographic verifier.
 
 Both supported algorithms, Ed25519 and ES256, require fully specified public
 JWK algorithms. `EdDSA` and `none` are rejected. Subscribe tokens require
-`cnf.jwk`; event tokens forbid `cnf`. Both require current issuance/expiration
-claims, exact well-known document names, an audience and a non-empty `eid`.
+`cnf.jwk`; event tokens forbid `cnf`. Both reject unsupported JOSE `crit` and
+require current issuance/expiration claims, exact well-known document names, an
+audience and a non-empty `eid`; `exp` has zero tolerance.
 No Events `jti` requirement is introduced; a permitted optional `jti` is accepted.
 
 Events requests with no payload omit the HTTP body and do not cover

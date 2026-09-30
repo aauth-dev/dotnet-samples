@@ -89,7 +89,15 @@ public static class R3DocumentEndpoint
             }
             catch (Exception ex) when (ex is R3FetchVerificationException or AAuthVerificationException)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", ex.Message, statusCode: StatusCodes.Status401Unauthorized);
+                var code = ex switch
+                {
+                    AAuthVerificationException signature => signature.Code,
+                    R3FetchVerificationException fetch => fetch.Code,
+                    _ => AAuth.Errors.SignatureErrorCode.InvalidSignature,
+                };
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(code,
+                    acceptedSchemes: code == AAuth.Errors.SignatureErrorCode.UnsupportedScheme
+                        ? [AAuthConstants.Schemes.JwksUri] : null);
             }
 
             if (!isTrustedFetcher(fetcher))
@@ -120,7 +128,21 @@ public static class R3DocumentEndpoint
                 RequireBodyCoverage = true });
         await middleware.InvokeAsync(context);
         if (!authenticated)
-            throw new R3FetchVerificationException("R3 fetch signature verification failed.");
+        {
+            if (!SignatureError.TryParse(context.Response.Headers[SignatureError.HeaderName].ToString(), out var code))
+                code = SignatureErrorCode.InvalidSignature;
+            if (code == SignatureErrorCode.InvalidSignature
+                && context.Request.Headers.TryGetValue(AAuthConstants.Headers.SignatureKey, out var signatureKey))
+            {
+                try
+                {
+                    if (SignatureKeyHeader.Parse(signatureKey.ToString()).Scheme != AAuthConstants.Schemes.JwksUri)
+                        code = SignatureErrorCode.UnsupportedScheme;
+                }
+                catch (AAuthVerificationException) { }
+            }
+            throw new R3FetchVerificationException("R3 fetch signature verification failed.", code);
+        }
         var parsed = context.GetAAuthParsedKey()!;
         var fetcher = new R3VerifiedFetcher(parsed.Scheme, parsed.Identifier!, parsed.Kid,
             context.Features.Get<AAuthVerificationResult>()!.Jkt, parsed);
@@ -162,8 +184,12 @@ public sealed record R3VerifiedFetcher(
 
 public class R3FetchVerificationException : Exception
 {
-    public R3FetchVerificationException(string message) : base(message) { }
-    public R3FetchVerificationException(string message, Exception inner) : base(message, inner) { }
+    internal SignatureErrorCode Code { get; }
+    public R3FetchVerificationException(string message) : this(message, null, SignatureErrorCode.InvalidSignature) { }
+    public R3FetchVerificationException(string message, Exception inner) : this(message, inner, SignatureErrorCode.InvalidSignature) { }
+    internal R3FetchVerificationException(string message, SignatureErrorCode code) : this(message, null, code) { }
+    private R3FetchVerificationException(string message, Exception? inner, SignatureErrorCode code) : base(message, inner)
+        => Code = code;
 }
 
 public sealed class R3UntrustedJwksUriException : R3FetchVerificationException

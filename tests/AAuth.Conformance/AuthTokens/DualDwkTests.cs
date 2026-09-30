@@ -56,6 +56,18 @@ public class DualDwkTests
         Assert.Equal("aauth-access.json", (string?)result.Payload["dwk"]);
     }
 
+    [Fact(DisplayName = "§Auth Token dwk — expected aauth-access.json rejects aauth-person.json")]
+    public async Task ExpectedAccessDwk_RejectsPersonDwk()
+    {
+        var (jwt, psKey, agentKey) = await BuildWithDwkAsync(AuthTokenBuilder.PersonDwk);
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
+
+        var exception = Assert.Throws<TokenVerificationException>(() =>
+            verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, expectedDwk: AuthTokenBuilder.AccessDwk));
+
+        Assert.Contains("dwk", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact(DisplayName = "§Auth Token dwk — verifier rejects aauth-resource.json as dwk for auth tokens")]
     public async Task Rejects_ResourceDwk()
     {

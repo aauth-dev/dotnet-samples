@@ -752,11 +752,7 @@ public class AccessEndpointR3Tests
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
         Assert.Equal("error=invalid_signature", replay.Headers.GetValues("Signature-Error").Single());
-        Assert.Equal("application/problem+json", replay.Content.Headers.ContentType?.MediaType);
-        var error = await replay.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("invalid_signature", (string?)error!["error"]);
-        Assert.Equal("replayed request signature", (string?)error["detail"]);
-        Assert.False(error.ContainsKey("error_description"));
+        Assert.Empty(await replay.Content.ReadAsByteArrayAsync());
         Assert.Single(auditSink.Records);
     }
 

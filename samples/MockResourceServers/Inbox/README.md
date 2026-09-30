@@ -30,13 +30,12 @@ the user's Person Server. Two parties only: agent + resource.
 |------|------|---------|
 | `GET /` | none | Flow index (lists the two entry points) |
 | `GET /messages` | signed | **Reactive** entry point. Serves messages when a valid `Authorization: AAuth` token is presented; otherwise returns `202` + `AAuth-Requirement: requirement=interaction` pointing at `/consent` |
-| `POST /authorize` | signed | **Proactive** entry point (`{ "scope": "inbox.read" }`, §Authorization Endpoint Request) — same consent path |
 | `GET /pending/{code}` | signed | Deferred-response poll target: `202` while pending, then `200` + `AAuth-Access` once approved |
 | `GET /consent?code=…` | none | The Inbox's **own** consent page (the user approves here) |
 | `POST /consent/approve` | none | Records the user's approval |
 
-`/.well-known/aauth-resource.json` advertises `access_mode = "session-token"`
-and the `authorization_endpoint`. `/.well-known/jwks.json` serves the resource key.
+`/.well-known/aauth-resource.json` advertises `access_mode = "session-token"`.
+`/.well-known/jwks.json` serves the resource key.
 
 ## The flow
 
@@ -81,7 +80,6 @@ Override the issuer: `--AAuth:Issuer https://my-inbox.example` (or the
   `WithInteractionHandling(...)` — captures `AAuth-Access`, replays
   `Authorization: AAuth`, drives the `202 → consent → 200` handshake.
 - Resource: `HttpContext.ResolveAAuthAccessAsync` / `IssueAAuthAccessAsync` /
-  `InteractionRequiredAAuth`, `MapAAuthAuthorizationEndpoint`, and
-  `IOpaqueTokenStore`.
+  `InteractionRequiredAAuth`, `MapAAuthInteractionPoll`, and `IOpaqueTokenStore`.
 
 See [Resource-Managed Access](../../../docs/workflows/resource-managed-access.md).

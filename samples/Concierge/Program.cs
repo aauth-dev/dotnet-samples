@@ -156,6 +156,9 @@ app.UseWhen(ctx => IsWalletPath(ctx.Request.Path), branch => branch.UseAAuthInte
     {
         verification.EgressPolicy = SampleEgress.Policy;
         verification.ResourceIdentifier = conciergeUrl;
+        // Four-party branch: the Wallet's Access Server issues the auth token
+        // (§PS-AS Federation), so require dwk=aauth-access.json from that AS only.
+        verification.ExpectedAuthTokenDwk = AAuthConstants.DwkFiles.Access;
         verification.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { accessServerUrl };
         verification.Trust.PersonServers.Allowed = new HashSet<string> { psUrl };
     },

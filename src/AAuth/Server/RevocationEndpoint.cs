@@ -136,9 +136,7 @@ public static class RevocationEndpoint
             var verified = context.Features.Get<AAuthVerificationResult>();
             if (verified is null)
             {
-                return AAuthProblemDetails.Create(
-                    "invalid_request", "revocation requires a verified AAuth signature (map /revoke behind UseAAuthVerification).",
-                    statusCode: StatusCodes.Status401Unauthorized);
+                return AAuthProblemDetails.SignatureFailure(SignatureErrorCode.InvalidSignature);
             }
 
             // MUST at every recipient, not only when the host's verifier was configured to demand it.

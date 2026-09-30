@@ -246,7 +246,8 @@ public static class AAuthPersonServerEndpoints
             => string.Equals(candidate, issuer, StringComparison.Ordinal)
                 || (options.Trust.IsConfigured(AAuthTrustedParty.AccessServer, ctx.RequestServices)
                     && await options.Trust.IsTrustedAsync(candidate, AAuthTrustedParty.AccessServer,
-                        ctx.RequestServices, ctx, AuthTokenBuilder.TokenType, ctx.RequestAborted).ConfigureAwait(false));
+                        ctx.RequestServices, ctx, AuthTokenBuilder.TokenType,
+                        cancellationToken: ctx.RequestAborted).ConfigureAwait(false));
 
         // Presented and upstream person tokens are this PS's own: verify them with
         // its signing keys rather than fetching its own JWKS.

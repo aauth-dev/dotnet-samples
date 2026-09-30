@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using AAuth.Errors;
 
 namespace AAuth.Server;
 
@@ -55,9 +56,26 @@ public static class AAuthProblemDetails
         return otherwise ?? new SignatureErrorResult(Errors.SignatureError.Format(Errors.SignatureErrorCode.ExpiredJwt));
     }
 
+    internal static IResult SignatureFailure(SignatureErrorCode code,
+        IEnumerable<string>? requiredInput = null,
+        IEnumerable<string>? acceptedSchemes = null,
+        IEnumerable<string>? acceptedAlgorithms = null,
+        int statusCode = StatusCodes.Status401Unauthorized)
+    {
+        return new SignatureErrorResult(SignatureError.Format(code, requiredInput: requiredInput?.ToArray()),
+            acceptedSchemes, acceptedAlgorithms, statusCode);
+    }
+
+    internal static Task WriteSignatureFailureAsync(HttpContext context, SignatureErrorCode code,
+        IEnumerable<string>? requiredInput = null,
+        IEnumerable<string>? acceptedSchemes = null,
+        IEnumerable<string>? acceptedAlgorithms = null,
+        int statusCode = StatusCodes.Status401Unauthorized)
+        => SignatureFailure(code, requiredInput, acceptedSchemes, acceptedAlgorithms, statusCode).ExecuteAsync(context);
+
     internal static IResult MissingCoverage(IEnumerable<string> required) =>
-        new SignatureErrorResult(Errors.SignatureError.Format(Errors.SignatureErrorCode.InvalidInput,
-            requiredInput: HttpSig.AAuthSigningHandler.CoveredComponents.Concat(required).Distinct().ToArray()));
+        SignatureFailure(SignatureErrorCode.InvalidInput,
+            requiredInput: HttpSig.AAuthSigningHandler.CoveredComponents.Concat(required).Distinct().ToArray());
 
     private static readonly string[] BodyComponents = ["content-type", "content-digest"];
 
@@ -69,12 +87,17 @@ public static class AAuthProblemDetails
             && !verified.CoveredComponents.IsSupersetOf(BodyComponents)
             ? MissingCoverage(BodyComponents) : null;
 
-    private sealed class SignatureErrorResult(string header) : IResult
+    private sealed class SignatureErrorResult(string header, IEnumerable<string>? acceptedSchemes = null,
+        IEnumerable<string>? acceptedAlgorithms = null, int statusCode = StatusCodes.Status401Unauthorized) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
-            httpContext.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            httpContext.Response.StatusCode = statusCode;
             httpContext.Response.Headers[Errors.SignatureError.HeaderName] = header;
+            if (acceptedSchemes is not null)
+                httpContext.Response.Headers["Accept-Signature-Scheme"] = string.Join(", ", acceptedSchemes);
+            if (acceptedAlgorithms is not null)
+                httpContext.Response.Headers["Accept-Signature-Alg"] = string.Join(", ", acceptedAlgorithms);
             return Task.CompletedTask;
         }
     }

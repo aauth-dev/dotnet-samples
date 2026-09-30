@@ -352,6 +352,13 @@ public sealed class AAuthResourceMetadataOptions
     public required string Issuer { get; set; }
 
     /// <summary>
+    /// Optional Access Server issuer for four-party authorization. This is runtime
+    /// configuration used by resource verification/challenge composition; it is
+    /// not emitted as resource metadata.
+    /// </summary>
+    public string? AccessServer { get; set; }
+
+    /// <summary>
     /// Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. Optional in
     /// draft-02: a resource that issues resource tokens or makes signed calls MUST
     /// supply keys (and <c>jwks_uri</c> is then published); an identity-only resource
@@ -441,6 +448,10 @@ public sealed class AAuthResourceMetadataOptions
             // and http://127.0.0.1 so WebApplicationFactory tests (which
             // bind plain HTTP) can still configure a sensible issuer.
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
+        }
+        if (!string.IsNullOrEmpty(AccessServer) && !AAuthUrl.IsHttpsOrLoopback(AccessServer, EgressPolicy))
+        {
+            throw new InvalidOperationException("AccessServer must be an absolute https:// URL (or http://localhost).");
         }
         AAuthMetadataUrl.ValidateOptional(EgressPolicy, LogoUri, AAuthUrlKind.Informational, Issuer, nameof(LogoUri));
         AAuthMetadataUrl.ValidateOptional(EgressPolicy, LogoDarkUri, AAuthUrlKind.Informational, Issuer, nameof(LogoDarkUri));

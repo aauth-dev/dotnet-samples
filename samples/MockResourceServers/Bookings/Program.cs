@@ -67,6 +67,7 @@ builder.Services.AddAAuthResource(o =>
 {
     o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
+    o.AccessServer = accessServerUrl;
     o.RevocationEndpoint = $"{resourceUrl}/revoke";
     o.ConfigureRevocation = revocation =>
         revocation.IsAcceptedIssuer = caller => caller == personServerUrl || caller == accessServerUrl;
@@ -345,6 +346,7 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
         var middleware = new AAuthVerificationMiddleware(_ => { authenticated = true; return Task.CompletedTask; },
             ctx.RequestServices.GetRequiredService<AAuthVerifier>(), new DefaultSignatureKeyResolver(discoveryKeys, discoveryMetadata), discoveryMetadata, discoveryKeys,
             new AAuthVerificationOptions { EgressPolicy = SampleEgress.Policy, AcceptedSchemes = ["jwt"], ResourceIdentifier = resourceUrl,
+                ExpectedAuthTokenDwk = AAuthConstants.DwkFiles.Access,
                 ExpectedAccount = _ => account });
         await middleware.InvokeAsync(ctx);
         if (!authenticated) throw new R3FetchVerificationException("Agent signature verification failed.");
@@ -403,6 +405,7 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
             jwks,
             resourceUrl,
             fetcher.ParsedKey.ConfirmationKey,
+            expectedDwk: AAuthConstants.DwkFiles.Access,
             cancellationToken: ctx.RequestAborted,
             accountExpectation: new AccountExpectation(account));
         var issuer = ((string?)verified.Payload["iss"])?.TrimEnd('/');
@@ -432,7 +435,8 @@ async Task<SignedPresenter> VerifyPresenterAsync(HttpContext ctx, R3VerifiedFetc
         var authenticated = false;
         var middleware = new AAuthVerificationMiddleware(_ => { authenticated = true; return Task.CompletedTask; },
             ctx.RequestServices.GetRequiredService<AAuthVerifier>(), new DefaultSignatureKeyResolver(keys, metadataClient), metadataClient, keys,
-            new AAuthVerificationOptions { EgressPolicy = SampleEgress.Policy, AcceptedSchemes = ["jwt"], ResourceIdentifier = resourceUrl });
+            new AAuthVerificationOptions { EgressPolicy = SampleEgress.Policy, AcceptedSchemes = ["jwt"], ResourceIdentifier = resourceUrl,
+                ExpectedAuthTokenDwk = AAuthConstants.DwkFiles.Access });
         await middleware.InvokeAsync(ctx);
         if (!authenticated) throw new R3FetchVerificationException("Agent signature verification failed.");
         var parsed = ctx.GetAAuthParsedKey()!;

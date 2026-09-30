@@ -228,10 +228,12 @@ public class SignatureV10AdversarialTests
         public string Scheme => "jwt";
         public string TokenType => "custom+jwt";
         public int Calls { get; private set; }
-        public Task<TokenVerifier.VerifiedToken> VerifyAsync(string jwt, IAAuthKey key, TokenVerifier verifier, CancellationToken ct)
+        public ValueTask<IAAuthKey?> ResolveIssuerKeyAsync(SignatureTokenIssuerKeyContext context, CancellationToken ct) =>
+            ValueTask.FromResult<IAAuthKey?>(null);
+        public Task<TokenVerifier.VerifiedToken> VerifyAsync(SignatureTokenVerificationContext context, CancellationToken ct)
         {
             Calls++;
-            var verified = verifier.Verify(jwt, key, TokenType, AgentTokenBuilder.AgentDwk);
+            var verified = context.TokenVerifier.Verify(context.Jwt, context.IssuerKey, TokenType, AgentTokenBuilder.AgentDwk);
             if (!allow) throw new TokenVerificationException("Custom policy denied.");
             return Task.FromResult(verified);
         }

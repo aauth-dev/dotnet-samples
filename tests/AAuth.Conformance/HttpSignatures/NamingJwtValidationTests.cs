@@ -84,13 +84,12 @@ public class NamingJwtValidationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§jkt-jwt — naming JWT expired within clock skew still succeeds")]
-    public async Task NamingJwtExpiredWithinClockSkew_Succeeds()
+    [Fact(DisplayName = "§jkt-jwt — naming JWT expired within clock skew still returns 401")]
+    public async Task NamingJwtExpiredWithinClockSkew_Returns401()
     {
-        // exp is 10 seconds in the past (within 30s clock skew)
         var namingJwt = await BuildNamingJwtAsync(exp: FixedClock.AddSeconds(-10));
         var response = await SendSignedRequest(namingJwt);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact(DisplayName = "§jkt-jwt — replay detection rejects duplicate jti")]

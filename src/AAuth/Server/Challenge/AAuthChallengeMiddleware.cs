@@ -30,8 +30,11 @@ namespace AAuth.Server.Challenge;
 ///   and the token is <c>aa-agent+jwt</c>, mints a resource token and returns 401 with
 ///   <c>AAuth-Requirement: requirement=auth-token; resource-token="…"</c>.</item>
 /// <item>If <see cref="ChallengeOptions.AccessMode"/> is <see cref="AAuthAccessMode.AgentTokenRequired"/>,
-///   passes through when an AAuth agent or auth token is present, otherwise returns 401 with
+///   passes through only when an AAuth agent token is present, otherwise returns 401 with
 ///   a bare <c>AAuth-Requirement: requirement=agent-token</c> (§Agent Token Required).</item>
+/// <item>If <see cref="ChallengeOptions.AccessMode"/> is <see cref="AAuthAccessMode.PersonTokenRequired"/>,
+///   passes through only when an AAuth person token is present, otherwise returns 401 with
+///   a bare <c>AAuth-Requirement: requirement=person-token</c> (§Person Token Required).</item>
 /// <item>If the token is <c>aa-auth+jwt</c> (or non-JWT schemes in identity-only mode),
 ///   passes through to the next middleware.</item>
 /// </list>
@@ -82,21 +85,11 @@ public sealed class AAuthChallengeMiddleware
         var tokenType = AAuthTokenTypeExtensions.ParseTokenType(
             result?.TokenType ?? (string?)parsedInfo?.Header?["typ"]);
 
-        // Scheme filtering.
-        if (scheme is not null && _options.AllowedSignatureKeySchemes is { } allowed && !allowed.Contains(scheme))
-        {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.Headers[AAuthConstants.Headers.AAuthError] = $"Scheme '{scheme}' is not allowed by this resource.";
-            return;
-        }
-
-        // §Agent Token Required: this resource specifically wants AAuth identity,
-        // distinct from any other URI-identified key. Pass through when an AAuth
-        // token (agent, person or auth) is present; otherwise challenge with a
-        // bare requirement=agent-token.
+        // §Agent Token Required: this resource specifically wants an AAuth agent
+        // token; person and auth tokens prove different roles and are challenged.
         if (_options.AccessMode == AAuthAccessMode.AgentTokenRequired)
         {
-            if (tokenType is AAuthTokenType.AgentToken or AAuthTokenType.PersonToken or AAuthTokenType.AuthToken)
+            if (tokenType == AAuthTokenType.AgentToken)
             {
                 await _next(context).ConfigureAwait(false);
                 return;
@@ -105,6 +98,20 @@ public sealed class AAuthChallengeMiddleware
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             context.Response.Headers[AAuthRequirementHeader.Name] =
                 AAuthRequirementHeader.FormatAgentToken();
+            return;
+        }
+
+        if (_options.AccessMode == AAuthAccessMode.PersonTokenRequired)
+        {
+            if (tokenType == AAuthTokenType.PersonToken)
+            {
+                await _next(context).ConfigureAwait(false);
+                return;
+            }
+
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.Headers[AAuthRequirementHeader.Name] =
+                AAuthRequirementHeader.FormatPersonToken();
             return;
         }
 
@@ -162,6 +169,8 @@ public sealed class AAuthChallengeMiddleware
         if (string.IsNullOrEmpty(options.ResourceIdentifier))
             throw new InvalidOperationException("ChallengeOptions.ResourceIdentifier must be set for RequireAuthToken mode.");
         var token = presented.Token;
+        if (token.TokenType is not (PersonTokenBuilder.TokenType or AuthTokenBuilder.TokenType))
+            throw new InvalidOperationException("A resource token must name a presented person token or auth token.");
         var personServer = PersonServerOf(token);
         return await new ResourceTokenBuilder
         {

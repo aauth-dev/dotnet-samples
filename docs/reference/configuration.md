@@ -42,7 +42,8 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | `RequiredComponents` | `IReadOnlyCollection<string>` | `[]` | Additional required covered components. |
 | `GenericSignatureKeys` | `bool` | `false` | Use generic Signature Keys failure status policy instead of AAuth's 401 profile. |
 | `Trust` | `AAuthTrustOptions` | `new()` (open) | Agent Provider, auth-token issuer and person-token issuer trust; see [AAuthTrustOptions](#aauthtrustoptions). |
-| `ClockSkew` | `TimeSpan` | 30 seconds | Tolerance applied to `exp`/`iat` checks |
+| `ExpectedAuthTokenDwk` | `string?` | `aauth-person.json` | Auth-token `dwk` pin. `AddAAuthResource` with `AccessServer` derives `aauth-access.json`; set `null` only for explicit mixed PS/AS deployments with a `TokenDwk`-aware trust policy. |
+| `ClockSkew` | `TimeSpan` | 30 seconds | Tolerance for optional future `iat` checks. `exp` has zero tolerance and is rejected when it is not in the future. |
 | `TimeProvider` | `TimeProvider` | System | Clock source for all time-dependent checks. Inject for deterministic testing. |
 
 > Startup diagnostics do not change runtime trust policy:
@@ -196,7 +197,7 @@ An `IAccessPolicy` is required (`UsePolicy` or a DI registration).
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `TimeProvider` | `TimeProvider` | System | Clock source |
-| `ClockSkew` | `TimeSpan` | 60 seconds | Tolerance for exp/iat validation |
+| `ClockSkew` | `TimeSpan` | 60 seconds | Tolerance for optional future `iat` checks. `exp` has zero tolerance and is rejected when it is not in the future. |
 
 ## Deferred Consent (Polling)
 
@@ -404,6 +405,7 @@ Register with `AddAAuthResource(configure: …)` or bind from `AAuth:Resource`.
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
 | `Issuer` | `string` | Yes | Resource canonical URL |
+| `AccessServer` | `string?` | No | Access Server issuer for four-party resources. When set, challenges use it as the resource-token `aud` and auth-token verification defaults to AS-issued `aauth-access.json` tokens from that issuer. |
 | `SigningKeys` | `AAuthSigningKeySet` | Conditional | Signing keys published at the JWKS (tokens are signed with the active key); required when issuing resource tokens or making signed calls, optional for verification-only resources |
 | `KeyHandle` | `string?` | No | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
 | `KeyId` | `string?` | No | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |

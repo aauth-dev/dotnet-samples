@@ -155,9 +155,10 @@ public class IssuerDiscoverySecurityTests
     {
         public string Scheme => "self-jwt";
         public string TokenType => "cache-test+jwt";
-        public Task<TokenVerifier.VerifiedToken> VerifyAsync(string jwt, IAAuthKey issuerKey,
-            TokenVerifier verifier, CancellationToken cancellationToken) =>
-            Task.FromResult(verifier.Verify(jwt, issuerKey, TokenType, AuthTokenBuilder.AccessDwk));
+        public ValueTask<IAAuthKey?> ResolveIssuerKeyAsync(SignatureTokenIssuerKeyContext context, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IAAuthKey?>(null);
+        public Task<TokenVerifier.VerifiedToken> VerifyAsync(SignatureTokenVerificationContext context, CancellationToken cancellationToken) =>
+            Task.FromResult(context.TokenVerifier.Verify(context.Jwt, context.IssuerKey, TokenType, AuthTokenBuilder.AccessDwk));
     }
 
     private sealed class Handler : HttpMessageHandler

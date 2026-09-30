@@ -50,7 +50,7 @@ public static class AAuthInteractionEndpointExtensions
             var pollerJkt = ctx.GetAAuthVerification()?.Jkt;
             if (string.IsNullOrEmpty(pollerJkt))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "poll requires a verified AAuth signature", statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidSignature);
             }
             if (!string.Equals(pollerJkt, entry.AgentJkt, StringComparison.Ordinal)
                 || !string.Equals(entry.OwnerIssuer, ctx.GetAAuthVerification()?.Issuer, StringComparison.Ordinal)

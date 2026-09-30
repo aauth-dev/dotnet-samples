@@ -229,23 +229,23 @@ they land together after R01.
 
 **Definition of Done**
 
-- [ ] A JWT with `crit:["x"]` is rejected for every token type.
-- [ ] A companion `jwt` without `iss`/`dwk` verifies through the new seam.
+- [x] A JWT with `crit:["x"]` is rejected for every token type.
+- [x] A companion `jwt` without `iss`/`dwk` verifies through the new seam.
       An expired companion token is rejected with zero skew.
-- [ ] Every SDK 401 carries `Signature-Error`. An unsupported scheme also
+- [x] Every SDK 401 carries `Signature-Error`. An unsupported scheme also
       carries `Accept-Signature-Scheme`. No 403 carries either.
-- [ ] Four-party: a PS-issued auth token (`dwk=aauth-person.json`) with valid
+- [x] Four-party: a PS-issued auth token (`dwk=aauth-person.json`) with valid
       `aud`/`scope` is rejected, and an AS-issued one is accepted.
       Three-party: an AS-`dwk` token from an unrelated AS is rejected.
-- [ ] The PS rejects an AS response token verified through `aauth-person.json`.
-- [ ] The authorization endpoint challenges agent-token and auth-token callers
+- [x] The PS rejects an AS response token verified through `aauth-person.json`.
+- [x] The authorization endpoint challenges agent-token and auth-token callers
       with `requirement=person-token`. An R3 `r3_operations` body without
       `scope` is routed to the extension.
-- [ ] An `AgentTokenRequired` endpoint challenges person-token and auth-token
+- [x] An `AgentTokenRequired` endpoint challenges person-token and auth-token
       callers.
-- [ ] An untrusted issuer gets 401 `invalid_key`.
-- [ ] The TLS 1.2/1.3 pin is asserted on the SDK handler.
-- [ ] The gates, including Keycloak, are green.
+- [x] An untrusted issuer gets 401 `invalid_key`.
+- [x] The TLS 1.2/1.3 pin is asserted on the SDK handler.
+- [x] The gates, including Keycloak, are green.
 
 ## Phase 4 — Deferred polling and error tables (R11)
 

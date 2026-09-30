@@ -127,27 +127,16 @@ app.MapGet("/messages", async (HttpContext ctx) =>
 // on approval — the resource maps no poll plumbing of its own.
 app.MapAAuthInteractionPoll().RequireAAuthSignature();
 
-// Optional proactive entry point (§Authorization Endpoint Request) — same
-// decision path as /messages.
-app.MapAAuthAuthorizationEndpoint("/authorize", async (ctx, request) =>
-{
-    var info = await ctx.ResolveAAuthAccessAsync(store, ctx.RequestAborted);
-    if (info is not null)
-        return Results.Ok(new { authorized = true, scope = info.Scope });
-
-    return ctx.RequireAAuthInteraction(request.Scope);
-}).RequireAAuthSignature();
-
 // The resource's authenticated consent page consumes the correlation code,
 // binds a decision session to the person and pending owner, and validates CSRF.
 // Only that verified decision context can approve the stored interaction.
 ```
 
-> **Known non-conformance (remediation Phase 3).** The authorization endpoint
-> above accepts any AAuth signature. Draft-11 requires a person token there
-> (§Authorization Endpoint), and a request without one is answered with
-> `requirement=person-token`. Don't copy the `/authorize` mapping until Phase 3
-> lands. See the [remediation plan](../../.agent/plans/2026-09-30-v11-compliance-remediation/implementation-plan.md).
+> The resource-managed `session-token` flow is separate from the protocol
+> `authorization_endpoint`. A published authorization endpoint requires a
+> person token and is for proactively requesting a resource token; a two-party
+> resource-managed sample like Inbox should use the reactive `202 interaction`
+> path instead of mapping `/authorize`.
 
 ## DI Registration
 
@@ -177,7 +166,6 @@ builder.Services.AddAAuthResource(options =>
     options.Issuer = "https://resource.example";
     options.SigningKeys = new() { ["key-1"] = resourceKey };
     options.AccessMode = AAuthConstants.AccessModes.SessionToken;
-    options.AuthorizationEndpoint = "https://resource.example/authorize";
 });
 
 // The resource-managed module registers the opaque-token store, the interaction
@@ -195,8 +183,6 @@ The endpoints then drive the flow with `ResolveAAuthAccessAsync` /
 the decision using an authenticated, owner-bound `BrowserConsentSessions`
 session and the pending-store generation. See the actual
 [Inbox consent endpoints](../../samples/MockResourceServers/Inbox/Program.cs).
-Optionally,
-`MapAAuthAuthorizationEndpoint` adds the proactive entry point.
 
 See [Dependency Injection](../reference/dependency-injection.md) for full reference.
 

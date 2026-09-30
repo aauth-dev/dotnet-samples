@@ -83,6 +83,7 @@ public sealed class AuthTokenResponseValidator
                 _jwks,
                 expectedAudience,
                 agentKey,
+                expectedDwk: AuthTokenBuilder.AccessDwk,
                 expectedMaxScope: requestedScope,
                 cancellationToken: ct).ConfigureAwait(false);
 

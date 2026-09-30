@@ -286,7 +286,7 @@ The checks (failure throws `TokenVerificationException`):
 |---|-------|--------|
 | 1 | `typ` | Must be `aa-resource+jwt` |
 | 2 | `dwk` + signature | `dwk=aauth-resource.json`; key resolved from `{iss}/.well-known/aauth-resource.json` → `jwks_uri` |
-| 3 | `exp` / `iat` | Within validity (honours `ClockSkew`) |
+| 3 | `exp` / `iat` | `exp` is in the future with zero tolerance; optional future `iat` honours `ClockSkew` |
 | 4 | `aud` | Equals `expectedAudience` |
 | 5 | `agent_jkt` | Equals the presenting agent's key thumbprint (PoP binding); the sub-agent's for a parent-mediated sub-agent request |
 | 6 | `ps` | Equals `expectedPersonServer`: the local PS, or the authenticated PS caller at an AS |

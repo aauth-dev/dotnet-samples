@@ -48,7 +48,8 @@ public class AuthTokenDeliveryTests
         string? personServer = null,
         IAAuthKey? agentConfirmationKey = null,
         string? scope = null,
-        string? account = null)
+        string? account = null,
+        string? dwk = null)
     {
         return await new AuthTokenBuilder
         {
@@ -63,7 +64,7 @@ public class AuthTokenDeliveryTests
             Scope = scope ?? "data.read",
             Subject = subject ?? Subject,
             Account = account,
-            Dwk = AuthTokenBuilder.AccessDwk,
+            Dwk = dwk ?? AuthTokenBuilder.AccessDwk,
         }.BuildAsync();
     }
 
@@ -90,6 +91,15 @@ public class AuthTokenDeliveryTests
         Assert.True(result.IsValid, result.Error);
         Assert.Null(result.Error);
         Assert.NotNull(result.Verified);
+    }
+
+    [Fact(DisplayName = "§Auth Token Delivery — AS response with person-role dwk is rejected")]
+    public async Task RejectsAsResponseWithPersonDwk()
+    {
+        var result = await Validate(await BuildAuthTokenAsync(dwk: AuthTokenBuilder.PersonDwk));
+
+        Assert.False(result.IsValid);
+        Assert.Contains("dwk", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact(DisplayName = "§Auth Token Delivery — issuer mismatch rejected")]
@@ -170,7 +180,7 @@ public class AuthTokenDeliveryTests
         {
             var path = request.RequestUri?.AbsolutePath ?? "";
 
-            if (path.EndsWith("aauth-access.json"))
+            if (path.EndsWith("aauth-access.json") || path.EndsWith("aauth-person.json"))
             {
                 return JsonResponse(new JsonObject
                 {

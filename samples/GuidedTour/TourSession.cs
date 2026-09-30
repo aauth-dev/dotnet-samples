@@ -376,7 +376,7 @@ public sealed partial class TourSession : IAsyncDisposable
     // every leg is agent ↔ resource — there is no third party.
     private static readonly TourPlanStep[] ResourceManagedPlan =
     {
-        new(1, "Discover Inbox metadata", "Unsigned GET /.well-known/aauth-resource.json — access_mode=session-token + authorization_endpoint.", Actor.Agent, Actor.Resource),
+        new(1, "Discover Inbox metadata", "Unsigned GET /.well-known/aauth-resource.json — access_mode=session-token.", Actor.Agent, Actor.Resource),
         new(2, "Signed GET /messages → 202", "GuidedTour locally self-issues an agent JWT with its published identity/key; the Inbox returns 202 + interaction. No external AP enrollment or PS/AS exchange.", Actor.Agent, Actor.Resource),
         new(3, "Direct user to Inbox consent", "Agent surfaces the {url}?code={code} link to the Inbox's OWN consent page.", Actor.Agent, Actor.Agent),
         new(4, "Authenticated Inbox consent", "Browser signs in, consumes the correlation code once, and submits a CSRF-protected decision. The following signed poll confirms the verdict.", Actor.Resource, Actor.Resource),
@@ -2457,8 +2457,8 @@ public sealed partial class TourSession : IAsyncDisposable
             Narrative =
                 "Before signing anything, the agent fetches the Inbox's well-known " +
                 "metadata. The tell for this access mode is `access_mode: " +
-                "\"session-token\"` plus an `authorization_endpoint` — the Inbox " +
-                "manages authorization **itself**, with no Person Server. This call is " +
+                "\"session-token\"`: the Inbox manages authorization **itself**, " +
+                "with no Person Server. This call is " +
                 "unsigned.",
             RequestLine = $"{ex.RequestLine}  →  {url}",
             RequestHeaders = ex.RequestHeaders,

@@ -10,11 +10,16 @@ public sealed class EventsSignatureTokenVerifier(bool subscribe) : ISignatureTok
 {
     public string Scheme => subscribe ? "jwt" : "self-jwt";
     public string TokenType => subscribe ? EventsTokens.SubscribeType : EventsTokens.EventType;
-    public Task<TokenVerifier.VerifiedToken> VerifyAsync(string jwt, IAAuthKey issuerKey,
-        TokenVerifier verifier, CancellationToken cancellationToken)
+    public ValueTask<IAAuthKey?> ResolveIssuerKeyAsync(SignatureTokenIssuerKeyContext context, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(EventsTokens.Verify(jwt, issuerKey, subscribe, verifier));
+        return ValueTask.FromResult<IAAuthKey?>(null);
+    }
+
+    public Task<TokenVerifier.VerifiedToken> VerifyAsync(SignatureTokenVerificationContext context, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(EventsTokens.Verify(context.Jwt, context.IssuerKey, subscribe, context.TokenVerifier));
     }
 }
 
@@ -69,15 +74,19 @@ public static class EventsServiceExtensions
     {
         public string Scheme => "jwt";
         public string TokenType => EventsTokens.SubscribeType;
-        public Task<TokenVerifier.VerifiedToken> VerifyAsync(string jwt, IAAuthKey key, TokenVerifier verifier, CancellationToken cancellationToken)
-            => new EventsSignatureTokenVerifier(true).VerifyAsync(jwt, key, verifier, cancellationToken);
+        public ValueTask<IAAuthKey?> ResolveIssuerKeyAsync(SignatureTokenIssuerKeyContext context, CancellationToken cancellationToken)
+            => new EventsSignatureTokenVerifier(true).ResolveIssuerKeyAsync(context, cancellationToken);
+        public Task<TokenVerifier.VerifiedToken> VerifyAsync(SignatureTokenVerificationContext context, CancellationToken cancellationToken)
+            => new EventsSignatureTokenVerifier(true).VerifyAsync(context, cancellationToken);
     }
 
     private sealed class EventVerifier : ISignatureTokenVerifier
     {
         public string Scheme => "self-jwt";
         public string TokenType => EventsTokens.EventType;
-        public Task<TokenVerifier.VerifiedToken> VerifyAsync(string jwt, IAAuthKey key, TokenVerifier verifier, CancellationToken cancellationToken)
-            => new EventsSignatureTokenVerifier(false).VerifyAsync(jwt, key, verifier, cancellationToken);
+        public ValueTask<IAAuthKey?> ResolveIssuerKeyAsync(SignatureTokenIssuerKeyContext context, CancellationToken cancellationToken)
+            => new EventsSignatureTokenVerifier(false).ResolveIssuerKeyAsync(context, cancellationToken);
+        public Task<TokenVerifier.VerifiedToken> VerifyAsync(SignatureTokenVerificationContext context, CancellationToken cancellationToken)
+            => new EventsSignatureTokenVerifier(false).VerifyAsync(context, cancellationToken);
     }
 }

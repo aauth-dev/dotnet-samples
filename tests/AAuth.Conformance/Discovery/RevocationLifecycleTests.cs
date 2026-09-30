@@ -456,6 +456,8 @@ public class RevocationLifecycleTests
                 options.EgressPolicy = TestEgress.Policy;
                 options.ResourceIdentifier = issuer;
                 options.AcceptedSchemes = ["jwt", "jwks_uri"];
+                options.ExpectedAuthTokenDwk = null;
+                options.Trust.Policy = new MixedGraphTrustPolicy();
             });
             app.MapGet("/use", () => Results.Ok());
             app.Use(async (context, next) =>
@@ -481,6 +483,24 @@ public class RevocationLifecycleTests
                 caller == Person || caller == Access && Failing.GetValueOrDefault(issuer) != "unsupported_iss", "/revoke");
             await app.StartAsync();
             _hosts.Add(issuer, app);
+        }
+
+        private sealed class MixedGraphTrustPolicy : IAAuthTrustPolicy
+        {
+            public ValueTask<bool> IsTrustedAsync(AAuthTrustContext context, CancellationToken cancellationToken = default)
+                => ValueTask.FromResult(context.Party switch
+                {
+                    AAuthTrustedParty.AuthTokenIssuer => context.TokenDwk switch
+                    {
+                        AuthTokenBuilder.AccessDwk => context.Issuer == Access,
+                        AuthTokenBuilder.PersonDwk => context.Issuer == Person,
+                        _ => false,
+                    },
+                    AAuthTrustedParty.PersonServer => true,
+                    AAuthTrustedParty.AgentProvider => true,
+                    AAuthTrustedParty.AccessServer => true,
+                    _ => false,
+                });
         }
 
         public async Task<string> AgentTokenAsync(string issuer, string tokenId, bool distinctKey = false)

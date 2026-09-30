@@ -39,6 +39,9 @@ public enum AAuthAccessMode
     // Require the agent's own agent token — bare requirement=agent-token otherwise
     AgentTokenRequired,
 
+    // Require a person token — bare requirement=person-token otherwise
+    PersonTokenRequired,
+
     // Resource manages authorization itself (two-party) — challenge middleware
     // passes through; endpoints issue/validate the AAuth-Access opaque token
     ResourceManaged,
@@ -48,7 +51,13 @@ public enum AAuthAccessMode
 ## How It Works
 
 1. `UseAAuthVerification` runs first and stores `AAuthVerificationResult` in features
-2. If `AccessMode` is `RequireAuthToken`:
+2. If `AccessMode` is `AgentTokenRequired`, only an AAuth agent token passes;
+   person tokens, auth tokens, and generic signatures get
+   `401 AAuth-Requirement: requirement=agent-token`.
+3. If `AccessMode` is `PersonTokenRequired`, only an AAuth person token passes;
+   missing, agent-token, auth-token, and generic callers get
+   `401 AAuth-Requirement: requirement=person-token`.
+4. If `AccessMode` is `RequireAuthToken`:
    - An **agent token** alone gets `401 Unauthorized` with
      `AAuth-Requirement: requirement=person-token` (§Person Token Required). A
      resource issues a resource token only after it verifies a person or auth
@@ -58,7 +67,7 @@ public enum AAuthAccessMode
      `401 Unauthorized` with `AAuth-Requirement: requirement=auth-token; resource-token="<jwt>"`
      (§Auth Token Required).
    - A verified **auth token** passes through.
-3. The agent's `ChallengeHandler` catches each 401: it requests a person token at
+5. The agent's `ChallengeHandler` catches each 401: it requests a person token at
    its PS's `person_token_endpoint`, retries, then sends the resource token and
    the person token it presented (`presented_token`) to the PS's
    `auth_token_endpoint`, and retries with the auth token.
@@ -70,7 +79,8 @@ person token's `iss`, an auth token's `ps`), `presented_jti` is its `jti`,
 `AccessServer` (four-party) or the person's PS (three-party). A custom endpoint
 can mint the same token from the verified assertion with
 `AAuthChallengeMiddleware.BuildResourceTokenAsync(options, presented, scope, ...)`,
-which also accepts an optional `interaction` and `loginHint`.
+which accepts only verified person-token or auth-token assertions and also
+accepts an optional `interaction` and `loginHint`.
 
 ## Challenge Options
 
@@ -95,8 +105,7 @@ public sealed class ChallengeOptions
     // Default scopes to request in the resource token (space-separated)
     public string? DefaultScopes { get; init; }
 
-    // Allowed Signature-Key schemes (null = allow all)
-    public IReadOnlySet<string>? AllowedSignatureKeySchemes { get; init; }
+    // Accepted Signature-Key schemes are configured on AAuthVerificationOptions.
 }
 ```
 

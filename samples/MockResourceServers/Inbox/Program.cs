@@ -16,16 +16,13 @@ using AAuth.Server.Verification;
 // Inbox hands back models an existing OAuth access token, bound to the agent's
 // signature so it is useless as a standalone bearer token.
 //
-// Two spec-defined entry points, sharing one decision path:
+// Resource-managed entry point:
 //
 //   REACTIVE   GET /messages
 //     first call (no token) -> 202 + AAuth-Requirement: requirement=interaction
 //                              (url = /consent, code) + Location = /pending/{code}
 //     user approves at /consent, agent polls /pending/{code} -> 200 + AAuth-Access
 //     later calls send Authorization: AAuth <token68> (signed) -> 200 + messages
-//
-//   PROACTIVE  POST /authorize  { "scope": "inbox.read" }   (§Authorization
-//     Endpoint Request) -> same 202/interaction path, then AAuth-Access.
 //
 // The Inbox owns its own consent surface (/consent) — no PS/AS is involved.
 // ---------------------------------------------------------------------------
@@ -41,8 +38,7 @@ var resourceUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:500
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 
 // One DI call: verifier, discovery clients (pooled handler), JTI store, and the
-// published metadata (access_mode + authorization_endpoint) — no manual
-// HttpClient/discovery wiring.
+// published metadata (access_mode) — no manual HttpClient/discovery wiring.
 builder.Services.AddAAuthResource(o =>
 {
     o.EgressPolicy = SampleEgress.Policy;
@@ -53,7 +49,6 @@ builder.Services.AddAAuthResource(o =>
     o.SignatureWindow = signatureWindowSeconds;
     o.Name = "Aria Inbox";
     o.AccessMode = AAuthConstants.AccessModes.SessionToken;
-    o.AuthorizationEndpoint = $"{resourceUrl}/authorize";
 });
 
 // Resource-managed interaction module: registers the opaque-token store, the
@@ -103,7 +98,6 @@ app.MapGet("/", () => Results.Ok(new
     flows = new[]
     {
         new { path = "/messages", entry = "reactive", note = "202 → consent → AAuth-Access → replay" },
-        new { path = "/authorize", entry = "proactive", note = "POST { scope } → same consent path" },
     },
 }));
 
@@ -122,19 +116,6 @@ app.MapGet("/messages", async (HttpContext ctx) =>
     }
 
     return ctx.RequireAAuthInteraction("inbox.read");
-}).RequireAAuthSignature();
-
-// POST /authorize — proactive entry point (§Authorization Endpoint Request).
-// Same decision path as /messages.
-app.MapAAuthAuthorizationEndpoint("/authorize", async (ctx, request) =>
-{
-    var info = await ctx.ResolveAAuthAccessAsync(store, ctx.RequestAborted);
-    if (info is not null)
-    {
-        return Results.Ok(new { authorized = true, scope = info.Scope });
-    }
-
-    return ctx.RequireAAuthInteraction(request.Scope);
 }).RequireAAuthSignature();
 
 // The deferred-response poll target (§Resource-Managed Authorization): 202 while

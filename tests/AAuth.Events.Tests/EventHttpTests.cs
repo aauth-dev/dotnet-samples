@@ -230,7 +230,7 @@ public class EventHttpTests
         Assert.Equal(AAuth.Errors.SignatureErrorCode.ExpiredJwt, expiration.Code);
         var forged = await new EventTokenBuilder { Issuer = host.Issuer, Audience = EventHost.Agent, Eid = "eid", Key = host.AgentKey,
             KeyId = "key", Verifier = host.Protocol.TokenVerifier }.BuildAsync();
-        await Assert.ThrowsAsync<TokenVerificationException>(() => receiver.ReceiveAsync(forged, []));
+        await Assert.ThrowsAsync<AAuthVerificationException>(() => receiver.ReceiveAsync(forged, []));
         Assert.Empty(host.Store.ReadEvents(EventHost.Agent));
     }
 

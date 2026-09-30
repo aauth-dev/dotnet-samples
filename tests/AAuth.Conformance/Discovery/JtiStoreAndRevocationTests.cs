@@ -244,11 +244,8 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         var response = await client.PostAsJsonAsync("/revoke", new { jti = "unverified", exp = Exp() });
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("invalid_request", body!["error"]!.GetValue<string>());
-        Assert.Contains("verified AAuth signature", body["detail"]!.GetValue<string>());
-        Assert.False(body.ContainsKey("error_description"));
+        Assert.Equal("error=invalid_signature", response.Headers.GetValues("Signature-Error").Single());
+        Assert.Empty(await response.Content.ReadAsByteArrayAsync());
         Assert.False(await _jtiStore.IsRevokedAsync(new TokenKey(ApIssuer, "unverified")));
     }
 

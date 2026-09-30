@@ -28,6 +28,13 @@ public enum AAuthAccessMode
     AgentTokenRequired,
 
     /// <summary>
+    /// Require a verified AAuth person token (<c>typ: aa-person+jwt</c>). If
+    /// the caller presents no person token, the middleware issues a bare
+    /// <c>AAuth-Requirement: requirement=person-token</c>.
+    /// </summary>
+    PersonTokenRequired,
+
+    /// <summary>
     /// The resource manages authorization itself (two-party), with no PS or AS
     /// (§Resource-Managed Authorization). The challenge middleware passes every
     /// request through — the resource's own endpoints decide whether to require

@@ -66,7 +66,7 @@ public sealed class AAuthVerificationOptions
     // verifies against the issuer's JWKS); an empty Allowed set denies all.
     public AAuthTrustOptions Trust { get; init; } = new();
 
-    // Tolerance for exp/iat validation (default: 30s)
+    // Tolerance for optional future iat validation; exp has zero tolerance (default: 30s)
     public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
 
     // Clock source for all time checks (default: TimeProvider.System; inject for testing)
@@ -227,7 +227,7 @@ verifies it as `upstream_token` (its `aud` must be the intermediary's agent-toke
 app.UseAAuthVerification(options =>
 {
     options.ResourceIdentifier = "https://concierge.example";
-    options.ClockSkew = TimeSpan.FromSeconds(60); // generous skew for distributed systems
+    options.ClockSkew = TimeSpan.FromSeconds(60); // generous iat skew for distributed systems; exp has zero tolerance
 });
 
 app.MapGet("/", async (HttpContext ctx) =>

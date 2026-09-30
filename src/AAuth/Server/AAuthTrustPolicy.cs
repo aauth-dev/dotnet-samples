@@ -45,6 +45,9 @@ public sealed class AAuthTrustContext
     /// <summary>The <c>typ</c> of the token being verified, when there is one.</summary>
     public string? TokenType { get; init; }
 
+    /// <summary>The token's <c>dwk</c> claim, when the trust decision is about a JWT.</summary>
+    public string? TokenDwk { get; init; }
+
     /// <summary>The current request, or <see langword="null"/> outside a request.</summary>
     public HttpContext? HttpContext { get; init; }
 
@@ -146,11 +149,13 @@ public sealed class AAuthTrustOptions
         IServiceProvider services,
         HttpContext? httpContext = null,
         string? tokenType = null,
+        string? tokenDwk = null,
         CancellationToken cancellationToken = default)
         => IsTrustedAsync(new AAuthTrustContext(issuer, party, services)
         {
             HttpContext = httpContext,
             TokenType = tokenType,
+            TokenDwk = tokenDwk,
         }, cancellationToken);
 
     /// <summary>Decide trust for <paramref name="context"/>.</summary>

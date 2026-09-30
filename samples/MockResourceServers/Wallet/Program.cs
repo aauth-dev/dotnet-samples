@@ -46,6 +46,7 @@ builder.Services.AddAAuthResource(o =>
 {
     o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
+    o.AccessServer = accessServerUrl;
     o.RevocationEndpoint = $"{resourceUrl}/revoke";
     o.SigningKeys[ResourceKid] = resourceKey;
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);

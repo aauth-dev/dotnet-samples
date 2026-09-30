@@ -185,7 +185,8 @@ public static class AAuthAccessServerEndpoints
             var parsedKey = c.GetAAuthParsedKey();
             if (parsedKey is null || parsedKey.Scheme != AAuthConstants.Schemes.JwksUri)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_carrier", "expected jwks_uri scheme", statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.UnsupportedScheme,
+                    acceptedSchemes: [AAuthConstants.Schemes.JwksUri]);
             }
 
             if (!IsVerifiedPersonServer(c))
@@ -255,7 +256,8 @@ public static class AAuthAccessServerEndpoints
             // §PS-AS Federation: the PS is the only entity that calls AS token endpoints.
             if (parsed.Scheme != AAuthConstants.Schemes.JwksUri)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", $"expected jwks_uri scheme, got {parsed.Scheme}", statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.UnsupportedScheme,
+                    acceptedSchemes: [AAuthConstants.Schemes.JwksUri]);
             }
             var personServer = parsed.Identifier!;
             if (!IsVerifiedPersonServer(ctx))

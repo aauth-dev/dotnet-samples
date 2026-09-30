@@ -155,7 +155,7 @@ Assumes the agent is already bootstrapped. Two-party — no Person Server and
 no token exchange; the **Inbox** manages authorization itself.
 
 1. Discover Inbox metadata — unsigned `GET /.well-known/aauth-resource.json`
-   (`access_mode=session-token` + `authorization_endpoint`).
+   (`access_mode=session-token`).
 2. Signed `GET /messages` → **`202 Accepted`** with `Location: /pending/{id}`
    and an `AAuth-Requirement: interaction` pointing at the Inbox's own consent
    page + single-use code.
@@ -304,4 +304,3 @@ with **Run step**).
 | `GuidedTour:AgentProviderUrl` | `http://localhost:5301` | AP base URL. When set, bootstrap enrols with the real AP instead of self-signing. |
 | `GuidedTour:AgentId` | `aauth:tour-agent@ap.example` | Value placed in the agent token's `sub`. |
 | `GuidedTour:Mode` | `Bootstrap` | Default flow on startup. `Bootstrap`, `Identity`, `ResourceManaged`, `Autonomous` (Direct Grant), `Deferred`, `CallChain`, `Federated`, or `Mission`. The topbar picker overrides this at runtime. |
-

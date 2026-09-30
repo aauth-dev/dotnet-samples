@@ -66,7 +66,7 @@ public sealed class AAuthVerificationMiddleware
         _options = options;
         _tokenVerifier = CreateTokenVerifier(options);
         _resolver = resolver is DefaultSignatureKeyResolver defaultResolver
-            ? defaultResolver.WithValidation(jwks, metadata, _tokenVerifier)
+            ? defaultResolver.WithValidation(jwks, metadata, _tokenVerifier, options.ExpectedAuthTokenDwk)
             : resolver;
     }
 
@@ -192,9 +192,7 @@ public sealed class AAuthVerificationMiddleware
                 || presentedTyp == PersonTokenBuilder.TokenType)
             && parsedInfo.Scheme != AAuthConstants.Schemes.Jwt)
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.Headers[SignatureError.HeaderName] =
-                SignatureError.Format(SignatureErrorCode.InvalidJwt);
+            await AAuthProblemDetails.WriteSignatureFailureAsync(context, SignatureErrorCode.InvalidJwt);
             context.Response.Headers[AAuthConstants.Headers.AAuthError] =
                 $"{presentedTyp} MUST be presented with Signature-Key scheme=jwt.";
             return;
@@ -227,20 +225,22 @@ public sealed class AAuthVerificationMiddleware
             {
                 if (typ == AgentTokenBuilder.TokenType)
                 {
-                    if (!await IsTrustedAsync(context, resolution.VerifiedToken.Issuer, AAuthTrustedParty.AgentProvider, typ).ConfigureAwait(false))
-                        throw new TokenVerificationException("Agent issuer is not trusted by policy.");
+                    if (!await IsTrustedAsync(context, resolution.VerifiedToken.Issuer, AAuthTrustedParty.AgentProvider, typ, SignatureKeyParser.Text(parsedInfo.Payload, "dwk")).ConfigureAwait(false))
+                        throw new TokenVerificationException(SignatureErrorCode.InvalidKey, "Agent issuer is not trusted by policy.");
                 }
                 else if (typ == AuthTokenBuilder.TokenType)
                 {
-                    if (!await IsTrustedAsync(context, resolution.VerifiedToken.Issuer, AAuthTrustedParty.AuthTokenIssuer, typ).ConfigureAwait(false))
-                        throw new TokenVerificationException("Auth token issuer is not trusted by policy.");
+                    var tokenDwk = SignatureKeyParser.Text(parsedInfo.Payload, "dwk");
+                    if (!await IsTrustedAsync(context, resolution.VerifiedToken.Issuer, AAuthTrustedParty.AuthTokenIssuer, typ, tokenDwk).ConfigureAwait(false))
+                        throw new TokenVerificationException(SignatureErrorCode.InvalidKey, "Auth token issuer is not trusted by policy.");
                     _tokenVerifier.VerifyAuthToken(parsedInfo.Jwt, resolution.IssuerKey!, RequireResourceIdentifier(typ), publicKey,
+                        expectedDwk: _options.ExpectedAuthTokenDwk,
                         accountExpectation: new AccountExpectation(_options.ExpectedAccount?.Invoke(context)));
                 }
                 else if (typ == PersonTokenBuilder.TokenType)
                 {
-                    if (!await IsTrustedAsync(context, resolution.VerifiedToken.Issuer, AAuthTrustedParty.PersonServer, typ).ConfigureAwait(false))
-                        throw new TokenVerificationException("Person token issuer is not trusted by policy.");
+                    if (!await IsTrustedAsync(context, resolution.VerifiedToken.Issuer, AAuthTrustedParty.PersonServer, typ, SignatureKeyParser.Text(parsedInfo.Payload, "dwk")).ConfigureAwait(false))
+                        throw new TokenVerificationException(SignatureErrorCode.InvalidKey, "Person token issuer is not trusted by policy.");
                     _tokenVerifier.VerifyPersonToken(parsedInfo.Jwt, resolution.IssuerKey!, RequireResourceIdentifier(typ), publicKey);
                 }
                 // Other token types require different trust chains and are not
@@ -379,12 +379,13 @@ public sealed class AAuthVerificationMiddleware
             || request.ContentLength is null
                 && (request.ContentType is not null || request.Headers.ContainsKey("Transfer-Encoding"));
 
-    private ValueTask<bool> IsTrustedAsync(HttpContext context, string issuer, AAuthTrustedParty party, string? tokenType)
+    private ValueTask<bool> IsTrustedAsync(HttpContext context, string issuer, AAuthTrustedParty party, string? tokenType, string? tokenDwk)
     {
         var trust = new AAuthTrustContext(issuer, party, context.RequestServices ?? AAuthTrustOptions.NoServices)
         {
             HttpContext = context,
             TokenType = tokenType,
+            TokenDwk = tokenDwk,
         };
         return context.GetEndpoint()?.Metadata.GetMetadata<AAuth.Server.Endpoints.AAuthEndpointRequirement>()?.Trust is { } endpoint
             ? endpoint.IsTrustedAsync(trust, context.RequestAborted)
@@ -401,13 +402,13 @@ public sealed class AAuthVerificationMiddleware
 
     private void WriteFailure(HttpContext context, SignatureErrorCode code, IReadOnlyCollection<string>? requiredComponents = null)
     {
-        context.Response.StatusCode = _options.GenericSignatureKeys ? StatusCodes.Status400BadRequest : StatusCodes.Status401Unauthorized;
-        context.Response.Headers[SignatureError.HeaderName] = SignatureError.Format(code,
-            requiredInput: AAuthSigningHandler.CoveredComponents.Concat(requiredComponents ?? _options.RequiredComponents).Distinct().ToArray());
-        if (code == SignatureErrorCode.UnsupportedAlgorithm)
-            context.Response.Headers["Accept-Signature-Alg"] = string.Join(", ", SupportedAlgorithms);
-        if (code == SignatureErrorCode.UnsupportedScheme)
-            context.Response.Headers["Accept-Signature-Scheme"] = string.Join(", ", _options.AcceptedSchemes);
+        var requiredInput = AAuthSigningHandler.CoveredComponents.Concat(requiredComponents ?? _options.RequiredComponents).Distinct().ToArray();
+        AAuthProblemDetails.SignatureFailure(code,
+            requiredInput: requiredInput,
+            acceptedAlgorithms: code == SignatureErrorCode.UnsupportedAlgorithm ? SupportedAlgorithms : null,
+            acceptedSchemes: code == SignatureErrorCode.UnsupportedScheme ? _options.AcceptedSchemes : null,
+            statusCode: _options.GenericSignatureKeys ? StatusCodes.Status400BadRequest : StatusCodes.Status401Unauthorized)
+            .ExecuteAsync(context).GetAwaiter().GetResult();
     }
 
 

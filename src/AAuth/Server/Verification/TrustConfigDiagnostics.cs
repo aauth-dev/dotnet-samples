@@ -22,12 +22,13 @@ internal static class TrustConfigDiagnostics
         ILogger? logger,
         bool authTrustConfigured,
         bool agentTrustConfigured,
-        string contextLabel)
+        string contextLabel,
+        string? accessServer = null)
     {
-        if (!authTrustConfigured)
+        if (!authTrustConfigured && string.IsNullOrEmpty(accessServer))
         {
             logger?.LogWarning(
-                "AAuth ({Context}): auth-token endpoints accept any verifiable Person Server because no " +
+                "AAuth ({Context}): three-party auth-token endpoints accept any verifiable Person Server because no " +
                 "Trust.AuthTokenIssuers policy is configured (the AAuth spec " +
                 "default for PS-asserted access). Configure a policy to restrict, or assign AAuthTrust.Any " +
                 "to declare intentional open trust and silence this warning.",

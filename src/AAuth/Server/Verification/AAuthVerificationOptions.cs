@@ -10,6 +10,9 @@ namespace AAuth.Server.Verification;
 /// </summary>
 public sealed class AAuthVerificationOptions
 {
+    private string? _expectedAuthTokenDwk = AAuthConstants.DwkFiles.Person;
+    internal bool IsExpectedAuthTokenDwkConfigured { get; private set; }
+
     public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     public IReadOnlyList<string> AcceptedSchemes { get; set; } = ["jwt"];
     public string SignatureLabel { get; set; } = "sig";
@@ -32,6 +35,23 @@ public sealed class AAuthVerificationOptions
     /// (<c>hwk</c>/<c>jkt-jwt</c>/<c>jwks_uri</c>) carry no issuer and are unaffected.
     /// </summary>
     public AAuthTrustOptions Trust { get; set; } = new();
+
+    /// <summary>
+    /// Expected auth-token <c>dwk</c>. Defaults to <c>aauth-person.json</c> for
+    /// three-party PS-asserted access. Four-party resource composition derives
+    /// <c>aauth-access.json</c> from <c>AAuthResourceOptions.AccessServer</c>.
+    /// Set <see langword="null"/> only for explicit mixed PS/AS deployments with
+    /// a trust policy that inspects <see cref="AAuthTrustContext.TokenDwk"/>.
+    /// </summary>
+    public string? ExpectedAuthTokenDwk
+    {
+        get => _expectedAuthTokenDwk;
+        set
+        {
+            _expectedAuthTokenDwk = value;
+            IsExpectedAuthTokenDwkConfigured = true;
+        }
+    }
 
     /// <summary>
     /// This resource's own identifier, which auth-token and person-token <c>aud</c> must
@@ -63,4 +83,30 @@ public sealed class AAuthVerificationOptions
 
     /// <summary>Time source for signature freshness and token expiry.</summary>
     public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
+    internal AAuthVerificationOptions Clone()
+    {
+        var clone = new AAuthVerificationOptions
+        {
+            EgressPolicy = EgressPolicy,
+            AcceptedSchemes = AcceptedSchemes,
+            SignatureLabel = SignatureLabel,
+            RequiredComponents = RequiredComponents,
+            RequireBodyCoverage = RequireBodyCoverage,
+            GenericSignatureKeys = GenericSignatureKeys,
+            Trust = Trust,
+            ResourceIdentifier = ResourceIdentifier,
+            ExpectedAccount = ExpectedAccount,
+            ClockSkew = ClockSkew,
+            TimeProvider = TimeProvider,
+        };
+        clone._expectedAuthTokenDwk = _expectedAuthTokenDwk;
+        clone.IsExpectedAuthTokenDwkConfigured = IsExpectedAuthTokenDwkConfigured;
+        return clone;
+    }
+
+    internal void UseDefaultExpectedAuthTokenDwk(string? expectedDwk)
+    {
+        _expectedAuthTokenDwk = expectedDwk;
+    }
 }
