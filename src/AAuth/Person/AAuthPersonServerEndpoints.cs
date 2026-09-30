@@ -24,28 +24,41 @@ using Microsoft.Extensions.Logging;
 namespace AAuth.Person;
 
 /// <summary>
-/// Configuration for <see cref="AAuthPersonServerEndpoints.MapAAuthPersonServer"/>.
+/// Configuration for a Person Server registered with <c>AddAAuthPersonServer</c> and mapped
+/// with <see cref="AAuthPersonServerEndpoints.MapAAuthPersonServer"/>. Bind it from
+/// <c>AAuth:PersonServer</c>.
 /// </summary>
 public sealed class AAuthPersonServerOptions
 {
     public AAuthEgressPolicy EgressPolicy { get; set; } = AAuthEgressPolicy.Production;
     public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
-    /// <summary>
-    /// The PS token inventory; defaults to the DI <see cref="IJtiStore"/> or a new in-memory store.
-    /// Hold the same instance to revoke agent-person bindings (<see cref="AgentPersonBinding.RevokeAsync"/>).
-    /// </summary>
-    public IJtiStore? TokenInventory { get; set; }
     public Func<PersonPendingEntry, ClarificationRequirement, System.Threading.CancellationToken, Task<ClarificationResponse?>>? TriageClarificationAsync { get; set; }
 
     /// <summary>HTTPS URL of this Person Server (<c>iss</c> of minted auth tokens).</summary>
-    public required string Issuer { get; set; }
+    public string Issuer { get; set; } = "";
 
     /// <summary>
-    /// The PS signing keys, keyed by <c>kid</c>. Published at the JWKS and used
-    /// to sign minted auth tokens (the first entry signs).
+    /// The PS signing keys, keyed by <c>kid</c>. Published at the JWKS; minted tokens are
+    /// signed with the active key.
     /// </summary>
-    public required AAuthSigningKeySet SigningKeys { get; set; }
+    public AAuthSigningKeySet SigningKeys { get; set; } = new();
+
+    /// <summary>
+    /// A handle in the registered <see cref="IKeyStore"/> to load the signing key from when
+    /// <see cref="SigningKeys"/> is empty. Published under <see cref="KeyId"/>, or the key's
+    /// thumbprint when unset.
+    /// </summary>
+    public string? KeyHandle { get; set; }
+
+    /// <summary>The <c>kid</c> for the key loaded from <see cref="KeyHandle"/>.</summary>
+    public string? KeyId { get; set; }
+
+    /// <summary>
+    /// Serve this instance only for requests whose <c>Host</c> is the issuer's authority.
+    /// Required when several AAuth roles or instances share one host.
+    /// </summary>
+    public bool MatchIssuerHost { get; set; }
 
     /// <summary>The auth token endpoint path (<c>auth_token_endpoint</c>). Default <c>/token</c>.</summary>
     public string TokenPath { get; set; } = "/token";
@@ -89,22 +102,22 @@ public sealed class AAuthPersonServerOptions
     public AAuthTrustOptions Trust { get; set; } = new();
 
     /// <summary>
-    /// The §Interaction Endpoint URL advertised in the PS metadata
+    /// The §Interaction Endpoint path advertised in the PS metadata
     /// (<c>interaction_endpoint</c>), where agents POST mission interaction /
     /// payment / question / completion requests. Distinct from
     /// <see cref="InteractionPath"/> (the consent URL on <c>requirement=interaction</c>).
     /// When null the metadata falls back to <see cref="InteractionPath"/>.
     /// </summary>
-    public string? InteractionEndpoint { get; set; }
+    public string? InteractionEndpointPath { get; set; }
 
-    /// <summary>The mission endpoint URL advertised in the PS metadata (<c>mission_endpoint</c>), if any.</summary>
-    public string? MissionEndpoint { get; set; }
+    /// <summary>The mission endpoint path advertised in the PS metadata (<c>mission_endpoint</c>), if any.</summary>
+    public string? MissionPath { get; set; }
 
-    /// <summary>The permission endpoint URL advertised in the PS metadata (<c>permission_endpoint</c>), if any.</summary>
-    public string? PermissionEndpoint { get; set; }
+    /// <summary>The permission endpoint path advertised in the PS metadata (<c>permission_endpoint</c>), if any.</summary>
+    public string? PermissionPath { get; set; }
 
-    /// <summary>The audit endpoint URL advertised in the PS metadata (<c>audit_endpoint</c>), if any.</summary>
-    public string? AuditEndpoint { get; set; }
+    /// <summary>The audit endpoint path advertised in the PS metadata (<c>audit_endpoint</c>), if any.</summary>
+    public string? AuditPath { get; set; }
 
     /// <summary>
     /// Additional path prefixes the mapper's request-signature verification skips,
@@ -142,53 +155,24 @@ public static class AAuthPersonServerEndpoints
     /// call-chaining resolves <see cref="UpstreamTokenValidator"/>; the
     /// four-party branch resolves <see cref="AccessServerClient"/>.
     /// </summary>
-    public static WebApplication MapAAuthPersonServer(
-        this WebApplication app,
-        AAuthPersonServerOptions options)
+    public static WebApplication MapAAuthPersonServer(this WebApplication app, string? name = null)
     {
         ArgumentNullException.ThrowIfNull(app);
-        ArgumentNullException.ThrowIfNull(options);
-
-        if (options.SigningKeys.Count == 0)
-        {
-            throw new InvalidOperationException("AAuthPersonServerOptions.SigningKeys must contain at least one key.");
-        }
-
-        // Fail fast on misconfigured spec-constrained URLs/paths: the issuer is the
-        // token `iss`/`aud` anchor (MUST be absolute https), the interaction path is
-        // appended with `?code=…` (so it carries no query/fragment), and each trusted
-        // Access Server is a four-party anchor (MUST be absolute https).
-        if (!AAuth.AAuthUrl.IsHttpsOrLoopback(options.Issuer, options.EgressPolicy))
-        {
-            throw new InvalidOperationException(
-                "AAuthPersonServerOptions.Issuer must be an absolute https URL (loopback http allowed for development).");
-        }
-        if (options.InteractionPath is { } interactionPathRaw
-            && (interactionPathRaw.Contains('?') || interactionPathRaw.Contains('#')))
-        {
-            throw new InvalidOperationException(
-                "AAuthPersonServerOptions.InteractionPath must not contain a query or fragment.");
-        }
-        foreach (var trustedAs in options.Trust.AccessServers.Allowed ?? new HashSet<string>())
-        {
-            if (!AAuth.AAuthUrl.IsHttpsOrLoopback(trustedAs, options.EgressPolicy))
-            {
-                throw new InvalidOperationException(
-                    $"AAuthPersonServerOptions.Trust.AccessServers entry '{trustedAs}' must be an absolute https URL " +
-                    "(loopback http allowed for development).");
-            }
-        }
-
-        _ = options.SigningKeys.Active;
+        name ??= AAuthPersonServerBuilder.DefaultName;
+        var identity = app.Services.GetKeyedService<IAAuthServerIdentity>(name)
+            ?? throw new InvalidOperationException($"No Person Server named '{name}' is registered; call AddAAuthPersonServer first.");
+        var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<AAuthPersonServerOptions>>().Get(name);
+        _ = identity.SigningKeys.Active;
 
         var issuer = options.Issuer;
-        var inventory = app.MapAAuthIssuerRevocation(issuer, AuthTokenBuilder.PersonDwk,
+        var (routes, inScope) = AAuthServerRoles.Scope(app, issuer, options.MatchIssuerHost);
+        var inventory = RevocationEndpoint.MapIssuerRevocationCore(app, routes, inScope, issuer, AuthTokenBuilder.PersonDwk,
             options.SigningKeys, options.RevocationPath, options.EgressPolicy, options.TimeProvider, revocation =>
             {
                 // A PS answers an agent provider's revocation with an empty 200.
                 revocation.ReportDownstream = false;
                 options.ConfigureRevocation?.Invoke(revocation);
-            }, options.TokenInventory);
+            }, app.Services.GetRequiredKeyedService<IJtiStore>(name));
         var interactionPath = "/" + options.InteractionPath.Trim('/');
         var interactionPrefix = interactionPath.Split('/', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } seg
             ? "/" + seg[0]
@@ -201,17 +185,17 @@ public static class AAuthPersonServerEndpoints
             .ToArray();
 
         // 1. Well-known metadata + JWKS (reachable without a signature).
-        WellKnownEndpoints.MapAAuthPersonServerWellKnown(app, new AAuthPersonServerMetadataOptions
+        WellKnownEndpoints.MapAAuthPersonServerWellKnown(routes, new AAuthPersonServerMetadataOptions
         {
             EgressPolicy = options.EgressPolicy,
             Issuer = options.Issuer,
             AuthTokenEndpoint = $"{issuer}{options.TokenPath}",
             PersonTokenEndpoint = $"{issuer}{options.PersonTokenPath}",
             SigningKeys = options.SigningKeys,
-            InteractionEndpoint = options.InteractionEndpoint ?? interactionUrl,
-            MissionEndpoint = options.MissionEndpoint,
-            PermissionEndpoint = options.PermissionEndpoint,
-            AuditEndpoint = options.AuditEndpoint,
+            InteractionEndpoint = AAuthServerRoles.OptionalUrl(issuer, options.InteractionEndpointPath) ?? interactionUrl,
+            MissionEndpoint = AAuthServerRoles.OptionalUrl(issuer, options.MissionPath),
+            PermissionEndpoint = AAuthServerRoles.OptionalUrl(issuer, options.PermissionPath),
+            AuditEndpoint = AAuthServerRoles.OptionalUrl(issuer, options.AuditPath),
             ScopesSupported = options.ScopesSupported,
             RevocationEndpoint = $"{issuer}{options.RevocationPath}",
         });
@@ -221,7 +205,8 @@ public static class AAuthPersonServerEndpoints
         //    endpoint carries no signature, so exclude it — plus any unsigned
         //    surfaces the PS declares (e.g. its own consent/admin page).
         app.UseWhen(
-            ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
+            ctx => inScope(ctx)
+                && !ctx.Request.Path.StartsWithSegments("/.well-known")
                 && !ctx.Request.Path.StartsWithSegments(options.RevocationPath)
                 && !ctx.Request.Path.StartsWithSegments(interactionPrefix)
                 && !unsignedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
@@ -229,13 +214,15 @@ public static class AAuthPersonServerEndpoints
                 AcceptedSchemes = ["jwt"], RequireBodyCoverage = true, TimeProvider = options.TimeProvider,
                 Trust = options.Trust }));
 
-        var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
+        var tokenVerifier = app.Services.GetRequiredKeyedService<TokenVerifier>(name);
         var metadataClient = app.Services.GetRequiredService<MetadataClient>();
         var jwksClient = app.Services.GetRequiredService<JwksClient>();
-        var asserter = app.Services.GetRequiredService<IIdentityClaimsAsserter>();
-        var pending = app.Services.GetRequiredService<IPersonPendingStore>();
+        var asserter = app.Services.GetRequiredKeyedService<IIdentityClaimsAsserter>(name);
+        var pending = app.Services.GetRequiredKeyedService<IPersonPendingStore>(name);
         var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AAuth.PersonServer");
-        PersonResourceInteraction.Map(app, pending, options);
+        PersonResourceInteraction.Map(routes, pending, options);
+        AAuthServerRoles.WarnOnInMemoryDefaults(app.Services, logger, "Person Server", name, pending, inventory,
+            app.Services.GetService<IMissionStore>(), app.Services.GetService<IMissionLog>());
 
         // Startup footgun guard (diagnostics only): warn when federation is open by
         // default. Suppressed by any explicit policy (including AAuthTrust.Any).
@@ -475,7 +462,7 @@ public static class AAuthPersonServerEndpoints
         // -------------------------------------------------------------------
         // POST {PersonTokenPath} — the PS person token endpoint (§Person Token Endpoint).
         // -------------------------------------------------------------------
-        app.MapPost(options.PersonTokenPath, async (HttpContext ctx) =>
+        routes.MapPost(options.PersonTokenPath, async (HttpContext ctx) =>
         {
             var (issuance, body, failure) = await ReadAgentRequestAsync(ctx);
             if (failure is not null) return failure;
@@ -556,7 +543,7 @@ public static class AAuthPersonServerEndpoints
         // -------------------------------------------------------------------
         // POST {TokenPath} — the PS auth token endpoint (§Auth Token Request).
         // -------------------------------------------------------------------
-        app.MapPost(options.TokenPath, async (HttpContext ctx) =>
+        routes.MapPost(options.TokenPath, async (HttpContext ctx) =>
         {
             var (issuance, body, failure) = await ReadAgentRequestAsync(ctx);
             if (failure is not null) return failure;
@@ -597,7 +584,7 @@ public static class AAuthPersonServerEndpoints
         // -------------------------------------------------------------------
         // GET {PendingPathPrefix}/{id} — the agent polls the deferred verdict.
         // -------------------------------------------------------------------
-        app.MapGet($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
+        routes.MapGet($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
         {
             var entry = pending.Get(id);
             if (entry is null) return AAuth.Server.DeferredState.Missing(id);
@@ -675,7 +662,7 @@ public static class AAuthPersonServerEndpoints
         // POST {PendingPathPrefix}/{id} — the agent answers a clarification
         // (§Agent Response to Clarification) or replaces its request. The SDK
         // records it in the mission log and readies the next review.
-        app.MapPost($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
+        routes.MapPost($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
         {
             var entry = pending.Get(id);
             if (entry is null) return AAuth.Server.DeferredState.Missing(id);
@@ -767,7 +754,7 @@ public static class AAuthPersonServerEndpoints
 
         // DELETE {PendingPathPrefix}/{id} — the agent withdraws the request
         // (§Agent Response to Clarification — cancel). A later poll returns 410.
-        app.MapDelete($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
+        routes.MapDelete($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
         {
             var entry = pending.Get(id);
             if (entry is null) return AAuth.Server.DeferredState.Missing(id);
@@ -1213,7 +1200,8 @@ public static class AAuthPersonServerEndpoints
             if (sourceFailure is not null) return sourceFailure;
             var sourceTokens = registered!;
 
-            var federation = app.Services.GetRequiredService<AccessServerClient>();
+            var federation = AAuthSeams.Resolve<AccessServerClient>(app.Services, name, null, () =>
+                throw new InvalidOperationException("Four-party federation requires AddAAuthPersonServer(...).WithFederation()."));
             var entry = pending.Add(resourceUrl, federatedScope, issuance.AgentId, agentConfirmationKey: null,
                 issuance.AgentTokenExpiresAt, federatedMission, ceiling);
             entry.ResourceContext = federatedContext;

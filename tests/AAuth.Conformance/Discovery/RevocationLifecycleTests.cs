@@ -394,30 +394,35 @@ public class RevocationLifecycleTests
             accessBuilder.Services.AddSingleton<IAccessPolicy>(new AllowPolicy());
             accessBuilder.Services.AddSingleton<IAccessPendingStore, InMemoryAccessPendingStore>();
             accessBuilder.Services.AddSingleton(new RevocationClient(graph.Signed(Access, AuthTokenBuilder.AccessDwk)));
-            var access = accessBuilder.Build();
-            access.MapAAuthAccessServer(new AAuthAccessServerOptions
+            accessBuilder.Services.AddAAuthAccessServer(configure: o =>
             {
-                EgressPolicy = TestEgress.Policy, Issuer = Access,
-                SigningKeys = new AAuthSigningKeySet { ["key"] = graph._keys[Access] },
+                o.EgressPolicy = TestEgress.Policy;
+                o.Issuer = Access;
+                o.SigningKeys = new AAuthSigningKeySet { ["key"] = graph._keys[Access] };
             });
+            var access = accessBuilder.Build();
+            access.MapAAuthAccessServer();
             await access.StartAsync();
             graph._hosts.Add(Access, access);
             var personBuilder = graph.Builder();
             personBuilder.Services.AddSingleton<IPersonPendingStore>(graph.Pending);
             graph.Consent.Required = consent;
             personBuilder.Services.AddSingleton<IIdentityClaimsAsserter>(graph.Consent);
-            personBuilder.Services.AddAAuthGovernance();
             personBuilder.Services.AddSingleton(new RevocationClient(graph.Signed(Person, "aauth-person.json")));
             personBuilder.Services.AddSingleton(provider => new AccessServerClient(graph.Signed(Person, "aauth-person.json"),
                 provider.GetRequiredService<MetadataClient>(), new AuthTokenResponseValidator(
                     provider.GetRequiredService<MetadataClient>(), provider.GetRequiredService<JwksClient>(), provider.GetRequiredService<TokenVerifier>())));
+            personBuilder.Services.AddAAuthPersonServer(configure: o =>
+                {
+                    o.EgressPolicy = TestEgress.Policy;
+                    o.Issuer = Person;
+                    o.ConfigureRevocation = revocation => revocation.DeferAfter = TimeSpan.FromMilliseconds(200);
+                    o.SigningKeys = new AAuthSigningKeySet { ["key"] = graph._keys[Person] };
+                })
+                .UseTokenInventory(graph.PersonInventory)
+                .WithGovernance();
             var person = personBuilder.Build();
-            person.MapAAuthPersonServer(new AAuthPersonServerOptions
-            {
-                EgressPolicy = TestEgress.Policy, Issuer = Person, TokenInventory = graph.PersonInventory,
-                ConfigureRevocation = revocation => revocation.DeferAfter = TimeSpan.FromMilliseconds(200),
-                SigningKeys = new AAuthSigningKeySet { ["key"] = graph._keys[Person] },
-            });
+            person.MapAAuthPersonServer();
             person.MapAAuthGovernance(options => options.PersonServer = Person);
             await person.StartAsync();
             graph._hosts.Add(Person, person);

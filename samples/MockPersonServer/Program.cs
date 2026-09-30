@@ -40,7 +40,6 @@ var builder = WebApplication.CreateBuilder(args);
 // drives the GuidedTour's deferred / user-consent showcase and the §3.4
 // ThreePartyUserConsentFlow integration test.
 // -----------------------------------------------------------------------
-var psKey = AAuthKey.Generate();
 const string PsKid = "ps-1";
 const string PsScope = "calendar.read";
 // Demo identity claims the mock PS asserts about the user. A production PS
@@ -75,41 +74,63 @@ var trustedAccessServers = builder.Configuration
         .GetSection("MockPersonServer:TrustedAccessServers").Get<string[]>()
     ?? ["http://localhost:5500"];
 
-builder.Services.AddSingleton(psKey);
 builder.Services.AddSingleton(new AAuthVerifier
 {
     MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
 });
-builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = SampleEgress.Policy });
 // Shared discovery clients (MetadataClient + JwksClient) with a pooled handler;
 // no manual HttpClient wiring.
 builder.Services.AddAAuthDiscovery(options => options.EgressPolicy = SampleEgress.Policy);
 builder.Services.AddSingleton<ConsentStore>();
 
-// Person Server decision seams. The SDK's MapAAuthPersonServer owns the protocol
-// (verification, mint, federation, the mission three-gate + the clarification
-// round-trip); these supply only the demo's decisions:
+// `/admin` and `/dashboard` are the PS's own unsigned consent surfaces (§PS Approval
+// Endpoint Authentication — out of scope), so the mapper skips signature verification for them.
+var browserConsent = new AAuth.Server.BrowserConsentSessions("AAuth.Person.Consent",
+    builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-person-demo" : null);
+
+// Person Server registration. The SDK's MapAAuthPersonServer (below) owns the
+// protocol (verification, mint, federation, the mission three-gate + the
+// clarification round-trip); the builder supplies only the demo's decisions:
 //   * identity + the non-mission consent gate (over ConsentStore);
-//   * the id-keyed pending store, bridged to the (agent,resource,scope) ConsentStore.
-builder.Services.AddSingleton<IIdentityClaimsAsserter>(sp =>
-    new SampleIdentityClaimsAsserter(
-        sp.GetRequiredService<ConsentStore>(), requireConsent, demoRoles, demoGroups, demoUserClaims));
-builder.Services.AddSingleton<IPersonPendingStore>(sp =>
-    new ConsentBridgePersonPendingStore(sp.GetRequiredService<ConsentStore>(), sp.GetRequiredService<ConsentRegistry>(),
-        demoRoles, demoGroups));
+//   * the id-keyed pending store, bridged to the (agent,resource,scope) ConsentStore;
+//   * four-party federation (PS→AS): the PS signs token requests as itself via the
+//     `jwks_uri` scheme through the named federation client, so tests can route it
+//     to an in-process AS;
+//   * the mission governance seams (§PS Governance Endpoints).
+builder.Services.AddAAuthPersonServer(configure: options =>
+    {
+        options.EgressPolicy = SampleEgress.Policy;
+        options.Issuer = psIssuer;
+        options.SigningKeys = new AAuthSigningKeySet(PsKid, AAuthKey.Generate());
+        options.DefaultScope = PsScope;
+        // Governance endpoints (mapped below) advertised in aauth-person.json so the
+        // agent's MissionClient / PermissionClient / AuditClient can resolve them.
+        options.MissionPath = "/mission";
+        options.PermissionPath = "/permission";
+        options.AuditPath = "/audit";
+        options.InteractionEndpointPath = "/mission-interaction";
+        options.UnsignedPathPrefixes = new[] { "/admin", "/dashboard" };
+        options.ResourceInteractionSessions = browserConsent;
+    })
+    .WithTrust(trust => trust.AccessServers.Allowed = new HashSet<string>(trustedAccessServers))
+    .UseClaimsAsserter(sp => new SampleIdentityClaimsAsserter(
+        sp.GetRequiredService<ConsentStore>(), requireConsent, demoRoles, demoGroups, demoUserClaims))
+    .UsePendingStore(sp => new ConsentBridgePersonPendingStore(
+        sp.GetRequiredService<ConsentStore>(), sp.GetRequiredService<ConsentRegistry>(), demoRoles, demoGroups))
+    .WithFederation()
+    .WithGovernance();
 // Every PS-parked consent request and its outcome, and the one decision path the
 // per-request link and the dashboard share.
 builder.Services.AddSingleton<ConsentRegistry>();
 builder.Services.AddSingleton<PersonConsentDecisions>();
 builder.Services.AddSingleton<ConsentDashboardSessions>();
 
-// Mission governance (§PS Governance Endpoints). AddAAuthGovernance registers
-// the in-memory mission store + log; the PS supplies the policy/user-channel
+// Mission governance (§PS Governance Endpoints). WithGovernance registers the
+// in-memory mission store + log; the PS supplies the policy/user-channel
 // seams (decider / audit sink / interaction relay), the deterministic consent
 // script that stands in for a real user-consent screen, and the out-of-scope
 // mission-token decision (ScriptMissionTokenConsent — the SDK's clarification
 // protocol calls into it).
-builder.Services.AddAAuthGovernance();
 builder.Services.AddSingleton<MissionConsentScript>();
 builder.Services.AddSingleton<MissionPolicyStore>();
 builder.Services.AddSingleton<MissionPendingStore>();
@@ -124,12 +145,8 @@ builder.Services.AddSingleton(sp =>
         sp.GetRequiredService<MetadataClient>(),
         sp.GetRequiredService<JwksClient>()));
 
-// Four-party federation client (PS→AS), wired by the SDK: the PS signs the
-// token request with its own key via the `jwks_uri` scheme, and the transport
-// uses the named federation client so tests can route it to an in-process AS.
-builder.Services.AddAAuthFederation(psKey, psIssuer, PsKid);
-
 var app = builder.Build();
+var ps = app.Services.GetRequiredKeyedService<IAAuthServerIdentity>(AAuthPersonServerBuilder.DefaultName);
 
 // -----------------------------------------------------------------------
 // Well-known endpoints: MapAAuthPersonServer (below) publishes the PS
@@ -140,35 +157,16 @@ var app = builder.Build();
 
 // Person Server token endpoint + pending polls + PS metadata, in one call. The
 // SDK owns verification, the three-/four-party mint, PS→AS federation, and the
-// mission three-gate + clarification protocol; the decision seams registered
-// above supply the demo's policy. `/admin` is the PS's own unsigned consent
-// surface (§PS Approval Endpoint Authentication — out of scope), so the mapper
-// skips signature verification for it.
-var browserConsent = new AAuth.Server.BrowserConsentSessions("AAuth.Person.Consent",
-    builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-person-demo" : null);
-var tokenInventory = new InMemoryJtiStore();
-app.MapAAuthPersonServer(new AAuthPersonServerOptions
-{
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = psIssuer,
-    TokenInventory = tokenInventory,
-    SigningKeys = new AAuthSigningKeySet { [PsKid] = psKey },
-    DefaultScope = PsScope,
-    Trust = { AccessServers = { Allowed = new HashSet<string>(trustedAccessServers) } },
-    // Governance endpoints (mapped below) advertised in aauth-person.json so the
-    // agent's MissionClient / PermissionClient / AuditClient can resolve them.
-    MissionEndpoint = $"{psIssuer.TrimEnd('/')}/mission",
-    PermissionEndpoint = $"{psIssuer.TrimEnd('/')}/permission",
-    AuditEndpoint = $"{psIssuer.TrimEnd('/')}/audit",
-    InteractionEndpoint = $"{psIssuer.TrimEnd('/')}/mission-interaction",
-    UnsignedPathPrefixes = new[] { "/admin", "/dashboard" },
-    ResourceInteractionSessions = browserConsent,
-});
+// mission three-gate + clarification protocol; the builder registered above
+// supplies the demo's policy.
+app.MapAAuthPersonServer();
 
 // Demo route: the agent asks this PS to terminate access it federated. Per
 // #revocation-cascade the PS revokes, at the AS, the person token it presented
 // there; the AS then revokes the auth tokens it issued against it at the Wallet.
-app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient metadata, TokenVerifier verifier) =>
+app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient metadata,
+    [FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] TokenVerifier verifier,
+    [FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] IJtiStore tokenInventory) =>
 {
     var owner = context.GetAAuthVerification();
     if (owner is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true, Agent: not null })
@@ -182,19 +180,18 @@ app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient m
     {
         // Only this PS's own person token, bound to the requesting agent's key.
         var key = SignatureKeyParser.Parse(context.Request.Headers["Signature-Key"].ToString()).ConfirmationKey;
-        verified = verifier.VerifyPersonToken(personToken, psKey, wallet, key);
-        if (verified.Issuer != psIssuer)
+        verified = verifier.VerifyPersonToken(personToken, ps.SigningKeys.Active.Signer, wallet, key);
+        if (verified.Issuer != ps.Issuer)
             return AAuthProblemDetails.Create("denied", statusCode: 403);
     }
     catch (TokenVerificationException)
     {
         return AAuthProblemDetails.Create("denied", statusCode: 403);
     }
-    using var signed = new AAuthClientBuilder(psKey).UseJwksUri(psIssuer, AuthTokenBuilder.PersonDwk, PsKid)
-        .WithEgressPolicy(SampleEgress.Policy).Build();
+    using var signed = ps.CreateSignedClient();
     var jti = (string)verified.Payload["jti"]!;
     // Only the Access Servers this person token was presented to: each recorded an auth token as its grant.
-    var presentedTo = (await tokenInventory.GetGrantsAsync(new TokenKey(psIssuer, jti), context.RequestAborted))
+    var presentedTo = (await tokenInventory.GetGrantsAsync(new TokenKey(ps.Issuer, jti), context.RequestAborted))
         .Select(grant => grant.Token.Issuer).Where(trustedAccessServers.Contains).Distinct(StringComparer.Ordinal);
     var results = new JsonArray();
     var recorded = true;
@@ -293,7 +290,7 @@ app.MapPost("/mission", async (
             OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
             OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
             S256 = string.Empty,            // computed from the blob once approved
-            PersonServer = psIssuer,
+            PersonServer = ps.Issuer,
             Proposal = proposal,
         });
         ctx.Response.Headers.Location = $"/mission-create-pending/{pendingMission.Id}";
@@ -301,7 +298,7 @@ app.MapPost("/mission", async (
         ctx.Response.Headers["Retry-After"] = "1";
         ctx.Response.Headers["Cache-Control"] = "no-store";
         ctx.Response.Headers[AAuthRequirementHeader.Name] =
-            Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", pendingMission.Browser.Code, SampleEgress.Policy);
+            Interaction.Format(ps.Url("/interaction"), pendingMission.Browser.Code, SampleEgress.Policy);
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
@@ -310,10 +307,10 @@ app.MapPost("/mission", async (
     var (blob, s256) = MissionApprovalBuilder.Build(agentId, proposal, approvedTools, DateTimeOffset.UtcNow,
         approvedResources: proposal.Resources);
 
-    await missions.SaveAsync(new StoredMission(s256, psIssuer, agentId, blob));
+    await missions.SaveAsync(new StoredMission(s256, ps.Issuer, agentId, blob));
     policy.Record(s256, proposal.Description, approvedTools, script.InScopeSnapshot());
 
-    var personTokens = await ctx.IssueMissionPersonTokensAsync(psIssuer, s256, proposal.Resources);
+    var personTokens = await ctx.IssueMissionPersonTokensAsync(ps.Issuer, s256, proposal.Resources);
     return Results.Json(MissionApprovalBuilder.Response(blob, s256, personTokens: personTokens));
 });
 
@@ -346,7 +343,7 @@ app.MapMethods("/mission-create-pending/{id}", ["GET", "DELETE"], async (
             ctx.Response.Headers["Retry-After"] = "1";
             ctx.Response.Headers["Cache-Control"] = "no-store";
             ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Browser.Code, SampleEgress.Policy);
+                Interaction.Format(ps.Url("/interaction"), entry.Browser.Code, SampleEgress.Policy);
             return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
         }
 
@@ -361,9 +358,9 @@ app.MapMethods("/mission-create-pending/{id}", ["GET", "DELETE"], async (
         var approvedTools = proposal.Tools;
         var (blob, s256) = MissionApprovalBuilder.Build(entry.AgentId, proposal, approvedTools, DateTimeOffset.UtcNow,
             approvedResources: proposal.Resources);
-        await missions.SaveAsync(new StoredMission(s256, psIssuer, entry.AgentId, blob));
+        await missions.SaveAsync(new StoredMission(s256, ps.Issuer, entry.AgentId, blob));
         policy.Record(s256, proposal.Description, approvedTools, script.InScopeSnapshot());
-        var personTokens = await ctx.IssueMissionPersonTokensAsync(psIssuer, s256, proposal.Resources);
+        var personTokens = await ctx.IssueMissionPersonTokensAsync(ps.Issuer, s256, proposal.Resources);
         return Results.Json(MissionApprovalBuilder.Response(blob, s256, personTokens: personTokens));
     });
 });
@@ -422,7 +419,7 @@ app.MapPost("/permission", async (
             OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
             OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
             S256 = request.MissionS256,
-            PersonServer = psIssuer,
+            PersonServer = ps.Issuer,
             Action = request.Action.Name,
         });
         ctx.Response.Headers.Location = $"/permission-pending/{entry.Id}";
@@ -433,7 +430,7 @@ app.MapPost("/permission", async (
         if (script.InteractiveBrowser)
         {
             ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Browser.Code, SampleEgress.Policy);
+                Interaction.Format(ps.Url("/interaction"), entry.Browser.Code, SampleEgress.Policy);
         }
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
@@ -602,7 +599,7 @@ app.MapMethods("/permission-pending/{id}", ["GET", "DELETE"], async (
                 ctx.Response.Headers["Retry-After"] = "1";
                 ctx.Response.Headers["Cache-Control"] = "no-store";
                 ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                    Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Browser.Code, SampleEgress.Policy);
+                    Interaction.Format(ps.Url("/interaction"), entry.Browser.Code, SampleEgress.Policy);
                 return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
             }
             granted = entry.Decision.Value;
@@ -759,7 +756,8 @@ app.MapGet("/admin/mission-log/{s256}", async (string s256, IMissionLog log) =>
 // (cookie/passkey/SSO); here we trust the demo environment and just look
 // up the pending entry by its single-use code. The form submits to
 // /interaction/approve or /interaction/deny.
-app.MapMethods("/interaction", ["GET", "POST"], async (HttpContext ctx, IPersonPendingStore pending, MissionPendingStore missionPending, MissionPolicyStore missionPolicy) =>
+app.MapMethods("/interaction", ["GET", "POST"], async (HttpContext ctx,
+    [FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] IPersonPendingStore pending, MissionPendingStore missionPending, MissionPolicyStore missionPolicy) =>
 {
     var entered = await browserConsent.EnterAsync(ctx, supplied =>
     {
@@ -970,7 +968,8 @@ app.MapMethods("/interaction", ["GET", "POST"], async (HttpContext ctx, IPersonP
 // consent for the entry's (agent, resource, scope) triple, and shows a
 // confirmation page. Idempotent: re-submitting a code whose entry is
 // already approved still 200s.
-app.MapPost("/interaction/approve", async (HttpContext ctx, IPersonPendingStore pending, MissionPendingStore missionPending, PersonConsentDecisions decisions) =>
+app.MapPost("/interaction/approve", async (HttpContext ctx,
+    [FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] IPersonPendingStore pending, MissionPendingStore missionPending, PersonConsentDecisions decisions) =>
 {
     var decision = await browserConsent.DecideAsync(ctx);
     if (decision.Error is not null) return decision.Error;
@@ -1033,7 +1032,8 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, IPersonPendingStore 
 // Deny handler. Marks the pending entry as denied (rather than removing
 // it) so the agent's next poll receives a deterministic
 // `403 denied` instead of an ambiguous `404 unknown_pending`.
-app.MapPost("/interaction/deny", async (HttpContext ctx, IPersonPendingStore pending, MissionPendingStore missionPending, PersonConsentDecisions decisions) =>
+app.MapPost("/interaction/deny", async (HttpContext ctx,
+    [FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] IPersonPendingStore pending, MissionPendingStore missionPending, PersonConsentDecisions decisions) =>
 {
     var decision = await browserConsent.DecideAsync(ctx);
     if (decision.Error is not null) return decision.Error;

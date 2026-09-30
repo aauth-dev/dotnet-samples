@@ -347,9 +347,94 @@ PROCEEDED.
   - Keycloak profile (`KEYCLOAK_E2E=1`, live Keycloak 26.0 container):
     `federated-deferred` 1 passed; container removed.
 
+### [2026-09-29] [Phase 4] Server role registration
+
+PROCEEDED.
+- **PS and AS roles.** `AddAAuthPersonServer(name?, configure?)` and
+  `AddAAuthAccessServer(name?, configure?)`, plus `(IConfiguration, ...)`
+  overloads for `AAuth:PersonServer` / `AAuth:AccessServer`, return builders
+  exposing `Services` and `Name`. Default instance names are
+  `"PersonServer"` and `"AccessServer"` (distinct so both roles co-host
+  without naming). Options are named `IOptions` validated at start: issuer,
+  a key (`SigningKeys` or `KeyHandle`), path shape, trusted URLs, and (AS) an
+  `IAccessPolicy`. `MapAAuthPersonServer(name?)` / `MapAAuthAccessServer(name?)`
+  read them; the options overloads are gone.
+- **Seams.** Keyed singletons per instance name, resolved builder `Use*` →
+  unkeyed DI → SDK default. The defaults are keyed factories that forward to
+  an unkeyed registration first, so samples and tests that register seams
+  unkeyed keep working and everything is resolvable by key. PS: pending
+  store, claims asserter, `TokenVerifier`, token inventory (`IJtiStore`,
+  replacing `AAuthPersonServerOptions.TokenInventory`). AS: policy (no
+  default; the keyed default throws), pending store, `TokenVerifier`,
+  inventory. Builders also take factory overloads. `IMissionStore` /
+  `IMissionLog` defaults and `AAuthVerifier` are `TryAdd`ed.
+- **Identity.** `IAAuthServerIdentity` (keyed): issuer, dwk, key set, egress
+  policy, `Url(path)`, `CreateSignedClient()` (jwks_uri, active key, via the
+  shared internal `AAuthSigningKeySetHandler`). MockPersonServer and the
+  Federated AS use it; `psIssuer`/`asIssuer` remain only at the config read.
+- **Federation.** `AddAAuthFederation` deleted; `.WithFederation()` registers
+  a keyed `AccessServerClient` signing through the identity. It now uses the
+  PS's own egress policy rather than `MetadataClient.Policy`
+  (`EgressTransportTests` sets both). The `FederationHttpClientName` constant
+  moved to `AAuthPersonServerBuilder`. `.WithGovernance()` calls
+  `AddAAuthGovernance`.
+- **Metadata URLs.** `MissionEndpoint`/`PermissionEndpoint`/`AuditEndpoint`/
+  `InteractionEndpoint` URLs became `MissionPath`/`PermissionPath`/`AuditPath`/
+  `InteractionEndpointPath`; the mapper derives URLs from the issuer.
+- **Co-hosting.** Server identifiers are origins (no path), so instances
+  sharing a process are distinguished by host. `MatchIssuerHost` confines an
+  instance's endpoints (`RequireHost` route group), its verification
+  middleware, its revocation middleware and its JWKS to the issuer authority.
+  Without it the behaviour is unchanged. `MapAAuthIssuerRevocation` keeps its
+  public shape over an internal host-scopable core.
+- **Resource.** `AddAAuthResource(IConfiguration, configure?)` for
+  `AAuth:Resource`; registers `TokenVerifier` (role policy and clock) and
+  `IOptions<AAuthResourceOptions>`; `KeyHandle`/`KeyId` load lazily with the
+  metadata options. Bookings and Concierge drop their hand-made verifiers.
+- **In-memory warning.** Mapping a PS or AS logs a warning per in-memory
+  default (pending store, inventory, mission store/log) outside Development.
+- **Tests.** `ServerRoleRegistrationTests.cs`: `PersonServerRegistrationTests`
+  (defaults, builder and DI replacement, validation, key handle, binding,
+  warning, derived metadata URLs, unregistered map), `AccessServerRegistrationTests`,
+  `ResourceRegistrationTests`, `CoHostedRolesTests` (two named PS + AS +
+  resource in one host: per-host metadata, JWKS, seams, token endpoints).
+  A subagent migrated tests, samples, Razor snippets and docs; verified
+  independently.
+- **Deferred to Phase 5 (server feature seams):** the consent-dashboard items
+  in this phase's body. `ConsentRegistry`/`PersonConsentDecisions`/
+  `ConsentDashboardSessions` remain sample registrations; the pending-store
+  observer, the SDK out-of-band decision API owning
+  `BrowserInteraction.Consume()`, and the four-party `Pending202`
+  re-advertisement ruling need their own design and tests.
+- **Gates.**
+  - Build clean.
+  - Test projects: AAuth.Tests 1734 (+19), AAuth.Conformance 1257,
+    AAuth.R3.Tests 328, AAuth.Events.Tests 80.
+  - ApiSurface: +725/-372 cumulative. Docs inventory refreshed; e2e
+    typecheck clean.
+  - Full Playwright: 78 passed, 1 skipped, `--retries=0`.
+  - Keycloak profile: `federated-deferred` 1 passed; container removed.
+
 ## Deviations from plan
 
-None yet.
+### [2026-09-29] [Phase 4] Seam defaults are keyed forwarding factories
+
+PROCEEDED. The plan says the builder `TryAdd`s defaults. A plain keyed
+default would shadow a user's unkeyed DI registration, breaking "replaceable
+through DI". Each default is instead a keyed factory returning the unkeyed
+registration when present, else the SDK default.
+
+### [2026-09-29] [Phase 4] Resource role stays single-instance
+
+PROCEEDED. `AddAAuthResource` keeps its eager single options instance (exposed
+as `IOptions<AAuthResourceOptions>`) instead of named options: its conditional
+registrations (replay store, opaque-token store, key resolver) depend on option
+values at registration time. Named resource instances are not needed by any
+DoD item; revisit with Phase 5.
+
+### [2026-09-29] [Phase 4] Consent-dashboard seams moved to Phase 5
+
+PROCEEDED. See the Phase 4 entry.
 
 ## Open questions
 

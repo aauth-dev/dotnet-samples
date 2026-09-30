@@ -23,6 +23,10 @@ calls the PS answers.
 `AddAAuthGovernance` registers the storage defaults **and** conservative no-op
 policy/user-channel defaults. Every seam is registered with `TryAdd`, so a PS can
 register its own implementations (before or after the call) and keep the rest.
+A Person Server registered with `AddAAuthPersonServer` can call `.WithGovernance()`
+on its builder, which calls `AddAAuthGovernance` for you. Advertise the endpoints
+with the options' `MissionPath`, `PermissionPath`, `AuditPath` and
+`InteractionEndpointPath`.
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;

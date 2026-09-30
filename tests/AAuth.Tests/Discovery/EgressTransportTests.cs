@@ -55,14 +55,15 @@ public class EgressTransportTests
         using var http = AAuthHttpTransport.CreateClient();
         services.AddSingleton(new MetadataClient(http));
         services.AddSingleton(new JwksClient(http));
-        services.AddAAuthFederation(AAuth.Crypto.AAuthKey.Generate(), "https://person.example", "key");
-        services.AddHttpClient(AAuthFederationServiceCollectionExtensions.FederationHttpClientName)
+        AddFederatedPersonServer(services);
+        services.AddHttpClient(AAuthPersonServerBuilder.FederationHttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => new UntrustedWrapper
             {
                 InnerHandler = AAuthHttpTransport.CreateHandler(),
             });
         using var provider = services.BuildServiceProvider();
-        Assert.Throws<InvalidOperationException>(() => provider.GetRequiredService<AccessServerClient>());
+        Assert.Throws<InvalidOperationException>(() =>
+            provider.GetRequiredKeyedService<AccessServerClient>(AAuthPersonServerBuilder.DefaultName));
     }
 
     [Fact]
@@ -75,11 +76,11 @@ public class EgressTransportTests
             AAuthTransportContract.InProcessOnly);
         services.AddSingleton(new MetadataClient(http));
         services.AddSingleton(new JwksClient(http));
-        services.AddAAuthFederation(AAuth.Crypto.AAuthKey.Generate(), "https://person.example", "key");
+        AddFederatedPersonServer(services, policy);
         using var provider = services.BuildServiceProvider();
-        var federation = provider.GetRequiredService<AccessServerClient>();
+        var federation = provider.GetRequiredKeyedService<AccessServerClient>(AAuthPersonServerBuilder.DefaultName);
         var chain = Assert.IsAssignableFrom<DelegatingHandler>(provider.GetRequiredService<IHttpMessageHandlerFactory>()
-            .CreateHandler(AAuthFederationServiceCollectionExtensions.FederationHttpClientName));
+            .CreateHandler(AAuthPersonServerBuilder.FederationHttpClientName));
         using var bypass = new UntrustedWrapper { InnerHandler = new HttpClientHandler() };
         var original = Assert.IsAssignableFrom<HttpMessageHandler>(chain.InnerHandler);
         try
@@ -105,13 +106,21 @@ public class EgressTransportTests
         using var http = AAuthHttpTransport.CreateClient();
         services.AddSingleton(new MetadataClient(http));
         services.AddSingleton(new JwksClient(http));
-        services.AddAAuthFederation(AAuth.Crypto.AAuthKey.Generate(), "https://person.example", "key");
-        services.AddHttpClient(AAuthFederationServiceCollectionExtensions.FederationHttpClientName)
+        AddFederatedPersonServer(services);
+        services.AddHttpClient(AAuthPersonServerBuilder.FederationHttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => new UntrustedWrapper { InnerHandler = new HttpClientHandler() });
         services.Configure<AAuthFederationOptions>(options => options.TransportContract = AAuthTransportContract.InProcessOnly);
         using var provider = services.BuildServiceProvider();
-        Assert.NotNull(provider.GetRequiredService<AccessServerClient>());
+        Assert.NotNull(provider.GetRequiredKeyedService<AccessServerClient>(AAuthPersonServerBuilder.DefaultName));
     }
+
+    private static void AddFederatedPersonServer(IServiceCollection services, AAuthEgressPolicy? policy = null) =>
+        services.AddAAuthPersonServer(configure: options =>
+        {
+            options.Issuer = "https://person.example";
+            options.SigningKeys = new AAuth.Crypto.AAuthSigningKeySet { ["key"] = AAuth.Crypto.AAuthKey.Generate() };
+            if (policy is not null) options.EgressPolicy = policy;
+        }).WithFederation();
 
     private sealed class FederationMetadataHandler : HttpMessageHandler
     {

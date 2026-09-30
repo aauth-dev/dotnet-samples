@@ -88,8 +88,8 @@ public class MockAccessServerTests : IDisposable
         var discoveryTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
         using var factory = CreateFactory(builder => builder.ConfigureTestServices(services =>
         {
-            services.RemoveAll<IAccessPolicy>();
-            services.AddSingleton<IAccessPolicy>(policy);
+            services.RemoveAllKeyed<IAccessPolicy>(AAuthAccessServerBuilder.DefaultName);
+            services.AddKeyedSingleton<IAccessPolicy>(AAuthAccessServerBuilder.DefaultName, policy);
             services.RemoveAll<MetadataClient>();
             services.RemoveAll<JwksClient>();
             services.AddSingleton(new MetadataClient(new InProcessHttpClient(new StubDiscoveryHandler(sharedKey))));

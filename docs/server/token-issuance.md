@@ -360,36 +360,49 @@ request signature, and maps both token endpoints:
     Token Delivery check.
 
 The host owns all AAuth crypto; the identity and consent decision is delegated to
-a pluggable `IIdentityClaimsAsserter`.
+a pluggable `IIdentityClaimsAsserter`. Register the Person Server with
+`AddAAuthPersonServer`, then map it:
 
 ```csharp
 using AAuth.Person;
 
-// The identity/consent seam (the PS counterpart to IAccessPolicy) and the store
-// that parks deferred consent decisions.
-builder.Services.AddSingleton<IIdentityClaimsAsserter>(new DefaultIdentityClaimsAsserter("user-42"));
-builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+// The identity/consent seam is the PS counterpart to IAccessPolicy. Deferred
+// consent decisions park in the default InMemoryPersonPendingStore.
+builder.Services.AddAAuthPersonServer(configure: options =>
+    {
+        options.Issuer       = psIssuer;
+        options.SigningKeys  = new AAuthSigningKeySet(PsKid, psKey);
+        options.DefaultScope = "calendar.read";
+    })
+    // Unset ⇒ federate to verified aud; empty ⇒ three-party only.
+    .WithTrust(trust => trust.AccessServers.Allowed = trustedAccessServers)
+    .UseClaimsAsserter(new DefaultIdentityClaimsAsserter("user-42"))
+    .WithFederation();
 
 var app = builder.Build();
 
 // One call maps /.well-known + JWKS, request-signature verification,
 // POST /person, POST /token, and GET /pending/{id}.
-app.MapAAuthPersonServer(new AAuthPersonServerOptions
-{
-    Issuer       = psIssuer,
-    SigningKeys  = new AAuthSigningKeySet(PsKid, psKey),
-    DefaultScope = "calendar.read",
-    // Unset ⇒ federate to verified aud; empty ⇒ three-party only.
-    Trust        = { AccessServers = { Allowed = trustedAccessServers } },
-});
+app.MapAAuthPersonServer();
 ```
+
+The options are validated at startup. A missing issuer or signing key fails
+`app.StartAsync()` (and `MapAAuthPersonServer()`) with an
+`OptionsValidationException`. Each seam resolves from the builder's `Use*`
+helper, then from an unkeyed DI registration, then from the SDK default. To bind
+from `AAuth:PersonServer`, load the key through `KeyHandle`, or co-host several
+instances with `MatchIssuerHost`, see
+[Person Server and Access Server Registration](../reference/dependency-injection.md#person-server-and-access-server-registration).
 
 ### AAuthPersonServerOptions Properties
 
 | Property | Type | Required | Default | Description |
 |----------|------|:--------:|---------|-------------|
-| `Issuer` | `string` | Yes | — | HTTPS URL of this PS (`iss` of minted auth tokens) |
-| `SigningKeys` | `AAuthSigningKeySet` | Yes | — | Signing keys published at the PS JWKS; tokens are signed with the active key. Supports Ed25519 and ES256 keys |
+| `Issuer` | `string` | Yes | — | HTTPS URL of this PS (`iss` of minted auth tokens); validated at startup |
+| `SigningKeys` | `AAuthSigningKeySet` | One of `SigningKeys` / `KeyHandle` | empty | Signing keys published at the PS JWKS; tokens are signed with the active key. Supports Ed25519 and ES256 keys |
+| `KeyHandle` | `string?` | One of `SigningKeys` / `KeyHandle` | `null` | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
+| `KeyId` | `string?` | No | `null` | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |
+| `MatchIssuerHost` | `bool` | No | `false` | Serve this instance only for requests whose `Host` is the issuer's authority; set it when several roles or instances share one host |
 | `TokenPath` | `string` | No | `/token` | The auth token endpoint path (`auth_token_endpoint`) |
 | `PersonTokenPath` | `string` | No | `/person` | The person token endpoint path (`person_token_endpoint`) |
 | `RevocationPath` | `string` | No | `/revoke` | The revocation endpoint path |
@@ -397,11 +410,15 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 | `DefaultScope` | `string` | No | `""` | Scope assumed when the resource token omits one |
 | `InteractionPath` | `string` | No | `/interaction` | Path the host maps for the consent page |
 | `Trust` | `AAuthTrustOptions` | No | `new()` | `Trust.AccessServers` governs the Access Server URLs the PS will federate to. Unconfigured ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); `Allowed` empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. `Predicate` AND-composes; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
-| `InteractionEndpoint` | `string?` | No | `null` | §Interaction Endpoint URL advertised in metadata (falls back to `InteractionPath`) |
-| `MissionEndpoint` | `string?` | No | `null` | Mission endpoint URL advertised in `aauth-person.json` (the PS maps the endpoint) |
-| `PermissionEndpoint` | `string?` | No | `null` | Permission endpoint URL advertised in `aauth-person.json` (the PS maps the endpoint) |
-| `AuditEndpoint` | `string?` | No | `null` | Audit endpoint URL advertised in `aauth-person.json` (the PS maps the endpoint) |
+| `InteractionEndpointPath` | `string?` | No | `null` | §Interaction Endpoint path; advertised in metadata as issuer + path (falls back to `InteractionPath`) |
+| `MissionPath` | `string?` | No | `null` | Mission endpoint path; advertised in `aauth-person.json` as issuer + path (the PS maps the endpoint) |
+| `PermissionPath` | `string?` | No | `null` | Permission endpoint path; advertised in `aauth-person.json` as issuer + path (the PS maps the endpoint) |
+| `AuditPath` | `string?` | No | `null` | Audit endpoint path; advertised in `aauth-person.json` as issuer + path (the PS maps the endpoint) |
 | `UnsignedPathPrefixes` | `IReadOnlyCollection<string>?` | No | `null` | Extra path prefixes the mapper's signature verification skips (e.g. the PS's own unsigned `/admin` consent surface) |
+
+The token inventory is a seam, not an option. Use `.UseTokenInventory(inventory)`
+on the builder, or resolve the default with
+`GetRequiredKeyedService<IJtiStore>(AAuthPersonServerBuilder.DefaultName)`.
 
 ### The `IIdentityClaimsAsserter` seam
 
@@ -460,8 +477,8 @@ identity and consent decision.
 
 When the resource token carries `mission_s256`, `MapAAuthPersonServer` packages
 the mission three-gate token-issuance mechanics, using the `IMissionStore` /
-`IMissionLog` primitives registered by
-[`AddAAuthGovernance()`](mission-governance.md):
+`IMissionLog` primitives (in-memory by default; the builder's `.WithGovernance()`
+calls [`AddAAuthGovernance()`](mission-governance.md) for the governance seams):
 
 1. **Unknown, foreign, or terminated mission** → `404 mission_not_found` or
    `403 mission_terminated` (an expired mission counts as terminated).

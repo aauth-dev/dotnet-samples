@@ -181,7 +181,7 @@ public class MockPersonServerFederationTests
                     new InProcessHttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
 
                 // Route the PS→AS federation transport at the same in-process AS.
-                services.AddHttpClient(AAuthFederationServiceCollectionExtensions.FederationHttpClientName)
+                services.AddHttpClient(AAuthPersonServerBuilder.FederationHttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope, interactive));
                 services.Configure<AAuthFederationOptions>(options => options.TransportContract = AAuthTransportContract.InProcessOnly);
             });

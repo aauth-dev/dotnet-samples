@@ -67,15 +67,16 @@ public class MissionPersonTokenIssuanceTests
         builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
         builder.Services.AddSingleton<IIdentityClaimsAsserter>(new PerResourceAsserter());
         builder.Services.AddRouting();
+        builder.Services.AddAAuthPersonServer(configure: o =>
+        {
+            o.EgressPolicy = new AAuthEgressPolicy(dnsResolver: new PublicDns());
+            o.Issuer = PsIssuer;
+            o.SigningKeys = new AAuthSigningKeySet { [PsKid] = PsKey };
+            o.Trust.AccessServers.Allowed = new HashSet<string>();
+        });
 
         var app = builder.Build();
-        app.MapAAuthPersonServer(new AAuthPersonServerOptions
-        {
-            EgressPolicy = new AAuthEgressPolicy(dnsResolver: new PublicDns()),
-            Issuer = PsIssuer,
-            SigningKeys = new AAuthSigningKeySet { [PsKid] = PsKey },
-            Trust = { AccessServers = { Allowed = new HashSet<string>() } },
-        });
+        app.MapAAuthPersonServer();
         app.MapAAuthGovernance(options => options.PersonServer = PsIssuer);
         await app.StartAsync();
         return app;

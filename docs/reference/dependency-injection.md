@@ -363,12 +363,17 @@ refresh transport. Keys and stores remain caller-owned.
 `AddAAuthResource` registers inbound verification and resource-token issuance.
 It requires the resource issuer but does not require agent credentials.
 Signing keys are required when issuing resource tokens or making signed calls;
-a verification-only resource can leave `SigningKeys` empty.
+a verification-only resource can leave `SigningKeys` empty. It also registers a
+`TokenVerifier` (with the resource's `EgressPolicy` and `TimeProvider`) and
+`IOptions<AAuthResourceOptions>`; the `AddAAuthResource(IConfiguration, …)`
+overload binds from a section such as `AAuth:Resource`.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Issuer` | `string` | required | Resource HTTPS URL (metadata + audience) |
 | `SigningKeys` | `AAuthSigningKeySet` | empty | Keys published at the JWKS; resource tokens are signed with the active key |
+| `KeyHandle` | `string?` | `null` | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
+| `KeyId` | `string?` | `null` | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |
 | `Name` | `string?` | `null` | Human-readable name in metadata (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope descriptions in metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
@@ -479,28 +484,199 @@ builder.Services.AddAAuthInteractionRelay((request, ct) =>
 See [Mission Governance (Server)](../server/mission-governance.md) for the seams
 and the decision model.
 
-### Person Server side: the token-issuance seams
+A Person Server registered with `AddAAuthPersonServer` can call `.WithGovernance()`
+on its builder instead; it calls `AddAAuthGovernance()` for you. See
+[Person Server and Access Server Registration](#person-server-and-access-server-registration).
 
-The one-call PS issuer `MapAAuthPersonServer` resolves two seams from DI — the
-identity/consent decision (`IIdentityClaimsAsserter`) and the deferred-consent
-park store (`IPersonPendingStore`):
+## Person Server and Access Server Registration
+
+Register a Person Server (PS) or Access Server (AS) in DI, then map it by name.
+`AddAAuthPersonServer` / `AddAAuthAccessServer` return a builder for the role's
+seams; `MapAAuthPersonServer()` / `MapAAuthAccessServer()` map the endpoints.
+The default instance names are `AAuthPersonServerBuilder.DefaultName`
+(`"PersonServer"`) and `AAuthAccessServerBuilder.DefaultName` (`"AccessServer"`).
 
 ```csharp
-builder.Services.AddSingleton<IIdentityClaimsAsserter>(
-    new DefaultIdentityClaimsAsserter("user-42"));     // swap in a real asserter
-builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+builder.Services.AddAAuthPersonServer(configure: options =>
+    {
+        options.Issuer       = psIssuer;
+        options.SigningKeys  = new AAuthSigningKeySet(PsKid, psKey);
+        options.DefaultScope = "calendar.read";
+        options.MissionPath  = "/mission"; // advertised as {Issuer}/mission
+    })
+    // Unset ⇒ federate to verified aud; empty ⇒ three-party only.
+    .WithTrust(trust => trust.AccessServers.Allowed = trustedAccessServers)
+    .UseClaimsAsserter(new DefaultIdentityClaimsAsserter("user-42")) // swap in a real asserter
+    .WithFederation()  // PS→AS four-party client, signed as this PS
+    .WithGovernance(); // mission store/log and governance seams (AddAAuthGovernance)
 
 var app = builder.Build();
-app.MapAAuthPersonServer(new AAuthPersonServerOptions
-{
-    Issuer      = psIssuer,
-    SigningKeys = new AAuthSigningKeySet(PsKid, psKey),
-    // Unset ⇒ federate to verified aud; empty ⇒ three-party only.
-    Trust       = { AccessServers = { Allowed = trustedAccessServers } },
-});
+app.MapAAuthPersonServer();
 ```
 
-When a request carries `mission_s256`, the helper also resolves the
-`IMissionStore` / `IMissionLog` primitives registered by `AddAAuthGovernance()`.
-See [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+An Access Server has no default access policy, so it needs `UsePolicy` or an
+`IAccessPolicy` registered in DI:
+
+```csharp
+builder.Services.AddAAuthAccessServer(configure: options =>
+    {
+        options.Issuer      = asIssuer;
+        options.SigningKeys = new AAuthSigningKeySet(AsKid, asKey);
+    })
+    .WithTrust(trust => trust.PersonServers.Allowed = trustedPersonServers)
+    .UsePolicy(accessPolicy);
+
+var app = builder.Build();
+app.MapAAuthAccessServer();
+```
+
+### Builder helpers
+
+| Helper | Person Server | Access Server |
+|--------|:-------------:|:-------------:|
+| `Configure(options => …)` | ✓ | ✓ |
+| `WithTrust(trust => …)`: configures `options.Trust` | ✓ | ✓ |
+| `UsePendingStore<T>()` / `(instance)` / `(sp => …)` | ✓ | ✓ |
+| `UseTokenVerifier(verifier)` | ✓ | ✓ |
+| `UseTokenInventory<T>()` / `(instance)`: the issuer's `IJtiStore` | ✓ | ✓ |
+| `UseClaimsAsserter<T>()` / `(instance)` / `(sp => …)` | ✓ | — |
+| `WithFederation()`: the PS→AS `AccessServerClient` | ✓ | — |
+| `WithGovernance()`: calls `AddAAuthGovernance()` | ✓ | — |
+| `UsePolicy<T>()` / `(instance)` / `(sp => …)`: required | — | ✓ |
+
+`WithFederation()` signs PS→AS token requests as the PS (`jwks_uri` scheme,
+active key) through the named `AAuthPersonServerBuilder.FederationHttpClientName`
+(`"aauth-federation"`) client. Tests can redirect that client in process with
+`AddHttpClient(AAuthPersonServerBuilder.FederationHttpClientName)` plus
+`AAuthFederationOptions.TransportContract`.
+
+### Seam precedence
+
+Each seam is a keyed singleton under the instance name. It resolves in this order:
+
+1. The builder's `Use*` helper.
+2. An unkeyed DI registration of the same service type, such as
+   `services.AddSingleton<IPersonPendingStore>(…)`.
+3. The SDK default.
+
+| Seam | Default |
+|------|---------|
+| `IPersonPendingStore` | `InMemoryPersonPendingStore` |
+| `IIdentityClaimsAsserter` | `DefaultIdentityClaimsAsserter` |
+| `IAccessPendingStore` | `InMemoryAccessPendingStore` |
+| `IAccessPolicy` | none: startup fails without one |
+| `TokenVerifier` | A verifier with the role's `EgressPolicy` and `TimeProvider` |
+| `IJtiStore` (token inventory) | `InMemoryJtiStore` |
+
+`AddAAuthPersonServer` also registers `AddAAuthDiscovery()` and in-memory
+`IMissionStore` / `IMissionLog` defaults (`TryAdd`). To use a seam in your own
+endpoints, resolve it by instance name:
+
+```csharp
+var pending = app.Services.GetRequiredKeyedService<IPersonPendingStore>(AAuthPersonServerBuilder.DefaultName);
+
+app.MapGet("/admin/pending/{id}", (string id,
+    [FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] IPersonPendingStore store) =>
+    store.Get(id) is { } entry ? Results.Ok(entry.Status.ToString()) : Results.NotFound());
+```
+
+Outside the `Development` environment, mapping a role that still uses an
+in-memory default (a pending store, the token inventory, or the mission store or
+log) logs a warning. That state is lost on restart and isn't shared across
+instances, so register durable implementations in production.
+
+### Startup validation
+
+The role options are validated at startup instead of through `required` members.
+A bad configuration fails `app.StartAsync()` with an `OptionsValidationException`.
+`MapAAuthPersonServer()` / `MapAAuthAccessServer()` fail the same way because they
+read the options. The exception joins every failure with `"; "`:
+
+- `Issuer` must be an absolute https URL (loopback http is allowed for development).
+- The role needs a signing key: add one to `SigningKeys` or set `KeyHandle`.
+- `InteractionPath` (PS) / `InteractionLoginPath` (AS) must not contain a query or fragment.
+- Each `Trust.AccessServers` (PS) / `Trust.PersonServers` (AS) `Allowed` entry must be an absolute https URL.
+- An Access Server must resolve an `IAccessPolicy`.
+
+### Binding from configuration
+
+Each role has an `IConfiguration` overload. The conventional sections are
+`AAuth:PersonServer`, `AAuth:AccessServer` and `AAuth:Resource`, exposed as the
+`ConfigurationSection` constant on each extension class. The optional
+`configure` callback runs after binding:
+
+```csharp
+builder.Services.AddSingleton<IKeyStore>(FileKeyStore.Default());
+builder.Services.AddAAuthPersonServer(
+    builder.Configuration.GetSection(AAuthPersonServerServiceCollectionExtensions.ConfigurationSection));
+builder.Services.AddAAuthResource(
+    builder.Configuration.GetSection(AAuthResourceServiceCollectionExtensions.ConfigurationSection),
+    options => options.Name = "Calendar");
+```
+
+```json
+{
+  "AAuth": {
+    "PersonServer": {
+      "Issuer": "https://ps.example",
+      "KeyHandle": "ps-signing-key",
+      "KeyId": "ps-1",
+      "MissionPath": "/mission",
+      "Trust": { "AccessServers": { "Allowed": [ "https://as.example" ] } }
+    }
+  }
+}
+```
+
+When `SigningKeys` is empty, `KeyHandle` loads the signing key from the
+registered `IKeyStore`. The key is published under `KeyId`, or under its JWK
+thumbprint when `KeyId` is unset. `AAuthResourceOptions` has the same `KeyHandle`
+/ `KeyId` pair.
+
+### Co-hosting several roles or instances
+
+By default a mapped role serves every request that reaches the app. When several
+roles or instances share one host, set `MatchIssuerHost = true` on each. Each
+instance then serves only requests whose `Host` matches its issuer's authority:
+
+```csharp
+builder.Services.AddAAuthPersonServer("tenant-a", options =>
+{
+    options.Issuer          = "https://ps-a.example";
+    options.SigningKeys     = new AAuthSigningKeySet("ps-a", psKey);
+    options.MatchIssuerHost = true;
+});
+builder.Services.AddAAuthPersonServer("tenant-b", options =>
+{
+    options.Issuer          = "https://ps-b.example";
+    options.SigningKeys     = new AAuthSigningKeySet("ps-b", psSigningKey);
+    options.MatchIssuerHost = true;
+}).UseClaimsAsserter(identityAsserter);
+
+var app = builder.Build();
+app.MapAAuthPersonServer("tenant-a");
+app.MapAAuthPersonServer("tenant-b");
+```
+
+### The server identity
+
+Each instance registers an `AAuth.Server.IAAuthServerIdentity` keyed by its name.
+It holds the `Issuer`, the well-known document name (`Dwk`), the `SigningKeys`
+and the `EgressPolicy`. `Url(path)` builds an absolute URL on the server.
+`CreateSignedClient()` returns an `HttpClient` that signs as the server
+(`jwks_uri` scheme, active key) without exposing the key:
+
+```csharp
+var ps = app.Services.GetRequiredKeyedService<IAAuthServerIdentity>(AAuthPersonServerBuilder.DefaultName);
+var consentUrl = ps.Url("/interaction"); // {Issuer}/interaction
+using var signedAsPs = ps.CreateSignedClient();
+var ownTokens = tokenVerifier.WithLocalIssuer(ps.Issuer, ps.SigningKeys);
+```
+
+To route the signed client through a custom transport, pass the inner handler
+and its `AAuthTransportContract` together:
+`CreateSignedClient(innerHandler, AAuthTransportContract.InProcessOnly)`.
+
+See [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver)
+and [Federated Access](../workflows/federated-access.md#access-server-side-code).
 

@@ -1319,6 +1319,11 @@ public class DeferredFederationTests
             accessBuilder.WebHost.UseTestServer();
             accessBuilder.Services.AddSingleton(metadata).AddSingleton(jwks).AddSingleton(new TokenVerifier())
                 .AddSingleton(new AAuthVerifier()).AddSingleton<IAccessPolicy>(policy).AddSingleton<IAccessPendingStore>(store);
+            accessBuilder.Services.AddAAuthAccessServer(configure: o =>
+            {
+                o.Issuer = AsIssuer;
+                o.SigningKeys = new AAuthSigningKeySet { ["key"] = asKey };
+            });
             var access = accessBuilder.Build();
             if (outcome == "unstructured-error") access.Use(async (context, next) =>
             {
@@ -1331,7 +1336,7 @@ public class DeferredFederationTests
                 if (context.Request.Path != "/token") { await next(); return; }
                 await context.Response.WriteAsJsonAsync(new { auth_token = "not.a.token" });
             });
-            access.MapAAuthAccessServer(new AAuthAccessServerOptions { Issuer = AsIssuer, SigningKeys = new AAuthSigningKeySet { ["key"] = asKey } });
+            access.MapAAuthAccessServer();
             var accessSessions = new BrowserConsentSessions("as-consent-tests", "test-person", isolatedDemoAccess: _ => true);
             access.MapMethods("/interaction/login", ["GET", "POST"], async (HttpContext context) =>
             {
@@ -1368,15 +1373,16 @@ public class DeferredFederationTests
                 .AddSingleton(new AccessServerClient(ps, metadata, new AuthTokenResponseValidator(metadata, jwks)));
             personBuilder.Services.AddAAuthGovernance();
             if (missionConsent is not null) personBuilder.Services.AddSingleton(missionConsent);
-            var person = personBuilder.Build();
-            person.MapAAuthPersonServer(new AAuthPersonServerOptions
+            personBuilder.Services.AddAAuthPersonServer(configure: o =>
             {
-                Issuer = PsIssuer,
-                ResourceInteractionSessions = new BrowserConsentSessions("resource-consent-tests", "test-person", isolatedDemoAccess: _ => true),
-                SigningKeys = new AAuthSigningKeySet { ["key"] = psKey },
-                TriageClarificationAsync = outcome == "local"
-                    ? (_, _, _) => Task.FromResult<ClarificationResponse?>(ClarificationResponse.Respond("mission context answers this")) : null,
+                o.Issuer = PsIssuer;
+                o.ResourceInteractionSessions = new BrowserConsentSessions("resource-consent-tests", "test-person", isolatedDemoAccess: _ => true);
+                o.SigningKeys = new AAuthSigningKeySet { ["key"] = psKey };
+                o.TriageClarificationAsync = outcome == "local"
+                    ? (_, _, _) => Task.FromResult<ClarificationResponse?>(ClarificationResponse.Respond("mission context answers this")) : null;
             });
+            var person = personBuilder.Build();
+            person.MapAAuthPersonServer();
             var sessions = new BrowserConsentSessions("consent-tests", "authenticated-demo-person", isolatedDemoAccess: _ => true);
             var personStore = person.Services.GetRequiredService<IPersonPendingStore>();
             person.MapMethods("/interaction", ["GET", "POST"], async (HttpContext context) =>

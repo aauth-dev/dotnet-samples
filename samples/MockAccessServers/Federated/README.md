@@ -45,8 +45,9 @@ evaluates policy and mints the auth token.
 
 The whole `POST /token` + `GET|POST /pending/{id}` pipeline (signature/token
 verification, the §Claims Required composition, deferred polling, minting)
-ships as the SDK host helper `MapAAuthAccessServer`; this sample only supplies
-configuration, the `IAccessPolicy`, and (for Keycloak) the browser-facing
+ships as the SDK host helper `MapAAuthAccessServer`, registered with
+`builder.Services.AddAAuthAccessServer(...)`; this sample only supplies
+configuration, the `IAccessPolicy` (`.UsePolicy(...)`), and (for Keycloak) the browser-facing
 `/interaction` endpoints.
 
 The auth token's `dwk = aauth-access.json` is what tells a resource the token
@@ -119,6 +120,9 @@ when the AP restarts). Run `make agent-reset` to clear it manually.
 ## Scope
 
 This sample wires the SDK host helper `MapAAuthAccessServer` to a pluggable
-policy seam (`IAccessPolicy`, an SDK type in `AAuth.Server`) with a `stub` and a
-Keycloak-backed interactive provider, plus the shared `IAccessPendingStore` that
-parks deferred (interaction / §Claims Required) decisions.
+policy seam (`IAccessPolicy`, an SDK type in `AAuth.Server`, registered with
+`.UsePolicy(...)` on the Access Server builder) with a `stub` and a
+Keycloak-backed interactive provider, plus the SDK's default in-memory
+`IAccessPendingStore` that parks deferred (interaction / §Claims Required)
+decisions; its `/interaction` endpoints inject it with
+`[FromKeyedServices(AAuthAccessServerBuilder.DefaultName)]`.

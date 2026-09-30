@@ -212,21 +212,29 @@ public class IssuanceBoundsTests
             builder.Services.AddSingleton(provider => new UpstreamTokenValidator(
                 provider.GetRequiredService<MetadataClient>(), provider.GetRequiredService<JwksClient>(),
                 provider.GetRequiredService<TokenVerifier>()));
-            var app = builder.Build();
             if (access)
-                app.MapAAuthAccessServer(new AAuthAccessServerOptions
+                builder.Services.AddAAuthAccessServer(configure: o =>
                 {
-                    EgressPolicy = TestEgress.Policy,
-                    Issuer = As, SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey },
-                    Trust = { PersonServers = { Allowed = new HashSet<string> { Ps } } }, TimeProvider = clock,
+                    o.EgressPolicy = TestEgress.Policy;
+                    o.Issuer = As;
+                    o.SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey };
+                    o.Trust.PersonServers.Allowed = new HashSet<string> { Ps };
+                    o.TimeProvider = clock;
                 });
             else
-                app.MapAAuthPersonServer(new AAuthPersonServerOptions
+                builder.Services.AddAAuthPersonServer(configure: o =>
                 {
-                    EgressPolicy = TestEgress.Policy,
-                    Issuer = Ps, SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey },
-                    Trust = { AccessServers = { Allowed = new HashSet<string>() } }, TimeProvider = clock,
+                    o.EgressPolicy = TestEgress.Policy;
+                    o.Issuer = Ps;
+                    o.SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey };
+                    o.Trust.AccessServers.Allowed = new HashSet<string>();
+                    o.TimeProvider = clock;
                 });
+            var app = builder.Build();
+            if (access)
+                app.MapAAuthAccessServer();
+            else
+                app.MapAAuthPersonServer();
             await app.StartAsync();
             return new IssuerFixture { App = app, Access = access, Clock = clock, IssuerKey = issuerKey,
                 PsKey = psKey, ApKey = apKey, ResourceKey = resourceKey };

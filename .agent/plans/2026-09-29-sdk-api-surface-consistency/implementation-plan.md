@@ -305,34 +305,34 @@ This is the highest-blast-radius server change.
 
 ### Definition of Done
 
-- [ ] `AddAAuthPersonServer` and `AddAAuthAccessServer` exist and bind from
+- [x] `AddAAuthPersonServer` and `AddAAuthAccessServer` exist and bind from
       `AAuth:PersonServer` and `AAuth:AccessServer`. `ValidateOnStart` fails
       fast on a missing issuer, a missing key, or (AS only) a missing
       `IAccessPolicy`.
-- [ ] `MapAAuthPersonServer(name?)` / `MapAAuthAccessServer(name?)` take no
+- [x] `MapAAuthPersonServer(name?)` / `MapAAuthAccessServer(name?)` take no
       options instance.
-- [ ] `AddAAuthFederation` is deleted; federation is enabled through the PS
+- [x] `AddAAuthFederation` is deleted; federation is enabled through the PS
       builder.
-- [ ] Tests:
-  - [ ] `PersonServerRegistrationTests`:
+- [x] Tests:
+  - [x] `PersonServerRegistrationTests`:
     - defaults resolved;
     - each seam replaceable through the builder helper and through DI;
     - validation failures;
     - the in-memory warning appears outside Development.
-  - [ ] `CoHostedRolesTests`: PS + AS + resource in one host, with two named
+  - [x] `CoHostedRolesTests`: PS + AS + resource in one host, with two named
         PS instances.
-  - [ ] `AccessServerRegistrationTests`: missing-policy error, pending-store
+  - [x] `AccessServerRegistrationTests`: missing-policy error, pending-store
         default.
-  - [ ] `ResourceRegistrationTests`: `TokenVerifier` registered with the role
+  - [x] `ResourceRegistrationTests`: `TokenVerifier` registered with the role
         egress policy.
-  - [ ] Configuration binding tests for each role section.
-- [ ] Sample PS/AS/resource `Program.cs` files contain no
+  - [x] Configuration binding tests for each role section.
+- [x] Sample PS/AS/resource `Program.cs` files contain no
       `AddSingleton<IPersonPendingStore|IIdentityClaimsAsserter|IAccessPendingStore>`
       unless they are overriding a default (each override commented), and no
       `new TokenVerifier`.
-- [ ] Grep evidence: `psIssuer`/`asIssuer` appear only where configuration is
+- [x] Grep evidence: `psIssuer`/`asIssuer` appear only where configuration is
       read.
-- [ ] Gates pass, including the Keycloak profile.
+- [x] Gates pass, including the Keycloak profile.
 
 ## Phase 5 — Server feature seams (F-S3, F-S4, F-S5; Q10, Q12)
 

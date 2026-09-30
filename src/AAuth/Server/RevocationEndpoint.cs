@@ -29,13 +29,21 @@ public static class RevocationEndpoint
         AAuth.Crypto.AAuthSigningKeySet signingKeys, string path,
         AAuth.Discovery.AAuthEgressPolicy egressPolicy, TimeProvider clock, Action<AAuthRevocationOptions>? configure,
         IJtiStore? inventory = null)
+        => MapIssuerRevocationCore(app, app, static _ => true, issuer, dwk, signingKeys, path, egressPolicy, clock,
+            configure, inventory ?? app.Services.GetService<IJtiStore>() ?? new InMemoryJtiStore(clock));
+
+    // `routes` and `inScope` confine the endpoint and its middleware to one role instance's host.
+    internal static IJtiStore MapIssuerRevocationCore(WebApplication app, IEndpointRouteBuilder routes,
+        Func<HttpContext, bool> inScope, string issuer, string dwk,
+        AAuth.Crypto.AAuthSigningKeySet signingKeys, string path,
+        AAuth.Discovery.AAuthEgressPolicy egressPolicy, TimeProvider clock, Action<AAuthRevocationOptions>? configure,
+        IJtiStore inventory)
     {
-        inventory ??= app.Services.GetService<IJtiStore>() ?? new InMemoryJtiStore(clock);
         var metadata = app.Services.GetRequiredService<AAuth.Discovery.MetadataClient>();
         var client = app.Services.GetService<RevocationClient>();
         if (client is null)
         {
-            var signing = new ActiveKeySigningHandler(signingKeys, issuer, dwk)
+            var signing = new AAuth.HttpSig.AAuthSigningKeySetHandler(signingKeys, issuer, dwk)
             {
                 InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(egressPolicy),
             };
@@ -46,13 +54,13 @@ public static class RevocationEndpoint
         }
         app.Use(async (context, next) =>
         {
-            context.Items[AAuthVerificationMiddleware.TokenStoreItemKey] = inventory;
+            if (inScope(context)) context.Items[AAuthVerificationMiddleware.TokenStoreItemKey] = inventory;
             await next();
         });
         var jwks = app.Services.GetRequiredService<AAuth.Discovery.JwksClient>();
         var resolver = app.Services.GetService<AAuth.HttpSig.ISignatureKeyResolver>()
             ?? new AAuth.HttpSig.DefaultSignatureKeyResolver(jwks, metadata);
-        app.UseWhen(context => context.Request.Path == path, branch => branch.Use(next =>
+        app.UseWhen(context => inScope(context) && context.Request.Path == path, branch => branch.Use(next =>
             new AAuthVerificationMiddleware(next, app.Services.GetService<AAuth.HttpSig.AAuthVerifier>() ?? new(),
                 resolver, metadata, jwks, new AAuthVerificationOptions
                 {
@@ -61,7 +69,7 @@ public static class RevocationEndpoint
                     TimeProvider = clock,
                 }).InvokeAsync));
         // Deferred-revocation polls are bodyless signed GETs.
-        app.UseWhen(context => context.Request.Path.StartsWithSegments(path.TrimEnd('/') + "/pending"), branch => branch.Use(next =>
+        app.UseWhen(context => inScope(context) && context.Request.Path.StartsWithSegments(path.TrimEnd('/') + "/pending"), branch => branch.Use(next =>
             new AAuthVerificationMiddleware(next, app.Services.GetService<AAuth.HttpSig.AAuthVerifier>() ?? new(),
                 resolver, metadata, jwks, new AAuthVerificationOptions
                 {
@@ -79,7 +87,7 @@ public static class RevocationEndpoint
             return (await client.RevokeAsync(endpointUri, grant.Token.TokenId, grant.ExpiresAt, cancellationToken)).Failure;
         }
 
-        app.MapAAuthRevocationEndpoint(inventory, options =>
+        routes.MapAAuthRevocationEndpoint(inventory, options =>
         {
             options.IsAcceptedIssuer = AAuthTrust.Any;
             options.Issuer = issuer;
@@ -315,20 +323,5 @@ public static class RevocationEndpoint
         if (!outcomes.TryGetValue(recipient, out var current) || current is null
             || error == RevocationDownstreamError.RevocationUnavailable)
             outcomes[recipient] = error ?? current;
-    }
-
-    // Signs each downstream revocation with the issuer's key set's active key at send
-    // time, so key rotation reaches outbound revocations without a restart.
-    private sealed class ActiveKeySigningHandler(AAuth.Crypto.AAuthSigningKeySet keys, string issuer, string dwk)
-        : System.Net.Http.DelegatingHandler
-    {
-        protected override async Task<System.Net.Http.HttpResponseMessage> SendAsync(
-            System.Net.Http.HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            var (kid, signer) = keys.Active;
-            await new AAuth.HttpSig.AAuthSigningHandler(signer, new AAuth.HttpSig.JwksUriSignatureKeyProvider(issuer, dwk, kid))
-                .SignAsync(request, cancellationToken).ConfigureAwait(false);
-            return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        }
     }
 }

@@ -1,4 +1,5 @@
 using AAuth.Person;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MockPersonServer;
 
@@ -16,7 +17,8 @@ public enum ConsentOutcome
 /// The one place a PS consent decision mutates state (Q15). The per-request link
 /// (<c>/interaction/approve|deny</c>) and the dashboard both decide through it.
 /// </summary>
-public sealed class PersonConsentDecisions(ConsentStore consent, IIdentityClaimsAsserter asserter, ConsentRegistry registry)
+public sealed class PersonConsentDecisions(ConsentStore consent,
+    [FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] IIdentityClaimsAsserter asserter, ConsentRegistry registry)
 {
     /// <summary>Decide a mission-governance request. The caller holds the entry's lifecycle gate.</summary>
     public ConsentOutcome ApplyHeld(MissionPendingEntry entry, bool approve, ConsentDecider by)

@@ -36,13 +36,9 @@ var builder = WebApplication.CreateBuilder(args);
 // the issuer URL through `AAuth:Issuer`; default matches launchSettings
 // (http://localhost:5500).
 // -----------------------------------------------------------------------
-var asKey = AAuthKey.Generate();
 const string AsKid = "as-1";
 const string AsScope = "wallet.read";
 var asIssuer = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5500";
-ConsentHtml.Authority = Uri.TryCreate(asIssuer, UriKind.Absolute, out var asIssuerUri)
-    ? asIssuerUri.Authority
-    : asIssuer;
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 
 // Person Servers this AS will broker for. The PS authenticates to the AS
@@ -53,15 +49,38 @@ var trustedPersonServers = builder.Configuration
     .GetSection("MockAccessServer:TrustedPersonServers")
     .Get<string[]>() ?? ["http://localhost:5100"];
 
-builder.Services.AddSingleton(asKey);
 builder.Services.AddSingleton(new AAuthVerifier
 {
     MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
 });
-builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = SampleEgress.Policy });
 // Shared discovery clients (MetadataClient + JwksClient) with a pooled handler;
 // no manual HttpClient wiring.
 builder.Services.AddAAuthDiscovery(options => options.EgressPolicy = SampleEgress.Policy);
+
+// -----------------------------------------------------------------------
+// Access Server registration. MapAAuthAccessServer (below) publishes
+// /.well-known/aauth-access.json + JWKS, adds request-signature verification
+// (excluding /.well-known and the browser-facing /interaction endpoints), and
+// maps POST /token + GET|POST /pending/{id}. Deferred decisions are parked in
+// the SDK's default in-memory pending store, shared with this sample's
+// interaction endpoints while the user completes an interactive Keycloak
+// login/consent round-trip (and across the §Claims Required push).
+// -----------------------------------------------------------------------
+var accessServer = builder.Services.AddAAuthAccessServer(configure: options =>
+    {
+        options.EgressPolicy = SampleEgress.Policy;
+        options.Issuer = asIssuer;
+        options.SigningKeys = new AAuthSigningKeySet(AsKid, AAuthKey.Generate());
+        options.DefaultScope = AsScope;
+        options.InteractionLoginPath = "/interaction/login";
+        // Demo convention: an agent whose id starts with `aauth:demo@` is treated
+        // as holding the admin role. A production AS would receive the principal's
+        // directory membership via the PS's §Claims Required push.
+        options.DeriveAgentClaims = agentId => IsAdminAgent(agentId)
+            ? new JsonObject { ["roles"] = new JsonArray(StubAccessPolicy.AdminRole) }
+            : null;
+    })
+    .WithTrust(trust => trust.PersonServers.Allowed = new HashSet<string>(trustedPersonServers));
 
 // -----------------------------------------------------------------------
 // Policy Decision Point (S3). The AAuth crypto stays in the SDK helper; only
@@ -84,15 +103,14 @@ switch (policyProvider)
             .GetSection("AccessServer:RequireClaims").Get<string[]>() ?? [];
         var stubRequireConsent = builder.Configuration
             .GetValue("AccessServer:RequireConsent", false);
-        builder.Services.AddSingleton<IAccessPolicy>(
-            new StubAccessPolicy(stubRequiredClaims, stubRequireConsent, walletRules));
+        accessServer.UsePolicy(new StubAccessPolicy(stubRequiredClaims, stubRequireConsent, walletRules));
         break;
     case "keycloak":
         var keycloakOptions = new KeycloakOptions();
         builder.Configuration.GetSection("AccessServer:Keycloak").Bind(keycloakOptions);
         builder.Services.AddSingleton(keycloakOptions);
         builder.Services.AddHttpClient("keycloak");
-        builder.Services.AddSingleton<IAccessPolicy>(sp => new KeycloakAccessPolicy(
+        accessServer.UsePolicy(sp => new KeycloakAccessPolicy(
             sp.GetRequiredService<IHttpClientFactory>().CreateClient("keycloak"),
             sp.GetRequiredService<KeycloakOptions>(), walletRules));
         break;
@@ -101,38 +119,15 @@ switch (policyProvider)
             $"Unknown AccessServer:PolicyProvider '{policyProvider}'. Expected 'stub' or 'keycloak'.");
 }
 
-// Parks in-flight federated decisions while the user completes an interactive
-// Keycloak login/consent round-trip (and across the §Claims Required push).
-// Shared between the SDK helper and this sample's interaction endpoints.
-builder.Services.AddSingleton<IAccessPendingStore, InMemoryAccessPendingStore>();
-
 var app = builder.Build();
+var asIdentity = app.Services.GetRequiredKeyedService<IAAuthServerIdentity>(AAuthAccessServerBuilder.DefaultName);
+ConsentHtml.Authority = new Uri(asIdentity.Issuer).Authority;
 var browserConsent = new BrowserConsentSessions("AAuth.Federated.Consent",
     policyProvider == "stub" && builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-federated-demo" : null);
 
-// -----------------------------------------------------------------------
-// Map the whole AS pipeline in one call (§AS Token Endpoint): publishes
-// /.well-known/aauth-access.json + JWKS, adds request-signature verification
-// (excluding /.well-known and the browser-facing /interaction endpoints), and
-// maps POST /token + GET|POST /pending/{id}. Policy decisions come from the
-// configured IAccessPolicy; deferred decisions are parked in the shared
-// IAccessPendingStore.
-// -----------------------------------------------------------------------
-app.MapAAuthAccessServer(new AAuthAccessServerOptions
-{
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = asIssuer,
-    SigningKeys = new AAuthSigningKeySet { [AsKid] = asKey },
-    DefaultScope = AsScope,
-    Trust = { PersonServers = { Allowed = new HashSet<string>(trustedPersonServers) } },
-    InteractionLoginPath = "/interaction/login",
-    // Demo convention: an agent whose id starts with `aauth:demo@` is treated
-    // as holding the admin role. A production AS would receive the principal's
-    // directory membership via the PS's §Claims Required push.
-    DeriveAgentClaims = agentId => IsAdminAgent(agentId)
-        ? new JsonObject { ["roles"] = new JsonArray(StubAccessPolicy.AdminRole) }
-        : null,
-});
+// Map the whole AS pipeline in one call (§AS Token Endpoint); policy decisions
+// come from the configured IAccessPolicy.
+app.MapAAuthAccessServer();
 
 // -----------------------------------------------------------------------
 // GET /interaction/login?code={id} — browser entry point.
@@ -146,9 +141,10 @@ app.MapAAuthAccessServer(new AAuthAccessServerOptions
 //
 // Excluded from AAuth verification (no signature; it is the user's browser).
 // -----------------------------------------------------------------------
-app.MapMethods("/interaction/login", ["GET", "POST"], async (HttpContext ctx) =>
+app.MapMethods("/interaction/login", ["GET", "POST"], async (HttpContext ctx,
+    [FromKeyedServices(AAuthAccessServerBuilder.DefaultName)] IAccessPendingStore pending,
+    [FromKeyedServices(AAuthAccessServerBuilder.DefaultName)] IAccessPolicy policy) =>
 {
-    var pending = app.Services.GetRequiredService<IAccessPendingStore>();
     var entered = await browserConsent.EnterAsync(ctx, code => pending.GetByCode(code) is { } candidate
         ? new BrowserPendingRequest(candidate.Id, candidate.PendingExpiresAt, candidate.Browser, candidate.Lifecycle) : null,
         externalLogin: policyProvider == "keycloak");
@@ -163,9 +159,9 @@ app.MapMethods("/interaction/login", ["GET", "POST"], async (HttpContext ctx) =>
     }
 
     // Interactive (Keycloak) policy: hand off to the OIDC provider.
-    if (app.Services.GetRequiredService<IAccessPolicy>() is IInteractiveAccessPolicy interactive)
+    if (policy is IInteractiveAccessPolicy interactive)
     {
-        var redirectUri = $"{asIssuer.TrimEnd('/')}/interaction/callback";
+        var redirectUri = asIdentity.Url("/interaction/callback");
         return Results.Redirect(interactive.BuildAuthorizationUrl(entered.Decision!, redirectUri));
     }
 
@@ -180,10 +176,10 @@ app.MapMethods("/interaction/login", ["GET", "POST"], async (HttpContext ctx) =>
 // Flips the pending entry to Allowed so the agent's next poll mints the
 // four-party auth token. Excluded from AAuth verification (browser form).
 // -----------------------------------------------------------------------
-app.MapPost("/interaction/approve", async (HttpContext ctx) =>
+app.MapPost("/interaction/approve", async (HttpContext ctx,
+    [FromKeyedServices(AAuthAccessServerBuilder.DefaultName)] IAccessPendingStore pending) =>
 {
     if (policyProvider != "stub") return AAuthProblemDetails.Create("denied", statusCode: 403);
-    var pending = app.Services.GetRequiredService<IAccessPendingStore>();
     var decision = await browserConsent.DecideAsync(ctx);
     if (decision.Error is not null) return decision.Error;
     var code = decision.Decision!.Id;
@@ -213,10 +209,10 @@ app.MapPost("/interaction/approve", async (HttpContext ctx) =>
 // POST /interaction/deny — the stub AS consent screen's Deny button. Marks
 // the pending entry Denied so the agent's next poll receives 403 denied.
 // -----------------------------------------------------------------------
-app.MapPost("/interaction/deny", async (HttpContext ctx) =>
+app.MapPost("/interaction/deny", async (HttpContext ctx,
+    [FromKeyedServices(AAuthAccessServerBuilder.DefaultName)] IAccessPendingStore pending) =>
 {
     if (policyProvider != "stub") return AAuthProblemDetails.Create("denied", statusCode: 403);
-    var pending = app.Services.GetRequiredService<IAccessPendingStore>();
     var decision = await browserConsent.DecideAsync(ctx);
     if (decision.Error is not null) return decision.Error;
     var code = decision.Decision!.Id;
@@ -252,12 +248,13 @@ app.MapPost("/interaction/deny", async (HttpContext ctx) =>
 // the entry into §Claims Required so the PS pushes the attributes on the same
 // pending URL.
 // -----------------------------------------------------------------------
-app.MapGet("/interaction/callback", async (HttpContext ctx, string? code, string? state, string? error) =>
+app.MapGet("/interaction/callback", async (HttpContext ctx, string? code, string? state, string? error,
+    [FromKeyedServices(AAuthAccessServerBuilder.DefaultName)] IAccessPendingStore pending,
+    [FromKeyedServices(AAuthAccessServerBuilder.DefaultName)] IAccessPolicy policy) =>
 {
     if (policyProvider != "keycloak") return AAuthProblemDetails.Create("denied", statusCode: 403);
     var session = await browserConsent.DecideAsync(ctx, externalLogin: true, externalState: state);
     if (session.Error is not null) return session.Error;
-    var pending = app.Services.GetRequiredService<IAccessPendingStore>();
     var entry = pending.Get(session.Decision!.Id);
     if (entry is null)
     {
@@ -280,12 +277,12 @@ app.MapGet("/interaction/callback", async (HttpContext ctx, string? code, string
             return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing code", statusCode: StatusCodes.Status400BadRequest);
         }
 
-        if (app.Services.GetRequiredService<IAccessPolicy>() is not IInteractiveAccessPolicy interactive)
+        if (policy is not IInteractiveAccessPolicy interactive)
         {
             return AAuth.Server.AAuthProblemDetails.Create("interaction_unsupported", "configured policy is not interactive", statusCode: StatusCodes.Status400BadRequest);
         }
 
-        var redirectUri = $"{asIssuer.TrimEnd('/')}/interaction/callback";
+        var redirectUri = asIdentity.Url("/interaction/callback");
         var request = new AccessPolicyRequest
         {
             ResourceUrl = entry.ResourceUrl,

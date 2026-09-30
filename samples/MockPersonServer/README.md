@@ -8,19 +8,22 @@ A minimal AAuth Person Server for end-to-end demos and integration tests.
 
 - Serves PS discovery metadata at `/.well-known/aauth-person.json` (with `auth_token_endpoint`).
 - Serves its signing JWKS at `/.well-known/jwks.json`.
-- Maps the token endpoint, the deferred-poll endpoint, and PS metadata in one
-  call — [`app.MapAAuthPersonServer(...)`](../../docs/server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+- Registers the Person Server with `builder.Services.AddAAuthPersonServer(...)` and
+  maps the token endpoint, the deferred-poll endpoint, and PS metadata in one
+  call — [`app.MapAAuthPersonServer()`](../../docs/server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
   The SDK owns the protocol (RFC 9421 signature verification, `resource_token`
   verification, the three-/four-party mint, PS→AS federation, and the mission
   three-gate + the normative `requirement=clarification` round-trip); this sample
-  supplies only the **decisions** through DI seams:
-  - `IIdentityClaimsAsserter` (`SampleIdentityClaimsAsserter`) — the directed
+  supplies only the **decisions**, on the Person Server builder and through DI seams:
+  - `UseClaimsAsserter` (`SampleIdentityClaimsAsserter`) — the directed
     identity, plus the non-mission `ConsentStore` gate.
   - `IMissionTokenConsent` (`ScriptMissionTokenConsent`) — the out-of-scope
     mission decision (grant / deny / clarify / hold), driven by the scripted
     `MissionConsentScript` (a stand-in for a live consent screen, or an LLM).
-  - `IPersonPendingStore` (`ConsentBridgePersonPendingStore`) — bridges the demo
-    `ConsentStore` into the SDK's id-keyed pending model.
+  - `UsePendingStore` (`ConsentBridgePersonPendingStore`) — bridges the demo
+    `ConsentStore` into the SDK's id-keyed pending model. The sample's own
+    consent pages inject it with
+    `[FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] IPersonPendingStore`.
 - On `POST /token`, the mapper validates the signature, reads `resource_token`,
   and returns an `aa-auth+jwt` bound to the agent's confirmation key.
 - When started with `RequireConsent=true`, the exchange defers instead:
@@ -100,15 +103,17 @@ the AS named in the verified resource token's `aud`).
 > collapsed mint and the four-party federation routing — are packaged by
 > [`MapAAuthPersonServer`](../../docs/server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
 > This sample adopts that helper and injects its policy through the
-> `IIdentityClaimsAsserter` / `IMissionTokenConsent` / `IPersonPendingStore`
-> seams, while keeping its own browser consent + mission screens (the SDK leaves
+> `UseClaimsAsserter` / `UsePendingStore` builder seams and the
+> `IMissionTokenConsent` DI seam, while keeping its own browser consent + mission
+> screens (the SDK leaves
 > *how the PS authenticates the approving party* out of scope).
 
 ## Agent governance (missions)
 
 Beyond minting tokens, this PS doubles as the **contextual policy point** for
 the optional, orthogonal agent-governance layer (§Agent Governance). Governance
-is wired with a single call — `builder.Services.AddAAuthGovernance()` — which
+is wired with a single call — `.WithGovernance()` on the Person Server builder
+(it calls `AddAAuthGovernance()`) — which
 registers an in-memory mission store and log; the sample then supplies the
 policy and user-channel seams (`IPermissionDecider`, `IAuditSink`,
 `IInteractionRelay`, and `IMissionTokenConsent` for the out-of-scope token gate)

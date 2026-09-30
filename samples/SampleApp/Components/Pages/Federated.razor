@@ -82,15 +82,16 @@ var response = await client.GetAsync($"{resource}/wallet");</code></pre>
 // aud == PS: direct grant; admitted AS audience: signed federation.
 // The signed PS-to-AS body carries resource_token and agent_token.
 // Deferred AS consent/clarification is relayed through PS pending state.
-builder.Services.AddSingleton&lt;IPersonPendingStore, InMemoryPersonPendingStore&gt;();
+builder.Services.AddAAuthPersonServer(configure: options =&gt;
+    {
+        options.EgressPolicy = SampleEgress.Policy;
+        options.Issuer = psIssuer;
+        options.SigningKeys = new AAuthSigningKeySet(PsKid, psKey);
+    })
+    .WithTrust(trust =&gt; trust.AccessServers.Allowed = new HashSet&lt;string&gt;(trustedAccessServers))
+    .WithFederation();
 var app = builder.Build();
-app.MapAAuthPersonServer(new AAuthPersonServerOptions
-{
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = psIssuer,
-    SigningKeys = new AAuthSigningKeySet(PsKid, psKey),
-    Trust = { AccessServers = { Allowed = new HashSet&lt;string&gt;(trustedAccessServers) } },
-});</code></pre>
+app.MapAAuthPersonServer();</code></pre>
 </div>
 </div>
 

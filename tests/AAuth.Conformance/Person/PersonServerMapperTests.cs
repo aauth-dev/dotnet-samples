@@ -74,17 +74,18 @@ public class PersonServerMapperTests
             builder.Services.AddSingleton<IMissionTokenConsent>(consent);
         }
         builder.Services.AddRouting();
+        var personServer = builder.Services.AddAAuthPersonServer(configure: o =>
+        {
+            o.EgressPolicy = new AAuthEgressPolicy(dnsResolver: new PublicDns());
+            o.Issuer = PsIssuer;
+            o.SigningKeys = new AAuthSigningKeySet { [PsKid] = PsKey };
+            o.Trust.AccessServers.Allowed = new System.Collections.Generic.HashSet<string> { AsIssuer };
+            o.ResourceInteractionSessions = demoResource ? new AAuth.Server.BrowserConsentSessions("resource-tests", "demo-person", isolatedDemoAccess: _ => true) : null;
+        });
+        if (inventory is not null) personServer.UseTokenInventory(inventory);
 
         var app = builder.Build();
-        app.MapAAuthPersonServer(new AAuthPersonServerOptions
-        {
-            EgressPolicy = new AAuthEgressPolicy(dnsResolver: new PublicDns()),
-            Issuer = PsIssuer,
-            SigningKeys = new AAuthSigningKeySet { [PsKid] = PsKey },
-            Trust = { AccessServers = { Allowed = new System.Collections.Generic.HashSet<string> { AsIssuer } } },
-            ResourceInteractionSessions = demoResource ? new AAuth.Server.BrowserConsentSessions("resource-tests", "demo-person", isolatedDemoAccess: _ => true) : null,
-            TokenInventory = inventory,
-        });
+        app.MapAAuthPersonServer();
         await app.StartAsync();
         await app.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
             S256, PsIssuer, AgentId, new byte[] { 1, 2, 3 }));

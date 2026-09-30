@@ -61,7 +61,7 @@ var discoveryMetadata = R3Metadata.AddVocabularies(new JsonObject(), new Diction
 });
 var authoritativeOperations = supportedOperations.Select(R3OperationIdentity.OpenApi).ToArray();
 
-// Resource DI via the one-call helper: registers the AAuth verifier, the shared
+// Resource DI via the one-call helper: registers the AAuth verifier, the token verifier, the shared
 // discovery clients (MetadataClient + JwksClient) behind an SDK-owned pooled handler,
 // and the well-known metadata options — no manual HttpClient wiring (2026-06-27
 // server-api-surface). R3's r3_vocabularies ride the
@@ -83,7 +83,6 @@ builder.Services.AddAAuthResource(o =>
         ["r3_vocabularies"] = discoveryMetadata["r3_vocabularies"]!.DeepClone(),
     };
 });
-builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = SampleEgress.Policy });
 builder.Services.AddSingleton<R3ProposalStore>();
 builder.Services.AddAAuthEvents();
 

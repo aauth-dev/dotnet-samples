@@ -28,13 +28,28 @@ public sealed class AAuthAccessServerOptions
     public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
     /// <summary>HTTPS URL of this Access Server (<c>iss</c> of minted auth tokens).</summary>
-    public required string Issuer { get; set; }
+    public string Issuer { get; set; } = "";
 
     /// <summary>
-    /// The AS signing keys, keyed by <c>kid</c>. Published at the JWKS and used
-    /// to sign minted auth tokens (the first entry signs).
+    /// The AS signing keys, keyed by <c>kid</c>. Published at the JWKS; minted tokens are
+    /// signed with the active key.
     /// </summary>
-    public required AAuthSigningKeySet SigningKeys { get; set; }
+    public AAuthSigningKeySet SigningKeys { get; set; } = new();
+
+    /// <summary>
+    /// A handle in the registered <see cref="IKeyStore"/> to load the signing key from when
+    /// <see cref="SigningKeys"/> is empty.
+    /// </summary>
+    public string? KeyHandle { get; set; }
+
+    /// <summary>The <c>kid</c> for the key loaded from <see cref="KeyHandle"/> (default: its thumbprint).</summary>
+    public string? KeyId { get; set; }
+
+    /// <summary>
+    /// Serve this instance only for requests whose <c>Host</c> is the issuer's authority.
+    /// Required when several AAuth roles or instances share one host.
+    /// </summary>
+    public bool MatchIssuerHost { get; set; }
 
     /// <summary>The token endpoint path. Default <c>/token</c>.</summary>
     public string TokenPath { get; set; } = "/token";
@@ -94,57 +109,30 @@ public static class AAuthAccessServerEndpoints
     /// <see cref="JwksClient"/>, <see cref="IAccessPolicy"/>, and
     /// <see cref="IAccessPendingStore"/> from DI.
     /// </summary>
-    public static WebApplication MapAAuthAccessServer(
-        this WebApplication app,
-        AAuthAccessServerOptions options)
+    public static WebApplication MapAAuthAccessServer(this WebApplication app, string? name = null)
     {
         ArgumentNullException.ThrowIfNull(app);
-        ArgumentNullException.ThrowIfNull(options);
-
-        if (options.SigningKeys.Count == 0)
-        {
-            throw new InvalidOperationException("AAuthAccessServerOptions.SigningKeys must contain at least one key.");
-        }
-
-        // Fail fast on misconfigured spec-constrained URLs/paths: the issuer is the
-        // auth-token `iss`/`aud` anchor (MUST be absolute https), the login path is
-        // appended with `?code=…` (so it carries no query/fragment), and each trusted
-        // Person Server is a four-party anchor (MUST be absolute https).
-        if (!AAuth.AAuthUrl.IsHttpsOrLoopback(options.Issuer, options.EgressPolicy))
-        {
-            throw new InvalidOperationException(
-                "AAuthAccessServerOptions.Issuer must be an absolute https URL (loopback http allowed for development).");
-        }
-        if (options.InteractionLoginPath is { } loginPathRaw
-            && (loginPathRaw.Contains('?') || loginPathRaw.Contains('#')))
-        {
-            throw new InvalidOperationException(
-                "AAuthAccessServerOptions.InteractionLoginPath must not contain a query or fragment.");
-        }
-        foreach (var trustedPs in options.Trust.PersonServers.Allowed ?? new HashSet<string>())
-        {
-            if (!AAuth.AAuthUrl.IsHttpsOrLoopback(trustedPs, options.EgressPolicy))
-            {
-                throw new InvalidOperationException(
-                    $"AAuthAccessServerOptions.Trust.PersonServers entry '{trustedPs}' must be an absolute https URL " +
-                    "(loopback http allowed for development).");
-            }
-        }
-
-        _ = options.SigningKeys.Active;
+        name ??= AAuthAccessServerBuilder.DefaultName;
+        var identity = app.Services.GetKeyedService<IAAuthServerIdentity>(name)
+            ?? throw new InvalidOperationException($"No Access Server named '{name}' is registered; call AddAAuthAccessServer first.");
+        var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<AAuthAccessServerOptions>>().Get(name);
+        _ = identity.SigningKeys.Active;
 
         var issuer = options.Issuer;
-        var inventory = app.MapAAuthIssuerRevocation(issuer, AuthTokenBuilder.AccessDwk,
-            options.SigningKeys, options.RevocationPath, options.EgressPolicy, options.TimeProvider, options.ConfigureRevocation);
+        var (routes, inScope) = AAuthServerRoles.Scope(app, issuer, options.MatchIssuerHost);
+        var inventory = RevocationEndpoint.MapIssuerRevocationCore(app, routes, inScope, issuer, AuthTokenBuilder.AccessDwk,
+            options.SigningKeys, options.RevocationPath, options.EgressPolicy, options.TimeProvider, options.ConfigureRevocation,
+            app.Services.GetRequiredKeyedService<IJtiStore>(name));
         var loginPath = "/" + options.InteractionLoginPath.Trim('/');
         var interactionPrefix = loginPath.Split('/', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } seg
             ? "/" + seg[0]
             : loginPath;
+        var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AAuth.AccessServer");
 
         // Startup footgun guard (diagnostics only): warn when brokering is open by
         // default. Suppressed by any explicit policy (including AAuthTrust.Any).
         TrustConfigDiagnostics.WarnIfOpenFederation(
-            app.Services.GetService<ILoggerFactory>()?.CreateLogger("AAuth.AccessServer"),
+            logger,
             trustConfigured: options.Trust.IsConfigured(AAuthTrustedParty.PersonServer, app.Services),
             "MapAAuthAccessServer",
             "this Access Server brokers for any verifiable Person Server because no Trust.PersonServers " +
@@ -152,7 +140,7 @@ public static class AAuthAccessServerEndpoints
             "restrict, or assign AAuthTrust.Any to declare intentional open brokering and silence this warning.");
 
         // 1. Well-known metadata + JWKS (reachable without a signature).
-        WellKnownEndpoints.MapAAuthAccessServerWellKnown(app, new AAuthAccessServerMetadataOptions
+        WellKnownEndpoints.MapAAuthAccessServerWellKnown(routes, new AAuthAccessServerMetadataOptions
         {
             EgressPolicy = options.EgressPolicy,
             Issuer = options.Issuer,
@@ -165,16 +153,18 @@ public static class AAuthAccessServerEndpoints
         //    with verified metadata discovery; the browser-facing interaction
         //    endpoints carry no signature, so exclude them.
         app.UseWhen(
-            ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
+            ctx => inScope(ctx)
+                && !ctx.Request.Path.StartsWithSegments("/.well-known")
                 && !ctx.Request.Path.StartsWithSegments(options.RevocationPath)
                 && !ctx.Request.Path.StartsWithSegments(interactionPrefix),
             branch => branch.UseAAuthVerification(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy, AcceptedSchemes = ["jwks_uri"], RequireBodyCoverage = true, TimeProvider = options.TimeProvider }));
 
-        var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
+        var tokenVerifier = app.Services.GetRequiredKeyedService<TokenVerifier>(name);
         var metadataClient = app.Services.GetRequiredService<MetadataClient>();
         var jwksClient = app.Services.GetRequiredService<JwksClient>();
-        var policy = app.Services.GetRequiredService<IAccessPolicy>();
-        var pending = app.Services.GetRequiredService<IAccessPendingStore>();
+        var policy = app.Services.GetRequiredKeyedService<IAccessPolicy>(name);
+        var pending = app.Services.GetRequiredKeyedService<IAccessPendingStore>(name);
+        AAuthServerRoles.WarnOnInMemoryDefaults(app.Services, logger, "Access Server", name, pending, inventory);
 
         bool IsVerifiedPersonServer(HttpContext context)
         {
@@ -258,7 +248,7 @@ public static class AAuthAccessServerEndpoints
         // -------------------------------------------------------------------
         // POST {TokenPath} — the AS token endpoint (§PS-to-AS Token Request).
         // -------------------------------------------------------------------
-        app.MapPost(options.TokenPath, async (HttpContext ctx) =>
+        routes.MapPost(options.TokenPath, async (HttpContext ctx) =>
         {
             var parsed = ctx.GetAAuthParsedKey()!;
             // §PS-AS Federation: the PS is the only entity that calls AS token endpoints.
@@ -448,7 +438,7 @@ public static class AAuthAccessServerEndpoints
         // -------------------------------------------------------------------
         // GET {PendingPathPrefix}/{id} — the PS polls the deferred verdict.
         // -------------------------------------------------------------------
-        app.MapGet($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
+        routes.MapGet($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
         {
             var entry = pending.Get(id);
             if (entry is null)
@@ -514,7 +504,7 @@ public static class AAuthAccessServerEndpoints
         // POST {PendingPathPrefix}/{id} — the §Claims Required push. The PS
         // POSTs (signed) the requested identity claims; never `sub`.
         // -------------------------------------------------------------------
-        app.MapPost($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
+        routes.MapPost($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
         {
             var entry = pending.Get(id);
             if (entry is null)
@@ -672,7 +662,7 @@ public static class AAuthAccessServerEndpoints
             });
         });
 
-        app.MapDelete($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
+        routes.MapDelete($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
         {
             var entry = pending.Get(id);
             if (entry is null) return DeferredState.Missing(id);

@@ -222,6 +222,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | Type | Purpose |
 |------|---------|
 | `RevocationEndpoint` | Token revocation endpoint |
+| `IAAuthServerIdentity` | A registered PS/AS instance's issuer, signing keys and egress policy (keyed by instance name); `Url(path)` and `CreateSignedClient()` sign as the server |
 | `IJtiStore` / `InMemoryJtiStore` | Replay detection (records the per-request signature) + revocation |
 | `AddAAuthResourceManaged` | High-level resource-managed (two-party) setup: opaque-token store + interaction store + poll endpoint |
 | `HttpContext.RequireAAuthInteraction` | Opt an endpoint into a consent interaction (`202` + `AAuth-Requirement`) |
@@ -242,9 +243,10 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | Type | Purpose |
 |------|---------|
 | `AAuthAgentServiceCollectionExtensions` | `services.AddAAuthAgent(...)` |
-| `AAuthResourceServiceCollectionExtensions` | `services.AddAAuthResource(...)`, `services.AddAAuthAuthentication()`, `services.AddAAuthAuthorization()` |
+| `AAuthResourceServiceCollectionExtensions` | `services.AddAAuthResource(...)` (options or an `AAuth:Resource` configuration section), `services.AddAAuthAuthentication()`, `services.AddAAuthAuthorization()` |
 | `AAuthResourceManagedServiceCollectionExtensions` | `services.AddAAuthResourceManaged(...)` — resource-managed (two-party) setup |
-| `AAuthFederationServiceCollectionExtensions` | `services.AddAAuthFederation(...)` — PS→AS four-party client |
+| `AAuthPersonServerServiceCollectionExtensions` / `AAuthPersonServerBuilder` | `services.AddAAuthPersonServer(...)` (options or `AAuth:PersonServer`); builder `UseClaimsAsserter` / `UsePendingStore` / `UseTokenVerifier` / `UseTokenInventory` / `WithTrust` / `WithFederation()` (PS→AS four-party client) / `WithGovernance()`; map with `app.MapAAuthPersonServer(name?)` |
+| `AAuthAccessServerServiceCollectionExtensions` / `AAuthAccessServerBuilder` | `services.AddAAuthAccessServer(...)` (options or `AAuth:AccessServer`); builder `UsePolicy` (required) / `UsePendingStore` / `UseTokenVerifier` / `UseTokenInventory` / `WithTrust`; map with `app.MapAAuthAccessServer(name?)` |
 | `AAuthDiscoveryServiceCollectionExtensions` | `services.AddAAuthDiscovery(...)` |
 | `AAuthGovernanceServiceCollectionExtensions` | `services.AddAAuthGovernance()` |
 | `AAuthEndpointExtensions` | `endpoint.RequireAAuth(scope, role)` / `.RequireAAuthSignature()` + `app.UseAAuth(...)` — per-route requirements |

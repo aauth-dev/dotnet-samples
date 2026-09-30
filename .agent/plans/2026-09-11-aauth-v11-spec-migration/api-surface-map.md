@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 190 changed public-source files, 666 added/replacement declarations, 368 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 193 changed public-source files, 725 added/replacement declarations, 372 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -762,7 +762,7 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [PersonConsentDecis
 + MockPersonServer.PersonConsentDecisions: public async Task < ConsentOutcome > ApplyHeldAsync ( PersonPendingEntry entry , bool approve , ConsentDecider by , CancellationToken cancellationToken )
 + MockPersonServer.PersonConsentDecisions: public async Task < ConsentOutcome > DecideAsync ( string id , bool approve , ConsentDecider by , CancellationToken cancellationToken )
 + MockPersonServer: public enum ConsentOutcome
-+ MockPersonServer: public sealed class PersonConsentDecisions ( ConsentStore consent , IIdentityClaimsAsserter asserter , ConsentRegistry registry )
++ MockPersonServer: public sealed class PersonConsentDecisions ( ConsentStore consent , [ FromKeyedServices ( AAuthPersonServerBuilder . DefaultName ) ] IIdentityClaimsAsserter asserter , ConsentRegistry registry )
 ```
 
 Public owners: `MockPersonServer.ConsentOutcome`, `MockPersonServer.PersonConsentDecisions`, `MockPersonServer`.
@@ -1215,6 +1215,7 @@ Public owners: `AAuth.AAuthTokenTypeExtensions`, `AAuth.AAuthTokenType`, `AAuth`
 Concept/decision: [consent](#consent). Source: [AAuthAccessServerEndpoints.cs](../../../src/AAuth/Access/AAuthAccessServerEndpoints.cs).
 
 ```diff
+- AAuth.Access.AAuthAccessServerEndpoints: public static WebApplication MapAAuthAccessServer ( this WebApplication app , AAuthAccessServerOptions options )
 - AAuth.Access.AAuthAccessServerOptions: public AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuthEgressPolicy . Production
 - AAuth.Access.AAuthAccessServerOptions: public Action < AAuthRevocationOptions > ? ConfigureRevocation { get ; init ; }
 - AAuth.Access.AAuthAccessServerOptions: public Func < string , JsonObject ? > ? DeriveAgentClaims { get ; init ; }
@@ -1228,15 +1229,19 @@ Concept/decision: [consent](#consent). Source: [AAuthAccessServerEndpoints.cs](.
 - AAuth.Access.AAuthAccessServerOptions: public string PendingPathPrefix { get ; init ; } = "/pending"
 - AAuth.Access.AAuthAccessServerOptions: public string RevocationPath { get ; init ; } = "/revoke"
 - AAuth.Access.AAuthAccessServerOptions: public string TokenPath { get ; init ; } = "/token"
++ AAuth.Access.AAuthAccessServerEndpoints: public static WebApplication MapAAuthAccessServer ( this WebApplication app , string ? name = null )
 + AAuth.Access.AAuthAccessServerOptions: public AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuthEgressPolicy . Production
++ AAuth.Access.AAuthAccessServerOptions: public AAuthSigningKeySet SigningKeys { get ; set ; } = new ( )
 + AAuth.Access.AAuthAccessServerOptions: public AAuthTrustOptions Trust { get ; set ; } = new ( )
 + AAuth.Access.AAuthAccessServerOptions: public Action < AAuthRevocationOptions > ? ConfigureRevocation { get ; set ; }
 + AAuth.Access.AAuthAccessServerOptions: public Func < string , JsonObject ? > ? DeriveAgentClaims { get ; set ; }
 + AAuth.Access.AAuthAccessServerOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
-+ AAuth.Access.AAuthAccessServerOptions: public required AAuthSigningKeySet SigningKeys { get ; set ; }
-+ AAuth.Access.AAuthAccessServerOptions: public required string Issuer { get ; set ; }
++ AAuth.Access.AAuthAccessServerOptions: public bool MatchIssuerHost { get ; set ; }
++ AAuth.Access.AAuthAccessServerOptions: public string ? KeyHandle { get ; set ; }
++ AAuth.Access.AAuthAccessServerOptions: public string ? KeyId { get ; set ; }
 + AAuth.Access.AAuthAccessServerOptions: public string DefaultScope { get ; set ; } = ""
 + AAuth.Access.AAuthAccessServerOptions: public string InteractionLoginPath { get ; set ; } = "/interaction/login"
++ AAuth.Access.AAuthAccessServerOptions: public string Issuer { get ; set ; } = ""
 + AAuth.Access.AAuthAccessServerOptions: public string PendingPathPrefix { get ; set ; } = "/pending"
 + AAuth.Access.AAuthAccessServerOptions: public string RevocationPath { get ; set ; } = "/revoke"
 + AAuth.Access.AAuthAccessServerOptions: public string TokenPath { get ; set ; } = "/token"
@@ -1695,6 +1700,34 @@ Concept/decision: [signatures](#signatures). Source: [KeyFactory.cs](../../../sr
 
 Public owners: `AAuth.Crypto.KeyFactory`, `AAuth.Crypto`.
 
+### src/AAuth/DependencyInjection/AAuthAccessServerServiceCollectionExtensions.cs
+
+Concept/decision: [di](#di). Source: [AAuthAccessServerServiceCollectionExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthAccessServerServiceCollectionExtensions.cs).
+
+```diff
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public AAuthAccessServerBuilder Configure ( Action < AAuthAccessServerOptions > configure )
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public AAuthAccessServerBuilder UsePendingStore ( Func < IServiceProvider , IAccessPendingStore > factory )
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public AAuthAccessServerBuilder UsePendingStore ( IAccessPendingStore store )
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public AAuthAccessServerBuilder UsePendingStore < T > ( ) where T : class , IAccessPendingStore
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public AAuthAccessServerBuilder UsePolicy ( Func < IServiceProvider , IAccessPolicy > factory )
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public AAuthAccessServerBuilder UsePolicy ( IAccessPolicy policy )
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public AAuthAccessServerBuilder UsePolicy < T > ( ) where T : class , IAccessPolicy
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public AAuthAccessServerBuilder UseTokenInventory ( IJtiStore inventory )
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public AAuthAccessServerBuilder UseTokenInventory < T > ( ) where T : class , IJtiStore
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public AAuthAccessServerBuilder UseTokenVerifier ( TokenVerifier verifier )
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public AAuthAccessServerBuilder WithTrust ( Action < AAuthTrustOptions > configure )
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public IServiceCollection Services { get ; }
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public const string DefaultName = "AccessServer" ;
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder: public string Name { get ; }
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerServiceCollectionExtensions: public const string ConfigurationSection = "AAuth:AccessServer" ;
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerServiceCollectionExtensions: public static AAuthAccessServerBuilder AddAAuthAccessServer ( this IServiceCollection services , IConfiguration configuration , string ? name = null , Action < AAuthAccessServerOptions > ? configure = null )
++ Microsoft.Extensions.DependencyInjection.AAuthAccessServerServiceCollectionExtensions: public static AAuthAccessServerBuilder AddAAuthAccessServer ( this IServiceCollection services , string ? name = null , Action < AAuthAccessServerOptions > ? configure = null )
++ Microsoft.Extensions.DependencyInjection: public sealed class AAuthAccessServerBuilder
++ Microsoft.Extensions.DependencyInjection: public static class AAuthAccessServerServiceCollectionExtensions
+```
+
+Public owners: `Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilder`, `Microsoft.Extensions.DependencyInjection.AAuthAccessServerServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
+
 ### src/AAuth/DependencyInjection/AAuthAgentOptions.cs
 
 Concept/decision: [di](#di). Source: [AAuthAgentOptions.cs](../../../src/AAuth/DependencyInjection/AAuthAgentOptions.cs).
@@ -1719,8 +1752,9 @@ Public owners: `Microsoft.AspNetCore.Builder.AAuthApplicationBuilderExtensions`,
 Concept/decision: [di](#di). Source: [AAuthFederationServiceCollectionExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthFederationServiceCollectionExtensions.cs).
 
 ```diff
+- Microsoft.Extensions.DependencyInjection.AAuthFederationServiceCollectionExtensions: public const string FederationHttpClientName = "aauth-federation" ;
 - Microsoft.Extensions.DependencyInjection.AAuthFederationServiceCollectionExtensions: public static IServiceCollection AddAAuthFederation ( this IServiceCollection services , IAAuthKey personServerKey , string personServerIssuer , string personServerKeyId )
-+ Microsoft.Extensions.DependencyInjection.AAuthFederationServiceCollectionExtensions: public static IServiceCollection AddAAuthFederation ( this IServiceCollection services , IAAuthSigner personServerKey , string personServerIssuer , string personServerKeyId )
+- Microsoft.Extensions.DependencyInjection: public static class AAuthFederationServiceCollectionExtensions
 ```
 
 Public owners: `Microsoft.Extensions.DependencyInjection.AAuthFederationServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
@@ -1741,6 +1775,37 @@ Public signatures unchanged (4); behavior reviewed under di.
 
 Public owners: `Microsoft.Extensions.DependencyInjection.AAuthGovernanceServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
 
+### src/AAuth/DependencyInjection/AAuthPersonServerServiceCollectionExtensions.cs
+
+Concept/decision: [di](#di). Source: [AAuthPersonServerServiceCollectionExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthPersonServerServiceCollectionExtensions.cs).
+
+```diff
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder Configure ( Action < AAuthPersonServerOptions > configure )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseClaimsAsserter ( Func < IServiceProvider , IIdentityClaimsAsserter > factory )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseClaimsAsserter ( IIdentityClaimsAsserter asserter )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseClaimsAsserter < T > ( ) where T : class , IIdentityClaimsAsserter
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePendingStore ( Func < IServiceProvider , IPersonPendingStore > factory )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePendingStore ( IPersonPendingStore store )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePendingStore < T > ( ) where T : class , IPersonPendingStore
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseTokenInventory ( IJtiStore inventory )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseTokenInventory < T > ( ) where T : class , IJtiStore
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseTokenVerifier ( TokenVerifier verifier )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder WithFederation ( )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder WithGovernance ( )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder WithTrust ( Action < AAuthTrustOptions > configure )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public IServiceCollection Services { get ; }
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public const string DefaultName = "PersonServer" ;
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public const string FederationHttpClientName = "aauth-federation" ;
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public string Name { get ; }
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerServiceCollectionExtensions: public const string ConfigurationSection = "AAuth:PersonServer" ;
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerServiceCollectionExtensions: public static AAuthPersonServerBuilder AddAAuthPersonServer ( this IServiceCollection services , IConfiguration configuration , string ? name = null , Action < AAuthPersonServerOptions > ? configure = null )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerServiceCollectionExtensions: public static AAuthPersonServerBuilder AddAAuthPersonServer ( this IServiceCollection services , string ? name = null , Action < AAuthPersonServerOptions > ? configure = null )
++ Microsoft.Extensions.DependencyInjection: public sealed class AAuthPersonServerBuilder
++ Microsoft.Extensions.DependencyInjection: public static class AAuthPersonServerServiceCollectionExtensions
+```
+
+Public owners: `Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder`, `Microsoft.Extensions.DependencyInjection.AAuthPersonServerServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
+
 ### src/AAuth/DependencyInjection/AAuthResourceOptions.cs
 
 Concept/decision: [di](#di). Source: [AAuthResourceOptions.cs](../../../src/AAuth/DependencyInjection/AAuthResourceOptions.cs).
@@ -1751,6 +1816,8 @@ Concept/decision: [di](#di). Source: [AAuthResourceOptions.cs](../../../src/AAut
 - AAuth.AAuthResourceOptions: public TimeSpan MaxFutureSkew { get ; set ; } = TimeSpan . FromSeconds ( 5 )
 + AAuth.AAuthResourceOptions: public AAuthSigningKeySet SigningKeys { get ; set ; } = new ( )
 + AAuth.AAuthResourceOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
++ AAuth.AAuthResourceOptions: public string ? KeyHandle { get ; set ; }
++ AAuth.AAuthResourceOptions: public string ? KeyId { get ; set ; }
 ```
 
 Public owners: `AAuth.AAuthResourceOptions`, `AAuth`.
@@ -1773,7 +1840,10 @@ Public owners: `AAuth.AAuthResourcePipelineOptions`, `AAuth`.
 
 Concept/decision: [di](#di). Source: [AAuthResourceServiceCollectionExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthResourceServiceCollectionExtensions.cs).
 
-Public signatures unchanged (6); behavior reviewed under di.
+```diff
++ Microsoft.Extensions.DependencyInjection.AAuthResourceServiceCollectionExtensions: public const string ConfigurationSection = "AAuth:Resource" ;
++ Microsoft.Extensions.DependencyInjection.AAuthResourceServiceCollectionExtensions: public static IServiceCollection AddAAuthResource ( this IServiceCollection services , IConfiguration configuration , Action < AAuthResourceOptions > ? configure = null )
+```
 
 Public owners: `Microsoft.Extensions.DependencyInjection.AAuthResourceServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
 
@@ -2002,6 +2072,7 @@ Public owners: `AAuth.Identifiers.AgentId`, `AAuth.Identifiers`.
 Concept/decision: [consent](#consent). Source: [AAuthPersonServerEndpoints.cs](../../../src/AAuth/Person/AAuthPersonServerEndpoints.cs).
 
 ```diff
+- AAuth.Person.AAuthPersonServerEndpoints: public static WebApplication MapAAuthPersonServer ( this WebApplication app , AAuthPersonServerOptions options )
 - AAuth.Person.AAuthPersonServerOptions: public AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuthEgressPolicy . Production
 - AAuth.Person.AAuthPersonServerOptions: public Action < AAuthRevocationOptions > ? ConfigureRevocation { get ; init ; }
 - AAuth.Person.AAuthPersonServerOptions: public BrowserConsentSessions ? ResourceInteractionSessions { get ; init ; }
@@ -2022,23 +2093,26 @@ Concept/decision: [consent](#consent). Source: [AAuthPersonServerEndpoints.cs](.
 - AAuth.Person.AAuthPersonServerOptions: public string PendingPathPrefix { get ; init ; } = "/pending"
 - AAuth.Person.AAuthPersonServerOptions: public string RevocationPath { get ; init ; } = "/revoke"
 - AAuth.Person.AAuthPersonServerOptions: public string TokenPath { get ; init ; } = "/token"
++ AAuth.Person.AAuthPersonServerEndpoints: public static WebApplication MapAAuthPersonServer ( this WebApplication app , string ? name = null )
 + AAuth.Person.AAuthPersonServerOptions: public AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuthEgressPolicy . Production
++ AAuth.Person.AAuthPersonServerOptions: public AAuthSigningKeySet SigningKeys { get ; set ; } = new ( )
 + AAuth.Person.AAuthPersonServerOptions: public AAuthTrustOptions Trust { get ; set ; } = new ( )
 + AAuth.Person.AAuthPersonServerOptions: public Action < AAuthRevocationOptions > ? ConfigureRevocation { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public BrowserConsentSessions ? ResourceInteractionSessions { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public Func < PersonPendingEntry , ClarificationRequirement , System . Threading . CancellationToken , Task < ClarificationResponse ? > > ? TriageClarificationAsync { get ; set ; }
-+ AAuth.Person.AAuthPersonServerOptions: public IJtiStore ? TokenInventory { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public IReadOnlyCollection < string > ? UnsignedPathPrefixes { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public IReadOnlyList < string > ? ScopesSupported { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
-+ AAuth.Person.AAuthPersonServerOptions: public required AAuthSigningKeySet SigningKeys { get ; set ; }
-+ AAuth.Person.AAuthPersonServerOptions: public required string Issuer { get ; set ; }
-+ AAuth.Person.AAuthPersonServerOptions: public string ? AuditEndpoint { get ; set ; }
-+ AAuth.Person.AAuthPersonServerOptions: public string ? InteractionEndpoint { get ; set ; }
-+ AAuth.Person.AAuthPersonServerOptions: public string ? MissionEndpoint { get ; set ; }
-+ AAuth.Person.AAuthPersonServerOptions: public string ? PermissionEndpoint { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public bool MatchIssuerHost { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string ? AuditPath { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string ? InteractionEndpointPath { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string ? KeyHandle { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string ? KeyId { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string ? MissionPath { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string ? PermissionPath { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public string DefaultScope { get ; set ; } = ""
 + AAuth.Person.AAuthPersonServerOptions: public string InteractionPath { get ; set ; } = "/interaction"
++ AAuth.Person.AAuthPersonServerOptions: public string Issuer { get ; set ; } = ""
 + AAuth.Person.AAuthPersonServerOptions: public string PendingPathPrefix { get ; set ; } = "/pending"
 + AAuth.Person.AAuthPersonServerOptions: public string PersonTokenPath { get ; set ; } = "/person"
 + AAuth.Person.AAuthPersonServerOptions: public string RevocationPath { get ; set ; } = "/revoke"
@@ -2145,6 +2219,23 @@ Concept/decision: [revocation](#revocation). Source: [AAuthRevocationOptions.cs]
 ```
 
 Public owners: `AAuth.Server.AAuthRevocationOptions`, `AAuth.Server`.
+
+### src/AAuth/Server/AAuthServerIdentity.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthServerIdentity.cs](../../../src/AAuth/Server/AAuthServerIdentity.cs).
+
+```diff
++ AAuth.Server.IAAuthServerIdentity: AAuthEgressPolicy EgressPolicy { get ; }
++ AAuth.Server.IAAuthServerIdentity: AAuthSigningKeySet SigningKeys { get ; }
++ AAuth.Server.IAAuthServerIdentity: HttpClient CreateSignedClient ( HttpMessageHandler ? innerHandler = null , AAuthTransportContract ? transportContract = null )
++ AAuth.Server.IAAuthServerIdentity: string Dwk { get ; }
++ AAuth.Server.IAAuthServerIdentity: string Issuer { get ; }
++ AAuth.Server.IAAuthServerIdentity: string Name { get ; }
++ AAuth.Server.IAAuthServerIdentity: string Url ( string path )
++ AAuth.Server: public interface IAAuthServerIdentity
+```
+
+Public owners: `AAuth.Server.IAAuthServerIdentity`, `AAuth.Server`.
 
 ### src/AAuth/Server/AAuthTrust.cs
 

@@ -51,12 +51,15 @@ public class ReusableChainingTests
         builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
         builder.Services.AddAAuthGovernance();
         builder.Services.AddSingleton<IMissionTokenConsent, Consent>();
-        await using var app = builder.Build();
-        app.MapAAuthPersonServer(new AAuthPersonServerOptions
+        builder.Services.AddAAuthPersonServer(configure: o =>
         {
-            Issuer = origin, EgressPolicy = egress, SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey },
-            UnsignedPathPrefixes = ["/data"],
+            o.Issuer = origin;
+            o.EgressPolicy = egress;
+            o.SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey };
+            o.UnsignedPathPrefixes = ["/data"];
         });
+        await using var app = builder.Build();
+        app.MapAAuthPersonServer();
         foreach (var dwk in new[] { AAuthConstants.DwkFiles.Agent, AAuthConstants.DwkFiles.Resource })
             app.MapGet("/.well-known/" + dwk, () => Results.Json(new { issuer = origin, jwks_uri = origin + "/.well-known/jwks.json" }));
         const string mission = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";

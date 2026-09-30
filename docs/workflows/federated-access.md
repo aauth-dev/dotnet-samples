@@ -86,19 +86,22 @@ to the agent.
 ```csharp
 using AAuth.Person;
 
-builder.Services.AddSingleton<IIdentityClaimsAsserter>(identityAsserter);
-builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+builder.Services.AddAAuthPersonServer(configure: options =>
+    {
+        options.Issuer      = psIssuer;
+        options.SigningKeys = new AAuthSigningKeySet(PsKid, psKey);
+    })
+    .WithTrust(trust => trust.AccessServers.Allowed = trustedAccessServers)
+    .UseClaimsAsserter(identityAsserter)
+    // The PS→AS client: signs the federated token request as this PS.
+    .WithFederation();
 var app = builder.Build();
-app.MapAAuthPersonServer(new AAuthPersonServerOptions
-{
-    Issuer = psIssuer,
-    SigningKeys = new AAuthSigningKeySet(PsKid, psKey),
-    Trust = { AccessServers = { Allowed = trustedAccessServers } },
-});
+app.MapAAuthPersonServer();
 ```
 
 > Both branches above — the three-party mint and the four-party federation — are
-> packaged in the one-call host helper `MapAAuthPersonServer`. Federation is open
+> packaged in the one-call host helper `MapAAuthPersonServer`, registered with
+> `AddAAuthPersonServer`. Federation is open
 > by default: with `Trust.AccessServers` unset the PS federates to the AS named
 > in a verified resource token's `aud`; set its `Allowed` list (or
 > `Predicate`) to pin specific Access Servers, or set `Allowed` empty for three-party only. See
@@ -117,25 +120,30 @@ be the calling PS), evaluates policy through a pluggable
 ```csharp
 using AAuth.Access;
 
-// Register the policy decision point (stub | keycloak) and the store that
-// parks deferred decisions (§Claims Required / interactive consent).
-builder.Services.AddSingleton<IAccessPolicy>(accessPolicy);
-builder.Services.AddSingleton<IAccessPendingStore, InMemoryAccessPendingStore>();
+// Register the Access Server with its policy decision point (stub | keycloak).
+// Deferred decisions (§Claims Required / interactive consent) park in the
+// default InMemoryAccessPendingStore; replace it with UsePendingStore.
+builder.Services.AddAAuthAccessServer(configure: options =>
+    {
+        options.Issuer       = asIssuer;
+        options.SigningKeys  = new AAuthSigningKeySet(AsKid, asKey);
+        options.DefaultScope = "wallet.read";
+    })
+    .WithTrust(trust => trust.PersonServers.Allowed = trustedPersonServers)
+    .UsePolicy(accessPolicy);
 
 var app = builder.Build();
 
 // One call maps /.well-known + JWKS, request-signature verification, and
 // POST /token + GET|POST /pending/{id}.
-app.MapAAuthAccessServer(new AAuthAccessServerOptions
-{
-    Issuer       = asIssuer,
-    SigningKeys  = new AAuthSigningKeySet(AsKid, asKey),
-    DefaultScope = "wallet.read",
-    Trust        = { PersonServers = { Allowed = trustedPersonServers } },
-});
+app.MapAAuthAccessServer();
 ```
 
-The helper resolves `IAccessPolicy` and `IAccessPendingStore` from DI. The
+The `IAccessPolicy` is required: startup validation fails without `UsePolicy`
+or an `IAccessPolicy` registered in DI. The pending store resolves from
+`UsePendingStore`, then an unkeyed `IAccessPendingStore` registration, then the
+in-memory default; resolve it in your own endpoints with
+`[FromKeyedServices(AAuthAccessServerBuilder.DefaultName)] IAccessPendingStore`. The
 policy returns one of `Allow` / `Deny` / `NeedsInteraction` / `NeedsClaims` /
 `NeedsPayment`; the helper maps those to a minted auth token, `403`, or a `202`
 that parks the decision and advertises the requirement to the PS.

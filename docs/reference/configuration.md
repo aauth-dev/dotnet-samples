@@ -88,29 +88,63 @@ counterparty is trusted (the spec default).
 |----------|------|---------|-------------|
 | `Issuer` | `string` | — (required) | HTTPS issuer URL for this resource |
 | `SigningKeys` | `AAuthSigningKeySet` | `new()` | Signing keys published at the JWKS; tokens are signed with the active key |
+| `KeyHandle` | `string?` | `null` | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
+| `KeyId` | `string?` | `null` | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |
 | `Name` | `string?` | `null` | Human-readable resource name (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope → description map for metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
 | `AuthorizationEndpoint` | `string?` | `null` | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
 
-### AAuthPersonServerOptions (via MapAAuthPersonServer)
+### AAuthPersonServerOptions (via AddAAuthPersonServer)
+
+Register with `AddAAuthPersonServer(configure: …)` or bind from `AAuth:PersonServer`
+with `AddAAuthPersonServer(configuration.GetSection(…))`. `Issuer` and a signing
+key are validated at startup (`OptionsValidationException`).
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Issuer` | `string` | — (required) | HTTPS URL of this PS (`iss` of minted person and auth tokens) |
-| `SigningKeys` | `AAuthSigningKeySet` | Required | Signing keys published at the PS JWKS; tokens are signed with the active key |
+| `Issuer` | `string` | — (validated) | HTTPS URL of this PS (`iss` of minted person and auth tokens) |
+| `SigningKeys` | `AAuthSigningKeySet` | empty | Signing keys published at the PS JWKS; tokens are signed with the active key. Set this or `KeyHandle` |
+| `KeyHandle` | `string?` | `null` | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
+| `KeyId` | `string?` | `null` | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |
+| `MatchIssuerHost` | `bool` | `false` | Serve this instance only for requests whose `Host` is the issuer's authority; set it when several roles or instances share one host |
 | `TokenPath` | `string` | `/token` | Auth token endpoint path (`auth_token_endpoint`) |
 | `PersonTokenPath` | `string` | `/person` | Person token endpoint path (`person_token_endpoint`) |
 | `PendingPathPrefix` | `string` | `/pending` | Deferred-consent poll path prefix |
 | `DefaultScope` | `string` | `""` | Scope assumed when the resource token omits one |
 | `InteractionPath` | `string` | `/interaction` | Path the host maps for the consent page |
+| `InteractionEndpointPath` | `string?` | `null` | §Interaction Endpoint path, advertised as issuer + path |
+| `MissionPath` | `string?` | `null` | Mission endpoint path, advertised as issuer + path |
+| `PermissionPath` | `string?` | `null` | Permission endpoint path, advertised as issuer + path |
+| `AuditPath` | `string?` | `null` | Audit endpoint path, advertised as issuer + path |
 | `Trust` | `AAuthTrustOptions` | `new()` (open) | `Trust.AccessServers` governs the AS URLs the PS will federate to. Unconfigured ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); `Allowed` empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. Upstream auth tokens from an AS are accepted only when `Trust.AccessServers` is configured and accepts the issuer. |
 
-The helper resolves `IIdentityClaimsAsserter` and `IPersonPendingStore` from DI
-(and the `IMissionStore` / `IMissionLog` mission primitives when a request carries
-`mission_s256`). See
-[Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+The seams (`IIdentityClaimsAsserter`, `IPersonPendingStore`, `TokenVerifier`, and
+the `IJtiStore` token inventory) resolve per instance: first the builder's `Use*`
+helper, then an unkeyed DI registration, then the SDK default. The helper also
+resolves the `IMissionStore` / `IMissionLog` mission primitives when a request
+carries `mission_s256`. See
+[Person Server and Access Server Registration](dependency-injection.md#person-server-and-access-server-registration)
+and [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+
+### AAuthAccessServerOptions (via AddAAuthAccessServer)
+
+Register with `AddAAuthAccessServer(configure: …)` or bind from `AAuth:AccessServer`.
+An `IAccessPolicy` is required (`UsePolicy` or a DI registration).
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `Issuer` | `string` | — (validated) | HTTPS URL of this AS (`iss` of minted auth tokens) |
+| `SigningKeys` | `AAuthSigningKeySet` | empty | Signing keys published at the AS JWKS. Set this or `KeyHandle` |
+| `KeyHandle` | `string?` | `null` | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
+| `KeyId` | `string?` | `null` | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |
+| `MatchIssuerHost` | `bool` | `false` | Serve this instance only for requests whose `Host` is the issuer's authority |
+| `TokenPath` | `string` | `/token` | Auth token endpoint path (`auth_token_endpoint`) |
+| `PendingPathPrefix` | `string` | `/pending` | Deferred-decision poll path prefix |
+| `DefaultScope` | `string` | `""` | Scope assumed when the resource token omits one |
+| `InteractionLoginPath` | `string` | `/interaction/login` | Browser entry point for interactive policies |
+| `Trust` | `AAuthTrustOptions` | `new()` (open) | `Trust.PersonServers` governs the Person Servers this AS brokers for |
 
 ## Token Builders
 
@@ -325,6 +359,8 @@ remains `~/.aauth/ap-keys`.
 |----------|------|:--------:|-------------|
 | `Issuer` | `string` | Yes | Resource canonical URL |
 | `SigningKeys` | `AAuthSigningKeySet` | Conditional | Signing keys published at the JWKS (tokens are signed with the active key); required when issuing resource tokens or making signed calls, optional for verification-only resources |
+| `KeyHandle` | `string?` | No | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
+| `KeyId` | `string?` | No | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |
 | `Name` | `string?` | No | Resource display name (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | No | Scope descriptions for metadata |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
@@ -363,6 +399,13 @@ remains `~/.aauth/ap-keys`.
 
 ## JSON Configuration Keys (samples)
 
+The SDK's configuration overloads bind a whole section: `AddAAuthPersonServer`
+from `AAuth:PersonServer`, `AddAAuthAccessServer` from `AAuth:AccessServer`, and
+`AddAAuthResource` from `AAuth:Resource` (each extension class exposes a
+`ConfigurationSection` constant). The keys are the option property names, such as
+`AAuth:PersonServer:Issuer`, `AAuth:PersonServer:KeyHandle` or
+`AAuth:PersonServer:Trust:AccessServers:Allowed:0`.
+
 The shipped samples bind a few `AAuth:*` keys from `appsettings.json` /
 environment variables / command line. These are conventions of the samples (not
 SDK-required), shown here as a reference for wiring your own hosts.
@@ -374,7 +417,7 @@ SDK-required), shown here as a reference for wiring your own hosts.
 | `AAuth:TrustedPersonServers` | `string[]` | Calendar/Trips | Allow-list mapped to the resource pipeline's `Trust.AuthTokenIssuers.Allowed` (`app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = …)`). The SDK default for an unset list is open (accept any *verifiable* PS, namespaced by `iss`), but these samples default to `http://localhost:5100`; an empty array denies all auth tokens (deny-all kill-switch). |
 | `AAuth:LocalKeyHandle` | `string` | agent samples | Key handle in the `IKeyStore` for the agent's signing key. |
 | `AAuth:ApRefreshEndpoint` | `string` | agent samples | Agent Provider refresh endpoint for enrolled agents. |
-| `AAuth:PersonServer` | `string` | Concierge | Downstream Person Server URL. |
+| `AAuth:PersonServer` | `string` | Concierge | Downstream Person Server URL (a sample value, not the SDK's `AAuth:PersonServer` options section). |
 | `AAuth:Downstream` | `string` | Concierge | Downstream resource URL. |
 | `AAuth:AgentId` | `string` | Concierge | The agent identifier this host signs as. |
 | `AAuth:SelfIssuer` / `AAuth:SelfAgentId` | `string` | SampleApp | Self-issued agent issuer / identifier. |

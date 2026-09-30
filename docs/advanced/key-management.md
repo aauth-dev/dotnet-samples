@@ -196,6 +196,7 @@ changes it in three steps, with no restart.
 ```csharp
 // Share one set with the host options, for example
 // AAuthPersonServerOptions.SigningKeys or ChallengeOptions.ResourceSigningKeys.
+// A registered PS or AS also exposes its set as IAAuthServerIdentity.SigningKeys.
 var issuerKeys = new AAuthSigningKeySet("key-1", AAuthKey.Generate());
 
 // 1. Publish the new key. The JWKS lists key-1 and key-2; tokens are still signed with key-1.

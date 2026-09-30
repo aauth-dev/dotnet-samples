@@ -1879,7 +1879,7 @@ Public owners: `AAuth.AAuthFederationOptions`, `AAuth`.
 
 ### src/AAuth/DependencyInjection/AAuthFederationServiceCollectionExtensions.cs
 
-Concept/decision: [di](#di). Source: [AAuthFederationServiceCollectionExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthFederationServiceCollectionExtensions.cs).
+Concept/decision: [di](#di). Source: `src/AAuth/DependencyInjection/AAuthFederationServiceCollectionExtensions.cs` (since removed; federation is now `AAuthPersonServerBuilder.WithFederation()`).
 
 ```diff
 - Microsoft.Extensions.DependencyInjection.AAuthFederationServiceCollectionExtensions: public static IServiceCollection AddAAuthFederation ( this IServiceCollection services , AAuthKey personServerKey , string personServerIssuer , string personServerKeyId )

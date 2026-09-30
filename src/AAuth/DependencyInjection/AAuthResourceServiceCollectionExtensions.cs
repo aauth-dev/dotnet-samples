@@ -10,6 +10,7 @@ using AAuth.Server.Verification;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -19,9 +20,29 @@ namespace Microsoft.Extensions.DependencyInjection;
 /// </summary>
 public static class AAuthResourceServiceCollectionExtensions
 {
+    /// <summary>The configuration section a resource binds from by default.</summary>
+    public const string ConfigurationSection = "AAuth:Resource";
+
+    /// <summary>
+    /// Register AAuth resource server services bound from <paramref name="configuration"/>
+    /// (for example <c>AAuth:Resource</c>), then <paramref name="configure"/>.
+    /// </summary>
+    public static IServiceCollection AddAAuthResource(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        Action<AAuthResourceOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        return services.AddAAuthResource(options =>
+        {
+            configuration.Bind(options);
+            configure?.Invoke(options);
+        });
+    }
+
     /// <summary>
     /// Register AAuth resource server services: verifier, key resolver,
-    /// JTI store, and well-known metadata options.
+    /// JTI store, token verifier, and well-known metadata options.
     /// </summary>
     public static IServiceCollection AddAAuthResource(
         this IServiceCollection services,
@@ -35,11 +56,17 @@ public static class AAuthResourceServiceCollectionExtensions
 
         if (string.IsNullOrEmpty(options.Issuer))
             throw new InvalidOperationException("AAuthResourceOptions.Issuer must be set.");
+        services.TryAddSingleton(Microsoft.Extensions.Options.Options.Create(options));
 
         // Register AAuthVerifier as singleton.
         services.TryAddSingleton(sp => new AAuthVerifier
         {
             MaxAge = options.MaxSignatureAge,
+            TimeProvider = options.TimeProvider,
+        });
+        services.TryAddSingleton(sp => new AAuth.Tokens.TokenVerifier
+        {
+            EgressPolicy = options.EgressPolicy,
             TimeProvider = options.TimeProvider,
         });
 
@@ -92,7 +119,11 @@ public static class AAuthResourceServiceCollectionExtensions
             RevocationEndpoint = options.RevocationEndpoint,
             AdditionalMetadata = options.AdditionalMetadata,
         };
-        services.TryAddSingleton(metadataOptions);
+        services.TryAddSingleton(sp =>
+        {
+            AAuthServerRoles.LoadKeyHandle(options.SigningKeys, options.KeyHandle, options.KeyId, sp, nameof(AAuthResourceOptions));
+            return metadataOptions;
+        });
 
         return services;
     }

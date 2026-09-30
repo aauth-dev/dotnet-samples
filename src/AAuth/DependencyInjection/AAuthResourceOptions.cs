@@ -24,6 +24,15 @@ public sealed class AAuthResourceOptions
     public AAuthSigningKeySet SigningKeys { get; set; } = new();
 
     /// <summary>
+    /// A handle in the registered <see cref="IKeyStore"/> to load the signing key from when
+    /// <see cref="SigningKeys"/> is empty.
+    /// </summary>
+    public string? KeyHandle { get; set; }
+
+    /// <summary>The <c>kid</c> for the key loaded from <see cref="KeyHandle"/> (default: its thumbprint).</summary>
+    public string? KeyId { get; set; }
+
+    /// <summary>
     /// Signature validity window for inbound <c>created</c>, applied in both
     /// directions. Default: 60 seconds.
     /// </summary>

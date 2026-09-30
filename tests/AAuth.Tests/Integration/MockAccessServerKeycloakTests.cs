@@ -187,7 +187,7 @@ public class MockAccessServerKeycloakTests
             BaseAddress = new Uri(AsIssuer),
             AllowAutoRedirect = false,
         });
-        var code = factory.Services.GetRequiredService<AAuth.Access.IAccessPendingStore>().Get(id)!.Browser.Code;
+        var code = factory.Services.GetRequiredKeyedService<AAuth.Access.IAccessPendingStore>(AAuthAccessServerBuilder.DefaultName).Get(id)!.Browser.Code;
         using var arrival = await browser.GetAsync($"/interaction/login?code={code}");
         Assert.Equal(HttpStatusCode.Redirect, arrival.StatusCode);
         using var login = await browser.GetAsync(arrival.Headers.Location);
