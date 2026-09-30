@@ -42,14 +42,34 @@ public static class AAuthAgentServiceCollectionExtensions
         services.AddAAuthAgentFactory();
         services.TryAddSingleton<IHttpContextAccessor, HttpContextAccessor>();
         services.AddSingleton(new AAuthAgentRegistration(name));
+        services.TryAddKeyedSingleton<IAAuthTokenCache>(name, (_, _) => new InMemoryAAuthTokenCache());
+        AddTypedClients(services, name);
 
         // Composed from the service provider at first resolve; the pipeline (and its token
-        // caches) lives as long as the container.
+        // caches) lives as long as the container. Deferred polling is bounded by the handlers'
+        // PollingTimeout and each HTTP call by the egress policy, not by HttpClient.Timeout.
         var httpClient = services.AddHttpClient(name)
             .ConfigurePrimaryHttpMessageHandler(sp => AAuthAgentComposer.CreateBuilder(AAuthAgentComposer.Options(sp, name), sp, name)
                 .BuildHandler())
+            .ConfigureHttpClient(client => client.Timeout = Timeout.InfiniteTimeSpan)
             .SetHandlerLifetime(Timeout.InfiniteTimeSpan);
         return new AAuthAgentBuilder(services, name, httpClient);
+    }
+
+    // Typed clients keyed by agent name, signed as the agent (never as a carrier) and sharing
+    // one channel and metadata client.
+    private static void AddTypedClients(IServiceCollection services, string name)
+    {
+        services.TryAddKeyedSingleton(name, (sp, key) => AAuthAgentChannel.Create(
+            AAuthAgentComposer.Options(sp, (string)key!), sp, (string)key!,
+            sp.GetKeyedService<AAuthGovernanceDefaults>(key)?.Options));
+        services.TryAddKeyedSingleton(name, (sp, key) => sp.GetRequiredKeyedService<AAuthAgentChannel>(key).TokenExchange);
+        services.TryAddKeyedSingleton(name, (sp, key) => sp.GetRequiredKeyedService<AAuthAgentChannel>(key).Governance);
+        services.TryAddKeyedSingleton(name, (sp, key) => sp.GetRequiredKeyedService<AAuthAgentChannel>(key).Revocation);
+        services.TryAddKeyedSingleton(name, (sp, key) => sp.GetRequiredKeyedService<AAuthGovernanceClient>(key).Mission);
+        services.TryAddKeyedSingleton(name, (sp, key) => sp.GetRequiredKeyedService<AAuthGovernanceClient>(key).Permission);
+        services.TryAddKeyedSingleton(name, (sp, key) => sp.GetRequiredKeyedService<AAuthGovernanceClient>(key).Audit);
+        services.TryAddKeyedSingleton(name, (sp, key) => sp.GetRequiredKeyedService<AAuthGovernanceClient>(key).Interaction);
     }
 
     /// <summary>
@@ -128,16 +148,21 @@ public sealed class AAuthAgentBuilder
     }
 
     /// <summary>
-    /// Register an <see cref="AAuthGovernanceClient"/> keyed by <see cref="Name"/>, signed as this
-    /// agent and bound to its Person Server.
+    /// Set the default governance options of the <see cref="AAuthGovernanceClient"/> keyed by
+    /// <see cref="Name"/>. Every agent registers its typed Person Server clients
+    /// (<see cref="TokenExchangeClient"/>, <see cref="AAuthGovernanceClient"/>, <see cref="MissionClient"/>,
+    /// <see cref="PermissionClient"/>, <see cref="AuditClient"/>, <see cref="InteractionClient"/> and
+    /// <see cref="AAuth.Server.RevocationClient"/>) keyed by its name, signed as the agent.
     /// </summary>
     public AAuthAgentBuilder WithGovernance(GovernanceOptions? defaultOptions = null)
     {
-        Services.TryAddKeyedSingleton(Name, (sp, key) =>
-            AAuthAgentComposer.CreateBuilder(AAuthAgentComposer.Options(sp, (string)key!), sp, (string)key!).BuildGovernance(defaultOptions));
+        Services.RemoveAllKeyed<AAuthGovernanceDefaults>(Name);
+        Services.AddKeyedSingleton(Name, new AAuthGovernanceDefaults(defaultOptions));
         return this;
     }
 }
+
+internal sealed record AAuthGovernanceDefaults(GovernanceOptions? Options);
 
 internal sealed record AAuthAgentRegistration(string Name);
 
@@ -262,6 +287,7 @@ internal static class AAuthAgentComposer
                 target.OnPoll ??= observer is null ? null : observer.OnPoll;
             });
         if (options.EnableResourceManagedAccess) builder.WithResourceManagedAccess(options.AAuthAccessStore);
+        builder.WithTokenCache(options.TokenCache ?? Handler<IAAuthTokenCache>(services, name) ?? new InMemoryAAuthTokenCache());
         return builder;
     }
 

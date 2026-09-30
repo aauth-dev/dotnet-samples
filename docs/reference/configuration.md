@@ -370,6 +370,7 @@ delegates or instances; every other member binds from configuration, such as
 | `InnerHandler` | `HttpMessageHandler?` | No | *Code-only.* Transport under the signer |
 | `TransportContract` | `AAuthTransportContract?` | No | *Code-only.* Egress guarantee of `InnerHandler` |
 | `OnSignatureBase` | `Action<HttpRequestMessage, string>?` | No | *Code-only.* Observes each signature base |
+| `TokenCache` | `IAAuthTokenCache?` | No | *Code-only.* Cache of person and auth tokens (default: the agent's keyed in-memory cache) |
 
 `AddAAuthAgent` requires exactly one key and exactly one identity source.
 Omitting credentials does not select HWK. `PersonServer`, challenge handling,

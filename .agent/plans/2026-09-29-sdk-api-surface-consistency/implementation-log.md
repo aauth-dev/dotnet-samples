@@ -614,7 +614,81 @@ PROCEEDED.
   - ApiSurface: +873/-401 cumulative. Docs inventory refreshed; e2e typecheck clean.
   - Full Playwright: 78 passed, 1 skipped, `--retries=0`.
 
+### [2026-09-30] [Phase 9] Typed clients, token cache, lifetime
+
+PROCEEDED.
+- **Token cache** (`src/AAuth/Agent/AAuthTokenCache.cs`): `AAuthTokenCacheKey`
+  (agent token, upstream, mission, audience, account, key thumbprint),
+  `IAAuthTokenCache` (`Get`, `Set`, single-flight `AcquireAsync`) and
+  `InMemoryAAuthTokenCache`. `AAuthTokenHolder` reads the cache first; the
+  challenge handler obtains both person tokens and auth tokens through it.
+  `AAuthClientBuilder.WithTokenCache(cache)` shares one cache between builds.
+- **DI:** each agent gets a keyed in-memory cache; `AAuthAgentOptions.TokenCache`
+  overrides it. Keyed `TokenExchangeClient`, `AAuthGovernanceClient`,
+  `MissionClient`, `PermissionClient`, `AuditClient`, `InteractionClient` and
+  `RevocationClient` share one internal agent channel (agent-signed client plus the
+  DI `MetadataClient`, else an owned one). `AAuthAgent` exposes `TokenExchange`,
+  `Governance` and `Revocation`; created agents own and dispose their channel.
+  `WithGovernance(options)` now only sets the governance defaults.
+- **Timeouts (F-C7 confirmed):** an agent pipeline behind a 500 ms
+  `HttpClient.Timeout` is cancelled mid-consent. Agent `HttpClient`s (DI and
+  `Build()`) use `Timeout.InfiniteTimeSpan`; `RequestTimeout` bounds each call and
+  `PollingTimeout` the consent wait. Documented with client lifetime and cache
+  sharing in `docs/reference/dependency-injection.md`.
+- **Defect found:** `AgentTokenSourceHandler` held its semaphore across
+  `SendAsync`, so every `UseJwt` client ran one request at a time. It now locks
+  only the token update (see deviations).
+- **Samples:** `DocumentDemoSession` and `WalletDemoSession` create an agent through
+  `IAAuthAgentFactory` (registered in SampleApp) and use `agent.TokenExchange`;
+  the Document and Wallet code snippets take an `AAuthAgent`.
+- **Tests.** `TokenCacheSharingTests` (shared cache, alternating resources,
+  single-flight under a held PS, upstream and mission isolation) and
+  `AgentTypedClientTests` (DI cache reuse, configured shared cache, keyed clients,
+  missing-PS error, created agent's clients, F-C7 reproduction and fix).
+  `AgentFlowHost` gained a second resource origin, a PS POST counter and a hold
+  gate. Single-flight was mutation-checked: disabling it fails the concurrency test.
+- **Gates.**
+  - Build clean.
+  - Test projects: AAuth.Tests 1750, AAuth.Conformance 1285, AAuth.R3.Tests 330,
+    AAuth.Events.Tests 83.
+  - ApiSurface: +891/-403 cumulative. Docs inventory refreshed; e2e typecheck clean.
+  - Full Playwright: 76 passed, 1 skipped, 2 failed, `--retries=0`. Both failures
+    were the Documents helper expecting `TokenExchangeClient` in the step 3
+    snippet. Now it expects `agent.TokenExchange`. The documents and wallet specs
+    then passed 12/12, which drives both migrated sessions end to end.
+
 ## Deviations from plan
+
+### [2026-09-30] [Phase 9] Agent-token source no longer serializes requests
+
+PROCEEDED. Not in the plan. `AgentTokenSourceHandler` (every `UseJwt` client) held
+a semaphore across `SendAsync`, so an agent ran one request at a time, including
+whole consent waits. That also made single-flight untestable. The lock now covers
+only the token update, and a cancelled request still returns before reading the
+token source.
+
+### [2026-09-30] [Phase 9] The cache keeps a latest-carrier slot
+
+PROCEEDED. The plan says the cache replaces the single-value holder. Pipelines
+that are composed by hand sign with `AAuthTokenHolder.Current`, so the holder
+still records the latest carrier after each acquisition. Builder and DI clients
+select from the cache first. Person tokens and auth tokens share one entry per
+key; an auth token for a resource replaces the person token that earned it.
+
+### [2026-09-30] [Phase 9] Typed clients use the agent channel, not the pipeline
+
+PROCEEDED. The plan says typed clients share "the agent's signed pipeline" and the
+DI `MetadataClient`/`JwksClient`. They share an agent-signed channel instead,
+because the challenge pipeline would present carrier tokens to the Person Server.
+None of them verifies JWKS, so no `JwksClient` is involved. The F-C7 test uses a
+1.5-second consent against a 500 ms `HttpClient.Timeout` instead of a 3-minute
+poll.
+
+### [2026-09-30] [Phase 9] Wallet walkthrough migrated too
+
+PROCEEDED. Beyond `DocumentDemoSession` and `WalletScenarioCode`, the Wallet
+session and both walkthrough snippet sets moved to `IAAuthAgentFactory` so each
+snippet matches the code it describes. SampleApp registers the factory.
 
 ### [2026-09-30] [Phase 8] One callback shape, not one shared callback type
 

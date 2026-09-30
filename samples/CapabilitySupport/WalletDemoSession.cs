@@ -12,10 +12,11 @@ namespace AAuth.Samples.Capabilities;
 
 public enum WalletFlow { Clarification, AsGrantChaining, Revocation }
 
-public sealed class WalletDemoSession(string provider, string person, string wallet, string concierge) : IDisposable
+public sealed class WalletDemoSession(IAAuthAgentFactory agents, string provider, string person, string wallet, string concierge) : IDisposable
 {
     private readonly AAuthKey _key = AAuthKey.Generate();
     private readonly HttpClient _http = AAuthHttpTransport.CreateClient(SampleEgress.Policy);
+    private AAuthAgent? _agent;
     private string? _agentToken;
     private string? _personToken;
     private string? _resourceToken;
@@ -50,6 +51,10 @@ public sealed class WalletDemoSession(string provider, string person, string wal
                     .EnrolAsync(cancellationToken);
                 _agentToken = enrolled.AgentToken;
                 Agent = enrolled.AgentId;
+                // The agent's signed client and its typed Person Server clients share one identity.
+                _agent = agents.Create("wallet-walkthrough", _key, builder => builder.UseJwt(enrolled.AgentToken)
+                    .WithPersonServer(person).WithEgressPolicy(SampleEgress.Policy).WithInnerHandler(Wire(),
+                        AAuthTransportContract.EnforcesEgressPolicy));
                 Result = ScenarioWireHandler.Claims(_agentToken!).ToJsonString(Pretty);
                 break;
             case 1: _resourceToken = await ChallengeAsync(Resource + Path, cancellationToken); break;
@@ -112,12 +117,10 @@ public sealed class WalletDemoSession(string provider, string person, string wal
 
     private async Task<string> ExchangeAsync(CancellationToken cancellationToken)
     {
-        using var signed = Signed(_agentToken!);
-        using var metadata = new MetadataClient(_http);
         string result;
         try
         {
-            result = await new TokenExchangeClient(signed, metadata).ExchangeAsync(person, _resourceToken!, new TokenExchangeRequest
+            result = await _agent!.TokenExchange.ExchangeAsync(person, _resourceToken!, new TokenExchangeRequest
             {
                 PresentedToken = _personToken,
                 OnInteractionRequired = async (interaction, _) =>
@@ -147,20 +150,18 @@ public sealed class WalletDemoSession(string provider, string person, string wal
 
     private async Task<string> ChallengeAsync(string url, CancellationToken cancellationToken)
     {
-        using (var agent = Signed(_agentToken!))
         {
             // §Person Token Required: the agent token earns a person-token requirement first.
-            using (var prerequisite = await agent.GetAsync(url, cancellationToken))
+            using (var prerequisite = await _agent!.HttpClient.GetAsync(url, cancellationToken))
             {
                 Require(prerequisite.StatusCode, HttpStatusCode.Unauthorized);
                 if (AAuthRequirementHeader.Parse(prerequisite.Headers.GetValues(AAuthRequirementHeader.Name).First()).Requirement
                     != AAuthRequirementHeader.PersonTokenRequirement)
                     throw new InvalidOperationException("Expected a person-token requirement.");
             }
-            using var metadata = new MetadataClient(_http);
             try
             {
-                _personToken = await new TokenExchangeClient(agent, metadata).RequestPersonTokenAsync(person,
+                _personToken = await _agent.TokenExchange.RequestPersonTokenAsync(person,
                     new Uri(url).GetLeftPart(UriPartial.Authority), new TokenExchangeRequest
                     {
                         OnInteractionRequired = async (interaction, _) =>
@@ -223,8 +224,10 @@ public sealed class WalletDemoSession(string provider, string person, string wal
     }
 
     private HttpClient Signed(string token) => new AAuthClientBuilder(_key).UseJwt(token).WithEgressPolicy(SampleEgress.Policy)
-        .WithInnerHandler(new ScenarioWireHandler(exchange => Exchanges.Add(exchange))
-        { InnerHandler = AAuthHttpTransport.CreateHandler(SampleEgress.Policy) }, AAuthTransportContract.EnforcesEgressPolicy).Build();
+        .WithInnerHandler(Wire(), AAuthTransportContract.EnforcesEgressPolicy).Build();
+
+    private ScenarioWireHandler Wire() => new(exchange => Exchanges.Add(exchange))
+        { InnerHandler = AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
 
     private static void Require(HttpStatusCode actual, HttpStatusCode expected)
     {
@@ -232,5 +235,9 @@ public sealed class WalletDemoSession(string provider, string person, string wal
     }
 
     public static JsonSerializerOptions Pretty { get; } = new() { WriteIndented = true };
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        _agent?.Dispose();
+        _http.Dispose();
+    }
 }

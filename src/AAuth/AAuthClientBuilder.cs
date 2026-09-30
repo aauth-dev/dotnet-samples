@@ -105,6 +105,9 @@ public sealed class AAuthClientBuilder
     private bool _resourceManagedAccess;
     private IAAuthAccessStore? _accessStore;
 
+    // Carrier tokens obtained by exchange; shared when set, else per built pipeline.
+    private IAAuthTokenCache? _tokenCache;
+
     // Stored token (for reading claims)
     private string? _agentToken;
     private Func<string>? _tokenFactory;
@@ -488,9 +491,31 @@ public sealed class AAuthClientBuilder
         return this;
     }
 
-    /// <summary>Build the configured <see cref="HttpClient"/>.</summary>
+    /// <summary>
+    /// Keep the person tokens and auth tokens this client obtains in <paramref name="cache"/>. Clients
+    /// built with the same cache reuse each other's tokens; without one, each built pipeline has its own.
+    /// Build a client once and reuse it: a client built per request repeats every token exchange.
+    /// </summary>
+    public AAuthClientBuilder WithTokenCache(IAAuthTokenCache cache)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        _tokenCache = cache;
+        return this;
+    }
+
+    /// <summary>
+    /// Build the configured <see cref="HttpClient"/>. The caller owns and disposes it. Build once and
+    /// reuse it: the client holds the agent's token caches, so a client built per request repeats every
+    /// token exchange (share caches across builds with <see cref="WithTokenCache"/>).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="HttpClient.Timeout"/> is infinite: each HTTP call is bounded by the egress policy's
+    /// <see cref="AAuthEgressPolicy.RequestTimeout"/>, and deferred polling by its handler's
+    /// <c>PollingTimeout</c>, so a long consent is not cut off by the default 100-second client timeout.
+    /// </remarks>
     /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
-    public HttpClient Build() => AAuthHttpTransport.AttachPolicy(new HttpClient(BuildHandler()),
+    public HttpClient Build() => AAuthHttpTransport.AttachPolicy(
+        new HttpClient(BuildHandler()) { Timeout = Timeout.InfiniteTimeSpan },
         _egressPolicy, _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy);
 
     /// <summary>
@@ -525,18 +550,7 @@ public sealed class AAuthClientBuilder
             throw new InvalidOperationException(
                 "BuildGovernance requires a Person Server. Configure one via WithPersonServer(...).");
         }
-        var agentBuilder = new AAuthClientBuilder(_key)
-        {
-            _provider = _provider, _agentToken = _agentToken, _tokenFactory = _tokenFactory,
-            _tokenRefresher = _tokenRefresher, _ownedTokenRefresherFactory = _ownedTokenRefresherFactory,
-            _refreshThreshold = _refreshThreshold, _selfIssuedIssuer = _selfIssuedIssuer,
-            _selfIssuedSubject = _selfIssuedSubject, _selfIssuedKid = _selfIssuedKid,
-            _selfIssuedPersonServer = _selfIssuedPersonServer, _egressPolicy = _egressPolicy,
-            _innerHandler = _innerHandler, _transportContract = _transportContract,
-            _capabilities = _capabilities, _onSignatureBase = _onSignatureBase,
-        };
-        var signed = agentBuilder.Build();
-        signed.Timeout = Timeout.InfiniteTimeSpan;
+        var signed = BuildAgentSigned();
         try
         {
             var metadata = new MetadataClient(policy: _egressPolicy);
@@ -548,6 +562,32 @@ public sealed class AAuthClientBuilder
             throw;
         }
     }
+
+    /// <summary>
+    /// A client signed as the agent itself (never a carrier), with no challenge or interaction
+    /// handling: the channel for calls to the Person Server, whose deferred responses the typed
+    /// clients handle.
+    /// </summary>
+    internal HttpClient BuildAgentSigned()
+    {
+        if (_provider is not JwtSignatureKeyProvider && _tokenRefresher is null
+            && _ownedTokenRefresherFactory is null && _selfIssuedIssuer is null)
+            throw new InvalidOperationException("Person Server clients require an agent JWT source. Use UseJwt, Enrolled, SelfIssuing, or WithTokenRefresh.");
+        var agentBuilder = new AAuthClientBuilder(_key)
+        {
+            _provider = _provider, _agentToken = _agentToken, _tokenFactory = _tokenFactory,
+            _tokenRefresher = _tokenRefresher, _ownedTokenRefresherFactory = _ownedTokenRefresherFactory,
+            _refreshThreshold = _refreshThreshold, _selfIssuedIssuer = _selfIssuedIssuer,
+            _selfIssuedSubject = _selfIssuedSubject, _selfIssuedKid = _selfIssuedKid,
+            _selfIssuedPersonServer = _selfIssuedPersonServer, _egressPolicy = _egressPolicy,
+            _innerHandler = _innerHandler, _transportContract = _transportContract,
+            _capabilities = _capabilities, _onSignatureBase = _onSignatureBase,
+        };
+        return agentBuilder.Build();
+    }
+
+    internal AAuthEgressPolicy EgressPolicy => _egressPolicy;
+    internal string? PersonServer => _personServer;
 
     // Build a signed HttpClient (pinned to the agent identity) plus a metadata
     // client — the channel used for token exchange and governance calls. The long
@@ -675,7 +715,7 @@ public sealed class AAuthClientBuilder
         var agentTokenHolder = agentToken is not null
             ? new AAuthTokenHolder(agentToken)
             : new AAuthTokenHolder();
-        var carrierHolder = new AAuthTokenHolder();
+        var carrierHolder = new AAuthTokenHolder(_tokenCache);
 
         // Resource requests present the carrier once one is obtained, else the (fresh)
         // agent token.

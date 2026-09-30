@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 202 changed public-source files, 873 added/replacement declarations, 401 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 203 changed public-source files, 891 added/replacement declarations, 403 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -105,8 +105,10 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [DocumentDemoSessio
 
 ```diff
 - AAuth.Samples.Capabilities.DocumentDemoSession: public string ? ConsentUrl { get ; private set ; }
+- AAuth.Samples.Capabilities: public sealed class DocumentDemoSession ( string provider , string person , string resource ) : IDisposable
 + AAuth.Samples.Capabilities.DocumentDemoSession: public Interaction ? Consent { get ; private set ; }
 + AAuth.Samples.Capabilities.DocumentDemoSession: public string ? ConsentUrl
++ AAuth.Samples.Capabilities: public sealed class DocumentDemoSession ( IAAuthAgentFactory agents , string provider , string person , string resource ) : IDisposable
 ```
 
 Public owners: `AAuth.Samples.Capabilities.DocumentDemoSession`, `AAuth.Samples.Capabilities`.
@@ -118,9 +120,11 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [WalletDemoSession.
 ```diff
 - AAuth.Samples.Capabilities.WalletDemoSession: public string ? ConsentUrl { get ; private set ; }
 - AAuth.Samples.Capabilities.WalletFlow: DirectAs
+- AAuth.Samples.Capabilities: public sealed class WalletDemoSession ( string provider , string person , string wallet , string concierge ) : IDisposable
 + AAuth.Samples.Capabilities.WalletDemoSession: public Interaction ? Consent { get ; private set ; }
 + AAuth.Samples.Capabilities.WalletDemoSession: public string ? ConsentUrl
 + AAuth.Samples.Capabilities.WalletFlow: AsGrantChaining
++ AAuth.Samples.Capabilities: public sealed class WalletDemoSession ( IAAuthAgentFactory agents , string provider , string person , string wallet , string concierge ) : IDisposable
 ```
 
 Public owners: `AAuth.Samples.Capabilities.WalletDemoSession`, `AAuth.Samples.Capabilities.WalletFlow`, `AAuth.Samples.Capabilities`.
@@ -184,12 +188,13 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [WalletScenarioCode
         }
         """ ;
 + AAuth.Samples.Capabilities.WalletScenarioCode: public const string Clarification = """
-        public static Task<string> ClarifyAsync(HttpClient signedAgent, MetadataClient metadata,
+        public static Task<string> ClarifyAsync(AAuthAgent agent,
             string personServer, string resourceToken, string personToken,
             Func<Interaction, CancellationToken, Task> consent,
             Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>> answer,
             CancellationToken cancellationToken)
-            => new TokenExchangeClient(signedAgent, metadata).ExchangeAsync(personServer, resourceToken,
+            // The agent's TokenExchange client is signed as the agent, never with a carrier token.
+            => agent.TokenExchange.ExchangeAsync(personServer, resourceToken,
                 new TokenExchangeRequest
                 {
                     PresentedToken = personToken, OnInteractionRequired = consent, OnClarificationRequired = answer,
@@ -211,10 +216,10 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [WalletScenarioCode
             return revocation.RevokeTokenAsync(personTokenId, cancellationToken);
         }
 
-        public static Task<string> RecoverAsync(HttpClient signedAgent, MetadataClient metadata,
+        public static Task<string> RecoverAsync(AAuthAgent agent,
             string personServer, string freshResourceToken, string personToken,
             Func<Interaction, CancellationToken, Task> consent, CancellationToken cancellationToken)
-            => new TokenExchangeClient(signedAgent, metadata).ExchangeAsync(personServer, freshResourceToken,
+            => agent.TokenExchange.ExchangeAsync(personServer, freshResourceToken,
                 new TokenExchangeRequest { PresentedToken = personToken, OnInteractionRequired = consent }, cancellationToken);
         """ ;
 ```
@@ -1210,6 +1215,7 @@ Concept/decision: [agent-clients](#agent-clients). Source: [AAuthClientBuilder.c
 - AAuth.AAuthClientBuilder: public static EnrolledBuilder Enrolled ( IAAuthKey key )
 - AAuth.AAuthClientBuilder: public static SelfIssuingBuilder SelfIssuing ( IAAuthKey key )
 + AAuth.AAuthClientBuilder: public AAuthClientBuilder ( IAAuthSigner key )
++ AAuth.AAuthClientBuilder: public AAuthClientBuilder WithTokenCache ( IAAuthTokenCache cache )
 + AAuth.AAuthClientBuilder: public static EnrolledBuilder Enrolled ( IAAuthSigner key )
 + AAuth.AAuthClientBuilder: public static SelfIssuingBuilder SelfIssuing ( IAAuthSigner key )
 ```
@@ -1345,7 +1351,10 @@ Public owners: `AAuth.Access.AccessDecisionKind`, `AAuth.Access.AccessDecision`,
 Concept/decision: [agent-clients](#agent-clients). Source: [AAuthAgentFactory.cs](../../../src/AAuth/Agent/AAuthAgentFactory.cs).
 
 ```diff
++ AAuth.Agent.AAuthAgent: public AAuth . Server . RevocationClient Revocation
++ AAuth.Agent.AAuthAgent: public Governance . AAuthGovernanceClient Governance
 + AAuth.Agent.AAuthAgent: public HttpClient HttpClient { get ; }
++ AAuth.Agent.AAuthAgent: public TokenExchangeClient TokenExchange
 + AAuth.Agent.AAuthAgent: public string Name { get ; }
 + AAuth.Agent.AAuthAgent: public void Dispose ( )
 + AAuth.Agent.AAuthAgentDescriptor: public AAuthAgentDescriptor ( string name )
@@ -1391,11 +1400,32 @@ Concept/decision: [resource-managed](#resource-managed). Source: [AAuthRequestOp
 
 Public owners: `AAuth.Agent.AAuthRequestOptions`, `AAuth.Agent`.
 
+### src/AAuth/Agent/AAuthTokenCache.cs
+
+Concept/decision: [agent-clients](#agent-clients). Source: [AAuthTokenCache.cs](../../../src/AAuth/Agent/AAuthTokenCache.cs).
+
+```diff
++ AAuth.Agent.IAAuthTokenCache: Task < string > AcquireAsync ( AAuthTokenCacheKey key , string ? presented , Func < CancellationToken , Task < string > > acquire , CancellationToken cancellationToken )
++ AAuth.Agent.IAAuthTokenCache: string ? Get ( AAuthTokenCacheKey key )
++ AAuth.Agent.IAAuthTokenCache: void Set ( AAuthTokenCacheKey key , string token , DateTimeOffset expiresAt )
++ AAuth.Agent.InMemoryAAuthTokenCache: public InMemoryAAuthTokenCache ( TimeProvider ? timeProvider = null )
++ AAuth.Agent.InMemoryAAuthTokenCache: public async Task < string > AcquireAsync ( AAuthTokenCacheKey key , string ? presented , Func < CancellationToken , Task < string > > acquire , CancellationToken cancellationToken )
++ AAuth.Agent.InMemoryAAuthTokenCache: public string ? Get ( AAuthTokenCacheKey key )
++ AAuth.Agent.InMemoryAAuthTokenCache: public void Set ( AAuthTokenCacheKey key , string token , DateTimeOffset expiresAt )
++ AAuth.Agent: public interface IAAuthTokenCache
++ AAuth.Agent: public sealed class InMemoryAAuthTokenCache : IAAuthTokenCache
++ AAuth.Agent: public sealed record AAuthTokenCacheKey ( string AgentToken , string ? Upstream , string ? MissionS256 , string Audience , string ? Account , string KeyThumbprint )
+```
+
+Public owners: `AAuth.Agent.IAAuthTokenCache`, `AAuth.Agent.InMemoryAAuthTokenCache`, `AAuth.Agent`.
+
 ### src/AAuth/Agent/AAuthTokenHolder.cs
 
 Concept/decision: [agent-clients](#agent-clients). Source: [AAuthTokenHolder.cs](../../../src/AAuth/Agent/AAuthTokenHolder.cs).
 
-Public signatures unchanged (7); behavior reviewed under agent-clients.
+```diff
++ AAuth.Agent.AAuthTokenHolder: public AAuthTokenHolder ( IAAuthTokenCache ? cache )
+```
 
 Public owners: `AAuth.Agent.AAuthTokenHolder`, `AAuth.Agent`.
 
@@ -1840,6 +1870,7 @@ Concept/decision: [di](#di). Source: [AAuthAgentOptions.cs](../../../src/AAuth/D
 + AAuth.AAuthAgentOptions: public Func < string ? > ? UpstreamTokenProvider { get ; set ; }
 + AAuth.AAuthAgentOptions: public HttpMessageHandler ? InnerHandler { get ; set ; }
 + AAuth.AAuthAgentOptions: public IAAuthSigner ? Signer { get ; set ; }
++ AAuth.AAuthAgentOptions: public IAAuthTokenCache ? TokenCache { get ; set ; }
 + AAuth.AAuthAgentOptions: public ISignatureKeyProvider ? SignatureKeyProvider { get ; set ; }
 + AAuth.AAuthAgentOptions: public InteractionHandlingOptions Interaction { get ; set ; } = new ( )
 + AAuth.AAuthAgentOptions: public Mission ? Mission { get ; set ; }

@@ -9,6 +9,14 @@ namespace AAuth.Tests.Tokens;
 
 public class AccountBindingTests
 {
+    // The challenge handler stores an exchanged token through the holder's single-flight acquisition.
+    private static Task<string> Store(AAuth.Agent.AAuthTokenHolder holder, System.Net.Http.HttpRequestMessage request,
+        IAAuthSigner key, string token)
+    {
+        request.Options.Set(AAuth.HttpSig.AAuthSigningHandler.SigningKeyContext, key);
+        return holder.AcquireAsync(request, null, _ => Task.FromResult(token), default);
+    }
+
     [Fact]
     public async Task CachedCarrierTracksRefreshedSourceAndRequestBindings()
     {
@@ -30,7 +38,7 @@ public class AccountBindingTests
         request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, "personal");
         request.Options.Set(AAuth.Agent.AAuthRequestOptions.MissionS256, "mission-a");
         Assert.Equal(original, holder.SelectForRequest(request, original, key.ComputeJwkThumbprint()));
-        holder.UpdateFromExchange(auth, request);
+        await Store(holder, request, key, auth);
         Assert.Equal(auth, holder.SelectForRequest(request, original, key.ComputeJwkThumbprint()));
         Assert.Equal(refreshed, holder.SelectForRequest(request, refreshed, key.ComputeJwkThumbprint()));
         Assert.Equal(original, holder.SelectForRequest(request, original, "other-key"));
@@ -66,7 +74,7 @@ public class AccountBindingTests
         using (var obtained = Request("personal", "upstream-person-a"))
         {
             holder.SelectForRequest(obtained, agent, key.ComputeJwkThumbprint());
-            holder.UpdateFromExchange(auth, obtained);
+            await Store(holder, obtained, key, auth);
         }
 
         // Another person's call chain (a different upstream token) never gets person A's token.

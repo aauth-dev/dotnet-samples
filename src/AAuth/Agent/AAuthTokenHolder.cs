@@ -1,20 +1,13 @@
 using System;
+using System.Threading.Tasks;
 
 namespace AAuth.Agent;
 
 /// <summary>
-/// Mutable single-value carrier-token holder shared between an
-/// <see cref="HttpSig.AAuthSigningHandler"/> and a <see cref="ChallengeHandler"/>.
-/// Lets the challenge handler swap the active carrier token (agent token →
-/// person token → auth token) without rebuilding the HttpClient pipeline.
+/// The agent token slot (<see cref="Current"/>, <see cref="Update"/>) and the carrier tokens
+/// (person token, auth token) the challenge handler obtained, kept in an <see cref="IAAuthTokenCache"/>
+/// keyed by what each was obtained for. Thread-safe; share a cache to reuse carriers across clients.
 /// </summary>
-/// <remarks>
-/// Not thread-safe by design. The current sample agents are single-threaded.
-/// If concurrent requests through the same agent pipeline are ever needed,
-/// replace the field with an <see cref="System.Threading.Interlocked"/>
-/// or <c>AsyncLocal&lt;T&gt;</c> approach so an in-flight exchange does not
-/// race with parallel signed requests.
-/// </remarks>
 public sealed class AAuthTokenHolder
 {
     // volatile gives us release/acquire semantics on the reference write so
@@ -23,6 +16,7 @@ public sealed class AAuthTokenHolder
     // atomic on .NET; volatile only adds ordering.
     private sealed record Carrier(string Token, string? Upstream, string? Mission, string? AgentToken = null);
     private volatile Carrier _carrier;
+    private readonly IAAuthTokenCache _cache;
     private static readonly System.Net.Http.HttpRequestOptionsKey<string> SourceToken = new("AAuth.CarrierSourceToken");
 
     /// <summary>Create the holder with an initial token (typically the agent token).</summary>
@@ -30,15 +24,22 @@ public sealed class AAuthTokenHolder
     {
         ArgumentException.ThrowIfNullOrEmpty(initialToken);
         _carrier = new(initialToken, null, null);
+        _cache = new InMemoryAAuthTokenCache();
     }
 
     /// <summary>
     /// Create the holder without an initial token. The first call to
     /// <see cref="TokenRefreshHandler"/> will acquire the token lazily.
     /// </summary>
-    public AAuthTokenHolder()
+    public AAuthTokenHolder() : this((IAAuthTokenCache?)null)
+    {
+    }
+
+    /// <summary>Create an empty holder whose carriers live in <paramref name="cache"/>.</summary>
+    public AAuthTokenHolder(IAAuthTokenCache? cache)
     {
         _carrier = new(string.Empty, null, null);
+        _cache = cache ?? new InMemoryAAuthTokenCache();
     }
 
     /// <summary>Returns <c>true</c> when a token has been set.</summary>
@@ -50,6 +51,8 @@ public sealed class AAuthTokenHolder
     public string SelectForRequest(System.Net.Http.HttpRequestMessage request, string agentToken, string signingKeyThumbprint)
     {
         request.Options.Set(SourceToken, agentToken);
+        if (Key(request, agentToken, signingKeyThumbprint) is { } key && _cache.Get(key) is { } cached)
+            return cached;
         var carrier = _carrier;
         var token = carrier.Token;
         if (string.IsNullOrEmpty(token)) return agentToken;
@@ -78,11 +81,33 @@ public sealed class AAuthTokenHolder
         _carrier = new(token, null, null);
     }
 
-    internal void UpdateFromExchange(string token, System.Net.Http.HttpRequestMessage request)
+    // Single-flight per key: a concurrent request for the same key reuses this acquisition. The
+    // result also becomes Current, for pipelines that sign with the holder's latest carrier.
+    internal async Task<string> AcquireAsync(System.Net.Http.HttpRequestMessage request, string? presented,
+        Func<System.Threading.CancellationToken, Task<string>> acquire, System.Threading.CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrEmpty(token);
-        request.Options.TryGetValue(MissionForwardingHandler.UpstreamAuthorization, out var upstream);
         request.Options.TryGetValue(SourceToken, out var agentToken);
+        var token = agentToken is not null
+            && request.Options.TryGetValue(AAuth.HttpSig.AAuthSigningHandler.SigningKeyContext, out var signingKey)
+            && Key(request, agentToken, signingKey.ComputeJwkThumbprint()) is { } key
+                ? await _cache.AcquireAsync(key, presented, acquire, cancellationToken).ConfigureAwait(false)
+                : await acquire(cancellationToken).ConfigureAwait(false);
+        request.Options.TryGetValue(MissionForwardingHandler.UpstreamAuthorization, out var upstream);
         _carrier = new(token, upstream, AAuthRequestOptions.GetMissionS256(request), agentToken);
+        return token;
     }
+
+    private static AAuthTokenCacheKey? Key(System.Net.Http.HttpRequestMessage request, string agentToken, string thumbprint)
+    {
+        var audience = request.Options.TryGetValue(AAuthRequestOptions.ResourceIdentifier, out var resource)
+            ? resource : request.RequestUri?.GetLeftPart(UriPartial.Authority);
+        if (string.IsNullOrEmpty(agentToken) || audience is null) return null;
+        request.Options.TryGetValue(MissionForwardingHandler.UpstreamAuthorization, out var upstream);
+        return new(agentToken, upstream, AAuthRequestOptions.GetMissionS256(request), audience,
+            AAuthRequestOptions.GetAccount(request), thumbprint);
+    }
+
+    internal static DateTimeOffset ExpiresAt(string token)
+        => (long?)TokenRefreshHandler.ReadPayloadUnsafe(token)["exp"] is { } exp
+            ? DateTimeOffset.FromUnixTimeSeconds(exp) : DateTimeOffset.MinValue;
 }

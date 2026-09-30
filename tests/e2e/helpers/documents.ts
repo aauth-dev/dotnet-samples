@@ -18,7 +18,7 @@ export function documentTests() {
       await expectSyntaxHighlighted(root.locator('[data-code-step="1"] code'));
       await expectReadableLinks(page);
       await expect(root.locator('[data-protocol-step]')).toHaveCount(4);
-      const methods = ['EnrollDocumentAgentAsync', 'VerifyResourceTokenAsync', 'TokenExchangeClient', 'DownloadDocumentAsync'];
+      const methods = ['EnrollDocumentAgentAsync', 'VerifyResourceTokenAsync', 'agent.TokenExchange', 'DownloadDocumentAsync'];
       for (const step of [1, 2, 3, 4]) {
         await expect(root.locator(`[data-code-step="${step}"] summary`)).toContainText(`${step}.`);
         await expect(root.locator(`[data-code-step="${step}"] code`)).toContainText(methods[step - 1]);

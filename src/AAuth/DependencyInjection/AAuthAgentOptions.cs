@@ -97,6 +97,12 @@ public class AAuthAgentOptions
 
     /// <summary>Code-only: observes each RFC 9421 signature base.</summary>
     public Action<HttpRequestMessage, string>? OnSignatureBase { get; set; }
+
+    /// <summary>
+    /// Code-only: the cache of person and auth tokens obtained by challenge handling. Defaults to the
+    /// <see cref="IAAuthTokenCache"/> keyed by the agent name, then an unkeyed one, then in-memory.
+    /// </summary>
+    public IAAuthTokenCache? TokenCache { get; set; }
 }
 
 /// <summary>A self-issued agent identity (<c>AAuthClientBuilder.SelfIssuing</c>).</summary>

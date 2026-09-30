@@ -568,19 +568,19 @@ This is the highest-blast-radius client change.
 
 ### Definition of Done
 
-- [ ] `TokenCacheSharingTests`:
+- [x] `TokenCacheSharingTests`:
   - two builds sharing a cache perform one token exchange;
   - alternating two resources performs two exchanges, not one per call;
   - concurrent first requests trigger one exchange (single-flight);
   - a different upstream token or mission never reuses an entry.
-- [ ] The DI path reuses the cache across resolves.
-- [ ] Keyed typed-client resolution tests for each client.
-- [ ] Timeout test: a 3-minute deferred poll behind a DI agent client
+- [x] The DI path reuses the cache across resolves.
+- [x] Keyed typed-client resolution tests for each client.
+- [x] Timeout test: a 3-minute deferred poll behind a DI agent client
       completes (with `FakeTimeProvider` or a shortened equivalent).
-- [ ] Walkthrough code (`DocumentDemoSession.cs` L47, `WalletScenarioCode.cs`
+- [x] Walkthrough code (`DocumentDemoSession.cs` L47, `WalletScenarioCode.cs`
       L18) uses the keyed typed clients or the agent client, not hand-built
       `TokenExchangeClient`s.
-- [ ] Gates pass.
+- [x] Gates pass.
 
 ## Phase 10 — Sample migration (compiled code; F-C2; Q15)
 

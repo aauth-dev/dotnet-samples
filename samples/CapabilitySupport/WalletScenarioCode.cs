@@ -10,12 +10,13 @@ public static class WalletScenarioCode
     };
 
     public const string Clarification = """
-        public static Task<string> ClarifyAsync(HttpClient signedAgent, MetadataClient metadata,
+        public static Task<string> ClarifyAsync(AAuthAgent agent,
             string personServer, string resourceToken, string personToken,
             Func<Interaction, CancellationToken, Task> consent,
             Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>> answer,
             CancellationToken cancellationToken)
-            => new TokenExchangeClient(signedAgent, metadata).ExchangeAsync(personServer, resourceToken,
+            // The agent's TokenExchange client is signed as the agent, never with a carrier token.
+            => agent.TokenExchange.ExchangeAsync(personServer, resourceToken,
                 new TokenExchangeRequest
                 {
                     PresentedToken = personToken, OnInteractionRequired = consent, OnClarificationRequired = answer,
@@ -52,10 +53,10 @@ public static class WalletScenarioCode
             return revocation.RevokeTokenAsync(personTokenId, cancellationToken);
         }
 
-        public static Task<string> RecoverAsync(HttpClient signedAgent, MetadataClient metadata,
+        public static Task<string> RecoverAsync(AAuthAgent agent,
             string personServer, string freshResourceToken, string personToken,
             Func<Interaction, CancellationToken, Task> consent, CancellationToken cancellationToken)
-            => new TokenExchangeClient(signedAgent, metadata).ExchangeAsync(personServer, freshResourceToken,
+            => agent.TokenExchange.ExchangeAsync(personServer, freshResourceToken,
                 new TokenExchangeRequest { PresentedToken = personToken, OnInteractionRequired = consent }, cancellationToken);
         """;
 }

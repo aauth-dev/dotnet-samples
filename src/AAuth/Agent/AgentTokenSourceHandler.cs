@@ -5,12 +5,15 @@ namespace AAuth.Agent;
 internal sealed class AgentTokenSourceHandler(Func<string> source, AAuthTokenHolder holder, string? initialToken) : DelegatingHandler
 {
     private string? _lastSource = initialToken;
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly object _gate = new();
 
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    // Only the token update is serialized: concurrent requests proceed in parallel and each is
+    // signed with the latest agent token.
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        // A cancelled request neither reads the token source nor reaches the network.
+        if (cancellationToken.IsCancellationRequested) return Task.FromCanceled<HttpResponseMessage>(cancellationToken);
+        lock (_gate)
         {
             var token = source();
             if (token != _lastSource)
@@ -18,14 +21,7 @@ internal sealed class AgentTokenSourceHandler(Func<string> source, AAuthTokenHol
                 holder.Update(token);
                 _lastSource = token;
             }
-            return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
         }
-        finally { _gate.Release(); }
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing) _gate.Dispose();
-        base.Dispose(disposing);
+        return base.SendAsync(request, cancellationToken);
     }
 }

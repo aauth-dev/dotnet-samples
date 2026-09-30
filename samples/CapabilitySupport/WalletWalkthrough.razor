@@ -5,6 +5,7 @@
 @using System.Text.Json
 @using AAuth.Samples.Shared
 @inject IConfiguration Configuration
+@inject AAuth.Agent.IAAuthAgentFactory Agents
 
 @code {
     private string PersonServerUrl => Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
@@ -179,7 +180,7 @@
     }
     private void Create(WalletFlow flow = WalletFlow.Clarification)
     {
-        _session = new(Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
+        _session = new(Agents, Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
             Configuration["AAuth:PersonServer"] ?? "http://localhost:5100",
             Configuration["AAuth:Wallet"] ?? "http://localhost:5003",
             Configuration["AAuth:Concierge"] ?? "http://localhost:5200") { Flow = flow };

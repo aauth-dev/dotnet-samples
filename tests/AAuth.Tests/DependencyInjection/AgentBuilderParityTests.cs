@@ -52,6 +52,7 @@ public class AgentBuilderParityTests
         ["WithTokenRefresh"] = ["TokenRefresher", "TokenRefreshThreshold"],
         ["WithInteractionHandling"] = ["HandleInteractions", "Interaction"],
         ["WithResourceManagedAccess"] = ["EnableResourceManagedAccess", "AAuthAccessStore"],
+        ["WithTokenCache"] = ["TokenCache"],
         ["BuildGovernance"] = ["builder:WithGovernance"],
         ["Build"] = [Terminal],
         ["BuildHandler"] = [Terminal],

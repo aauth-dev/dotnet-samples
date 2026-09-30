@@ -32,7 +32,8 @@ See [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md) for the CLI/d
 `AddAAuthAgent(name, …)` registers a named agent and returns an `AAuthAgentBuilder`
 (`Configure`, `WithAgentProvider`, `WithGovernance`). Resolve the agent's
 `HttpClient` with `IHttpClientFactory.CreateClient(name)` or
-`IAAuthAgentFactory.Get(name)`. The named `AAuthAgentOptions` are validated when
+`IAAuthAgentFactory.Get(name)`, and its Person Server clients as keyed services
+(see [Typed Clients](#typed-clients)). The named `AAuthAgentOptions` are validated when
 the host starts (see [AAuthAgentOptions](#aauthagentoptions)). The pipeline is
 composed from the service provider when the agent is first resolved and lives as
 long as the container. A `KeyHandle` is loaded at that point through the
@@ -191,8 +192,8 @@ A self-issued agent binds `"SelfIssued": { "Issuer": "…", "Subject": "…" }`
 instead of `AgentProvider`. Scalars bind; delegate and instance members are
 code-only: `Signer`, `AgentTokenFactory`, `TokenRefresher`, `SignatureKeyProvider`,
 `Mission`, `UpstreamTokenProvider`, the `Challenge` and `Interaction` callbacks,
-`EgressPolicy`, `InnerHandler`, `TransportContract`, `AAuthAccessStore` and
-`OnSignatureBase`. Set them in `configure` or `.Configure(...)`.
+`EgressPolicy`, `InnerHandler`, `TransportContract`, `AAuthAccessStore`,
+`OnSignatureBase` and `TokenCache`. Set them in `configure` or `.Configure(...)`.
 
 ### Missions, Clarification and Call Chaining
 
@@ -343,7 +344,7 @@ builder.Services.AddAAuthDiscovery(options =>
 });
 ```
 
-`AddAAuthResource`, `AddAAuthPersonServer` and `AddAAuthAccessServer` register discovery clients if `AddAAuthDiscovery` has not been called. Call it explicitly to share instances and control cache behavior. Agents registered with `AddAAuthAgent` own their discovery clients inside their pipeline and don't use these registrations.
+`AddAAuthResource`, `AddAAuthPersonServer` and `AddAAuthAccessServer` register discovery clients if `AddAAuthDiscovery` has not been called. Call it explicitly to share instances and control cache behavior. An agent's challenge-handling pipeline owns its discovery clients. The agent's [typed clients](#typed-clients) use the registered `MetadataClient` when there is one, and otherwise their own.
 
 ## Consuming Registered Clients
 
@@ -391,6 +392,78 @@ using var probe = agents.Create("probe", key, agentBuilder => agentBuilder
     .UseJwt(agentToken)
     .WithChallengeHandling("https://ps.example"));
 ```
+
+### Typed Clients
+
+`AddAAuthAgent(name)` also registers the agent's Person Server clients, keyed by
+the agent name. Every client is signed as the agent, never with a person token or
+auth token it obtained:
+
+| Keyed service | Needs `PersonServer` |
+|---|---|
+| `TokenExchangeClient` | No. Each call names the Person Server. |
+| `AAuthGovernanceClient` | Yes |
+| `MissionClient`, `PermissionClient`, `AuditClient`, `InteractionClient` | Yes. The same instances as `AAuthGovernanceClient.Mission` and the other properties. |
+| `RevocationClient` | No |
+
+The clients share one agent-signed `HttpClient` and one `MetadataClient`. That is
+the registered `MetadataClient` when there is one. Resolving a client that needs
+a Person Server throws `InvalidOperationException` when
+`AAuthAgentOptions.PersonServer` is not set. `AAuthAgent` exposes the same clients
+as `TokenExchange`, `Governance` and `Revocation`:
+
+```csharp
+app.MapPost("/person-token", async (
+    [FromKeyedServices("planner")] TokenExchangeClient exchange, CancellationToken cancellationToken)
+    => await exchange.RequestPersonTokenAsync("https://ps.example", "https://calendar.example", cancellationToken));
+
+var planner = app.Services.GetRequiredService<IAAuthAgentFactory>().Get("planner");
+var missions = planner.Governance.Mission; // same instance as the keyed MissionClient
+```
+
+An agent from `IAAuthAgentFactory.Create(...)` creates its typed clients when
+they are first used. It disposes them with the agent.
+
+### Token Cache
+
+Challenge handling caches the person tokens and auth tokens it obtains in an
+`IAAuthTokenCache`. A token is reused only for a request with the same agent
+token, upstream token, mission, resource, account and signing key. Concurrent
+requests that need the same token share one exchange. An agent that alternates
+between resources keeps one entry per resource.
+
+Each registered agent gets an in-memory cache, keyed by its name. It is shared by
+every `HttpClient` resolved for the agent. To share a cache between agents, set
+`AAuthAgentOptions.TokenCache` in code, or register your own `IAAuthTokenCache`
+keyed by the agent name. With the builder, `WithTokenCache(cache)` shares one
+cache between builds:
+
+```csharp
+var cache = new InMemoryAAuthTokenCache();
+using var reader = new AAuthClientBuilder(key).UseJwt(agentToken)
+    .WithChallengeHandling("https://ps.example").WithTokenCache(cache).Build();
+using var writer = new AAuthClientBuilder(key).UseJwt(agentToken)
+    .WithChallengeHandling("https://ps.example").WithTokenCache(cache).Build();
+```
+
+### Lifetime and Timeouts
+
+- **Build once and reuse.** A registered agent's pipeline, token cache and typed
+  clients live as long as the container, and the container disposes them.
+  Disposing an agent from `IAAuthAgentFactory.Get(name)` does nothing.
+- **Caller-owned.** You own and dispose an agent from `IAAuthAgentFactory.Create(...)`
+  and a client from `AAuthClientBuilder.Build()` or `BuildGovernance()`. Building
+  one per request throws away its token cache unless you share one with
+  `WithTokenCache`.
+- **Three timeouts, each with one job.**
+  - `AAuthEgressPolicy.RequestTimeout` bounds each HTTP call the SDK makes.
+  - `PollingTimeout` (on `Challenge` and `Interaction`) and
+    `DeferredPollerOptions.MaxTotalWait` bound the wait for a deferred consent.
+  - `HttpClient.Timeout` bounds the whole `SendAsync`, including every poll inside
+    the pipeline. Agent clients set it to `Timeout.InfiniteTimeSpan`, so a consent
+    that takes longer than the default 100 seconds is not cut off. If you wrap an
+    agent's handler in your own `HttpClient`, set `Timeout` above `PollingTimeout`
+    or to `Timeout.InfiniteTimeSpan`.
 
 ### Multiple Named Clients
 
@@ -535,6 +608,7 @@ instances, which binding ignores.
 | `InnerHandler` | `HttpMessageHandler?` | `null` | *Code-only.* Transport under the signer |
 | `TransportContract` | `AAuthTransportContract?` | `null` | *Code-only.* What `InnerHandler` guarantees about egress |
 | `OnSignatureBase` | `Action<HttpRequestMessage, string>?` | `null` | *Code-only.* Observes each RFC 9421 signature base |
+| `TokenCache` | `IAAuthTokenCache?` | the agent's keyed cache (in-memory) | *Code-only.* Person and auth tokens from challenge handling (see [Token Cache](#token-cache)) |
 
 ### AAuthResourceOptions
 
@@ -606,9 +680,10 @@ using var dynamicUpstreamClient = new AAuthClientBuilder(key)
 
 The mission governance client is built from `AAuthClientBuilder`, which wires the
 signed channel for you. The client is **bound to one Person Server**, so the agent
-must have an agent-token identity and an explicit `PersonServer`. Call
-`.WithGovernance()` on a registered agent to register an `AAuthGovernanceClient`
-keyed by the agent name, signed as that agent:
+must have an agent-token identity and an explicit `PersonServer`. Every registered
+agent registers an `AAuthGovernanceClient` keyed by the agent name, signed as that
+agent (see [Typed Clients](#typed-clients)). Call `.WithGovernance(options)` to set
+its default `GovernanceOptions`:
 
 ```csharp
 builder.Services.AddAAuthAgent("planner", options =>
@@ -617,7 +692,7 @@ builder.Services.AddAAuthAgent("planner", options =>
         options.AgentToken = agentToken;
         options.PersonServer = "https://ps.example";
     })
-    .WithGovernance(governanceOptions); // optional default GovernanceOptions
+    .WithGovernance(governanceOptions); // optional: default GovernanceOptions
 
 var app = builder.Build();
 var planner = app.Services.GetRequiredKeyedService<AAuthGovernanceClient>("planner");

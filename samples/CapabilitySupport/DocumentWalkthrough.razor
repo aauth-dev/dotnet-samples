@@ -5,6 +5,7 @@
 @using System.Text.Json
 @using AAuth.Samples.Shared
 @inject IConfiguration Configuration
+@inject AAuth.Agent.IAAuthAgentFactory Agents
 
 @code {
     private string PersonServerUrl => Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
@@ -94,15 +95,13 @@
                 .WithEgressPolicy(policy).EnrolAsync(cancellationToken);
         """;
     public const string ChallengeExample = """
-        public static async Task<string> RequestDocumentAsync(string agentToken,
+        public static async Task<string> RequestDocumentAsync(AAuthAgent agent,
             string resource, string person, IAAuthSigner key,
             TokenVerifier verifier, MetadataClient metadata, JwksClient jwks,
             AAuthEgressPolicy policy, CancellationToken cancellationToken)
         {
-            using var agent = new AAuthClientBuilder(key).UseJwt(agentToken)
-                .WithEgressPolicy(policy).Build();
             // The resource first asks who the agent acts for (requirement=person-token).
-            var personToken = await new TokenExchangeClient(agent, metadata)
+            var personToken = await agent.TokenExchange
                 .RequestPersonTokenAsync(person, resource, cancellationToken);
             using var personClient = new AAuthClientBuilder(key).UseJwt(personToken)
                 .WithEgressPolicy(policy).Build();
@@ -122,14 +121,12 @@
         }
         """;
     public const string AuthorizeExample = """
-        public static async Task<string> AuthorizeDocumentAsync(IAAuthSigner key, string agentToken,
-            MetadataClient metadata, string person, string resourceToken, string personToken,
+        public static Task<string> AuthorizeDocumentAsync(AAuthAgent agent,
+            string person, string resourceToken, string personToken,
             Func<Interaction, CancellationToken, Task> showConsent,
-            AAuthEgressPolicy policy, CancellationToken cancellationToken)
-        {
-            using var agent = new AAuthClientBuilder(key).UseJwt(agentToken)
-                .WithEgressPolicy(policy).Build();
-            return await new TokenExchangeClient(agent, metadata).ExchangeAsync(person,
+            CancellationToken cancellationToken)
+            // The agent's TokenExchange client is signed as the agent, never with a carrier token.
+            => agent.TokenExchange.ExchangeAsync(person,
                 resourceToken, new TokenExchangeRequest
                 {
                     PresentedToken = personToken,
@@ -137,7 +134,6 @@
                     OnInteractionRequired = showConsent,
                     PollerOptions = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(5) },
                 }, cancellationToken);
-            }
         """;
     public const string DownloadExample = """
         public static async Task<string> DownloadDocumentAsync(IAAuthSigner key,
@@ -160,7 +156,7 @@
     protected override void OnAfterRender(bool firstRender) { if (firstRender) { _interactive = true; StateHasChanged(); } }
     private void Create()
     {
-        _session = new(Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
+        _session = new(Agents, Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
             Configuration["AAuth:PersonServer"] ?? "http://localhost:5100", Configuration["AAuth:Documents"] ?? "http://localhost:5007");
         _session.Changed = () => InvokeAsync(StateHasChanged);
     }

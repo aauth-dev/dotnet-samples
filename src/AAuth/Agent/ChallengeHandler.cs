@@ -236,10 +236,12 @@ public sealed class ChallengeHandler : DelegatingHandler
                 var resource = request.Options.TryGetValue(AAuthRequestOptions.ResourceIdentifier, out var configured)
                     ? configured : requestOrigin
                         ?? throw new InvalidOperationException("A person-token challenge requires an absolute request URI.");
-                carrier = (reusedMissionToken ? null : ReusableMissionPersonToken(request, upstreamToken, personServer, resource, requestedMission))
-                    ?? await _exchange.RequestPersonTokenAsync(personServer, resource,
-                        ExchangeOptions(request, upstreamToken, requestedMission, presentedToken: null), cancellationToken)
-                        .ConfigureAwait(false);
+                var reusable = reusedMissionToken ? null : ReusableMissionPersonToken(request, upstreamToken, personServer, resource, requestedMission);
+                request.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var refused);
+                carrier = await _holder.AcquireAsync(request, refused, ct => reusable is not null ? Task.FromResult(reusable)
+                    : _exchange.RequestPersonTokenAsync(personServer, resource,
+                        ExchangeOptions(request, upstreamToken, requestedMission, presentedToken: null), ct),
+                    cancellationToken).ConfigureAwait(false);
                 // A reused token the resource refused is not offered again.
                 reusedMissionToken = true;
             }
@@ -283,11 +285,10 @@ public sealed class ChallengeHandler : DelegatingHandler
                 // (see AAuthClientBuilder) that is independent of this handler's carrier
                 // holder, so it stays agent-signed across successive step-up challenges.
                 var exchangeOptions = ExchangeOptions(request, upstreamToken, requestedMission, presented);
-                carrier = await _exchange
-                    .ExchangeAsync(personServer, requirement.ResourceToken!, exchangeOptions, cancellationToken)
-                    .ConfigureAwait(false);
+                carrier = await _holder.AcquireAsync(request, presented,
+                    ct => _exchange.ExchangeAsync(personServer, requirement.ResourceToken!, exchangeOptions, ct),
+                    cancellationToken).ConfigureAwait(false);
             }
-            _holder.UpdateFromExchange(carrier, request);
 
             // Clone the original request to retry — HttpRequestMessage is
             // single-use, and the signing handler downstream will re-sign with

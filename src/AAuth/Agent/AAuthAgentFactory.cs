@@ -40,16 +40,24 @@ public sealed class AAuthAgentDescriptor : AAuthAgentOptions
     public string Name { get; }
 }
 
-/// <summary>An AAuth agent: its signed, challenge-handling <see cref="System.Net.Http.HttpClient"/>.</summary>
+/// <summary>
+/// An AAuth agent: its signed, challenge-handling <see cref="System.Net.Http.HttpClient"/> and the typed
+/// clients for its Person Server, all signed as this agent.
+/// </summary>
 public sealed class AAuthAgent : IDisposable
 {
     private readonly bool _owned;
+    private readonly Func<Type, object> _clients;
+    private readonly Lazy<AAuthAgentChannel>? _channel;
 
-    internal AAuthAgent(string name, HttpClient httpClient, bool owned)
+    internal AAuthAgent(string name, HttpClient httpClient, bool owned, Func<Type, object> clients,
+        Lazy<AAuthAgentChannel>? channel = null)
     {
         Name = name;
         HttpClient = httpClient;
         _owned = owned;
+        _clients = clients;
+        _channel = channel;
     }
 
     /// <summary>The agent name.</summary>
@@ -58,10 +66,22 @@ public sealed class AAuthAgent : IDisposable
     /// <summary>The agent's <see cref="System.Net.Http.HttpClient"/>. Reuse it: it holds the agent's token caches.</summary>
     public HttpClient HttpClient { get; }
 
+    /// <summary>Person token requests and token exchanges at the Person Server.</summary>
+    public TokenExchangeClient TokenExchange => (TokenExchangeClient)_clients(typeof(TokenExchangeClient));
+
+    /// <summary>Mission, permission, audit and interaction calls at the agent's Person Server.</summary>
+    public Governance.AAuthGovernanceClient Governance
+        => (Governance.AAuthGovernanceClient)_clients(typeof(Governance.AAuthGovernanceClient));
+
+    /// <summary>Server-signed revocation requests, signed as this agent.</summary>
+    public AAuth.Server.RevocationClient Revocation => (AAuth.Server.RevocationClient)_clients(typeof(AAuth.Server.RevocationClient));
+
     /// <summary>Dispose a caller-owned agent. A registered agent is disposed with its container.</summary>
     public void Dispose()
     {
-        if (_owned) HttpClient.Dispose();
+        if (!_owned) return;
+        HttpClient.Dispose();
+        if (_channel is { IsValueCreated: true }) _channel.Value.Dispose();
     }
 }
 
@@ -80,7 +100,7 @@ internal sealed class AAuthAgentFactory(IServiceProvider services) : IAAuthAgent
             var client = services.GetRequiredService<IHttpClientFactory>().CreateClient(key);
             AAuthHttpTransport.AttachPolicy(client, AAuthAgentComposer.Egress(options),
                 options.TransportContract ?? AAuthTransportContract.EnforcesEgressPolicy);
-            return new AAuthAgent(key, client, owned: false);
+            return new AAuthAgent(key, client, owned: false, type => services.GetRequiredKeyedService(type, key));
         });
     }
 
@@ -91,7 +111,9 @@ internal sealed class AAuthAgentFactory(IServiceProvider services) : IAAuthAgent
         if (validation.Failed)
             throw new Microsoft.Extensions.Options.OptionsValidationException(descriptor.Name, typeof(AAuthAgentOptions),
                 validation.Failures ?? []);
-        return new AAuthAgent(descriptor.Name, AAuthAgentComposer.CreateBuilder(descriptor, services, descriptor.Name).Build(), owned: true);
+        var channel = new Lazy<AAuthAgentChannel>(() => AAuthAgentChannel.Create(descriptor, services, descriptor.Name));
+        return new AAuthAgent(descriptor.Name, AAuthAgentComposer.CreateBuilder(descriptor, services, descriptor.Name).Build(),
+            owned: true, type => channel.Value.Client(type), channel);
     }
 
     public AAuthAgent Create(string name, IAAuthSigner signer, Action<AAuthClientBuilder> configure)
@@ -101,12 +123,69 @@ internal sealed class AAuthAgentFactory(IServiceProvider services) : IAAuthAgent
         ArgumentNullException.ThrowIfNull(configure);
         var builder = new AAuthClientBuilder(signer);
         configure(builder);
-        return new AAuthAgent(name, builder.Build(), owned: true);
+        var channel = new Lazy<AAuthAgentChannel>(() => new AAuthAgentChannel(builder, services, personServer: builder.PersonServer));
+        return new AAuthAgent(name, builder.Build(), owned: true, type => channel.Value.Client(type), channel);
     }
 
     public void Dispose()
     {
         foreach (var agent in _registered.Values) agent.HttpClient.Dispose();
         _registered.Clear();
+    }
+}
+
+/// <summary>
+/// An agent's Person Server channel: a client signed as the agent (never a carrier) and the typed
+/// clients over it, sharing one metadata client.
+/// </summary>
+internal sealed class AAuthAgentChannel : IDisposable
+{
+    private readonly bool _ownsMetadata;
+    private readonly string? _personServer;
+    private readonly Lazy<TokenExchangeClient> _tokenExchange;
+    private readonly Lazy<Governance.AAuthGovernanceClient> _governance;
+    private readonly Lazy<AAuth.Server.RevocationClient> _revocation;
+
+    internal AAuthAgentChannel(AAuthClientBuilder builder, IServiceProvider services, string? personServer,
+        Governance.GovernanceOptions? governanceDefaults = null)
+    {
+        Signed = builder.BuildAgentSigned();
+        var shared = services.GetService<MetadataClient>();
+        _ownsMetadata = shared is null;
+        Metadata = shared ?? new MetadataClient(policy: builder.EgressPolicy);
+        _personServer = personServer;
+        _tokenExchange = new(() => new TokenExchangeClient(Signed, Metadata));
+        _governance = new(() => new Governance.AAuthGovernanceClient(Signed, Metadata, PersonServer, governanceDefaults));
+        _revocation = new(() => new AAuth.Server.RevocationClient(Signed));
+    }
+
+    public static AAuthAgentChannel Create(AAuthAgentOptions options, IServiceProvider services, string name,
+        Governance.GovernanceOptions? governanceDefaults = null)
+    {
+        var builder = AAuthAgentComposer.CreateBuilder(options, services, name);
+        return new(builder, services, builder.PersonServer, governanceDefaults);
+    }
+
+    public HttpClient Signed { get; }
+    public MetadataClient Metadata { get; }
+
+    public string PersonServer => _personServer
+        ?? throw new InvalidOperationException("The agent's Person Server clients require AAuthAgentOptions.PersonServer.");
+
+    public TokenExchangeClient TokenExchange => _tokenExchange.Value;
+    public Governance.AAuthGovernanceClient Governance => _governance.Value;
+    public AAuth.Server.RevocationClient Revocation => _revocation.Value;
+
+    public object Client(Type type)
+        => type == typeof(TokenExchangeClient) ? TokenExchange
+            : type == typeof(Governance.AAuthGovernanceClient) ? Governance
+            : type == typeof(AAuth.Server.RevocationClient) ? Revocation
+            : throw new ArgumentOutOfRangeException(nameof(type));
+
+    public void Dispose()
+    {
+        if (_governance.IsValueCreated) _governance.Value.Dispose();
+        Signed.Dispose();
+        if (_ownsMetadata) Metadata.Dispose();
     }
 }

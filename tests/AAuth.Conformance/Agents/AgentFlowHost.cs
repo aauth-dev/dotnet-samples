@@ -16,7 +16,8 @@ using Microsoft.Extensions.DependencyInjection;
 namespace AAuth.Conformance.Agents;
 
 /// <summary>
-/// A loopback PS that is also the agent provider and a resource (<c>/data</c>). The resource
+/// A loopback PS that is also the agent provider and a resource (<c>/data</c>, served on
+/// <see cref="Origin"/> and, as a second resource, on <see cref="SecondOrigin"/>). The resource
 /// answers an auth token by echoing it, so a test reads what the PS issued.
 /// </summary>
 internal sealed class AgentFlowHost : IAsyncDisposable
@@ -25,30 +26,43 @@ internal sealed class AgentFlowHost : IAsyncDisposable
 
     private readonly WebApplication _app;
     private readonly AAuthKey _issuerKey;
+    private readonly Counter _posts;
 
-    private AgentFlowHost(WebApplication app, string origin, AAuthKey issuerKey, ConsentScript consent)
+    private AgentFlowHost(WebApplication app, string origin, string secondOrigin, AAuthKey issuerKey, ConsentScript consent,
+        Counter posts)
     {
         _app = app;
         Origin = origin;
+        SecondOrigin = secondOrigin;
         _issuerKey = issuerKey;
         Consent = consent;
+        _posts = posts;
     }
 
     public string Origin { get; }
-    public AAuthEgressPolicy Egress => AAuthEgressPolicy.ForDevelopmentLoopback(Origin);
+    public string SecondOrigin { get; }
+    public AAuthEgressPolicy Egress => AAuthEgressPolicy.ForDevelopmentLoopback(Origin, SecondOrigin);
     public ConsentScript Consent { get; }
+
+    /// <summary>POSTs the Person Server received: person token requests and exchanges.</summary>
+    public int PersonServerPosts => _posts.Value;
+
+    /// <summary>Requests the <c>/data</c> resource received.</summary>
+    public int DataRequests => _posts.Data;
+
+    /// <summary>Hold every Person Server POST until the returned source completes.</summary>
+    public TaskCompletionSource HoldPersonServer() => _posts.Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public static async Task<AgentFlowHost> StartAsync()
     {
-        using var reservation = new TcpListener(IPAddress.Loopback, 0);
-        reservation.Start();
-        var origin = "http://127.0.0.1:" + ((IPEndPoint)reservation.LocalEndpoint).Port;
-        reservation.Stop();
-        var egress = AAuthEgressPolicy.ForDevelopmentLoopback(origin);
+        var origin = ReserveOrigin();
+        var secondOrigin = ReserveOrigin();
+        var egress = AAuthEgressPolicy.ForDevelopmentLoopback(origin, secondOrigin);
+        var posts = new Counter();
         var issuerKey = AAuthKey.Generate();
         var consent = new ConsentScript();
         var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseKestrel().UseUrls(origin);
+        builder.WebHost.UseKestrel().UseUrls(origin, secondOrigin);
         builder.Services.AddSingleton(new MetadataClient(policy: egress));
         builder.Services.AddSingleton(new JwksClient(policy: egress));
         builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = egress });
@@ -66,9 +80,23 @@ internal sealed class AgentFlowHost : IAsyncDisposable
             o.UnsignedPathPrefixes = ["/data"];
         });
         var app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            if (context.Request.Path == "/data") posts.CountData();
+            if (HttpMethods.IsPost(context.Request.Method))
+            {
+                posts.Increment();
+                if (posts.Hold is { } hold) await hold.Task;
+            }
+            await next(context);
+        });
         app.MapAAuthPersonServer();
         foreach (var dwk in new[] { AAuthConstants.DwkFiles.Agent, AAuthConstants.DwkFiles.Resource })
-            app.MapGet("/.well-known/" + dwk, () => Results.Json(new { issuer = origin, jwks_uri = origin + "/.well-known/jwks.json" }));
+            app.MapGet("/.well-known/" + dwk, (HttpContext context) =>
+            {
+                var self = OriginOf(context);
+                return Results.Json(new { issuer = self, jwks_uri = self + "/.well-known/jwks.json" });
+            });
         app.MapGet("/data", async (HttpContext context) =>
         {
             var parsed = SignatureKeyParser.Parse(context.Request.Headers["Signature-Key"]!);
@@ -83,7 +111,7 @@ internal sealed class AgentFlowHost : IAsyncDisposable
             var person = parsed.Payload!;
             var resource = await new ResourceTokenBuilder
             {
-                EgressPolicy = egress, Issuer = origin, Audience = origin,
+                EgressPolicy = egress, Issuer = OriginOf(context), Audience = (string)person["iss"]!,
                 PersonServer = (string)person["iss"]!, Subject = (string)person["sub"]!, PresentedJti = (string)person["jti"]!,
                 MissionS256 = (string?)person["mission_s256"],
                 AgentJkt = KeyFactory.FromPublicJwk((System.Text.Json.Nodes.JsonObject)person["cnf"]!["jwk"]!).ComputeJwkThumbprint(),
@@ -93,7 +121,29 @@ internal sealed class AgentFlowHost : IAsyncDisposable
             return Results.StatusCode(401);
         });
         await app.StartAsync();
-        return new AgentFlowHost(app, origin, issuerKey, consent);
+        return new AgentFlowHost(app, origin, secondOrigin, issuerKey, consent, posts);
+    }
+
+    private static string ReserveOrigin()
+    {
+        using var reservation = new TcpListener(IPAddress.Loopback, 0);
+        reservation.Start();
+        var origin = "http://127.0.0.1:" + ((IPEndPoint)reservation.LocalEndpoint).Port;
+        reservation.Stop();
+        return origin;
+    }
+
+    private static string OriginOf(HttpContext context) => context.Request.Scheme + "://" + context.Request.Host;
+
+    private sealed class Counter
+    {
+        private int _value;
+        private int _data;
+        public int Value => Volatile.Read(ref _value);
+        public int Data => Volatile.Read(ref _data);
+        public volatile TaskCompletionSource? Hold;
+        public void Increment() => Interlocked.Increment(ref _value);
+        public void CountData() => Interlocked.Increment(ref _data);
     }
 
     /// <summary>An agent token this host issues as agent provider, naming it as the Person Server.</summary>
@@ -132,14 +182,21 @@ internal sealed class AgentFlowHost : IAsyncDisposable
                 ? "downstream-" + upstream : "person"));
     }
 
-    /// <summary>Grants mission tokens, after one clarification round when <see cref="Clarify"/> is set.</summary>
+    /// <summary>
+    /// Grants mission tokens, after one clarification round when <see cref="Clarify"/> is set and
+    /// after <see cref="Delay"/> (a slow reviewer).
+    /// </summary>
     public sealed class ConsentScript : IMissionTokenConsent
     {
         public bool Clarify { get; set; }
+        public TimeSpan Delay { get; set; }
 
-        public Task<MissionTokenConsentDecision> ReviewAsync(MissionTokenConsentContext context, CancellationToken cancellationToken = default)
-            => Task.FromResult(Clarify && context.ClarificationHistory is not { Count: > 0 }
+        public async Task<MissionTokenConsentDecision> ReviewAsync(MissionTokenConsentContext context, CancellationToken cancellationToken = default)
+        {
+            if (Delay > TimeSpan.Zero) await Task.Delay(Delay, cancellationToken);
+            return Clarify && context.ClarificationHistory is not { Count: > 0 }
                 ? MissionTokenConsentDecision.Clarify("Why does the offsite need this?")
-                : MissionTokenConsentDecision.Grant());
+                : MissionTokenConsentDecision.Grant();
+        }
     }
 }

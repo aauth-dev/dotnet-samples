@@ -17,6 +17,8 @@ builder.Services.AddRazorComponents()
 // Register enrollment as a singleton — needed only by the JWKS URI page
 // which demos AP-issued identity verified via the AP's JWKS endpoint.
 builder.Services.AddSingleton<EnrollmentService>();
+// Walkthrough agents are created per session; each owns its signed client and typed clients.
+builder.Services.AddAAuthAgentFactory();
 
 // -----------------------------------------------------------------------
 // Self-issued agent identity: SampleApp is a hosted service with a stable
