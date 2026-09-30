@@ -792,8 +792,20 @@ entries under *Decisions taken*.
 
 ### [2026-09-30] [Phase 0] Upstream issue: replay tuple and `created`
 
-OPEN (send pending). The owner asked for the Q1 limitation to be raised with
-Dick Hardt (spec author) through the AAuth connector MCP. The connector returned
-an OAuth challenge (HTTP 401) and its tools left the session before the message
-could be sent. The draft message is kept in the session files. Send it once the
-connector is re-authenticated, then record the reply here.
+SENT, awaiting reply. The owner asked for the Q1 limitation to be raised with
+Dick Hardt (spec author) through the AAuth connector MCP.
+
+On 2026-09-30, after the connector was re-authenticated, the message went via
+`encrypt.aauth.dev` `sendMessage` through `secret.agent.coop`:
+
+- from `mailto:dasiths@hotmail.com` to `mailto:dick.hardt@hello.coop`;
+- message id `msg_hcR1FaxPrNIPiCy1VHlYvTJ3_exh`.
+
+It asks for one of three changes, in order of preference:
+
+1. an optional `nonce` added to the replay tuple;
+2. `@query` (or the full `@target-uri`) in the replay tuple;
+3. letting verifiers key replay on the full signature base instead of the
+   tuple.
+
+Record the reply here when it arrives.

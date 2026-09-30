@@ -87,8 +87,9 @@ is listed in the phase's log entry.
       R11 SDK-11).
 - [x] Owner review of Q1 (throughput of the `created` wait) and Q2 (Development
       loopback identifiers) is recorded (owner rulings, 2026-09-30).
-- [ ] The upstream issue on the replay tuple and `created` is sent to the spec
-      author through the AAuth connector, and the reply is logged. This does
+- [x] The upstream issue on the replay tuple and `created` is sent to the spec
+      author through the AAuth connector (`msg_hcR1FaxPrNIPiCy1VHlYvTJ3_exh`).
+      The reply will be logged when it arrives. This does
       not block Phase 1.
 - [x] The baseline gates are green on the starting commit, and test counts are
       recorded in the log.
