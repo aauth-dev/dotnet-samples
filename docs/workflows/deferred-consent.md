@@ -105,11 +105,11 @@ var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 
 builder.Services.AddAAuthAgent("deferred", options =>
 {
-    options.Key = key!;
+    options.Signer = key!;
     options.PersonServer = "https://ps.example";
     options.TokenRefresher = tokenRefresher;
-    options.PollingTimeout = TimeSpan.FromMinutes(5);
-    options.OnInteractionRequired = async (interaction, ct) =>
+    options.Challenge.PollingTimeout = TimeSpan.FromMinutes(5);
+    options.Challenge.OnInteractionRequired = async (interaction, ct) =>
     {
         // Present to user — push notification, SignalR, etc.
         await Surface(interaction.BuildUserUrl());

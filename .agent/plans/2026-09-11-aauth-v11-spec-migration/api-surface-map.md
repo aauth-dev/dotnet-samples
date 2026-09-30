@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 195 changed public-source files, 800 added/replacement declarations, 386 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 198 changed public-source files, 856 added/replacement declarations, 399 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -1340,6 +1340,26 @@ Concept/decision: [consent](#consent). Source: [IAccessPolicy.cs](../../../src/A
 
 Public owners: `AAuth.Access.AccessDecisionKind`, `AAuth.Access.AccessDecision`, `AAuth.Access.AccessPolicyRequest`, `AAuth.Access.IAccessPolicy`, `AAuth.Access.IInteractiveAccessPolicy`, `AAuth.Access`.
 
+### src/AAuth/Agent/AAuthAgentFactory.cs
+
+Concept/decision: [agent-clients](#agent-clients). Source: [AAuthAgentFactory.cs](../../../src/AAuth/Agent/AAuthAgentFactory.cs).
+
+```diff
++ AAuth.Agent.AAuthAgent: public HttpClient HttpClient { get ; }
++ AAuth.Agent.AAuthAgent: public string Name { get ; }
++ AAuth.Agent.AAuthAgent: public void Dispose ( )
++ AAuth.Agent.AAuthAgentDescriptor: public AAuthAgentDescriptor ( string name )
++ AAuth.Agent.AAuthAgentDescriptor: public string Name { get ; }
++ AAuth.Agent.IAAuthAgentFactory: AAuthAgent Create ( AAuthAgentDescriptor descriptor )
++ AAuth.Agent.IAAuthAgentFactory: AAuthAgent Create ( string name , IAAuthSigner signer , Action < AAuthClientBuilder > configure )
++ AAuth.Agent.IAAuthAgentFactory: AAuthAgent Get ( string name )
++ AAuth.Agent: public interface IAAuthAgentFactory
++ AAuth.Agent: public sealed class AAuthAgent : IDisposable
++ AAuth.Agent: public sealed class AAuthAgentDescriptor : AAuthAgentOptions
+```
+
+Public owners: `AAuth.Agent.AAuthAgentDescriptor`, `AAuth.Agent.AAuthAgent`, `AAuth.Agent.IAAuthAgentFactory`, `AAuth.Agent`.
+
 ### src/AAuth/Agent/AAuthRequestOptions.cs
 
 Concept/decision: [resource-managed](#resource-managed). Source: [AAuthRequestOptions.cs](../../../src/AAuth/Agent/AAuthRequestOptions.cs).
@@ -1770,11 +1790,70 @@ Public owners: `Microsoft.Extensions.DependencyInjection.AAuthAccessServerBuilde
 Concept/decision: [di](#di). Source: [AAuthAgentOptions.cs](../../../src/AAuth/DependencyInjection/AAuthAgentOptions.cs).
 
 ```diff
+- AAuth.AAuthAgentOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
+- AAuth.AAuthAgentOptions: public AAuth . HttpSig . ISignatureKeyProvider ? SignatureKeyProvider { get ; set ; }
+- AAuth.AAuthAgentOptions: public Func < CancellationToken , Task > ? OnApprovalPending { get ; set ; }
+- AAuth.AAuthAgentOptions: public Func < Interaction , CancellationToken , Task > ? OnInteractionRequired { get ; set ; }
+- AAuth.AAuthAgentOptions: public Func < string , string , CancellationToken , Task > ? OnResourceInteraction { get ; set ; }
 - AAuth.AAuthAgentOptions: public IAAuthKey Key { get ; set ; } = null !
-+ AAuth.AAuthAgentOptions: public IAAuthSigner Key { get ; set ; } = null !
+- AAuth.AAuthAgentOptions: public TimeSpan PollingTimeout { get ; set ; } = TimeSpan . FromMinutes ( 5 )
+- AAuth: public sealed class AAuthAgentOptions
++ AAuth.AAuthAgentOptions: public AAuthAgentProviderOptions AgentProvider { get ; set ; } = new ( )
++ AAuth.AAuthAgentOptions: public AAuthEgressPolicy ? EgressPolicy { get ; set ; }
++ AAuth.AAuthAgentOptions: public AAuthJwksUriIdentityOptions JwksUri { get ; set ; } = new ( )
++ AAuth.AAuthAgentOptions: public AAuthSelfIssuedAgentOptions SelfIssued { get ; set ; } = new ( )
++ AAuth.AAuthAgentOptions: public AAuthTransportContract ? TransportContract { get ; set ; }
++ AAuth.AAuthAgentOptions: public Action < HttpRequestMessage , string > ? OnSignatureBase { get ; set ; }
++ AAuth.AAuthAgentOptions: public ChallengeHandlingOptions Challenge { get ; set ; } = new ( )
++ AAuth.AAuthAgentOptions: public Func < string > ? AgentTokenFactory { get ; set ; }
++ AAuth.AAuthAgentOptions: public Func < string ? > ? UpstreamTokenProvider { get ; set ; }
++ AAuth.AAuthAgentOptions: public HttpMessageHandler ? InnerHandler { get ; set ; }
++ AAuth.AAuthAgentOptions: public IAAuthSigner ? Signer { get ; set ; }
++ AAuth.AAuthAgentOptions: public ISignatureKeyProvider ? SignatureKeyProvider { get ; set ; }
++ AAuth.AAuthAgentOptions: public InteractionHandlingOptions Interaction { get ; set ; } = new ( )
++ AAuth.AAuthAgentOptions: public Mission ? Mission { get ; set ; }
++ AAuth.AAuthAgentOptions: public TimeSpan ? TokenRefreshThreshold { get ; set ; }
++ AAuth.AAuthAgentOptions: public bool ? HandleChallenges { get ; set ; }
++ AAuth.AAuthAgentOptions: public bool ? HandleInteractions { get ; set ; }
++ AAuth.AAuthAgentOptions: public bool ChainFromHttpContext { get ; set ; }
++ AAuth.AAuthAgentOptions: public string ? KeyHandle { get ; set ; }
++ AAuth.AAuthAgentOptions: public string [  ] ? Capabilities { get ; set ; }
++ AAuth.AAuthAgentOptions: public string [  ] ? DevelopmentLoopbackOrigins { get ; set ; }
++ AAuth.AAuthAgentProviderOptions: public string ? RefreshEndpoint { get ; set ; }
++ AAuth.AAuthJwksUriIdentityOptions: public string ? Dwk { get ; set ; }
++ AAuth.AAuthJwksUriIdentityOptions: public string ? Id { get ; set ; }
++ AAuth.AAuthJwksUriIdentityOptions: public string ? KeyId { get ; set ; }
++ AAuth.AAuthSelfIssuedAgentOptions: public string ? Issuer { get ; set ; }
++ AAuth.AAuthSelfIssuedAgentOptions: public string ? KeyId { get ; set ; }
++ AAuth.AAuthSelfIssuedAgentOptions: public string ? Subject { get ; set ; }
++ AAuth: public class AAuthAgentOptions
++ AAuth: public sealed class AAuthAgentProviderOptions
++ AAuth: public sealed class AAuthJwksUriIdentityOptions
++ AAuth: public sealed class AAuthSelfIssuedAgentOptions
 ```
 
-Public owners: `AAuth.AAuthAgentOptions`, `AAuth`.
+Public owners: `AAuth.AAuthAgentOptions`, `AAuth.AAuthAgentProviderOptions`, `AAuth.AAuthJwksUriIdentityOptions`, `AAuth.AAuthSelfIssuedAgentOptions`, `AAuth`.
+
+### src/AAuth/DependencyInjection/AAuthAgentServiceCollectionExtensions.cs
+
+Concept/decision: [di](#di). Source: [AAuthAgentServiceCollectionExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthAgentServiceCollectionExtensions.cs).
+
+```diff
+- Microsoft.Extensions.DependencyInjection.AAuthAgentServiceCollectionExtensions: public static IServiceCollection AddAAuthAgent ( this IServiceCollection services , string name , Action < AAuthAgentOptions > configure )
++ Microsoft.Extensions.DependencyInjection.AAuthAgentBuilder: public AAuthAgentBuilder Configure ( Action < AAuthAgentOptions > configure )
++ Microsoft.Extensions.DependencyInjection.AAuthAgentBuilder: public AAuthAgentBuilder WithAgentProvider ( Action < AAuthAgentProviderOptions > ? configure = null )
++ Microsoft.Extensions.DependencyInjection.AAuthAgentBuilder: public AAuthAgentBuilder WithGovernance ( GovernanceOptions ? defaultOptions = null )
++ Microsoft.Extensions.DependencyInjection.AAuthAgentBuilder: public IHttpClientBuilder HttpClientBuilder { get ; }
++ Microsoft.Extensions.DependencyInjection.AAuthAgentBuilder: public IServiceCollection Services { get ; }
++ Microsoft.Extensions.DependencyInjection.AAuthAgentBuilder: public string Name { get ; }
++ Microsoft.Extensions.DependencyInjection.AAuthAgentServiceCollectionExtensions: public const string ConfigurationSection = "AAuth:Agents" ;
++ Microsoft.Extensions.DependencyInjection.AAuthAgentServiceCollectionExtensions: public static AAuthAgentBuilder AddAAuthAgent ( this IServiceCollection services , string name , Action < AAuthAgentOptions > ? configure = null )
++ Microsoft.Extensions.DependencyInjection.AAuthAgentServiceCollectionExtensions: public static AAuthAgentBuilder AddAAuthAgent ( this IServiceCollection services , string name , IConfiguration configuration , Action < AAuthAgentOptions > ? configure = null )
++ Microsoft.Extensions.DependencyInjection.AAuthAgentServiceCollectionExtensions: public static IServiceCollection AddAAuthAgentFactory ( this IServiceCollection services )
++ Microsoft.Extensions.DependencyInjection: public sealed class AAuthAgentBuilder
+```
+
+Public owners: `Microsoft.Extensions.DependencyInjection.AAuthAgentBuilder`, `Microsoft.Extensions.DependencyInjection.AAuthAgentServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
 
 ### src/AAuth/DependencyInjection/AAuthApplicationBuilderExtensions.cs
 
@@ -1810,6 +1889,18 @@ Concept/decision: [di](#di). Source: [AAuthGovernanceApplicationBuilderExtension
 Public signatures unchanged (2); behavior reviewed under di.
 
 Public owners: `Microsoft.AspNetCore.Builder.AAuthGovernanceApplicationBuilderExtensions`, `Microsoft.AspNetCore.Builder`.
+
+### src/AAuth/DependencyInjection/AAuthGovernanceClientServiceCollectionExtensions.cs
+
+Concept/decision: [di](#di). Source: [AAuthGovernanceClientServiceCollectionExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthGovernanceClientServiceCollectionExtensions.cs).
+
+```diff
+- Microsoft.Extensions.DependencyInjection.AAuthGovernanceClientServiceCollectionExtensions: public static IServiceCollection AddAAuthGovernanceClient ( this IServiceCollection services , Func < IServiceProvider , AAuthClientBuilder > configureBuilder , GovernanceOptions ? defaultOptions = null )
+- Microsoft.Extensions.DependencyInjection.AAuthGovernanceClientServiceCollectionExtensions: public static IServiceCollection AddAAuthGovernanceClient ( this IServiceCollection services , Func < IServiceProvider , AAuthGovernanceClient > factory )
+- Microsoft.Extensions.DependencyInjection: public static class AAuthGovernanceClientServiceCollectionExtensions
+```
+
+Public owners: `Microsoft.Extensions.DependencyInjection.AAuthGovernanceClientServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
 
 ### src/AAuth/DependencyInjection/AAuthGovernanceServiceCollectionExtensions.cs
 
@@ -2049,7 +2140,12 @@ Concept/decision: [signatures](#signatures). Source: [AAuthHttpClientExtensions.
 
 ```diff
 - AAuth.HttpSig.AAuthClientOptions: public IAAuthKey Key { get ; set ; } = null !
-+ AAuth.HttpSig.AAuthClientOptions: public IAAuthSigner Key { get ; set ; } = null !
+- AAuth.HttpSig.AAuthClientOptions: public IReadOnlyList < string > ? Capabilities { get ; set ; }
+- AAuth.HttpSig.AAuthClientOptions: public ISignatureKeyProvider SigningMode { get ; set ; } = null !
++ AAuth.HttpSig.AAuthClientOptions: public IAAuthSigner ? Signer { get ; set ; }
++ AAuth.HttpSig.AAuthClientOptions: public ISignatureKeyProvider ? SignatureKeyProvider { get ; set ; }
++ AAuth.HttpSig.AAuthClientOptions: public string ? KeyHandle { get ; set ; }
++ AAuth.HttpSig.AAuthClientOptions: public string [  ] ? Capabilities { get ; set ; }
 ```
 
 Public owners: `AAuth.HttpSig.AAuthClientOptions`, `AAuth.HttpSig.AAuthHttpClientExtensions`, `AAuth.HttpSig`.

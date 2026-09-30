@@ -152,14 +152,14 @@ var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 
 builder.Services.AddAAuthAgent("resource-managed", options =>
 {
-    options.Key = key!;
+    options.Signer = key!;
     options.AgentToken = agentToken; // already-held aa-agent+jwt bound to key
     options.EnableResourceManagedAccess = true; // capture + replay AAuth-Access
-    options.OnResourceInteraction = async (url, code, ct) =>
+    options.Interaction.OnInteractionRequired = async (url, code, ct) =>
     {
         await Surface(url);
     };
-    options.PollingTimeout = TimeSpan.FromMinutes(3);
+    options.Interaction.PollingTimeout = TimeSpan.FromMinutes(3);
 });
 ```
 

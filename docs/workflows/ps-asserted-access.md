@@ -139,7 +139,7 @@ using var refresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, loca
 
 builder.Services.AddAAuthAgent("ps-asserted", options =>
 {
-    options.Key = key!;
+    options.Signer = key!;
     options.PersonServer = "https://ps.example";
     options.TokenRefresher = refresher;
 });

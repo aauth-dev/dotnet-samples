@@ -212,7 +212,7 @@ behaviour change.
   - [x] `SeamResolverTests`: explicit beats keyed, keyed beats unkeyed,
         unkeyed beats default.
   - [x] Clock-injection tests for each migrated type.
-- [ ] Gates pass; `ApiSurface` diff reviewed.
+- [x] Gates pass; `ApiSurface` diff reviewed.
 
 ## Phase 3 — Signing abstraction (F-X5; Q19)
 
@@ -477,26 +477,26 @@ This is the highest-blast-radius client change.
 
 ### Definition of Done
 
-- [ ] Every configuration-bindable concept on `AAuthAgentOptions` binds from
+- [x] Every configuration-bindable concept on `AAuthAgentOptions` binds from
       `AAuth:Agents:<name>`. Delegate and instance members are documented as
       code-only.
-- [ ] Parity test `AgentBuilderParityTests`: reflection lists the public
+- [x] Parity test `AgentBuilderParityTests`: reflection lists the public
       `AAuthClientBuilder` configuration methods, and each one maps to an
       `AAuthAgentBuilder` method or option, or to an explicit, justified
       exclusion list.
-- [ ] Binding tests cover every scalar in `AAuth:Agents:<name>`.
+- [x] Binding tests cover every scalar in `AAuth:Agents:<name>`.
       `ValidateOnStart` fails on a missing identity source or on conflicting
       sources.
-- [ ] Missions, clarification, and call chaining each have one DI-path
+- [x] Missions, clarification, and call chaining each have one DI-path
       end-to-end unit test against the in-process mock servers.
-- [ ] `AgentFactoryTests`:
+- [x] `AgentFactoryTests`:
   - two runtime-created tenant agents with different keys and person
     servers stay isolated;
   - a per-request intermediary agent chains its own upstream token;
   - disposal ownership.
-- [ ] A console test without Generic Host uses the builder only.
-- [ ] `AddAAuthGovernanceClient` is deleted.
-- [ ] Gates pass.
+- [x] A console test without Generic Host uses the builder only.
+- [x] `AddAAuthGovernanceClient` is deleted.
+- [x] Gates pass.
 
 ## Phase 8 — Client callbacks (F-C4; Q4, Q5)
 

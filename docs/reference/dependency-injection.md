@@ -18,15 +18,25 @@ flowchart LR
         H2 --> H3["Runtime: self-issue token via AgentTokenBuilder"]
     end
     subgraph CLI/Desktop
-        P["Provisioning: EnrolAsync(keyStore)"] --> C["App config: AAuth:LocalKeyHandle"]
-        C --> S["Startup: keyStore.LoadAsync → AddAAuthAgent"]
-        S --> R["Runtime: SDK calls AP refresh before expiry"]
+        P["Provisioning: EnrolAsync(keyStore)"] --> C["App config: KeyHandle"]
+        C --> S["Startup: AddAAuthAgent (KeyHandle, AgentProvider)"]
+        S --> K["First use: key loaded through IKeyStore"]
+        K --> R["Runtime: SDK calls AP refresh before expiry"]
     end
 ```
 
 See [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md) for the CLI/desktop provisioning step, or [Getting Started](../getting-started.md#self-issued-agent-tokens-hosted-services) for the self-issued path.
 
 ## Agent Registration (Outbound Requests)
+
+`AddAAuthAgent(name, …)` registers a named agent and returns an `AAuthAgentBuilder`
+(`Configure`, `WithAgentProvider`, `WithGovernance`). Resolve the agent's
+`HttpClient` with `IHttpClientFactory.CreateClient(name)` or
+`IAAuthAgentFactory.Get(name)`. The named `AAuthAgentOptions` are validated when
+the host starts (see [AAuthAgentOptions](#aauthagentoptions)). The pipeline is
+composed from the service provider when the agent is first resolved and lives as
+long as the container. A `KeyHandle` is loaded at that point through the
+registered `IKeyStore`, or `FileKeyStore.Default()` when none is registered.
 
 ### Pseudonymous (HWK) — Signing Only
 
@@ -37,10 +47,14 @@ var key = AAuthKey.Generate(); // or load from persistent storage
 
 builder.Services.AddAAuthAgent("signing-only", options =>
 {
-    options.Key = key;
+    options.Signer = key;
     options.SignatureKeyProvider = new HwkSignatureKeyProvider(key);
 });
 ```
+
+For a plain signing client without the agent pipeline, `AddAAuthClient(name, …)`
+takes `Signer` or `KeyHandle` plus a `SignatureKeyProvider`; its options are
+validated when the host starts.
 
 ### Identity-Based (JWT) — Self-Issued (Hosted Services)
 
@@ -53,12 +67,11 @@ var issuer = "https://my-service.example";
 
 builder.Services.AddAAuthAgent("self-issued", options =>
 {
-    options.Key = key;
-    options.PersonServer = "https://ps.example";
-    options.TokenRefresher = SelfIssuedTokenRefresher.Create(key, issuer, "aauth:my-service@my-service.example")
-        .WithKid(Kid)
-        .WithPersonServer("https://ps.example")
-        .Build();
+    options.Signer = key;
+    options.SelfIssued.Issuer = issuer;
+    options.SelfIssued.Subject = "aauth:my-service@my-service.example";
+    options.SelfIssued.KeyId = Kid;
+    options.PersonServer = "https://ps.example"; // also the token's ps claim
 });
 
 // Also publish agent metadata so verifiers can discover the JWKS
@@ -71,31 +84,31 @@ app.MapAAuthAgentWellKnown(options =>
 
 ### Identity-Based (JWT) — AP-Enrolled (CLI/Desktop Agents)
 
-Load the key by local handle from the store and configure token refresh:
+Name the enrolled key by its local handle and the agent provider's refresh
+endpoint. The agent token is refreshed at that endpoint, signed with the
+`KeyHandle` key:
 
 ```csharp
-IKeyStore keyStore = FileKeyStore.Default();
-var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
-var key = await keyStore.LoadAsync(localKeyHandle)
-    ?? throw new InvalidOperationException($"Key '{localKeyHandle}' not found.");
-var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
-
-builder.Services.AddHttpClient("identity")
-    .ConfigurePrimaryHttpMessageHandler(() => AAuthClientBuilder.Enrolled(key)
-        .RefreshingFrom(apRefreshEndpoint, localKeyHandle)
-        .WithKeyStore(keyStore)
-        .WithChallengeHandling("https://ps.example")
-        .BuildHandler());
+builder.Services.AddSingleton<IKeyStore>(FileKeyStore.Default()); // optional: the default
+builder.Services.AddAAuthAgent("identity", options =>
+    {
+        options.KeyHandle = configuration["AAuth:LocalKeyHandle"]!;
+        options.PersonServer = "https://ps.example";
+    })
+    .WithAgentProvider(provider => provider.RefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!);
 ```
 
-The factory owns each pipeline and its internally created refresh transport.
-For an already-held token with externally managed renewal, use the explicit
-options API:
+`WithAgentProvider` also registers an `AgentProviderClient` keyed by the agent
+name, for enrollment and two-key refresh
+(`GetRequiredKeyedService<AgentProviderClient>("identity")`). Setting
+`AgentProvider:RefreshEndpoint` in configuration selects the same identity.
+The pipeline owns its internally created refresh transport.
+For an already-held token with externally managed renewal, set `AgentToken`:
 
 ```csharp
 builder.Services.AddAAuthAgent("identity", options =>
 {
-    options.Key = key;
+    options.Signer = key;
     options.PersonServer = "https://ps.example";
     options.AgentToken = heldAgentToken;
 });
@@ -103,25 +116,34 @@ builder.Services.AddAAuthAgent("identity", options =>
 
 ### With User Interaction (Deferred Consent)
 
-When the Person Server requires user approval, provide interaction callbacks:
+When the Person Server or the resource requires user approval, provide
+interaction callbacks. `Challenge` configures the Person Server exchange;
+`Interaction` configures a resource's own `202` responses:
 
 ```csharp
 using var refresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
     .WithKeyStore(keyStore).Build();
 builder.Services.AddAAuthAgent("interactive", options =>
 {
-    options.Key = key;
+    options.Signer = key;
     options.PersonServer = "https://ps.example";
     options.TokenRefresher = refresher;
+    // The Person Server returning 202 + requirement=interaction surfaces here.
+    options.Challenge.OnInteractionRequired = ShowConsentAsync;
+    options.Challenge.PollingTimeout = TimeSpan.FromMinutes(3);
     // A resource returning 202 + requirement=interaction surfaces here.
-    options.OnResourceInteraction = async (url, code, ct) =>
+    options.Interaction.OnInteractionRequired = async (url, code, ct) =>
     {
         // Present URL and code to user
         logger.LogInformation("Approve at {Url} with code {Code}", url, code);
     };
-    options.PollingTimeout = TimeSpan.FromMinutes(3);
+    options.Interaction.PollingTimeout = TimeSpan.FromMinutes(3);
 });
 ```
+
+Challenge handling is on by default when `PersonServer` or call chaining is set;
+interaction handling is on by default when an `Interaction` callback is set.
+`HandleChallenges` and `HandleInteractions` override either default.
 
 ### With Token Refresh
 
@@ -132,11 +154,87 @@ using var refresher = AgentProviderTokenRefresher.Create("https://ap.example/ref
     .WithKeyStore(keyStore).Build();
 builder.Services.AddAAuthAgent("refreshing", options =>
 {
-    options.Key = key;
+    options.Signer = key;
     options.PersonServer = "https://ps.example";
     options.TokenRefresher = refresher;
 });
 ```
+
+### Binding From Configuration
+
+Bind an agent from a configuration section; the conventional root is
+`AAuth:Agents` (`AAuthAgentServiceCollectionExtensions.ConfigurationSection`).
+The optional `configure` callback, or `.Configure(...)`, runs after binding:
+
+```csharp
+builder.Services.AddAAuthAgent("calendar", builder.Configuration.GetSection("AAuth:Agents:calendar"))
+    .Configure(options => options.Interaction.OnInteractionRequired = (url, code, ct) => SurfaceToUser(url));
+```
+
+```json
+{
+  "AAuth": {
+    "Agents": {
+      "calendar": {
+        "KeyHandle": "calendar-agent",
+        "AgentProvider": { "RefreshEndpoint": "https://ap.example/refresh" },
+        "PersonServer": "https://ps.example",
+        "Capabilities": [ "interaction" ],
+        "Challenge": { "PollingTimeout": "00:03:00" }
+      }
+    }
+  }
+}
+```
+
+A self-issued agent binds `"SelfIssued": { "Issuer": "…", "Subject": "…" }`
+instead of `AgentProvider`. Scalars bind; delegate and instance members are
+code-only: `Signer`, `AgentTokenFactory`, `TokenRefresher`, `SignatureKeyProvider`,
+`Mission`, `UpstreamTokenProvider`, the `Challenge` and `Interaction` callbacks,
+`EgressPolicy`, `InnerHandler`, `TransportContract`, `AAuthAccessStore` and
+`OnSignatureBase`. Set them in `configure` or `.Configure(...)`.
+
+### Missions, Clarification and Call Chaining
+
+An agent acting under its own approved mission names it on person token
+requests. `Challenge.OnClarificationRequired` answers a Person Server's
+clarification questions during the exchange:
+
+```csharp
+builder.Services.AddAAuthAgent("trip-planner", options =>
+{
+    options.Signer = key;
+    options.AgentToken = agentToken;
+    options.PersonServer = "https://ps.example";
+    options.Mission = mission; // person tokens carry its mission_s256
+    options.Challenge.OnClarificationRequired = async (requirement, ct) =>
+        ClarificationResponse.Respond(await AskUser(WebUtility.HtmlEncode(requirement.Clarification)));
+});
+```
+
+An intermediary chains the upstream auth token of the request it is serving.
+`ChainFromHttpContext` reads the token verified by the inbound AAuth middleware;
+`UpstreamTokenProvider` supplies it from elsewhere. Set only one:
+
+```csharp
+builder.Services.AddAAuthAgent("downstream", options =>
+{
+    options.Signer = key;
+    options.AgentToken = agentToken;
+    options.ChainFromHttpContext = true; // or: options.UpstreamTokenProvider = () => upstreamAuthToken;
+});
+```
+
+See [Call Chaining (AAuthClientBuilder)](#call-chaining-aauthclientbuilder) for
+what chaining does.
+
+### The Builder Primitive
+
+`AddAAuthAgent` composes each agent from `AAuthClientBuilder`, which remains the
+primitive. Consoles and tools without a Generic Host use the builder directly
+(`new AAuthClientBuilder(key)`, `AAuthClientBuilder.SelfIssuing(key)`,
+`AAuthClientBuilder.Enrolled(key)`), and `IAAuthAgentFactory.Create(name, signer, …)`
+accepts a builder callback.
 
 ## Resource Registration (Inbound Verification)
 
@@ -245,7 +343,7 @@ builder.Services.AddAAuthDiscovery(options =>
 });
 ```
 
-Both `AddAAuthAgent` and `AddAAuthResource` register their own discovery clients if `AddAAuthDiscovery` has not been called. Call it explicitly to share instances and control cache behavior.
+`AddAAuthResource`, `AddAAuthPersonServer` and `AddAAuthAccessServer` register discovery clients if `AddAAuthDiscovery` has not been called. Call it explicitly to share instances and control cache behavior. Agents registered with `AddAAuthAgent` own their discovery clients inside their pipeline and don't use these registrations.
 
 ## Consuming Registered Clients
 
@@ -265,6 +363,35 @@ public class MyAgentService(IHttpClientFactory factory)
 }
 ```
 
+### Via IAAuthAgentFactory
+
+`AddAAuthAgent` also registers `IAAuthAgentFactory`; `AddAAuthAgentFactory()`
+registers it alone. `Get(name)` returns the registered agent. It is owned by the
+factory, so disposing it does nothing. `Create(...)` builds an agent unknown at
+startup, for example per tenant or per user. The caller owns it and disposes it.
+`AAuthAgent.HttpClient` holds the agent's token caches, so reuse one agent
+instead of creating one per request:
+
+```csharp
+var agents = app.Services.GetRequiredService<IAAuthAgentFactory>();
+
+var calendar = agents.Get("calendar"); // factory-owned
+var events = await calendar.HttpClient.GetStringAsync("https://calendar.example/events");
+
+// Validated like a registered agent's options; caller-owned.
+using var tenant = agents.Create(new AAuthAgentDescriptor("tenant-a")
+{
+    Signer = key,
+    AgentToken = agentToken,
+    PersonServer = "https://ps.example",
+});
+
+// Composed from the builder primitive; caller-owned.
+using var probe = agents.Create("probe", key, agentBuilder => agentBuilder
+    .UseJwt(agentToken)
+    .WithChallengeHandling("https://ps.example"));
+```
+
 ### Multiple Named Clients
 
 Register different clients for different resources or signing modes:
@@ -272,14 +399,14 @@ Register different clients for different resources or signing modes:
 ```csharp
 builder.Services.AddAAuthAgent("internal-api", options =>
 {
-    options.Key = key;
+    options.Signer = key;
     options.PersonServer = "https://ps.internal";
     options.TokenRefresher = internalRefresher;
 });
 
 builder.Services.AddAAuthAgent("external-api", options =>
 {
-    options.Key = externalKey;
+    options.Signer = externalKey;
     options.PersonServer = "https://ps.partner.example";
     options.TokenRefresher = externalRefresher;
 });
@@ -307,7 +434,7 @@ using var refresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, loca
     .WithKeyStore(keyStore).Build();
 builder.Services.AddAAuthAgent("downstream", options =>
 {
-    options.Key = agentKey;
+    options.Signer = agentKey;
     options.PersonServer = "https://ps.example";
     options.TokenRefresher = refresher;
 });
@@ -338,25 +465,76 @@ app.Run();
 
 ### AAuthAgentOptions
 
-`AddAAuthAgent` requires an agent token/refresher or an explicit generic provider.
-Keep an injected disposable refresher alive until all borrowing clients stop;
-the `using` examples belong to the enclosing host lifetime, not a short-lived
-registration helper. Prefer the enrolled `BuildHandler` factory above for owned
-refresh transport. Keys and stores remain caller-owned.
+`AddAAuthAgent` validates the named options when the host starts
+(`ValidateOnStart`). A bad configuration fails `app.StartAsync()` with an
+`OptionsValidationException`; `IAAuthAgentFactory.Create` applies the same rules:
+
+- Set exactly one of `Signer` and `KeyHandle`.
+- Set exactly one identity source: an agent token (`AgentToken` or
+  `AgentTokenFactory`, and/or `TokenRefresher`), `SelfIssued`, `AgentProvider`,
+  `JwksUri`, or `SignatureKeyProvider`. Omitting all of them does not select HWK.
+- `SelfIssued` needs `Issuer` and `Subject`; `JwksUri` needs `Id`, `Dwk` and
+  `KeyId`; `AgentProvider` needs `KeyHandle`.
+- `PersonServer`, `HandleChallenges = true`, `Mission` and call chaining need an
+  agent-token identity: an agent token, `SelfIssued` or `AgentProvider`.
+- A `SignatureKeyProvider` cannot be combined with `EnableResourceManagedAccess`.
+- Set at most one of `UpstreamTokenProvider` and `ChainFromHttpContext`, and at
+  most one of `EgressPolicy` and `DevelopmentLoopbackOrigins`.
+
+A `KeyHandle` that is missing from the key store fails when the agent is first
+resolved. Keep an injected disposable `TokenRefresher` alive until all borrowing
+clients stop; the `using` examples belong to the enclosing host lifetime, not a
+short-lived registration helper. `SelfIssued` and `AgentProvider` create
+refreshers the pipeline owns. Keys and stores remain caller-owned.
+
+Scalars bind from configuration. Members marked *code-only* are delegates or
+instances, which binding ignores.
+
+**Key** (exactly one)
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Key` | `IAAuthSigner` | required | Agent signing key (must have private component) |
+| `KeyHandle` | `string?` | `null` | Handle of the signing key in the registered `IKeyStore`, loaded at first use |
+| `Signer` | `IAAuthSigner?` | `null` | *Code-only.* The signing key (must have a private component) |
+
+**Identity sources** (exactly one)
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
 | `AgentToken` | `string?` | `null` | Already-held agent JWT; no implicit provisioning |
-| `SignatureKeyProvider` | `ISignatureKeyProvider?` | `null` | Explicit generic signing; incompatible with agent credentials or PS/resource-managed flows |
-| `PersonServer` | `string?` | `null` | PS URL; with `TokenRefresher`, enables 401 challenge handling |
-| `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | `null` | PS interaction during token exchange (deferred consent) |
-| `OnResourceInteraction` | `Func<string, string, CancellationToken, Task>?` | `null` | Resource `202` + `requirement=interaction` (URL + code) |
-| `OnApprovalPending` | `Func<CancellationToken, Task>?` | `null` | Resource `202` + `requirement=approval` |
-| `TokenRefresher` | `ITokenRefresher?` | `null` | Caller-owned source of refreshed agent JWTs; omission never selects HWK implicitly |
-| `PollingTimeout` | `TimeSpan` | 5 minutes | Max deferred polling time |
+| `AgentTokenFactory` | `Func<string>?` | `null` | *Code-only.* Returns the current agent JWT for each request |
+| `TokenRefresher` | `ITokenRefresher?` | `null` | *Code-only.* Caller-owned; refreshes the agent token before expiry, alone or with `AgentToken` |
+| `TokenRefreshThreshold` | `TimeSpan?` | 5 minutes | Refresh when less than this remains before `exp` |
+| `SelfIssued` | `AAuthSelfIssuedAgentOptions` | empty | Self-issued identity: `Issuer` and `Subject`, optional `KeyId` (default: the key's JWK thumbprint) |
+| `AgentProvider` | `AAuthAgentProviderOptions` | empty | Enrolled identity: `RefreshEndpoint`, refreshed with the `KeyHandle` key |
+| `JwksUri` | `AAuthJwksUriIdentityOptions` | empty | Server identity (`jwks_uri` scheme): `Id`, `Dwk`, `KeyId` |
+| `SignatureKeyProvider` | `ISignatureKeyProvider?` | `null` | *Code-only.* Generic Signature Keys signing; excludes AAuth authorization flows |
+
+**Flows**
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `PersonServer` | `string?` | the agent token's `ps` claim | Person Server; turns challenge handling on |
+| `HandleChallenges` | `bool?` | `null` | Overrides `401` challenge handling, on by default when `PersonServer` or call chaining is set |
+| `Challenge` | `ChallengeHandlingOptions` | defaults | PS interaction and clarification callbacks, `Prompt`, `Capabilities`, polling (callbacks are code-only) |
+| `HandleInteractions` | `bool?` | `null` | Overrides resource `202` handling, on by default when an `Interaction` callback is set |
+| `Interaction` | `InteractionHandlingOptions` | defaults | Resource `202` callbacks (`OnInteractionRequired` with URL + code, `OnApprovalPending`) and polling (callbacks are code-only) |
+| `Capabilities` | `string[]?` | `null` | `AAuth-Capabilities` declared on every signed request |
+| `Mission` | `Mission?` | `null` | *Code-only.* The agent's approved mission; person tokens carry its `mission_s256` |
+| `UpstreamTokenProvider` | `Func<string?>?` | `null` | *Code-only.* Returns the upstream auth token to chain |
+| `ChainFromHttpContext` | `bool` | `false` | Chain the current request's verified upstream auth token |
 | `EnableResourceManagedAccess` | `bool` | `false` | Capture + replay the opaque `AAuth-Access` token (resource-managed, two-party) |
-| `AAuthAccessStore` | `IAAuthAccessStore?` | `null` | Per-origin token store for the resource-managed flow (default in-memory) |
+| `AAuthAccessStore` | `IAAuthAccessStore?` | in-memory | *Code-only.* Per-origin token store for the resource-managed flow |
+
+**Transport**
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy?` | `Production` | *Code-only.* Egress policy for the agent's requests |
+| `DevelopmentLoopbackOrigins` | `string[]?` | `null` | Loopback origins a development agent may call |
+| `InnerHandler` | `HttpMessageHandler?` | `null` | *Code-only.* Transport under the signer |
+| `TransportContract` | `AAuthTransportContract?` | `null` | *Code-only.* What `InnerHandler` guarantees about egress |
+| `OnSignatureBase` | `Action<HttpRequestMessage, string>?` | `null` | *Code-only.* Observes each RFC 9421 signature base |
 
 ### AAuthResourceOptions
 
@@ -427,20 +605,27 @@ using var dynamicUpstreamClient = new AAuthClientBuilder(key)
 ### Agent side: the governance client
 
 The mission governance client is built from `AAuthClientBuilder`, which wires the
-signed channel for you. The client is **bound to one Person Server**, so the builder
-must set both a signing mode and a Person Server before `BuildGovernance()`. Use the
-`AddAAuthGovernanceClient(...)` DI extension to register it as a singleton:
+signed channel for you. The client is **bound to one Person Server**, so the agent
+must have an agent-token identity and an explicit `PersonServer`. Call
+`.WithGovernance()` on a registered agent to register an `AAuthGovernanceClient`
+keyed by the agent name, signed as that agent:
 
 ```csharp
-builder.Services.AddAAuthGovernanceClient(sp =>
-    new AAuthClientBuilder(agentKey)
-        .UseJwt(agentToken)
-        .WithPersonServer("https://ps.example")); // bound governance client
+builder.Services.AddAAuthAgent("planner", options =>
+    {
+        options.Signer = agentKey;
+        options.AgentToken = agentToken;
+        options.PersonServer = "https://ps.example";
+    })
+    .WithGovernance(governanceOptions); // optional default GovernanceOptions
+
+var app = builder.Build();
+var planner = app.Services.GetRequiredKeyedService<AAuthGovernanceClient>("planner");
 ```
 
-There is also a factory overload — `AddAAuthGovernanceClient(sp => /* AAuthGovernanceClient */)`
-— when you need full control over construction. To build one inline instead of via
-DI, call `BuildGovernance()` on a configured builder:
+In a minimal API or controller, inject it with
+`[FromKeyedServices("planner")] AAuthGovernanceClient governance`. To build one
+inline instead of via DI, call `BuildGovernance()` on a configured builder:
 
 ```csharp
 using var governance = new AAuthClientBuilder(agentKey)

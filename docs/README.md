@@ -119,6 +119,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `TokenExchangeClient` | Signed person token requests and auth token exchanges at the Person Server |
 | `DeferredPoller` | Polls the pending URL until auth_token or timeout |
 | `AgentProviderClient` | Enrols with an Agent Provider (CLI/desktop agents; hosted services self-issue) |
+| `IAAuthAgentFactory` / `AAuthAgent` / `AAuthAgentDescriptor` | Resolve registered agents (`Get`) or create caller-owned agents at runtime (`Create`) |
 | `Mission` / `MissionContextHandler` | Mission state + the handler that names the mission (`mission_s256`) on person token requests |
 | `MissionForwardingHandler` | `DelegatingHandler` that forwards the caller's token downstream as `upstream_token` |
 | `AAuthGovernanceClient` | Facade bundling the four PS governance clients |
@@ -242,7 +243,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 
 | Type | Purpose |
 |------|---------|
-| `AAuthAgentServiceCollectionExtensions` | `services.AddAAuthAgent(...)` |
+| `AAuthAgentServiceCollectionExtensions` / `AAuthAgentBuilder` | `services.AddAAuthAgent(name, …)` (options or a configuration section such as `AAuth:Agents:<name>`); builder `Configure` / `WithAgentProvider()` / `WithGovernance()`; `services.AddAAuthAgentFactory()` registers `IAAuthAgentFactory` alone |
 | `AAuthResourceServiceCollectionExtensions` | `services.AddAAuthResource(...)` (options or an `AAuth:Resource` configuration section), `services.AddAAuthAuthentication()`, `services.AddAAuthAuthorization()` |
 | `AAuthResourceManagedServiceCollectionExtensions` | `services.AddAAuthResourceManaged(...)` — resource-managed (two-party) setup |
 | `AAuthPersonServerServiceCollectionExtensions` / `AAuthPersonServerBuilder` | `services.AddAAuthPersonServer(...)` (options or `AAuth:PersonServer`); builder `UseClaimsAsserter` / `UsePendingStore` / `UseTokenVerifier` / `UseTokenInventory` / `WithTrust` / `WithFederation()` (PS→AS four-party client) / `WithGovernance()`; map with `app.MapAAuthPersonServer(name?)` |

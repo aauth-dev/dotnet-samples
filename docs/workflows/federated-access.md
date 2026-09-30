@@ -63,7 +63,7 @@ using var refresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, conf
 
 builder.Services.AddAAuthAgent("federated", options =>
 {
-    options.Key = key!;
+    options.Signer = key!;
     options.PersonServer = "https://ps.example";
     options.TokenRefresher = refresher;
 });

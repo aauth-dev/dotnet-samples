@@ -338,22 +338,46 @@ the matching dictionary member across all three signature fields.
 
 ### AAuthAgentOptions (AddAAuthAgent)
 
+Named options, validated when the host starts. Members marked *code-only* are
+delegates or instances; every other member binds from configuration, such as
+`AAuth:Agents:<name>`.
+
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
-| `Key` | `IAAuthSigner` | Yes | Agent signing key (must have private component) |
-| `PersonServer` | `string?` | No | Person Server URL; with `TokenRefresher`, enables 401 challenge handling |
-| `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | No | PS interaction during token exchange (deferred consent) |
-| `OnResourceInteraction` | `Func<string, string, CancellationToken, Task>?` | No | Resource `202` + `requirement=interaction` (URL + code) |
-| `OnApprovalPending` | `Func<CancellationToken, Task>?` | No | Resource `202` + `requirement=approval` |
-| `AgentToken` | `string?` | One credential source | Already-held agent JWT; no implicit enrollment |
-| `SignatureKeyProvider` | `ISignatureKeyProvider?` | Explicit generic source | Generic signing only; cannot combine with agent credentials or AAuth authorization flows |
-| `TokenRefresher` | `ITokenRefresher?` | One credential source | Auto-refresh before token expiry; can renew an already-held agent token |
-| `PollingTimeout` | `TimeSpan` | No | Max deferred polling time (default 5 minutes) |
+| `KeyHandle` | `string?` | One key | Signing key handle in the registered `IKeyStore` |
+| `Signer` | `IAAuthSigner?` | One key | *Code-only.* Signing key (must have private component) |
+| `AgentToken` | `string?` | One identity source | Already-held agent JWT; no implicit enrollment |
+| `AgentTokenFactory` | `Func<string>?` | One identity source | *Code-only.* Returns the current agent JWT |
+| `TokenRefresher` | `ITokenRefresher?` | One identity source | *Code-only.* Auto-refresh before token expiry; can renew an already-held agent token |
+| `TokenRefreshThreshold` | `TimeSpan?` | No | Refresh window before `exp` (default 5 minutes) |
+| `SelfIssued` | `AAuthSelfIssuedAgentOptions` | One identity source | Self-issued identity: `Issuer`, `Subject`, optional `KeyId` |
+| `AgentProvider` | `AAuthAgentProviderOptions` | One identity source | Enrolled identity: `RefreshEndpoint`; requires `KeyHandle` |
+| `JwksUri` | `AAuthJwksUriIdentityOptions` | One identity source | Server identity: `Id`, `Dwk`, `KeyId` |
+| `SignatureKeyProvider` | `ISignatureKeyProvider?` | One identity source | *Code-only.* Generic signing only; cannot combine with AAuth authorization flows |
+| `PersonServer` | `string?` | No | Person Server URL; enables `401` challenge handling (default: the token's `ps` claim) |
+| `HandleChallenges` | `bool?` | No | Override the challenge-handling default |
+| `Challenge` | `ChallengeHandlingOptions` | No | PS interaction/clarification callbacks and polling |
+| `HandleInteractions` | `bool?` | No | Override the interaction-handling default (on when an `Interaction` callback is set) |
+| `Interaction` | `InteractionHandlingOptions` | No | Resource `202` interaction/approval callbacks and polling |
+| `Capabilities` | `string[]?` | No | `AAuth-Capabilities` on every signed request |
+| `Mission` | `Mission?` | No | *Code-only.* The agent's approved mission |
+| `UpstreamTokenProvider` | `Func<string?>?` | No | *Code-only.* Upstream auth token to chain |
+| `ChainFromHttpContext` | `bool` | No | Chain the current request's verified upstream auth token |
+| `EnableResourceManagedAccess` | `bool` | No | Capture and replay `AAuth-Access` (resource-managed) |
+| `AAuthAccessStore` | `IAAuthAccessStore?` | No | *Code-only.* Per-origin `AAuth-Access` store (default in-memory) |
+| `EgressPolicy` | `AAuthEgressPolicy?` | No | *Code-only.* Egress policy (default `Production`) |
+| `DevelopmentLoopbackOrigins` | `string[]?` | No | Loopback origins a development agent may call |
+| `InnerHandler` | `HttpMessageHandler?` | No | *Code-only.* Transport under the signer |
+| `TransportContract` | `AAuthTransportContract?` | No | *Code-only.* Egress guarantee of `InnerHandler` |
+| `OnSignatureBase` | `Action<HttpRequestMessage, string>?` | No | *Code-only.* Observes each signature base |
 
-`AddAAuthAgent` requires `AgentToken`, `TokenRefresher`, or an explicit generic
-`SignatureKeyProvider`. Omitting credentials does not select HWK. A generic
-provider cannot be combined with PS challenge handling or resource-managed
-AAuth authorization. The MockAgentProvider sample also accepts
+`AddAAuthAgent` requires exactly one key and exactly one identity source.
+Omitting credentials does not select HWK. `PersonServer`, challenge handling,
+`Mission` and call chaining require an agent-token identity (an agent token,
+`SelfIssued` or `AgentProvider`), so a generic provider cannot be combined with
+PS challenge handling or resource-managed AAuth authorization. See
+[Dependency Injection](dependency-injection.md#aauthagentoptions) for every
+rule. The MockAgentProvider sample also accepts
 `AgentProvider:KeyDirectory` for isolated persisted AP signing keys; its default
 remains `~/.aauth/ap-keys`.
 
@@ -406,9 +430,11 @@ remains `~/.aauth/ap-keys`.
 The SDK's configuration overloads bind a whole section: `AddAAuthPersonServer`
 from `AAuth:PersonServer`, `AddAAuthAccessServer` from `AAuth:AccessServer`, and
 `AddAAuthResource` from `AAuth:Resource` (each extension class exposes a
-`ConfigurationSection` constant). The keys are the option property names, such as
-`AAuth:PersonServer:Issuer`, `AAuth:PersonServer:KeyHandle` or
-`AAuth:PersonServer:Trust:AccessServers:Allowed:0`.
+`ConfigurationSection` constant). `AddAAuthAgent(name, section)` binds the section
+you pass; the convention is `AAuth:Agents:<name>`. The keys are the option property names, such as
+`AAuth:PersonServer:Issuer`, `AAuth:PersonServer:KeyHandle`,
+`AAuth:PersonServer:Trust:AccessServers:Allowed:0` or
+`AAuth:Agents:calendar:AgentProvider:RefreshEndpoint`.
 
 The shipped samples bind a few `AAuth:*` keys from `appsettings.json` /
 environment variables / command line. These are conventions of the samples (not

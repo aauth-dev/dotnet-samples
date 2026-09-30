@@ -536,7 +536,60 @@ PROCEEDED.
   - Full Playwright rerun: 78 passed, 1 skipped, `--retries=0`.
   - Keycloak `federated-deferred`: 1 passed.
 
+### [2026-09-30] [Phase 7] Client registration, factory, configuration
+
+PROCEEDED.
+- **`AddAAuthAgent(name, configure?)`** and **`AddAAuthAgent(name, IConfiguration, configure?)`**
+  return `AAuthAgentBuilder` (`Services`, `Name`, `HttpClientBuilder`, `Configure`,
+  `WithAgentProvider`, `WithGovernance`). Named `IOptions<AAuthAgentOptions>`
+  validated on start; the pipeline is composed from the `IServiceProvider` at first
+  resolve by an internal composer over `AAuthClientBuilder` (the primitive).
+- **`AAuthAgentOptions`** (unsealed): `KeyHandle` (through `IKeyStore`) or `Signer`;
+  identity sources `AgentToken`/`AgentTokenFactory`/`TokenRefresher`, `SelfIssued`,
+  `AgentProvider`, `JwksUri`, `SignatureKeyProvider`; `PersonServer`,
+  `HandleChallenges` + `Challenge` (`ChallengeHandlingOptions`), `HandleInteractions`
+  + `Interaction` (`InteractionHandlingOptions`), `Capabilities`, `Mission`,
+  `UpstreamTokenProvider`/`ChainFromHttpContext`, resource-managed access,
+  `DevelopmentLoopbackOrigins`/`EgressPolicy`, `InnerHandler`, `OnSignatureBase`.
+  Delegates and instances are code-only (documented).
+- **`IAAuthAgentFactory`**: `Get(name)` (factory-owned, cached, disposed with the
+  container), `Create(AAuthAgentDescriptor)` and `Create(name, signer, builder => …)`
+  (caller-owned). `AAuthAgent` exposes `Name` and `HttpClient`; typed clients land
+  in Phase 9. `AddAAuthAgentFactory()` registers the factory alone.
+- **`AddAAuthClient`** uses named, validated `AAuthClientOptions`
+  (`KeyHandle`/`Signer`, `SignatureKeyProvider`, `Capabilities`), composed lazily.
+- **`AddAAuthGovernanceClient` deleted**; `.WithGovernance()` registers a keyed
+  `AAuthGovernanceClient`.
+- **Tests.** `AgentBuilderParityTests` (reflection over `AAuthClientBuilder`,
+  `SelfIssuingBuilder`, `EnrolledBuilder` with a justified exclusion list; plus the
+  console builder-only test); `AAuthAgentDITests` (lazy composition, `KeyHandle`,
+  every scalar bound from `AAuth:Agents:<name>` by reflection, `ValidateOnStart` on
+  missing/conflicting sources, `WithGovernance`, `WithAgentProvider`);
+  `AgentDependencyInjectionFlowTests` (mission, clarification, call chaining against
+  a loopback PS/resource); `AgentFactoryTests` (tenant isolation across two PSs,
+  per-request intermediary, ownership). A subagent migrated the docs; verified.
+- **Gates.**
+  - Build clean.
+  - Test projects: AAuth.Tests 1743, AAuth.Conformance 1272, AAuth.R3.Tests 330,
+    AAuth.Events.Tests 83.
+  - ApiSurface: +856/-399 cumulative. Docs inventory refreshed; e2e typecheck clean.
+  - Full Playwright: 78 passed, 1 skipped, `--retries=0`.
+
 ## Deviations from plan
+
+### [2026-09-30] [Phase 7] DI-path flow tests use a loopback Kestrel host
+
+PROCEEDED. The builder's token-exchange channel and metadata client use the
+real SDK transport, not `InnerHandler`, so the in-process `WebApplicationFactory`
+mocks cannot serve the exchange. The tests host a PS/agent provider/resource on a
+loopback port, as `ReusableChainingTests` does.
+
+### [2026-09-30] [Phase 7] Challenge handling defaults on only with a Person Server or chaining
+
+PROCEEDED. A token source without an explicit Person Server cannot resolve one
+until the first token arrives, so `HandleChallenges` defaults on when
+`PersonServer` or call chaining is set (the previous DI rule), and is otherwise
+opt-in.
 
 ### [2026-09-30] [Phase 6] `RevokeTokenAsync` instead of `RevokePersonTokenAsync`
 

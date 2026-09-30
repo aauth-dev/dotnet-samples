@@ -61,7 +61,7 @@ var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 
 builder.Services.AddAAuthAgent("identity", options =>
 {
-    options.Key = key!;
+    options.Signer = key!;
     options.AgentToken = heldAgentToken; // issued for this key; renew externally or set TokenRefresher
 });
 ```
@@ -71,7 +71,7 @@ builder.Services.AddAAuthAgent("identity", options =>
 ```csharp
 builder.Services.AddAAuthAgent("identity-jwks", options =>
 {
-    options.Key = key!;
+    options.Signer = key!;
     options.SignatureKeyProvider = new JwksUriSignatureKeyProvider(
         "https://server.example", "server-configuration", "key-1");
     // Generic signing, not an AAuth resource access mode.

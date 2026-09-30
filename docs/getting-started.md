@@ -77,7 +77,7 @@ using var client = AAuthSigningHandler.CreateClient(key, new JwtSignatureKeyProv
 // In Program.cs
 builder.Services.AddAAuthAgent("agent", options =>
 {
-    options.Key = key;
+    options.Signer = key;
     options.AgentToken = agentToken;
 });
 
