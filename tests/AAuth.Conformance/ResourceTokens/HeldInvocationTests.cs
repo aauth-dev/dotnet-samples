@@ -111,6 +111,25 @@ public sealed class HeldInvocationTests
         Assert.Equal(0, executions());
     }
 
+    [Fact(DisplayName = "§Deferred Delivery — first observed held expiry is 408, then the pending id is gone")]
+    public async Task ExpiredHeldInvocation_FirstObservationIs408Then410()
+    {
+        var clock = new Clock();
+        var (app, client, executions) = await StartAsync(clock);
+        await using var _ = app;
+        using var held = await client.PostAsJsonAsync("/orders", new { item = "hotel" });
+
+        clock.Now += TimeSpan.FromMinutes(11);
+        using var first = await client.GetAsync(held.Headers.Location);
+        using var replay = await client.GetAsync(held.Headers.Location);
+
+        Assert.Equal(HttpStatusCode.RequestTimeout, first.StatusCode);
+        Assert.Equal("expired", (string?)(await first.Content.ReadFromJsonAsync<JsonObject>())?["error"]);
+        Assert.Equal(HttpStatusCode.Gone, replay.StatusCode);
+        Assert.Equal("invalid_code", (string?)(await replay.Content.ReadFromJsonAsync<JsonObject>())?["error"]);
+        Assert.Equal(0, executions());
+    }
+
     [Fact(DisplayName = "§Deferred Delivery — the invocation runs once; the same auth token gets the retained result until its exp")]
     public async Task RepeatedAuthToken_ReturnsRetainedResult()
     {
@@ -166,7 +185,7 @@ public sealed class HeldInvocationTests
             ? Poll(held.Headers.Location!, clock, "auth-1", jkt: AAuthKey.Generate().ComputeJwkThumbprint())
             : Poll(held.Headers.Location!, clock, "auth-1", scope: "orders.read"));
 
-        Assert.Equal(variant == "key" ? HttpStatusCode.NotFound : HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(variant == "key" ? HttpStatusCode.Gone : HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Equal(0, executions());
         using var owner = await client.SendAsync(Poll(held.Headers.Location!, clock, "auth-2"));
         Assert.Equal(HttpStatusCode.Created, owner.StatusCode);

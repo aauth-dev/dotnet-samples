@@ -11,13 +11,13 @@ public enum TokenErrorCode
     InvalidRequest,
 
     /// <summary>
-    /// Agent-token parameter failure. Draft-11 answers a failing <c>Signature-Key</c>
-    /// agent token with <c>Signature-Error</c>; this code is kept for the AS/R3
-    /// <c>agent_token</c> parameter pending the AAuth #199 interim ruling.
+    /// Agent-token parameter failure (the <c>agent_token</c> parameter at an AS or R3
+    /// endpoint), following the <c>&lt;invalid|expired|revoked&gt;_&lt;parameter&gt;_token</c>
+    /// pattern (#token-endpoint-error-codes). Kept pending the AAuth #199 ruling.
     /// </summary>
     InvalidAgentToken,
 
-    /// <summary>Agent-token parameter expiry; kept with <see cref="InvalidAgentToken"/> pending the AAuth #199 interim ruling.</summary>
+    /// <summary>Agent-token parameter expiry; kept with <see cref="InvalidAgentToken"/> pending the AAuth #199 ruling.</summary>
     ExpiredAgentToken,
 
     /// <summary>Resource token malformed or signature verification failed.</summary>
@@ -71,12 +71,6 @@ public enum TokenErrorCode
     /// </summary>
     AsUnreachable,
 
-    /// <summary>
-    /// The request carried a <c>mission_s256</c> referencing a mission that is
-    /// no longer active. Terminal (HTTP 403) per §Mission Status Errors.
-    /// </summary>
-    MissionTerminated,
-
     /// <summary>Internal error.</summary>
     ServerError,
 }
@@ -108,7 +102,6 @@ public sealed record TokenErrorResponse(TokenErrorCode Error, string? Detail = n
         [TokenErrorCode.ClockSkew] = "clock_skew",
         [TokenErrorCode.UserUnreachable] = "user_unreachable",
         [TokenErrorCode.AsUnreachable] = "as_unreachable",
-        [TokenErrorCode.MissionTerminated] = "mission_terminated",
         [TokenErrorCode.ServerError] = "server_error",
     };
 

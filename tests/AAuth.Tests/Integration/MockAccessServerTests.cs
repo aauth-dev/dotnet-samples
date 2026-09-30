@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.HttpSig;
 using AAuth.Tokens;
 using AAuth.Access;
@@ -105,7 +106,7 @@ public class MockAccessServerTests : IDisposable
         attacker.BaseAddress = new Uri(AsIssuer);
         var agentKey = AAuthKey.Generate();
         var body = new JsonObject { ["agent_token"] = await BuildAgentTokenAsync(agentKey), ["resource_token"] = await BuildResourceTokenAsync(agentKey, AsIssuer), ["presented_token"] = await BuildPersonTokenAsync(agentKey) };
-        var expectedStatus = spoofPersonRole ? HttpStatusCode.Unauthorized : HttpStatusCode.Forbidden;
+        var expectedStatus = HttpStatusCode.Unauthorized;
         using var tokenAttack = await attacker.PostAsJsonAsync("/token", body);
         Assert.Equal(expectedStatus, tokenAttack.StatusCode);
         Assert.Empty(policy.Requests);
@@ -173,7 +174,7 @@ public class MockAccessServerTests : IDisposable
         });
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("policy_error", (string?)body!["error"]);
+        Assert.Equal("server_error", (string?)body!["error"]);
         Assert.Null(body["auth_token"]);
     }
 
@@ -314,7 +315,7 @@ public class MockAccessServerTests : IDisposable
             ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
@@ -438,9 +439,8 @@ public class MockAccessServerTests : IDisposable
             ["email"] = "evil@attacker.example",
         });
 
-        Assert.Equal(HttpStatusCode.Forbidden, push.StatusCode);
-        var body = await push.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("untrusted_person_server", (string?)body!["error"]);
+        Assert.Equal(HttpStatusCode.Unauthorized, push.StatusCode);
+        Assert.Equal("error=invalid_key", push.Headers.GetValues(SignatureError.HeaderName).Single());
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
+using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.Server.Verification;
 using AAuth.Tokens;
@@ -175,6 +176,9 @@ public sealed record HeldInvocation(string Id, string Operation, string Resource
 {
     /// <summary>The auth token <c>jti</c> that consumed it, once executed.</summary>
     public string? ConsumedBy { get; init; }
+
+    /// <summary>Whether the first timeout observation has already been reported.</summary>
+    public bool ExpiredObserved { get; init; }
 }
 
 /// <summary>Stores parked invocations. Implement it over a shared store to hold invocations across instances.</summary>
@@ -191,6 +195,9 @@ public interface IAAuthHeldInvocationStore
     /// <paramref name="retainUntil"/>. True only for the call that consumes it.
     /// </summary>
     ValueTask<bool> TryConsumeAsync(string id, string jti, DateTimeOffset retainUntil, CancellationToken cancellationToken = default);
+
+    /// <summary>Atomically mark a known unconsumed invocation expired. True only for the first observer.</summary>
+    ValueTask<bool> TryExpireAsync(string id, CancellationToken cancellationToken = default);
 }
 
 /// <summary>In-memory <see cref="IAAuthHeldInvocationStore"/>; state is lost on restart and not shared across instances.</summary>
@@ -217,9 +224,21 @@ public sealed class InMemoryHeldInvocationStore(TimeProvider? timeProvider = nul
     {
         while (_entries.TryGetValue(id, out var entry))
         {
-            if (entry.Invocation.ConsumedBy is not null) return ValueTask.FromResult(false);
+            if (entry.Invocation.ConsumedBy is not null || entry.Invocation.ExpiredObserved) return ValueTask.FromResult(false);
             var consumed = (entry.Invocation with { ConsumedBy = jti }, (DateTimeOffset?)retainUntil);
             if (_entries.TryUpdate(id, consumed, entry)) return ValueTask.FromResult(true);
+        }
+        return ValueTask.FromResult(false);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask<bool> TryExpireAsync(string id, CancellationToken cancellationToken = default)
+    {
+        while (_entries.TryGetValue(id, out var entry))
+        {
+            if (entry.Invocation.ConsumedBy is not null || entry.Invocation.ExpiredObserved) return ValueTask.FromResult(false);
+            var expired = (entry.Invocation with { ExpiredObserved = true }, entry.RetainUntil);
+            if (_entries.TryUpdate(id, expired, entry)) return ValueTask.FromResult(true);
         }
         return ValueTask.FromResult(false);
     }
@@ -310,23 +329,29 @@ internal sealed class AAuthHeldInvocations(IOptions<AAuthHeldInvocationOptions> 
         var verified = context.GetAAuthVerification();
         // The poller must hold the key the resource token was issued to.
         if (entry is null || verified is null || verified.Jkt != entry.AgentJkt)
-            return AAuthProblemDetails.Create("unknown_pending", statusCode: StatusCodes.Status404NotFound);
+            return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
         var now = _options.TimeProvider.GetUtcNow();
         var assertion = context.Features.Get<AAuthVerifiedAssertion>();
         if (verified is not { TokenType: AAuthTokenType.AuthToken, IssuerVerified: true }
             || assertion is null || (string?)assertion.Token.Payload["jti"] is not { Length: > 0 } jti)
         {
             // No auth token yet: keep holding while the invocation is pending.
-            return entry.ConsumedBy is not null || entry.PendingExpiresAt <= now
-                ? Expired()
+            if (entry.ConsumedBy is not null || entry.ExpiredObserved)
+                return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
+            return entry.PendingExpiresAt <= now
+                ? await ExpireAsync(id, context.RequestAborted).ConfigureAwait(false)
                 : new PendingResult(PathPrefix + "/" + id, entry.ResourceToken);
         }
 
         var key = id + ":" + jti;
         if (await gate.GetResultAsync(key, context.RequestAborted).ConfigureAwait(false) is { } retained)
             return new RetainedResult(retained);
-        if (entry.ConsumedBy is { } consumer ? consumer != jti : entry.PendingExpiresAt <= now)
-            return Expired();
+        if (entry.ConsumedBy is { } consumer && consumer != jti)
+            return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
+        if (entry.ExpiredObserved)
+            return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
+        if (entry.PendingExpiresAt <= now)
+            return await ExpireAsync(id, context.RequestAborted).ConfigureAwait(false);
         if (!entry.RequiredScopes.All(verified.Scopes.Contains))
             return AAuthProblemDetails.Create("insufficient_scope", statusCode: StatusCodes.Status403Forbidden);
 
@@ -347,7 +372,7 @@ internal sealed class AAuthHeldInvocations(IOptions<AAuthHeldInvocationOptions> 
             if (!await store.TryConsumeAsync(id, jti, assertion.Token.ExpiresAt, context.RequestAborted).ConfigureAwait(false))
             {
                 await gate.ReleaseAsync(key, CancellationToken.None).ConfigureAwait(false);
-                return Expired();
+                return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
             }
             result = await Operation(entry.Operation).Execute(context, entry.State, context.RequestAborted).ConfigureAwait(false);
         }
@@ -360,7 +385,10 @@ internal sealed class AAuthHeldInvocations(IOptions<AAuthHeldInvocationOptions> 
         return new RetainedResult(result);
     }
 
-    private static IResult Expired() => AAuthProblemDetails.Create("expired", statusCode: StatusCodes.Status410Gone);
+    private async Task<IResult> ExpireAsync(string id, CancellationToken cancellationToken)
+        => await store.TryExpireAsync(id, cancellationToken).ConfigureAwait(false)
+            ? AAuthProblemDetails.Polling(PollingErrorCode.Expired)
+            : AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
 
     private HeldInvocationEndpointMetadata Operation(string name)
     {

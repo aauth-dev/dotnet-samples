@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -160,6 +162,59 @@ public class PollingErrorTests
     {
         Assert.True(PollingErrorException.TryParseCode(wireCode, out var result));
         Assert.Equal(expected, result);
+    }
+
+    [Theory(DisplayName = "§Polling Errors — registered codes own their registered statuses")]
+    [InlineData(PollingErrorCode.Denied, 403)]
+    [InlineData(PollingErrorCode.Abandoned, 403)]
+    [InlineData(PollingErrorCode.Expired, 408)]
+    [InlineData(PollingErrorCode.Revoked, 403)]
+    [InlineData(PollingErrorCode.InvalidCode, 410)]
+    [InlineData(PollingErrorCode.SlowDown, 429)]
+    [InlineData(PollingErrorCode.ServerError, 500)]
+    public void PollingStatus_IsClosedTable(PollingErrorCode code, int expectedStatus)
+        => Assert.Equal(expectedStatus, AAuth.Server.AAuthProblemDetails.PollingStatus(code));
+
+    [Theory(DisplayName = "§Polling Errors — unregistered polling codes are not parsed")]
+    [InlineData("unknown_pending")]
+    [InlineData("unknown_interaction")]
+    [InlineData("request_withdrawn")]
+    [InlineData("policy_error")]
+    public void UnknownPollingCodes_AreNotParsed(string wireCode)
+        => Assert.False(PollingErrorException.TryParseCode(wireCode, out _));
+
+    [Fact(DisplayName = "§Polling Errors — SDK src does not emit removed v10/v02 codes")]
+    public void RemovedCodes_DoNotAppearInSrc()
+    {
+        var root = FindRepositoryRoot();
+        var forbidden = new[]
+        {
+            "unknown_pending",
+            "unknown_interaction",
+            "request_withdrawn",
+            "untrusted_person_server",
+            "untrusted_access_server",
+            "policy_error",
+        };
+        var matches = Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .SelectMany(path => File.ReadLines(path).Select((line, index) => new { path, line, index }))
+            .Where(hit => forbidden.Any(code => hit.line.Contains(code, StringComparison.Ordinal)))
+            .Select(hit => $"{Path.GetRelativePath(root, hit.path)}:{hit.index + 1}:{hit.line.Trim()}")
+            .ToArray();
+
+        Assert.Empty(matches);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, "src", "AAuth")))
+                return directory.FullName;
+            directory = directory.Parent;
+        }
+        throw new DirectoryNotFoundException("Could not locate repository root containing src/AAuth.");
     }
 
     private sealed class MockHandler : HttpMessageHandler

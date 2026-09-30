@@ -30,11 +30,11 @@ public sealed record DeferredPollerOptions
     public TimeSpan DefaultPollInterval { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// Minimum delay between polls — clamps a tiny <c>Retry-After: 0</c>
-    /// from runaway tight-looping if the server is broken. Set to
-    /// <see cref="TimeSpan.Zero"/> to honour the server verbatim.
+    /// Minimum delay between polls. The default is <see cref="TimeSpan.Zero"/>
+    /// so <c>Retry-After: 0</c> is honoured verbatim; hosts may opt into a local
+    /// safety floor.
     /// </summary>
-    public TimeSpan MinPollInterval { get; set; } = TimeSpan.FromMilliseconds(100);
+    public TimeSpan MinPollInterval { get; set; } = TimeSpan.Zero;
 
     /// <summary>
     /// When set, sends a <c>Prefer: wait=N</c> header on each poll request,
@@ -106,6 +106,7 @@ public sealed class DeferredPoller
         ArgumentNullException.ThrowIfNull(signedClient);
         _signedClient = signedClient;
         _options = options ?? new DeferredPollerOptions();
+        ValidateOptions(_options);
     }
 
     /// <summary>
@@ -254,6 +255,10 @@ public sealed class DeferredPoller
             else
                 await Task.Delay(delay, _options.TimeProvider, cancellationToken).ConfigureAwait(false);
         }
+        else if (_options.DelayAsync is { } delayAsync)
+        {
+            await delayAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private TimeSpan ComputeDelay(RetryConditionHeaderValue? retryAfter)
@@ -279,6 +284,16 @@ public sealed class DeferredPoller
         }
 
         return delay < _options.MinPollInterval ? _options.MinPollInterval : delay;
+    }
+
+    private static void ValidateOptions(DeferredPollerOptions options)
+    {
+        if (options.MaxTotalWait <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options.MaxTotalWait), "MaxTotalWait must be positive.");
+        if (options.DefaultPollInterval < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options.DefaultPollInterval), "DefaultPollInterval cannot be negative.");
+        if (options.MinPollInterval < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options.MinPollInterval), "MinPollInterval cannot be negative.");
     }
 
     private static async Task<(PollingErrorCode? Code, string? Detail)> TryParsePollingErrorAsync(HttpResponseMessage response)

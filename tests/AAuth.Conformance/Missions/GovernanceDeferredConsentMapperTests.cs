@@ -111,7 +111,7 @@ public class GovernanceDeferredConsentMapperTests
         using var foreign = new HttpRequestMessage(new HttpMethod(method), location);
         foreign.Headers.Add(header, value);
         using var rejected = await client.SendAsync(foreign);
-        Assert.Equal(HttpStatusCode.NotFound, rejected.StatusCode);
+        Assert.Equal(HttpStatusCode.Gone, rejected.StatusCode);
         using var legitimate = await client.GetAsync(location);
         Assert.Equal(HttpStatusCode.OK, legitimate.StatusCode);
         using var replay = await client.GetAsync(location);

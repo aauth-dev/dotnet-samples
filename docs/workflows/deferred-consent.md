@@ -163,7 +163,7 @@ class BrowserPresenter : IInteractionPresenter
 |----------|---------|-------------|
 | `MaxTotalWait` | 5 minutes | Maximum total polling time before timeout |
 | `DefaultPollInterval` | 5 seconds | Time between polls (server may override via Retry-After) |
-| `MinPollInterval` | 100ms | Floor for poll interval |
+| `MinPollInterval` | zero | Optional local floor; by default `Retry-After: 0` polls immediately |
 
 ## Error Scenarios
 

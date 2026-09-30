@@ -62,12 +62,11 @@ public class MissionTerminatedTests
         Assert.Equal("expired", ex.TerminationReason);
     }
 
-    [Fact(DisplayName = "§Mission Status Errors — error/mission_status codes round-trip via TokenErrorCode")]
-    public void MissionTerminated_TokenErrorCode_RoundTrips()
+    [Fact(DisplayName = "§Mission Status Errors — mission_terminated uses the dedicated mission error surface")]
+    public void MissionTerminated_UsesDedicatedMissionErrorCode()
     {
-        Assert.True(TokenErrorResponse.TryParseCode("mission_terminated", out var code));
-        Assert.Equal(TokenErrorCode.MissionTerminated, code);
-        Assert.Equal("mission_terminated", new TokenErrorResponse(code).ErrorCode);
+        Assert.False(TokenErrorResponse.TryParseCode("mission_terminated", out _));
+        Assert.Equal("mission_terminated", AAuthMissionTerminatedException.ErrorCode);
     }
 
     [Fact(DisplayName = "§Mission Management — termination reason constants match the spec table")]

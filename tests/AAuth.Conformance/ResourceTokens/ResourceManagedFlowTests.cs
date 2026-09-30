@@ -173,7 +173,7 @@ public class ResourceManagedFlowTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Gone, consumed.StatusCode);
         Assert.Equal("application/problem+json", consumed.Content.Headers.ContentType?.MediaType);
         var body = await consumed.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("expired", (string?)body!["error"]);
+        Assert.Equal("invalid_code", (string?)body!["error"]);
         Assert.False(body.ContainsKey("detail"));
     }
 

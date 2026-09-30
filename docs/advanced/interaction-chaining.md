@@ -137,7 +137,7 @@ app.MapMethods("/pending/{id}", ["GET", "DELETE"], async (HttpContext ctx, strin
     var entry = pending.Get(id);
     if (entry is null || ctx.Request.Path != $"{entry.PendingPrefix}/{entry.Id}"
         || !entry.Matches(ctx.Features.Get<UpstreamAuthTokenFeature>()?.Token))
-        return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: 404);
+        return AAuth.Server.AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
 
     return await entry.Lifecycle.ExecuteAsync(ctx, entry.ExpiresAt, TimeProvider.System, async () =>
     {

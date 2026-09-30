@@ -108,8 +108,6 @@ namespace AAuth.Errors;
 public enum TokenErrorCode
 {
     InvalidRequest,         // Malformed request body
-    InvalidAgentToken,      // agent_token parameter; kept pending AAuth #199 interim ruling
-    ExpiredAgentToken,      // agent_token parameter; kept pending AAuth #199 interim ruling
     InvalidResourceToken,   // Resource token fails validation
     ExpiredResourceToken,   // Resource token exp has passed
     RevokedResourceToken,   // The issuing resource withdrew it; do not resubmit
@@ -125,7 +123,6 @@ public enum TokenErrorCode
     ClockSkew,              // A parameter token's iat is too far ahead; wait, don't refresh
     UserUnreachable,        // No channel to the user; agent declared no interaction capability (terminal 403)
     AsUnreachable,          // PS could not get a verifiable auth token from the AS (502; retry later)
-    MissionTerminated,      // Mission already terminated (terminal 403 mission_terminated)
     ServerError,            // Internal server error (transient, retryable)
 }
 ```

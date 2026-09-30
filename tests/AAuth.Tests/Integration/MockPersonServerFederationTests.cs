@@ -75,9 +75,9 @@ public class MockPersonServerFederationTests
         using var response = await http.PostAsJsonAsync("/token",
             await TokenRequestAsync(http, agentKey, audience: "https://untrusted-as.test", scope: "wallet.read"));
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("untrusted_access_server", (string?)body!["error"]);
+        Assert.Equal("invalid_resource_token", (string?)body!["error"]);
     }
 
     [Fact]

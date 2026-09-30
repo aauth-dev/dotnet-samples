@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using AAuth;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.R3.Model;
 using AAuth.Server;
@@ -107,7 +108,7 @@ public static class R3AccessTokenEndpoint
             }
             catch (R3UntrustedJwksUriException)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
             catch (Exception ex) when (ex is R3FetchVerificationException or AAuth.HttpSig.AAuthVerificationException)
             {
@@ -124,7 +125,7 @@ public static class R3AccessTokenEndpoint
 
             if (!await options.IsCallerTrustedPersonServerAsync(context, caller))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
 
             var tokenVerifier = GetServiceOrDefault(context, new TokenVerifier { EgressPolicy = options.EgressPolicy });
@@ -285,14 +286,14 @@ public static class R3AccessTokenEndpoint
                 var poller = await R3DocumentEndpoint.VerifyFetcherAsync(context, R3AccessTokenEndpointOptions.IsPersonServerFetcher);
                 if (!await options.IsCallerTrustedPersonServerAsync(context, poller))
                 {
-                    return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", statusCode: StatusCodes.Status403Forbidden);
+                    return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
                 }
                 pollerPersonServer = poller.Identifier;
                 pollerKey = poller.KeyThumbprint;
             }
             catch (R3UntrustedJwksUriException)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
             catch (Exception ex) when (ex is R3FetchVerificationException or AAuth.HttpSig.AAuthVerificationException)
             {
@@ -318,7 +319,7 @@ public static class R3AccessTokenEndpoint
             if (!string.Equals(pollerPersonServer, entry.OriginPersonServer, StringComparison.Ordinal)
                 || !string.Equals(pollerKey, entry.OwnerKeyThumbprint, StringComparison.Ordinal))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "pending entry belongs to a different Person Server", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
             return await entry.Lifecycle.ExecuteAsync(context, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
@@ -389,7 +390,7 @@ public static class R3AccessTokenEndpoint
             {
                 if (entry.Status != R3PendingStatus.Pending || entry.Lifecycle.Delivered || entry.Lifecycle.Cancelled
                     || entry.PendingExpiresAt <= options.TimeProvider.GetUtcNow())
-                    return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+                    return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
                 entry.Status = R3PendingStatus.Allowed;
                 return Results.Content(R3ConsentHtml.Approved(issuer), "text/html");
             });
@@ -407,7 +408,7 @@ public static class R3AccessTokenEndpoint
             {
                 if (entry.Status != R3PendingStatus.Pending || entry.Lifecycle.Delivered || entry.Lifecycle.Cancelled
                     || entry.PendingExpiresAt <= options.TimeProvider.GetUtcNow())
-                    return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+                    return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
                 entry.Status = R3PendingStatus.Denied;
                 return Results.Content(R3ConsentHtml.Denied(issuer), "text/html");
             });

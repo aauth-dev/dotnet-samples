@@ -31,7 +31,7 @@ public class IssuanceBoundsTests
         using var response = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(120));
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("policy_error", (string?)body!["error"]);
+        Assert.Equal("server_error", (string?)body!["error"]);
         Assert.Null(body["auth_token"]);
     }
 

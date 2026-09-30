@@ -102,7 +102,7 @@ public class DeferredTimingTests
                 OnInteractionRequired = (_, _) => { callbacks++; return Task.CompletedTask; },
             }, CancellationToken.None);
         Assert.Equal(1, callbacks);
-        Assert.Equal(new[] { 5d, 5d }, clock.Delays.Select(delay => delay.TotalSeconds));
+        Assert.Equal(new[] { 0d, 5d, 5d }, clock.Delays.Select(delay => delay.TotalSeconds));
     }
 
     [Fact]

@@ -348,7 +348,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         var store = ctx.RequestServices.GetService<IDeferredConsentStore>();
         if (store is null)
         {
-            return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: StatusCodes.Status404NotFound,
+            return AAuth.Server.AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode,
                 extensions: new Dictionary<string, object?> { ["id"] = id });
         }
 
@@ -362,7 +362,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             || entry.OwnerIssuer is null || entry.OwnerKeyThumbprint is null
             || verified.Issuer != entry.OwnerIssuer || verified.Agent != entry.Agent || verified.Jkt != entry.OwnerKeyThumbprint)
         {
-            return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: StatusCodes.Status404NotFound);
+            return AAuth.Server.AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
         }
         return await entry.Lifecycle.ExecuteAsync(ctx, entry.ExpiresAt, TimeProvider.System, async () =>
         {

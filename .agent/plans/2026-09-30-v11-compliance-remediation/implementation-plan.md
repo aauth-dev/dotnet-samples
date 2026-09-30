@@ -270,16 +270,16 @@ they land together after R01.
 
 **Definition of Done**
 
-- [ ] Deferred auth-token polling waits for `Retry-After`, backs off on 429,
+- [x] Deferred auth-token polling waits for `Retry-After`, backs off on 429,
       and never treats 429 as terminal.
-- [ ] A regression test covers a pending GET that returns a fresh
+- [x] A regression test covers a pending GET that returns a fresh
       `requirement=auth-token` resource token: the agent re-exchanges and
       finishes at the same `Location`.
-- [ ] A test enumerates every SDK emitter and finds only registered codes with
+- [x] A test enumerates every SDK emitter and finds only registered codes with
       their registered statuses. `grep` finds none of `unknown_pending`,
       `unknown_interaction`, `request_withdrawn`, `untrusted_person_server`,
       `untrusted_access_server` or `policy_error` in `src/`.
-- [ ] The gates are green.
+- [x] The gates are green.
 
 ## Phase 5 — Token inventory, revocation guard, provenance and chaining (R06, R05)
 

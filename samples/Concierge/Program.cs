@@ -316,7 +316,7 @@ async Task<IResult> HandlePendingAsync(HttpContext ctx, string id, PendingStore 
     if (entry is null || ctx.Request.Path != $"{entry.PendingPrefix}/{entry.Id}"
         || !entry.Matches(ctx.Features.Get<UpstreamAuthTokenFeature>()?.Token))
     {
-        return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: StatusCodes.Status404NotFound,
+        return AAuth.Server.AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode,
             extensions: new Dictionary<string, object?> { ["id"] = id });
     }
 

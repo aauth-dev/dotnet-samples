@@ -1054,7 +1054,7 @@ public class DeferredFederationTests
         using var request = new HttpRequestMessage(new HttpMethod(method), initial.Headers.Location);
         if (method == "POST") request.Content = JsonContent.Create(new { action = "clarification_response", clarification_response = "approve" });
         using var response = await foreign.SendAsync(request);
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         using var owner = await fixture.Ps.GetAsync(initial.Headers.Location);
         Assert.Equal(HttpStatusCode.Accepted, owner.StatusCode);
     }

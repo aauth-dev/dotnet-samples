@@ -142,14 +142,14 @@ public class OptionsThreadingTests
         var challenge = new ChallengeHandlingOptions();
         Assert.Equal(TimeSpan.FromMinutes(5), challenge.PollingTimeout);
         Assert.Equal(TimeSpan.FromSeconds(5), challenge.DefaultPollInterval);
-        Assert.Equal(TimeSpan.FromMilliseconds(100), challenge.MinPollInterval);
+        Assert.Equal(TimeSpan.Zero, challenge.MinPollInterval);
         Assert.Null(challenge.PreferWaitSeconds);
         Assert.Null(challenge.OnPoll);
 
         var interaction = new InteractionHandlingOptions();
         Assert.Equal(TimeSpan.FromMinutes(5), interaction.PollingTimeout);
         Assert.Equal(TimeSpan.FromSeconds(5), interaction.DefaultPollInterval);
-        Assert.Equal(TimeSpan.FromMilliseconds(100), interaction.MinPollInterval);
+        Assert.Equal(TimeSpan.Zero, interaction.MinPollInterval);
         Assert.Null(interaction.PreferWaitSeconds);
         Assert.Null(interaction.OnPoll);
     }

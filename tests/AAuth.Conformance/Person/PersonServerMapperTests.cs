@@ -914,7 +914,8 @@ public class PersonServerMapperTests
         if (method == "POST")
             request.Content = JsonContent.Create(new { action = "clarification_response", clarification_response = "approve" });
         using var response = await attacker.SendAsync(request);
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Gone, response.StatusCode);
+        Assert.Equal("invalid_code", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())?["error"]);
         using var poll = await owner.GetAsync(first.Headers.Location);
         Assert.Equal(HttpStatusCode.Accepted, poll.StatusCode);
         await host.StopAsync();
@@ -1182,9 +1183,11 @@ public class PersonServerMapperTests
         using var attacker = await SignedAgentClientAsync(host, AAuthKey.Generate(), "aauth:attacker@ap.example");
         using var foreignPost = await attacker.PostAsJsonAsync(pendingUrl,
             new JsonObject { ["clarification_response"] = "let me in" });
-        Assert.Equal(HttpStatusCode.NotFound, foreignPost.StatusCode);
+        Assert.Equal(HttpStatusCode.Gone, foreignPost.StatusCode);
+        Assert.Equal("invalid_code", (string?)(await foreignPost.Content.ReadFromJsonAsync<JsonObject>())?["error"]);
         using var foreignDelete = await attacker.DeleteAsync(pendingUrl);
-        Assert.Equal(HttpStatusCode.NotFound, foreignDelete.StatusCode);
+        Assert.Equal(HttpStatusCode.Gone, foreignDelete.StatusCode);
+        Assert.Equal("invalid_code", (string?)(await foreignDelete.Content.ReadFromJsonAsync<JsonObject>())?["error"]);
 
         // The owner's own clarification round still works.
         using var ownerPost = await owner.PostAsJsonAsync(pendingUrl,
@@ -1202,9 +1205,9 @@ public class PersonServerMapperTests
 
         using var response = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, "https://untrusted-as.test"));
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("untrusted_access_server", (string?)body!["error"]);
+        Assert.Equal("invalid_resource_token", (string?)body!["error"]);
         await host.StopAsync();
     }
 

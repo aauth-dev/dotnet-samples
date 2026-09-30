@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth.Errors;
 using Microsoft.AspNetCore.Http;
 
 namespace AAuth.Server;
@@ -8,9 +9,7 @@ namespace AAuth.Server;
 public sealed class DeferredState
 {
     public static IResult Missing(string id)
-        => Guid.TryParseExact(id, "N", out _)
-            ? AAuthProblemDetails.Create("expired", statusCode: StatusCodes.Status410Gone)
-            : AAuthProblemDetails.Create("unknown_pending", statusCode: StatusCodes.Status404NotFound);
+        => AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
 
     public SemaphoreSlim Gate { get; } = new(1, 1);
     public bool Delivered { get; private set; }
@@ -27,16 +26,16 @@ public sealed class DeferredState
         {
             context.Response.Headers.CacheControl = "no-store";
             if (Delivered || Cancelled)
-                return AAuthProblemDetails.Create("expired", statusCode: StatusCodes.Status410Gone);
+                return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
             if (expiry <= timeProvider.GetUtcNow())
             {
                 Delivered = true;
-                return AAuthProblemDetails.Create("expired", statusCode: StatusCodes.Status408RequestTimeout);
+                return AAuthProblemDetails.Polling(PollingErrorCode.Expired);
             }
             if (InvalidCode)
             {
                 Delivered = true;
-                return AAuthProblemDetails.Create("invalid_code", statusCode: StatusCodes.Status400BadRequest);
+                return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
             }
             IResult result;
             try
@@ -53,11 +52,11 @@ public sealed class DeferredState
             }
             catch (OperationCanceledException)
             {
-                result = AAuthProblemDetails.Create("expired", statusCode: StatusCodes.Status408RequestTimeout);
+                result = AAuthProblemDetails.Polling(PollingErrorCode.Expired);
             }
             catch (Exception)
             {
-                result = AAuthProblemDetails.Create("server_error", statusCode: StatusCodes.Status500InternalServerError);
+                result = AAuthProblemDetails.Polling(PollingErrorCode.ServerError);
             }
             var status = (result as IStatusCodeHttpResult)?.StatusCode ?? StatusCodes.Status200OK;
                 if (status is not (StatusCodes.Status202Accepted

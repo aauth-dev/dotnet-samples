@@ -49,7 +49,7 @@ public class ConciergePendingSecurityTests
         using var caller = new AAuthClientBuilder(foreignKey).UseJwt(foreign).WithEgressPolicy(TestEgress.Policy)
             .WithInnerHandler(factory.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
         using var rejected = await caller.SendAsync(new HttpRequestMessage(new HttpMethod(method), resource + "/pending/" + pending.Id));
-        Assert.Equal(HttpStatusCode.NotFound, rejected.StatusCode);
+        Assert.Equal(HttpStatusCode.Gone, rejected.StatusCode);
         Assert.False(pending.Lifecycle.Cancelled);
         using var owner = new AAuthClientBuilder(ownerKey).UseJwt(original).WithEgressPolicy(TestEgress.Policy)
             .WithInnerHandler(factory.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();

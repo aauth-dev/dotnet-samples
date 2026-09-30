@@ -181,11 +181,11 @@ app.MapPost("/consent/approve", async (HttpContext ctx, IInteractionPendingStore
     var decision = await browserConsent.DecideAsync(ctx);
     if (decision.Error is not null) return decision.Error;
     var entry = pending.Get(decision.Decision!.Id);
-    if (entry is null) return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+    if (entry is null) return AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
     return await decision.Decision.ApplyAsync(ctx, () =>
     {
         if (entry.Approved || entry.Denied || entry.Expiry <= DateTimeOffset.UtcNow)
-            return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+            return AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
         entry.Approved = true;
         return Results.Content(
             "<!doctype html><meta charset=utf-8><title>Connected</title>"
@@ -204,11 +204,11 @@ app.MapPost("/consent/deny", async (HttpContext ctx, IInteractionPendingStore pe
     var decision = await browserConsent.DecideAsync(ctx);
     if (decision.Error is not null) return decision.Error;
     var entry = pending.Get(decision.Decision!.Id);
-    if (entry is null) return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+    if (entry is null) return AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
     return await decision.Decision.ApplyAsync(ctx, () =>
     {
         if (entry.Approved || entry.Denied || entry.Expiry <= DateTimeOffset.UtcNow)
-            return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+            return AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
         entry.Denied = true;
         return Results.Content("<!doctype html><title>Denied</title><h1>Denied</h1>", "text/html");
     });

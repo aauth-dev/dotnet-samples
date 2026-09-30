@@ -616,7 +616,7 @@ public static class AAuthPersonServerEndpoints
             if (entry is null) return AAuth.Server.DeferredState.Missing(id);
             if (!RequesterMatches(ctx, entry))
             {
-                return AAuthProblemDetails.Create("unknown_interaction", statusCode: StatusCodes.Status404NotFound);
+                return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
             }
 
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, async () =>
@@ -699,13 +699,13 @@ public static class AAuthPersonServerEndpoints
             if (entry is null) return AAuth.Server.DeferredState.Missing(id);
             if (!RequesterMatches(ctx, entry))
             {
-                return AAuthProblemDetails.Create("unknown_interaction", statusCode: StatusCodes.Status404NotFound);
+                return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
             }
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
                 if (entry.Status == PersonPendingStatus.Withdrawn)
                 {
-                    return AAuth.Server.AAuthProblemDetails.Create("request_withdrawn", statusCode: StatusCodes.Status410Gone);
+                    return AAuth.Server.AAuthProblemDetails.Polling(PollingErrorCode.Abandoned);
                 }
 
                 JsonObject? body;
@@ -791,7 +791,7 @@ public static class AAuthPersonServerEndpoints
             if (entry is null) return AAuth.Server.DeferredState.Missing(id);
             if (!RequesterMatches(ctx, entry))
             {
-                return AAuthProblemDetails.Create("unknown_interaction", statusCode: StatusCodes.Status404NotFound);
+                return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
             }
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
@@ -871,7 +871,7 @@ public static class AAuthPersonServerEndpoints
             {
                 case PersonPendingStatus.Withdrawn:
                     ctx.Response.Headers["Cache-Control"] = "no-store";
-                    return AAuth.Server.AAuthProblemDetails.Create("request_withdrawn", statusCode: StatusCodes.Status410Gone);
+                    return AAuth.Server.AAuthProblemDetails.Polling(PollingErrorCode.Abandoned);
 
                 case PersonPendingStatus.AwaitingClarification:
                     return Pending202Clarification(ctx, entry, options);
@@ -1191,12 +1191,12 @@ public static class AAuthPersonServerEndpoints
             // and/or predicate restricts.
             if (!AAuthUrl.IsHttpsOrLoopback(resourceAudience, options.EgressPolicy))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_access_server", $"Access Server audience '{resourceAudience}' must be an absolute https URL (loopback http allowed for development).", statusCode: StatusCodes.Status400BadRequest);
+                return AAuth.Server.AAuthProblemDetails.TokenEndpoint(TokenErrorCode.InvalidResourceToken, $"Access Server audience '{resourceAudience}' must be an absolute https URL (loopback http allowed for development).");
             }
             if (!await options.Trust.IsTrustedAsync(resourceAudience, AAuthTrustedParty.AccessServer,
                     ctx.RequestServices, ctx, cancellationToken: ctx.RequestAborted).ConfigureAwait(false))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_access_server", $"'{resourceAudience}' is not a trusted Access Server.", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.TokenEndpoint(TokenErrorCode.InvalidResourceToken, $"'{resourceAudience}' is not a trusted Access Server.");
             }
 
             TokenVerifier.VerifiedToken resource, presented;

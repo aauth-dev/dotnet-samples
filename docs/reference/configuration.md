@@ -207,11 +207,12 @@ An `IAccessPolicy` is required (`UsePolicy` or a DI registration).
 |----------|------|---------|-------------|
 | `MaxTotalWait` | `TimeSpan` | 5 minutes | Maximum time to poll before timeout |
 | `DefaultPollInterval` | `TimeSpan` | 5 seconds | Base interval between polls |
-| `MinPollInterval` | `TimeSpan` | 100ms | Minimum interval floor |
+| `MinPollInterval` | `TimeSpan` | zero | Optional minimum interval floor |
 | `PreferWaitSeconds` | `int?` | `null` | Send `Prefer: wait=N` header (long-poll) |
 | `OnPoll` | `Action<HttpResponseMessage>?` | `null` | Callback after each poll response |
 
-Server `Retry-After` headers override `DefaultPollInterval` (clamped to `MinPollInterval`).
+Server `Retry-After` headers override `DefaultPollInterval`; `Retry-After: 0`
+is immediate unless an app explicitly configures a non-zero `MinPollInterval`.
 The agent's challenge and interaction handlers take the same polling settings; see
 [ChallengeHandlingOptions](#challengehandlingoptions-withchallengehandling) and
 [InteractionHandlingOptions](#interactionhandlingoptions-withinteractionhandling).
@@ -452,7 +453,7 @@ Register with `AddAAuthResource(configure: …)` or bind from `AAuth:Resource`.
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Max deferred polling time |
 | `DefaultPollInterval` | `TimeSpan` | 5 seconds | Poll interval (overridden by Retry-After) |
 | `PreferWaitSeconds` | `int?` | null | Sends `Prefer: wait=N` to long-poll |
-| `MinPollInterval` | `TimeSpan` | 100 ms | Minimum delay between polls |
+| `MinPollInterval` | `TimeSpan` | zero | Optional minimum delay between polls |
 | `OnPoll` | `Action<HttpResponseMessage>?` | null | Per-poll callback (logging/progress) |
 | `Capabilities` | `IList<string>?` | null | Capabilities sent to the PS (null = infer) |
 | `Prompt` | `string?` | null | OIDC `prompt` sent to the PS |
@@ -473,7 +474,7 @@ cover resource-required components without an `invalid_input` retry.
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Max polling time |
 | `DefaultPollInterval` | `TimeSpan` | 5 seconds | Poll interval (overridden by Retry-After) |
 | `PreferWaitSeconds` | `int?` | null | Sends `Prefer: wait=N` to long-poll |
-| `MinPollInterval` | `TimeSpan` | 100 ms | Minimum delay between polls |
+| `MinPollInterval` | `TimeSpan` | zero | Optional minimum delay between polls |
 | `OnPoll` | `Action<HttpResponseMessage>?` | null | Per-poll callback |
 
 ## Extensibility Patterns

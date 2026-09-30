@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
@@ -191,13 +192,13 @@ public static class AAuthAccessServerEndpoints
 
             if (!IsVerifiedPersonServer(c))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "A verified Person Server metadata role is required.", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
 
             if (!await options.Trust.IsTrustedAsync(parsedKey.Identifier!, AAuthTrustedParty.PersonServer,
                     c.RequestServices, c, cancellationToken: c.RequestAborted).ConfigureAwait(false))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", $"jwks_uri '{parsedKey.JwksUri}' is not a trusted Person Server", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
 
             if (entry.OriginPersonServerHost is not { Length: > 0 } origin
@@ -205,7 +206,7 @@ public static class AAuthAccessServerEndpoints
                 || entry.OwnerKeyThumbprint is null
                 || !string.Equals(entry.OwnerKeyThumbprint, c.GetAAuthVerification()?.Jkt, StringComparison.Ordinal))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "pending entry belongs to a different Person Server", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
 
             return null;
@@ -262,12 +263,12 @@ public static class AAuthAccessServerEndpoints
             var personServer = parsed.Identifier!;
             if (!IsVerifiedPersonServer(ctx))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "A verified Person Server metadata role is required.", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
             if (!await options.Trust.IsTrustedAsync(personServer, AAuthTrustedParty.PersonServer,
                     ctx.RequestServices, ctx, cancellationToken: ctx.RequestAborted).ConfigureAwait(false))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", $"jwks_uri '{parsed.JwksUri}' is not a trusted Person Server", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
 
             JsonObject? body;
@@ -371,7 +372,7 @@ public static class AAuthAccessServerEndpoints
             }
 
             if (InvalidClaimPolicy(decision))
-                return AAuthProblemDetails.Create("policy_error", "Requested or projected claims contain protocol-owned names.", statusCode: StatusCodes.Status500InternalServerError);
+                return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, "Requested or projected claims contain protocol-owned names.");
 
             AccessPendingEntry Park(IReadOnlyList<string>? requiredClaims = null)
             {
@@ -400,7 +401,7 @@ public static class AAuthAccessServerEndpoints
                         // §Payment Required: Location MUST be present.
                         if (string.IsNullOrWhiteSpace(decision.PaymentUrl))
                         {
-                            return AAuth.Server.AAuthProblemDetails.Create("policy_error", "NeedsPayment requires a payment Location", statusCode: StatusCodes.Status500InternalServerError);
+                            return AAuth.Server.AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, "NeedsPayment requires a payment Location");
                         }
                         ctx.Response.Headers.Location = decision.PaymentUrl;
                         ctx.Response.Headers["Cache-Control"] = "no-store";
@@ -473,7 +474,7 @@ public static class AAuthAccessServerEndpoints
                     case AccessPendingStatus.Allowed:
                         {
                             if (entry.RequiredClaims?.Any(name => !AuthTokenBuilder.IsIdentityClaimAllowed(name)) == true)
-                                return AAuthProblemDetails.Create("policy_error", "Requested claims contain protocol-owned names.", statusCode: StatusCodes.Status500InternalServerError);
+                                return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, "Requested claims contain protocol-owned names.");
                             var (tenant, roles, groups, claims) = ProjectIdentityClaims(entry.SuppliedClaims, entry.RequiredClaims);
                             return await AuthTokenResponse.CreateTrackedAsync(ct => Mint(ct,
                                     entry.ResourceUrl, entry.Scope, entry.AgentConfirmationKey, entry.ResourceContext!,
@@ -622,7 +623,7 @@ public static class AAuthAccessServerEndpoints
                 }
 
                 if (InvalidClaimPolicy(decision))
-                    return AAuthProblemDetails.Create("policy_error", "Requested or projected claims contain protocol-owned names.", statusCode: StatusCodes.Status500InternalServerError);
+                    return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, "Requested or projected claims contain protocol-owned names.");
 
                 switch (decision.Kind)
                 {
@@ -713,7 +714,7 @@ public static class AAuthAccessServerEndpoints
                 PersonServerIssuer = entry.OriginPersonServerHost,
                 UpstreamAuthorization = entry.UpstreamAuthorization,
             }, ctx.RequestAborted);
-            if (InvalidClaimPolicy(decision)) return AAuthProblemDetails.Create("policy_error", statusCode: 500);
+            if (InvalidClaimPolicy(decision)) return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError);
             switch (decision.Kind)
             {
                 case AccessDecisionKind.Allow:

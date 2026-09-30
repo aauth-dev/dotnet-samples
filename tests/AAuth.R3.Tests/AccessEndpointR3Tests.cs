@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using AAuth;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.R3.Model;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
@@ -421,8 +422,8 @@ public class AccessEndpointR3Tests
             .Build();
         using var request = new HttpRequestMessage(new HttpMethod(method), new Uri(new Uri(R3TestData.AsIssuer), pending.Headers.Location!));
         using var denied = await client.SendAsync(request);
-        Assert.True(denied.StatusCode == HttpStatusCode.Forbidden, await denied.Content.ReadAsStringAsync());
-        Assert.Equal("untrusted_person_server", (string?)(await denied.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.True(denied.StatusCode == HttpStatusCode.Unauthorized, await denied.Content.ReadAsStringAsync());
+        Assert.Equal("error=invalid_key", denied.Headers.GetValues(SignatureError.HeaderName).Single());
         using var poll = await fixture.PollPendingAsync(pending.Headers.Location!.ToString());
         Assert.Equal(HttpStatusCode.Accepted, poll.StatusCode);
     }
@@ -452,9 +453,9 @@ public class AccessEndpointR3Tests
             resource_token = fixture.ResourceToken,
             presented_token = fixture.PersonToken,
         });
-        Assert.Equal(isPerson ? HttpStatusCode.OK : HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(isPerson ? HttpStatusCode.OK : HttpStatusCode.Unauthorized, response.StatusCode);
         if (!isPerson)
-            Assert.Equal("untrusted_person_server", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+            Assert.Equal("error=invalid_key", response.Headers.GetValues(SignatureError.HeaderName).Single());
     }
 
     [Theory]
@@ -996,7 +997,8 @@ public class AccessEndpointR3Tests
         var polled = await fixture.PollPendingAsAsync(
             location, fixture.ApKey, $"{R3TestData.ApIssuer}/.well-known/jwks.json", R3TestData.ApKid);
 
-        Assert.Equal(HttpStatusCode.Forbidden, polled.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, polled.StatusCode);
+        Assert.Equal("error=invalid_key", polled.Headers.GetValues(SignatureError.HeaderName).Single());
         Assert.Empty(auditSink.Records); // the wrong PS never triggers a mint/audit
     }
 
@@ -1066,9 +1068,8 @@ public class AccessEndpointR3Tests
 
         var response = await fixture.PostTokenAsync();
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("untrusted_person_server", (string?)body!["error"]);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("error=invalid_key", response.Headers.GetValues(SignatureError.HeaderName).Single());
     }
 
     [Fact]

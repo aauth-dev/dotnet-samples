@@ -710,6 +710,64 @@ before the approved review" time out waiting for Person Server consent. It
 does the same at the Phase 2 commit with the owner's MockPersonServer edits,
 and it passes in the full-suite order.
 
+### [2026-09-30] [Phase 4] R11 — Deferred polling and error tables
+
+RESOLVED.
+
+- `ChallengeHandler` now resumes deferred auth-token delivery through the shared
+  `DeferredPoller` path, carrying the initial `Retry-After`, treating
+  `429 slow_down` as linear backoff, and returning requirement-bearing
+  `202`/`401` responses so a fresh resource-token challenge is re-exchanged
+  before polling the same `Location` again.
+- Polling and token endpoint emitters were moved onto closed-table helpers that
+  own each registered code's status. Unknown, foreign, consumed or replayed
+  pending handles now converge on `410 invalid_code`; first observed held
+  invocation expiry is `408 expired`, then `410 invalid_code`.
+- Untrusted PS/AS signer cases are mapped per Q3 to bodyless
+  `401 Signature-Error: error=invalid_key`. AS/PS policy failures that exposed
+  the invented `policy_error` code now use registered `server_error`; untrusted
+  AS audience failures in PS federation use `invalid_resource_token`.
+- `TokenErrorCode` now contains only the registered token-endpoint table values;
+  `mission_terminated` remains on the dedicated mission error surface, not the
+  token-endpoint enum.
+- `DeferredPollerOptions.MinPollInterval` defaults to zero, so
+  `Retry-After: 0` is immediate unless an app explicitly configures a floor.
+- Directly affected docs and non-protected samples were updated. The protected
+  `samples/MockPersonServer/Program.cs` still contains removed-code examples,
+  so that sample sub-item is left for the owner/orchestrator rather than
+  editing owner-modified files.
+
+### [2026-09-30] [Phase 4] Gates and wrap-up
+
+RESOLVED.
+
+**Orchestrator correction.** The R11 agent had removed
+`TokenErrorCode.InvalidAgentToken` and `ExpiredAgentToken`, and mapped
+`agent_token` parameter failures to `*_presented_token`. That change is
+reverted, for two reasons:
+
+- the spec's `<invalid|expired|revoked>_<parameter>_token` pattern
+  (#token-endpoint-error-codes) covers the AS/R3 `agent_token` parameter;
+- the AAuth #199 codes are out of scope for this plan.
+
+The enum members, wire codes, their 400 status in the closed-table helper, the
+`TokenFailure` agent mapping and the three affected test expectations are
+restored. The removal of `MissionTerminated` from `TokenErrorCode` stands:
+`mission_terminated` stays on the mission-specific surface
+(`AAuthMissionTerminatedException`).
+
+Remaining work for the owner-edited sample (Phase 11):
+
+- `samples/MockPersonServer/Program.cs:321` and `:574` still emit
+  `404 unknown_pending`.
+
+Gates:
+
+- The build is clean.
+- Tests: AAuth.Tests 1819, Conformance 1348, R3 332, Events 89.
+- The inventory, snippet and link gates pass.
+- e2e: full Playwright 78 passed, 1 skipped.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 1] SMP-01 matches the exact agent id, not id plus key

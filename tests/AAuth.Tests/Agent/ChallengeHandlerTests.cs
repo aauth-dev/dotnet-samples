@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -263,6 +264,90 @@ public class ChallengeHandlerTests
             poll => Assert.Equal(("GET", "/pending/1", authToken, false), poll));
     }
 
+    [Fact(DisplayName = "ChallengeHandler — deferred auth-token polling honours Retry-After and slow_down")]
+    public async Task DeferredAuthToken_HonoursRetryAfterAndSlowDown()
+    {
+        var authToken = await BuildAuthTokenAsync("auth-jti-delay");
+        var delays = new List<TimeSpan>();
+        var exchangeHandler = new CapturingExchangeHandler(_ => { }, authToken);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeHttp = new InProcessHttpClient(new AAuthSigningHandler(SigningKey, () => AgentToken) { InnerHandler = exchangeHandler });
+        var holder = new AAuthTokenHolder(PersonToken);
+        var resource = new SlowDownHoldingResourceHandler(await BuildResourceTokenAsync());
+        var challengeHandler = new ChallengeHandler(
+            new TokenExchangeClient(exchangeHttp, metaClient), holder,
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
+            personServer: PsUrl, onInteractionRequired: null, pollerOptions: new DeferredPollerOptions
+            {
+                DelayAsync = (delay, ct) =>
+                {
+                    ct.ThrowIfCancellationRequested();
+                    delays.Add(delay);
+                    return Task.CompletedTask;
+                },
+            })
+        {
+            InnerHandler = new AAuthSigningHandler(SigningKey, () => holder.Current) { InnerHandler = resource },
+        };
+        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+
+        using var response = await client.PostAsync("/orders", new StringContent("{\"item\":\"hotel\"}", Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("{\"order\":2}", await response.Content.ReadAsStringAsync());
+        Assert.Collection(delays,
+            delay => Assert.Equal(TimeSpan.FromSeconds(30), delay),
+            delay => Assert.Equal(TimeSpan.FromSeconds(10), delay));
+        Assert.Collection(resource.Seen,
+            first => Assert.Equal(("POST", "/orders", PersonToken, true), first),
+            poll => Assert.Equal(("GET", "/pending/1", authToken, false), poll),
+            poll => Assert.Equal(("GET", "/pending/1", authToken, false), poll));
+    }
+
+    [Fact(DisplayName = "ChallengeHandler — deferred poll re-exchanges fresh auth-token requirement and resumes the same Location")]
+    public async Task DeferredAuthToken_ReExchangeOnPendingRequirement_ResumesSameLocation()
+    {
+        var firstAuth = await BuildAuthTokenAsync("auth-jti-first");
+        var secondAuth = await BuildAuthTokenAsync("auth-jti-second");
+        var firstResource = await BuildResourceTokenAsync(tokenId: "resource-jti-first");
+        var secondResource = await BuildResourceTokenAsync(presentedJti: "auth-jti-first", tokenId: "resource-jti-second");
+        var exchangedResources = new List<string?>();
+        var exchangeHandler = new CapturingExchangeHandler(req =>
+        {
+            var body = JsonNode.Parse(req.Content!.ReadAsStringAsync().Result)!.AsObject();
+            exchangedResources.Add((string?)body["resource_token"]);
+        }, firstAuth, secondAuth);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeHttp = new InProcessHttpClient(new AAuthSigningHandler(SigningKey, () => AgentToken) { InnerHandler = exchangeHandler });
+        var holder = new AAuthTokenHolder(PersonToken);
+        var resource = new ReExchangeHoldingResourceHandler(firstResource, secondResource);
+        var challengeHandler = new ChallengeHandler(
+            new TokenExchangeClient(exchangeHttp, metaClient), holder,
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
+            personServer: PsUrl, onInteractionRequired: null, pollerOptions: new DeferredPollerOptions
+            {
+                DelayAsync = (_, ct) =>
+                {
+                    ct.ThrowIfCancellationRequested();
+                    return Task.CompletedTask;
+                },
+            })
+        {
+            InnerHandler = new AAuthSigningHandler(SigningKey, () => holder.Current) { InnerHandler = resource },
+        };
+        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+
+        using var response = await client.PostAsync("/orders", new StringContent("{\"item\":\"hotel\"}", Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("{\"order\":3}", await response.Content.ReadAsStringAsync());
+        Assert.Equal(new[] { firstResource, secondResource }, exchangedResources);
+        Assert.Collection(resource.Seen,
+            first => Assert.Equal(("POST", "/orders", PersonToken, true), first),
+            poll => Assert.Equal(("GET", "/pending/1", firstAuth, false), poll),
+            poll => Assert.Equal(("GET", "/pending/1", secondAuth, false), poll));
+    }
+
     /// <summary>Holds a POST behind 202 requirement=auth-token and completes it on a GET of the pending URL with an auth token.</summary>
     private sealed class HoldingResourceHandler(string resourceToken) : HttpMessageHandler
     {
@@ -280,6 +365,64 @@ public class ChallengeHandlerTests
                 return Task.FromResult(held);
             }
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"order\":1}") });
+        }
+    }
+
+    private sealed class SlowDownHoldingResourceHandler(string resourceToken) : HttpMessageHandler
+    {
+        public List<(string Method, string Path, string? Carrier, bool HasBody)> Seen { get; } = [];
+        private int _polls;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var carrier = SignatureKeyParser.Parse(request.Headers.GetValues("Signature-Key").Single()).Jwt;
+            Seen.Add((request.Method.Method, request.RequestUri!.AbsolutePath, carrier, request.Content is not null));
+            if (request.Method == HttpMethod.Post)
+            {
+                var held = new HttpResponseMessage(HttpStatusCode.Accepted) { Content = new StringContent("{\"status\":\"pending\"}") };
+                held.Headers.Location = new Uri("/pending/1", UriKind.Relative);
+                held.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(30));
+                held.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, AAuthRequirementHeader.FormatAuthToken(resourceToken));
+                return Task.FromResult(held);
+            }
+            _polls++;
+            if (_polls == 1)
+            {
+                return Task.FromResult(new HttpResponseMessage((HttpStatusCode)429)
+                {
+                    Content = new StringContent("{\"error\":\"slow_down\"}", Encoding.UTF8, "application/problem+json"),
+                });
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"order\":2}") });
+        }
+    }
+
+    private sealed class ReExchangeHoldingResourceHandler(string firstResourceToken, string secondResourceToken) : HttpMessageHandler
+    {
+        public List<(string Method, string Path, string? Carrier, bool HasBody)> Seen { get; } = [];
+        private int _polls;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var carrier = SignatureKeyParser.Parse(request.Headers.GetValues("Signature-Key").Single()).Jwt;
+            Seen.Add((request.Method.Method, request.RequestUri!.AbsolutePath, carrier, request.Content is not null));
+            if (request.Method == HttpMethod.Post)
+            {
+                var held = new HttpResponseMessage(HttpStatusCode.Accepted) { Content = new StringContent("{\"status\":\"pending\"}") };
+                held.Headers.Location = new Uri("/pending/1", UriKind.Relative);
+                held.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.Zero);
+                held.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, AAuthRequirementHeader.FormatAuthToken(firstResourceToken));
+                return Task.FromResult(held);
+            }
+            _polls++;
+            if (_polls == 1)
+            {
+                var stepUp = new HttpResponseMessage(HttpStatusCode.Accepted) { Content = new StringContent("{\"status\":\"pending\"}") };
+                stepUp.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.Zero);
+                stepUp.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, AAuthRequirementHeader.FormatAuthToken(secondResourceToken));
+                return Task.FromResult(stepUp);
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"order\":3}") });
         }
     }
 
@@ -991,7 +1134,8 @@ public class ChallengeHandlerTests
         Key = SigningKey, KeyId = "ps-key",
     }.BuildAsync().AsTask().GetAwaiter().GetResult();
 
-    private static ValueTask<string> BuildResourceTokenAsync(string? missionS256 = null, string? failure = null, string personServer = PsUrl, string presentedJti = PersonJti) => new ResourceTokenBuilder
+    private static ValueTask<string> BuildResourceTokenAsync(string? missionS256 = null, string? failure = null,
+        string personServer = PsUrl, string presentedJti = PersonJti, string? tokenId = null) => new ResourceTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = failure == "origin" ? "https://other.example" : ResourceUrl,
@@ -1002,9 +1146,25 @@ public class ChallengeHandlerTests
         AgentJkt = failure == "key" ? "wrong-key" : SigningKey.ComputeJwkThumbprint(),
         Key = failure == "signature" ? AAuthKey.Generate() : SigningKey,
         KeyId = "resource-key",
+        TokenId = tokenId,
         Account = failure == "account" ? "other-account" : null,
         MissionS256 = missionS256,
         IssuedAt = failure == "expiry" ? DateTimeOffset.UtcNow.AddHours(-1) : null,
+    }.BuildAsync();
+
+    private static ValueTask<string> BuildAuthTokenAsync(string tokenId) => new AuthTokenBuilder
+    {
+        EgressPolicy = TestEgress.Policy,
+        Issuer = PsUrl,
+        Audience = ResourceUrl,
+        PersonServer = PsUrl,
+        Subject = PersonSubject,
+        AgentConfirmationKey = SigningKey,
+        AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30),
+        Key = SigningKey,
+        KeyId = "ps-key",
+        Lifetime = TimeSpan.FromMinutes(10),
+        TokenId = tokenId,
     }.BuildAsync();
 
     private static string BuildTokenWithPayload(JsonObject payload, string typ = AuthTokenBuilder.TokenType)
@@ -1092,11 +1252,11 @@ public class ChallengeHandlerTests
     {
         public int PersonServerCalls { get; private set; }
         private readonly Action<HttpRequestMessage> _onTokenPost;
-        private readonly string _authToken;
-        public CapturingExchangeHandler(Action<HttpRequestMessage> onTokenPost, string authToken = "fake-auth-token")
+        private readonly Queue<string> _authTokens;
+        public CapturingExchangeHandler(Action<HttpRequestMessage> onTokenPost, params string[] authTokens)
         {
             _onTokenPost = onTokenPost;
-            _authToken = authToken;
+            _authTokens = new Queue<string>(authTokens.Length == 0 ? ["fake-auth-token"] : authTokens);
         }
 
         protected override Task<HttpResponseMessage> SendAsync(
@@ -1134,7 +1294,7 @@ public class ChallengeHandlerTests
             _onTokenPost(request);
             var response = request.RequestUri!.AbsolutePath == "/person"
                 ? new JsonObject { ["person_token"] = "fake-person-token" }
-                : new JsonObject { ["auth_token"] = _authToken };
+                : new JsonObject { ["auth_token"] = _authTokens.Count > 1 ? _authTokens.Dequeue() : _authTokens.Peek() };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(response.ToJsonString(), Encoding.UTF8, "application/json"),

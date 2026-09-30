@@ -7,6 +7,50 @@ public static class AAuthProblemDetails
 {
     public const string ContentType = "application/problem+json";
 
+    public static IResult Polling(PollingErrorCode code, string? detail = null,
+        IDictionary<string, object?>? extensions = null)
+        => Create(PollingErrorException.ToWireCode(code), detail, PollingStatus(code), extensions);
+
+    public static int PollingStatus(PollingErrorCode code) => code switch
+    {
+        PollingErrorCode.Denied => StatusCodes.Status403Forbidden,
+        PollingErrorCode.Abandoned => StatusCodes.Status403Forbidden,
+        PollingErrorCode.Expired => StatusCodes.Status408RequestTimeout,
+        PollingErrorCode.Revoked => StatusCodes.Status403Forbidden,
+        PollingErrorCode.InvalidCode => StatusCodes.Status410Gone,
+        PollingErrorCode.SlowDown => StatusCodes.Status429TooManyRequests,
+        PollingErrorCode.ServerError => StatusCodes.Status500InternalServerError,
+        _ => throw new ArgumentOutOfRangeException(nameof(code), code, null),
+    };
+
+    public static IResult TokenEndpoint(TokenErrorCode code, string? detail = null,
+        IDictionary<string, object?>? extensions = null)
+        => Create(new TokenErrorResponse(code).ErrorCode, detail, TokenEndpointStatus(code), extensions);
+
+    public static int TokenEndpointStatus(TokenErrorCode code) => code switch
+    {
+        TokenErrorCode.InvalidRequest => StatusCodes.Status400BadRequest,
+        TokenErrorCode.InvalidAgentToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.ExpiredAgentToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.InvalidResourceToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.ExpiredResourceToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.RevokedResourceToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.InvalidPresentedToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.ExpiredPresentedToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.RevokedPresentedToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.InvalidUpstreamToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.ExpiredUpstreamToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.RevokedUpstreamToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.InvalidSubagentToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.ExpiredSubagentToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.RevokedSubagentToken => StatusCodes.Status400BadRequest,
+        TokenErrorCode.ClockSkew => StatusCodes.Status400BadRequest,
+        TokenErrorCode.UserUnreachable => StatusCodes.Status403Forbidden,
+        TokenErrorCode.AsUnreachable => StatusCodes.Status502BadGateway,
+        TokenErrorCode.ServerError => StatusCodes.Status500InternalServerError,
+        _ => throw new ArgumentOutOfRangeException(nameof(code), code, null),
+    };
+
     public static IResult TokenFailure(Tokens.TokenVerificationException exception,
         Tokens.TokenCredential credential = Tokens.TokenCredential.Agent)
     {

@@ -58,9 +58,9 @@ public sealed class ChallengeHandlingOptions
 
     /// <summary>
     /// Minimum delay between polls regardless of server's <c>Retry-After</c>.
-    /// Prevents runaway polling. Default: 100 ms.
+    /// Default: zero, so <c>Retry-After: 0</c> is immediate.
     /// </summary>
-    public TimeSpan MinPollInterval { get; set; } = TimeSpan.FromMilliseconds(100);
+    public TimeSpan MinPollInterval { get; set; } = TimeSpan.Zero;
 
     /// <summary>
     /// Optional callback invoked after each poll response. Useful for logging

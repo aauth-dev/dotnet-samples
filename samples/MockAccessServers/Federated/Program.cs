@@ -258,7 +258,7 @@ app.MapGet("/interaction/callback", async (HttpContext ctx, string? code, string
     var entry = pending.Get(session.Decision!.Id);
     if (entry is null)
     {
-        return AAuth.Server.AAuthProblemDetails.Create("unknown_interaction", statusCode: StatusCodes.Status404NotFound);
+        return AAuth.Server.AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
     }
 
     return await session.Decision.ApplyAsync(ctx, async () =>

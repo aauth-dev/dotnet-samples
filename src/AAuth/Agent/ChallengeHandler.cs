@@ -196,6 +196,7 @@ public sealed class ChallengeHandler : DelegatingHandler
         // requirement=auth-token as a 202 with a pending Location. The agent then
         // polls that URL with signed GETs and never resends the original request.
         Uri? pendingLocation = null;
+        System.Net.Http.Headers.RetryConditionHeaderValue? pendingRetryAfter = null;
         for (var attempt = 0; attempt < maxAuthTokenChallenges; attempt++)
         {
             var deferred = response.StatusCode == HttpStatusCode.Accepted;
@@ -212,11 +213,19 @@ public sealed class ChallengeHandler : DelegatingHandler
             if (deferred)
             {
                 if (requirement.Requirement != AAuthRequirementHeader.AuthTokenRequirement
-                    || response.Headers.Location is not { } location || request.RequestUri is null)
+                    || request.RequestUri is null)
                     return response;
-                var basis = pendingLocation ?? request.RequestUri;
-                pendingLocation = _exchange.EgressPolicy.ValidatePendingLocation(basis,
-                    location.IsAbsoluteUri ? location : new Uri(basis, location));
+                if (response.Headers.Location is { } location)
+                {
+                    var basis = pendingLocation ?? request.RequestUri;
+                    pendingLocation = _exchange.EgressPolicy.ValidatePendingLocation(basis,
+                        location.IsAbsoluteUri ? location : new Uri(basis, location));
+                }
+                else if (pendingLocation is null)
+                {
+                    return response;
+                }
+                pendingRetryAfter = response.Headers.RetryAfter;
             }
 
             // An intermediary routes every hop to the PS its upstream token names:
@@ -297,20 +306,26 @@ public sealed class ChallengeHandler : DelegatingHandler
             // verbatim; streaming bodies that are not re-readable will fail
             // here, which is a known limitation.
             response.Dispose();
-            var retry = pendingLocation is null
-                ? await CloneAsync(request, cancellationToken).ConfigureAwait(false)
-                : PollRequest(request, pendingLocation);
-            response = await SendWithAdaptiveSigningAsync(retry, cancellationToken).ConfigureAwait(false);
-            if (retry.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presentedToken))
-                request.Options.Set(AAuthRequestOptions.PresentedToken, presentedToken);
-            // Reassign the response's RequestMessage to the caller-owned
-            // original so diagnostics (EnsureSuccessStatusCode, loggers) keep
-            // working, then dispose the short-lived clone. This avoids both
-            // (a) retaining the cloned ByteArrayContent on the response until
-            // GC and (b) handing callers a response backed by a disposed
-            // request — the trade-off of the previous `using` placement.
-            response.RequestMessage = request;
-            retry.Dispose();
+            if (pendingLocation is null)
+            {
+                var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
+                response = await SendWithAdaptiveSigningAsync(retry, cancellationToken).ConfigureAwait(false);
+                if (retry.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presentedToken))
+                    request.Options.Set(AAuthRequestOptions.PresentedToken, presentedToken);
+                response.RequestMessage = request;
+                retry.Dispose();
+            }
+            else
+            {
+                using var pollClient = AAuth.Discovery.AAuthHttpTransport.AttachPolicy(
+                    new HttpClient(new ChallengePollHandler(this, request)),
+                    _exchange.EgressPolicy,
+                    AAuth.Discovery.AAuthTransportContract.EnforcesEgressPolicy);
+                var poller = new DeferredPoller(pollClient, PollerOptionsForAuthTokenDeferred());
+                response = await poller.ResumeAsync(pendingLocation, pendingRetryAfter, cancellationToken)
+                    .ConfigureAwait(false);
+                response.RequestMessage = request;
+            }
         }
 
         return response;
@@ -332,6 +347,25 @@ public sealed class ChallengeHandler : DelegatingHandler
             ? clarification.OnClarificationRequiredAsync : OnClarificationRequired,
         MaxClarificationRounds = MaxClarificationRounds,
     };
+
+    private DeferredPollerOptions PollerOptionsForAuthTokenDeferred()
+    {
+        var source = _pollerOptions ?? new DeferredPollerOptions();
+        var callerStop = source.StopWhenAccepted;
+        return new DeferredPollerOptions
+        {
+            TimeProvider = source.TimeProvider,
+            DelayAsync = source.DelayAsync,
+            MaxTotalWait = source.MaxTotalWait,
+            DefaultPollInterval = source.DefaultPollInterval,
+            MinPollInterval = source.MinPollInterval,
+            PreferWaitSeconds = source.PreferWaitSeconds,
+            OnPoll = source.OnPoll,
+            StopWhenAccepted = response =>
+                callerStop?.Invoke(response) == true
+                || TryFindRequirement(response) is { Requirement: AAuthRequirementHeader.AuthTokenRequirement, ResourceToken: not null },
+        };
+    }
 
     // A person token issued with the mission approval saves the /person call when it names this PS,
     // resource and mission, binds the signing key, and is not about to expire (§Mission Approval).
@@ -554,6 +588,22 @@ public sealed class ChallengeHandler : DelegatingHandler
             if (option.Key != AAuthSigningHandler.AdditionalComponentsKey.Key)
                 ((IDictionary<string, object?>)poll.Options)[option.Key] = option.Value;
         return poll;
+    }
+
+    private sealed class ChallengePollHandler(ChallengeHandler owner, HttpRequestMessage source) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            foreach (var option in source.Options)
+                if (option.Key != AAuthSigningHandler.AdditionalComponentsKey.Key)
+                    ((IDictionary<string, object?>)request.Options)[option.Key] = option.Value;
+            var response = await owner.SendWithAdaptiveSigningAsync(request, cancellationToken).ConfigureAwait(false);
+            if (request.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presentedToken))
+                source.Options.Set(AAuthRequestOptions.PresentedToken, presentedToken);
+            if (request.Options.TryGetValue(AAuthSigningHandler.SigningKeyContext, out var signingKey))
+                source.Options.Set(AAuthSigningHandler.SigningKeyContext, signingKey);
+            return response;
+        }
     }
 
     private static async Task<HttpRequestMessage> CloneAsync(
