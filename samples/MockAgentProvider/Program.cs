@@ -11,7 +11,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddAAuthEvents();
+builder.Services.AddAAuthEvents(options => options.EgressPolicy = SampleEgress.Policy);
+builder.Services.AddSingleton<IAgentProviderEventStore>(services => new SqliteEventStore(
+    services.GetRequiredService<IConfiguration>()["Events:Database"] ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aauth", "ap-events.db")));
 var app = builder.Build();
 
 // ── Configuration ───────────────────────────────────────────────────────────
@@ -23,11 +26,7 @@ var keyStore = new FileKeyStore(app.Configuration["AgentProvider:KeyDirectory"] 
     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
     ".aauth", "ap-keys"));
 var apKey = keyStore.LoadOrCreate(keyId);
-var eventStore = new SqliteEventStore(app.Configuration["Events:Database"] ?? Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aauth", "ap-events.db"));
-using var eventHttp = new SampleHttpClient();
-var eventProtocol = new EventsProtocol(eventHttp, app.Services.GetServices<ISignatureTokenVerifier>());
-app.MapLocalEventProvider(issuer, apKey, keyId, eventProtocol, eventStore);
+app.MapLocalEventProvider(issuer, apKey, keyId);
 
 Console.WriteLine($"Mock Agent Provider running at: {issuer}");
 Console.WriteLine($"AP signing key id: {keyId}");

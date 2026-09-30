@@ -28,6 +28,14 @@ const string SelfIssuedKid = "sample-app-1";
 var sampleAppUrl = builder.Configuration["AAuth:SelfIssuer"] ?? "http://localhost:5240";
 var sampleAppAgentId = builder.Configuration["AAuth:SelfAgentId"] ?? "aauth:sample-app@localhost";
 builder.Services.AddSingleton(new SelfIssuedIdentity(selfIssuedKey, SelfIssuedKid, sampleAppUrl, sampleAppAgentId));
+// Resource metadata for the federated-worker scenario, published by MapAAuthWellKnown.
+builder.Services.AddAAuthResource(options =>
+{
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Issuer = sampleAppUrl;
+    options.SigningKeys[SelfIssuedKid] = selfIssuedKey;
+    options.ScopeDescriptions = new(FederatedWorkerScenario.ScopeDescriptions);
+});
 
 var app = builder.Build();
 
@@ -37,21 +45,16 @@ if (!app.Environment.IsDevelopment())
 }
 
 // Publish agent metadata + JWKS so verifiers can discover our signing key.
-app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+app.MapAAuthAgentWellKnown(options =>
 {
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = sampleAppUrl,
-    Name = "SampleApp Demo",
-    SigningKeys = new AAuthSigningKeySet { [SelfIssuedKid] = selfIssuedKey },
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Issuer = sampleAppUrl;
+    options.Name = "SampleApp Demo";
+    options.SigningKeys = new AAuthSigningKeySet { [SelfIssuedKid] = selfIssuedKey };
 });
 
 app.UseAntiforgery();
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
-{
-    EgressPolicy = SampleEgress.Policy, Issuer = sampleAppUrl,
-    SigningKeys = new AAuthSigningKeySet { [SelfIssuedKid] = selfIssuedKey },
-    ScopeDescriptions = FederatedWorkerScenario.ScopeDescriptions,
-});
+app.MapAAuthWellKnown();
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()

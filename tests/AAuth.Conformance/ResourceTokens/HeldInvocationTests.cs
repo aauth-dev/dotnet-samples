@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace AAuth.Conformance.ResourceTokens;
@@ -46,8 +47,8 @@ public sealed class HeldInvocationTests
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
+        builder.Services.AddAAuthHeldInvocations(options => options.TimeProvider = clock);
         var app = builder.Build();
-        var held = new AAuthHeldInvocations(timeProvider: clock);
         var executions = 0;
         app.Use(async (context, next) =>
         {
@@ -72,9 +73,10 @@ public sealed class HeldInvocationTests
             }
             await next();
         });
-        app.MapPost("/orders", () => held.Hold(ResourceToken, ["orders.write"], (_, _) =>
-            Task.FromResult(HeldInvocationResult.Json(new { order = ++executions }, StatusCodes.Status201Created))));
-        app.MapAAuthHeldInvocations(held);
+        app.MapPost("/orders", (HttpContext context, IAAuthHeldInvocations held) => held.HoldAsync(context, ResourceToken, ["orders.write"]))
+            .WithHeldInvocation("orders", (_, _, _) =>
+                Task.FromResult(HeldInvocationResult.Json(new { order = ++executions }, StatusCodes.Status201Created)));
+        app.MapAAuthHeldInvocations();
         await app.StartAsync();
         return (app, app.GetTestClient(), () => executions);
     }
@@ -173,7 +175,7 @@ public sealed class HeldInvocationTests
     [Fact(DisplayName = "R3 per-call single use — concurrent presentations of one grant execute once and share the retained result")]
     public async Task SingleUseGrant_ExecutesOncePerJti()
     {
-        var grants = new AAuthSingleUseGrants();
+        IAAuthSingleUseGate grants = new InMemorySingleUseGate();
         var executions = 0;
         Task<HeldInvocationResult> Execute(System.Threading.CancellationToken _)
             => Task.FromResult(HeldInvocationResult.Json(new { run = System.Threading.Interlocked.Increment(ref executions) }));

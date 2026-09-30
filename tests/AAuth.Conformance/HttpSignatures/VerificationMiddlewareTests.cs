@@ -68,12 +68,12 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
 
         var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            AcceptedSchemes = ["jwt", "hwk", "jkt-jwt"],
-            ResourceIdentifier = ResourceId,
-            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { PsIssuer } } },
+            options.EgressPolicy = TestEgress.Policy;
+            options.AcceptedSchemes = ["jwt", "hwk", "jkt-jwt"];
+            options.ResourceIdentifier = ResourceId;
+            options.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { PsIssuer };
         });
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
@@ -181,11 +181,11 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(new JwksClient(_metadataHost!.GetTestClient(), policy: TestEgress.Policy,
             transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         await using var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            ResourceIdentifier = resourceConfigured ? ResourceId : null,
-            ExpectedAccount = _ => expected,
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = resourceConfigured ? ResourceId : null;
+            options.ExpectedAccount = _ => expected;
         });
         app.MapGet("/protected", (HttpContext context) => Results.Json(new
         {
@@ -388,11 +388,11 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            ResourceIdentifier = ResourceId,
-            Trust = { AgentProviders = { Allowed = new HashSet<string> { "https://trusted-only.example" } } },
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = ResourceId;
+            options.Trust.AgentProviders.Allowed = new HashSet<string> { "https://trusted-only.example" };
         });
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
@@ -416,11 +416,11 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            ResourceIdentifier = ResourceId,
-            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { "https://trusted-ps-only.example" } } },
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = ResourceId;
+            options.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { "https://trusted-ps-only.example" };
         });
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
@@ -433,7 +433,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
 
     // Rebuild the resource host with custom verification options (the trust-policy
     // tests below each need a fresh pipeline).
-    private async Task RestartHostWithAsync(AAuthVerificationOptions options)
+    private async Task RestartHostWithAsync(Action<AAuthVerificationOptions> configure)
     {
         if (_host is not null) { await _host.StopAsync(); _host.Dispose(); }
 
@@ -444,7 +444,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         var app = builder.Build();
-        app.UseAAuthVerification(options);
+        app.UseAAuthVerification(configure);
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
         _host = app;
@@ -455,10 +455,10 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     {
         // Spec default (PS-asserted access): with issuer verification on and no
         // trust policy, an auth token from any *verifiable* PS is accepted.
-        await RestartHostWithAsync(new AAuthVerificationOptions
+        await RestartHostWithAsync(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            ResourceIdentifier = ResourceId,
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = ResourceId;
             // Trust.AuthTokenIssuers intentionally unset ⇒ open.
         });
 
@@ -469,11 +469,11 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     [Fact(DisplayName = "§Trust Posture — empty trusted-issuer set denies all auth tokens (kill-switch)")]
     public async Task RejectsAuthTokenWhenEmptyTrustedIssuerSet()
     {
-        await RestartHostWithAsync(new AAuthVerificationOptions
+        await RestartHostWithAsync(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            ResourceIdentifier = ResourceId,
-            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string>() } }, // empty ⇒ deny-all
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = ResourceId;
+            options.Trust.AuthTokenIssuers.Allowed = new HashSet<string>(); // empty ⇒ deny-all
         });
 
         var response = await SendSigned(await BuildAuthTokenAsync());
@@ -483,11 +483,11 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     [Fact(DisplayName = "§Trust Posture — custom policy can reject an otherwise-verifiable PS")]
     public async Task RejectsAuthTokenWhenPolicyDeclines()
     {
-        await RestartHostWithAsync(new AAuthVerificationOptions
+        await RestartHostWithAsync(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            ResourceIdentifier = ResourceId,
-            Trust = { AuthTokenIssuers = { Predicate = iss => iss == "https://other-ps.example" } },
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = ResourceId;
+            options.Trust.AuthTokenIssuers.Predicate = iss => iss == "https://other-ps.example";
         });
 
         var response = await SendSigned(await BuildAuthTokenAsync()); // iss = PsIssuer, not matched
@@ -497,11 +497,11 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     [Fact(DisplayName = "§Trust Posture — custom policy admits a verifiable PS")]
     public async Task AcceptsAuthTokenWhenPolicyApproves()
     {
-        await RestartHostWithAsync(new AAuthVerificationOptions
+        await RestartHostWithAsync(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            ResourceIdentifier = ResourceId,
-            Trust = { AuthTokenIssuers = { Predicate = iss => iss == PsIssuer } },
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = ResourceId;
+            options.Trust.AuthTokenIssuers.Predicate = iss => iss == PsIssuer;
         });
 
         var response = await SendSigned(await BuildAuthTokenAsync());
@@ -617,10 +617,10 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            ResourceIdentifier = ResourceId,
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = ResourceId;
         });
         app.MapGet("/protected", (HttpContext ctx) =>
         {

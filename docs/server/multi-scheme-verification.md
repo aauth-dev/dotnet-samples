@@ -55,10 +55,8 @@ using AAuth.Server.Verification;
 // HttpClient/discovery wiring.
 builder.Services.AddAAuthResource(options => options.Issuer = "https://resource.example");
 
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    AcceptedSchemes = ["jwt", "hwk", "jkt-jwt", "jwks_uri", "jwks", "self-jwt"],
-});
+app.UseAAuthVerification(options =>
+    options.AcceptedSchemes = ["jwt", "hwk", "jkt-jwt", "jwks_uri", "jwks", "self-jwt"]);
 ```
 
 </details>

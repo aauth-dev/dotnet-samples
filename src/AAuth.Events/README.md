@@ -13,8 +13,15 @@ See the [Events workflow](../../docs/workflows/events.md) and the
 
 ## Verification
 
-Register `services.AddAAuthEvents()` and pass the registered
-`ISignatureTokenVerifier` instances to `EventsProtocol`. Unknown token types and
+Register `services.AddAAuthEvents(o => o.EgressPolicy = …)`: it adds the Events
+`ISignatureTokenVerifier` instances and a singleton `EventsProtocol` built from
+`AAuthEventsOptions` (`EgressPolicy`, `TimeProvider`, and an optional
+`InnerHandler` with its `TransportContract`). Register the host's durable
+`IAgentProviderEventStore` or `IResourceEventStore`; `MapAAuthEventEndpoint(path)`
+and `MapAAuthSubscriptionEndpoint(path, o => { o.Operation = …; o.ValidateParameters = …; })`
+resolve the protocol and store from DI per request. The subscription `Resource`
+defaults to the registered `AAuthResourceOptions.Issuer`. Agent-side code may still
+construct its own `EventsProtocol`. Unknown token types and
 unregistered Events types fail closed. The companion uses the shared
 `TokenVerifier`, `DefaultSignatureKeyResolver`, `AAuthVerificationMiddleware`,
 `KeyFactory`, metadata/JWKS cache and admitted transport. There is no separate

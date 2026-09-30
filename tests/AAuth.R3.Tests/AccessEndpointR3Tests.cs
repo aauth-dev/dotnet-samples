@@ -483,11 +483,14 @@ public class AccessEndpointR3Tests
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        await using var app = builder.Build();
-        Assert.Throws<InvalidOperationException>(() => app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
+        builder.Services.AddR3AccessTokenEndpoint(options =>
         {
-            Issuer = R3TestData.AsIssuer, SigningKeys = new AAuthSigningKeySet { ["as"] = AAuthKey.Generate() }, AuditSink = null!,
-        }));
+            options.Issuer = R3TestData.AsIssuer;
+            options.SigningKeys = new AAuthSigningKeySet { ["as"] = AAuthKey.Generate() };
+            options.AuditSink = null!;
+        });
+        await using var app = builder.Build();
+        Assert.Throws<InvalidOperationException>(() => app.MapR3AccessTokenEndpoint());
     }
 
     [Fact]
@@ -1258,7 +1261,6 @@ public class AccessEndpointR3Tests
                 // Registered as the interface so R3DocumentEndpoint's replay guard resolves it.
                 builder.Services.AddSingleton(jtiStore);
             }
-            var app = builder.Build();
             // When a fetch handler is supplied, exercise the REAL R3FetchClient signed
             // fetch (routed at the in-proc doc server) instead of the in-memory bypass.
             Func<HttpContext, string, string, string, CancellationToken, Task<byte[]>>? fetchOverride =
@@ -1268,27 +1270,29 @@ public class AccessEndpointR3Tests
                     var bytes = uri == r3Uri ? docBytes : uri == proposalUri ? proposalBytes : throw new InvalidOperationException("unknown R3 URI");
                     return Task.FromResult(bytes);
                 };
-            app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
+            builder.Services.AddR3AccessTokenEndpoint(options =>
             {
-                EgressPolicy = TestEgress.Policy,
-                Issuer = R3TestData.AsIssuer,
-                SigningKeys = new AAuthSigningKeySet { [R3TestData.AsKid] = asKey },
-                Trust = { PersonServers = { Allowed = openPersonServerTrust ? null : new HashSet<string>(trustedPersonServers ?? [R3TestData.PsIssuer]) } },
+                options.EgressPolicy = TestEgress.Policy;
+                options.Issuer = R3TestData.AsIssuer;
+                options.SigningKeys = new AAuthSigningKeySet { [R3TestData.AsKid] = asKey };
+                options.Trust.PersonServers.Allowed = openPersonServerTrust ? null : new HashSet<string>(trustedPersonServers ?? [R3TestData.PsIssuer]);
                 // AS policy: book_trip requires per-call approval (r3 §Auth Token Extensions —
                 // the AS decides granted vs per-call, not the R3 document).
-                IsPerCallOperation = op => op.Matches(Vocabulary.OpenApi, R3Operation.OpenApi("book_trip")),
-                RequireProposalConsent = requireProposalConsent,
-                BrowserConsent = new AAuth.Server.BrowserConsentSessions("Test.R3.Consent", "isolated-test-user", isolatedDemoAccess: _ => true),
-                AuditSink = auditSink ?? new InMemoryR3AuditSink(),
-                VocabularySchemas = vocabularySchemas ?? R3VocabularySchemas.Standard,
-                IsScopeAllowed = isScopeAllowed,
-                IsOperationAllowed = _ => { onPolicy?.Invoke(); return true; },
-                IsProposalAllowed = isProposalAllowed,
-                FetchAndVerifyAsync = fetchOverride,
-                FetchTransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
-                FetchHttpMessageHandler = fetchHandler,
-                TimeProvider = timeProvider ?? TimeProvider.System,
+                options.IsPerCallOperation = op => op.Matches(Vocabulary.OpenApi, R3Operation.OpenApi("book_trip"));
+                options.RequireProposalConsent = requireProposalConsent;
+                options.BrowserConsent = new AAuth.Server.BrowserConsentSessions("Test.R3.Consent", "isolated-test-user", isolatedDemoAccess: _ => true);
+                options.AuditSink = auditSink ?? new InMemoryR3AuditSink();
+                options.VocabularySchemas = vocabularySchemas ?? R3VocabularySchemas.Standard;
+                options.IsScopeAllowed = isScopeAllowed;
+                options.IsOperationAllowed = _ => { onPolicy?.Invoke(); return true; };
+                options.IsProposalAllowed = isProposalAllowed;
+                options.FetchAndVerifyAsync = fetchOverride;
+                options.FetchTransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly;
+                options.FetchHttpMessageHandler = fetchHandler;
+                options.TimeProvider = timeProvider ?? TimeProvider.System;
             });
+            var app = builder.Build();
+            app.MapR3AccessTokenEndpoint();
             await app.StartAsync();
 
             var personToken = await R3TestData.PersonTokenAsync(psKey, agentKey);

@@ -20,12 +20,34 @@ namespace AAuth.Server;
 public static class RevocationEndpoint
 {
     /// <summary>
+    /// Map the revocation endpoint of the resource registered with <c>AddAAuthResource</c>:
+    /// verifies the caller (<c>jwks_uri</c>, <c>jwks</c> or <c>self-jwt</c>), records revocations
+    /// in the DI <see cref="IJtiStore"/> (or an in-memory one), cascades to recorded grants, and
+    /// signs downstream revocations as the resource with its active key. Accepts any verified
+    /// issuer unless <paramref name="configure"/> narrows <see cref="AAuthRevocationOptions.IsAcceptedIssuer"/>.
+    /// </summary>
+    /// <returns>The token inventory verification consults for revoked tokens.</returns>
+    public static IJtiStore MapAAuthIssuerRevocation(this WebApplication app, string path = "/revoke",
+        Action<AAuthRevocationOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        var metadata = app.Services.GetService<AAuth.Server.Metadata.AAuthResourceMetadataOptions>()
+            ?? throw new InvalidOperationException("MapAAuthIssuerRevocation requires AddAAuthResource.");
+        if (metadata.SigningKeys is not { Count: > 0 } keys)
+            throw new InvalidOperationException("MapAAuthIssuerRevocation requires resource signing keys.");
+        var clock = app.Services.GetService<Microsoft.Extensions.Options.IOptions<AAuthResourceOptions>>()?.Value.TimeProvider
+            ?? TimeProvider.System;
+        return MapIssuerRevocationCore(app, app, static _ => true, metadata.Issuer, AAuth.Tokens.ResourceTokenBuilder.ResourceDwk,
+            keys, path, metadata.EgressPolicy, clock, configure,
+            app.Services.GetService<IJtiStore>() ?? new InMemoryJtiStore(clock));
+    }
+    /// <summary>
     /// Map a verified revocation endpoint for a token-issuing server (PS, AS, or resource)
     /// that cascades over the returned inventory, signing downstream revocations as
     /// <paramref name="issuer"/>. Accepts any verified issuer unless <paramref name="configure"/>
     /// narrows <see cref="AAuthRevocationOptions.IsAcceptedIssuer"/>.
     /// </summary>
-    public static IJtiStore MapAAuthIssuerRevocation(this WebApplication app, string issuer, string dwk,
+    internal static IJtiStore MapAAuthIssuerRevocation(this WebApplication app, string issuer, string dwk,
         AAuth.Crypto.AAuthSigningKeySet signingKeys, string path,
         AAuth.Discovery.AAuthEgressPolicy egressPolicy, TimeProvider clock, Action<AAuthRevocationOptions>? configure,
         IJtiStore? inventory = null)
@@ -87,7 +109,7 @@ public static class RevocationEndpoint
             return (await client.RevokeAsync(endpointUri, grant.Token.TokenId, grant.ExpiresAt, cancellationToken)).Failure;
         }
 
-        routes.MapAAuthRevocationEndpoint(inventory, options =>
+        routes.MapRevocationEndpointCore(inventory, options =>
         {
             options.IsAcceptedIssuer = AAuthTrust.Any;
             options.Issuer = issuer;
@@ -101,21 +123,9 @@ public static class RevocationEndpoint
     }
 
     /// <summary>
-    /// Map the revocation endpoint with no accepted issuers configured (every
-    /// caller is answered <c>unsupported_iss</c> — see <see cref="AAuthRevocationOptions"/>). Prefer the
-    /// <see cref="MapAAuthRevocationEndpoint(IEndpointRouteBuilder, IJtiStore, Action{AAuthRevocationOptions}, string)"/>
-    /// overload to declare whose revocations are accepted.
-    /// </summary>
-    public static IEndpointRouteBuilder MapAAuthRevocationEndpoint(
-        this IEndpointRouteBuilder endpoints,
-        IJtiStore jtiStore,
-        string path = "/revoke")
-        => endpoints.MapAAuthRevocationEndpoint(jtiStore, configure: null, path);
-
-    /// <summary>
-    /// Map the revocation endpoint. The endpoint accepts a signed POST with a JSON
-    /// body <c>{ "jti": "...", "exp": 1788727813 }</c> and records <c>(verified caller, jti)</c>
-    /// as revoked in the <see cref="IJtiStore"/>, seen or not, then cascades to the grants
+    /// Map the revocation endpoint over the DI-registered <see cref="IJtiStore"/>. The endpoint
+    /// accepts a signed POST with a JSON body <c>{ "jti": "...", "exp": 1788727813 }</c> and
+    /// records <c>(verified caller, jti)</c> as revoked, seen or not, then cascades to the grants
     /// recorded against it and answers <c>200</c> once each downstream call is terminal.
     /// </summary>
     /// <remarks>
@@ -123,13 +133,25 @@ public static class RevocationEndpoint
     /// Message Signatures; the issuer is that identity, never a body member. Map this
     /// endpoint <b>behind</b> AAuth verification (<c>UseAAuthVerification</c> or
     /// <c>UseAAuth</c>) so the verified caller identity is available; accept callers via
-    /// <see cref="AAuthRevocationOptions.IsAcceptedIssuer"/> (deny-by-default).
+    /// <see cref="AAuthRevocationOptions.IsAcceptedIssuer"/> (deny-by-default: without it every
+    /// caller is answered <c>unsupported_iss</c>).
     /// </remarks>
     public static IEndpointRouteBuilder MapAAuthRevocationEndpoint(
         this IEndpointRouteBuilder endpoints,
+        string path = "/revoke",
+        Action<AAuthRevocationOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        var store = endpoints.ServiceProvider.GetService<IJtiStore>()
+            ?? throw new InvalidOperationException("MapAAuthRevocationEndpoint requires a registered IJtiStore.");
+        return endpoints.MapRevocationEndpointCore(store, configure, path);
+    }
+
+    internal static IEndpointRouteBuilder MapRevocationEndpointCore(
+        this IEndpointRouteBuilder endpoints,
         IJtiStore jtiStore,
         Action<AAuthRevocationOptions>? configure,
-        string path = "/revoke")
+        string path)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(jtiStore);

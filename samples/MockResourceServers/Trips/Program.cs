@@ -1,5 +1,6 @@
 using AAuth;
 using AAuth.Crypto;
+using AAuth.Server;
 using AAuth.Server.Verification;
 
 // ---------------------------------------------------------------------------
@@ -65,9 +66,8 @@ var app = builder.Build();
 app.MapAAuthWellKnown();
 // Revocations are keyed by (verified caller, jti); only the trusted PSes issue
 // the tokens this resource accepts, so only they may revoke here.
-AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
-    app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options =>
-        options.IsAcceptedIssuer = trustedPersonServers.Contains);
+app.MapAAuthRevocationEndpoint(configure: options =>
+    options.IsAcceptedIssuer = trustedPersonServers.Contains);
 
 // One declarative pipeline. Mission-aware: the issued resource token copies the
 // presented person token's mission_s256, so the PS governs the exchange. Trust

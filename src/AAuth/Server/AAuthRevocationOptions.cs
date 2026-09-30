@@ -7,7 +7,7 @@ namespace AAuth.Server;
 
 /// <summary>
 /// Acceptance and cascade policy for the AAuth revocation endpoint
-/// (<see cref="RevocationEndpoint.MapAAuthRevocationEndpoint(Microsoft.AspNetCore.Routing.IEndpointRouteBuilder, IJtiStore, Action{AAuthRevocationOptions}?, string)"/>).
+/// (<see cref="RevocationEndpoint.MapAAuthRevocationEndpoint(Microsoft.AspNetCore.Routing.IEndpointRouteBuilder, string, Action{AAuthRevocationOptions}?)"/>).
 /// </summary>
 /// <remarks>
 /// Per §Token Revocation the issuer is not a request parameter: the recipient keys

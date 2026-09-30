@@ -38,6 +38,8 @@ builder.Services.AddAAuthResource(options =>
     options.Name = "Travel Catalog"; options.SigningKeys[kid] = key;
     options.AdditionalMetadata = metadata.ToDictionary(field => field.Key, field => field.Value);
 });
+// The reader policy for MapR3Document; R3Challenge mints entitle the aud and ps to read each document.
+builder.Services.AddAAuthR3Documents(_ => new R3DocumentReaderPolicy(access, [person], SampleEgress.Policy));
 var app = builder.Build();
 app.MapAAuthWellKnown();
 app.MapGet("/openapi.json", () => Results.Json(new JsonObject
@@ -50,16 +52,14 @@ app.MapGet("/openapi.json", () => Results.Json(new JsonObject
             ["responses"] = new JsonObject { ["200"] = new JsonObject { ["description"] = $"{service} entries" } },
         } }))),
 }));
-app.MapR3Document("/r3/{hash}", context => documents.TryGet((string)context.Request.RouteValues["hash"]!, out var bytes) ? bytes : null,
-    new R3DocumentReaderPolicy(access, [person], SampleEgress.Policy));
-app.UseWhen(context => context.Request.Path.StartsWithSegments("/catalog"), branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+app.MapR3Document("/r3/{hash}", context => documents.TryGet((string)context.Request.RouteValues["hash"]!, out var bytes) ? bytes : null);
+app.UseWhen(context => context.Request.Path.StartsWithSegments("/catalog"), branch => branch.UseAAuthVerification(options =>
 {
-    EgressPolicy = SampleEgress.Policy, ResourceIdentifier = issuer, AcceptedSchemes = ["jwt"],
-    Trust =
-    {
-        AuthTokenIssuers = { Allowed = new HashSet<string> { access } },
-        PersonServers = { Allowed = new HashSet<string> { person } },
-    },
+    options.EgressPolicy = SampleEgress.Policy;
+    options.ResourceIdentifier = issuer;
+    options.AcceptedSchemes = ["jwt"];
+    options.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { access };
+    options.Trust.PersonServers.Allowed = new HashSet<string> { person };
 }));
 app.MapGet("/catalog/{service}", async (string service, HttpContext context) =>
 {

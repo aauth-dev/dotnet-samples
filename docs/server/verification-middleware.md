@@ -28,11 +28,12 @@ builder.Services.AddAAuthResource(o =>
 
 var app = builder.Build();
 
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    ResourceIdentifier = "https://resource.example",
-});
+app.UseAAuthVerification(options => options.ResourceIdentifier = "https://resource.example");
 ```
+
+The options start with the registered `MetadataClient`'s egress policy, then apply
+any `services.Configure<AAuthVerificationOptions>(...)` registrations, then the
+delegate passed here.
 
 ## What It Verifies
 
@@ -94,10 +95,10 @@ public sealed class AAuthVerificationOptions
 >   `.RequireAAuth(scope, trust: policy)` replaces the resource-wide trust for one endpoint.
 >
 > ```csharp
-> app.UseAAuthVerification(new AAuthVerificationOptions
+> app.UseAAuthVerification(options =>
 > {
->     ResourceIdentifier = "https://api.example.com",
->     Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { "https://person.example.com" } } },
+>     options.ResourceIdentifier = "https://api.example.com";
+>     options.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { "https://person.example.com" };
 > });
 > ```
 >
@@ -220,10 +221,10 @@ verifies it as `upstream_token` (its `aud` must be the intermediary's agent-toke
 `iss`):
 
 ```csharp
-app.UseAAuthVerification(new AAuthVerificationOptions
+app.UseAAuthVerification(options =>
 {
-    ResourceIdentifier = "https://concierge.example",
-    ClockSkew = TimeSpan.FromSeconds(60), // generous skew for distributed systems
+    options.ResourceIdentifier = "https://concierge.example";
+    options.ClockSkew = TimeSpan.FromSeconds(60); // generous skew for distributed systems
 });
 
 app.MapGet("/", async (HttpContext ctx) =>

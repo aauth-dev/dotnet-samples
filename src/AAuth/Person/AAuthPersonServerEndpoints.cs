@@ -210,7 +210,7 @@ public static class AAuthPersonServerEndpoints
                 && !ctx.Request.Path.StartsWithSegments(options.RevocationPath)
                 && !ctx.Request.Path.StartsWithSegments(interactionPrefix)
                 && !unsignedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
-            branch => branch.UseAAuthVerification(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy,
+            branch => branch.UseAAuthVerificationCore(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy,
                 AcceptedSchemes = ["jwt"], RequireBodyCoverage = true, TimeProvider = options.TimeProvider,
                 Trust = options.Trust }));
 

@@ -108,15 +108,12 @@ Use `UseAAuthIntermediary` for verification + challenge, and `WithCallChaining(c
 app.UseWhen(
     ctx => !ctx.Request.Path.StartsWithSegments("/.well-known"),
     branch => branch.UseAAuthIntermediary(
-        new AAuthVerificationOptions
+        verification => verification.ResourceIdentifier = conciergeUrl,
+        challenge =>
         {
-            ResourceIdentifier = conciergeUrl,
-        },
-        new ChallengeOptions
-        {
-            AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKeys = new AAuthSigningKeySet("orch-1", conciergeKey),
-            ResourceIdentifier = conciergeUrl,
+            challenge.AccessMode = AAuthAccessMode.RequireAuthToken;
+            challenge.ResourceSigningKeys = new AAuthSigningKeySet("orch-1", conciergeKey);
+            challenge.ResourceIdentifier = conciergeUrl;
         }));
 
 // Only auth-token callers reach this handler
@@ -149,10 +146,7 @@ For full control over the exchange, use the building blocks directly:
 
 ```csharp
 // 1. Verify incoming requests with full issuer verification
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    ResourceIdentifier = conciergeUrl,
-});
+app.UseAAuthVerification(options => options.ResourceIdentifier = conciergeUrl);
 
 app.MapGet("/", async (HttpContext ctx) =>
 {

@@ -49,11 +49,7 @@ var accounts = builder.Configuration.GetSection("Bookings:Accounts").Get<Diction
         ["work"] = "Work reservations",
     };
 var readerPolicy = new R3DocumentReaderPolicy(accessServerUrl,
-    builder.Configuration.GetSection("Bookings:PersonServerEvaluators").Get<string[]>(), SampleEgress.Policy)
-{
-    IsEntitledPersonServer = (ctx, personServer) => ctx.Request.RouteValues["hash"] is string hash
-        && ctx.RequestServices.GetRequiredService<R3ProposalStore>().IsEntitled(hash, personServer),
-};
+    builder.Configuration.GetSection("Bookings:PersonServerEvaluators").Get<string[]>(), SampleEgress.Policy);
 var discoveryMetadata = R3Metadata.AddVocabularies(new JsonObject(), new Dictionary<string, string>
 {
     [Vocabulary.OpenApi] = $"{resourceUrl}/openapi.json",
@@ -84,24 +80,28 @@ builder.Services.AddAAuthResource(o =>
     };
 });
 builder.Services.AddSingleton<R3ProposalStore>();
-builder.Services.AddAAuthEvents();
-
-var app = builder.Build();
-using var eventHttp = new SampleHttpClient();
-var eventProtocol = new EventsProtocol(eventHttp, app.Services.GetServices<ISignatureTokenVerifier>());
-var eventStore = new SqliteEventStore(builder.Configuration["Events:Database"] ?? Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aauth", "bookings-events.db"));
-var bookingEvents = new BookingsEvents(resourceUrl, resourceKey, ResourceKid, eventProtocol, eventStore);
-bookingEvents.Map(app);
+// Every R3Challenge mint entitles the token's aud (AS) and ps (PS) to read its document.
+builder.Services.AddAAuthR3Documents(_ => readerPolicy);
 // R3 per-call single use: a proposal-approved auth token executes once, and a repeat
 // of the same token (even freshly signed) gets the retained result.
-var perCallGrants = new AAuthSingleUseGrants();
+builder.Services.AddAAuthHeldInvocations();
+var eventStore = new SqliteEventStore(builder.Configuration["Events:Database"] ?? Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aauth", "bookings-events.db"));
+builder.Services.AddSingleton<IResourceEventStore>(eventStore);
+builder.Services.AddAAuthEvents(options => options.EgressPolicy = SampleEgress.Policy);
+
+var app = builder.Build();
+var bookingEvents = new BookingsEvents(resourceUrl, resourceKey, ResourceKid, app.Services.GetRequiredService<EventsProtocol>(), eventStore);
+bookingEvents.Map(app);
+var perCallGrants = app.Services.GetRequiredService<IAAuthSingleUseGate>();
+var documentEntitlements = app.Services.GetRequiredService<IR3DocumentEntitlements>();
 
 // Resource well-known (aauth-resource.json + jwks.json) from the DI-registered
 // metadata options — including R3's r3_vocabularies via the AdditionalMetadata seam.
 app.MapAAuthWellKnown();
-var tokenInventory = app.MapAAuthIssuerRevocation(resourceUrl, ResourceTokenBuilder.ResourceDwk,
-    new AAuthSigningKeySet(ResourceKid, resourceKey), "/revoke", SampleEgress.Policy, TimeProvider.System,
+// The token inventory lets verification reject revoked tokens; revocations arrive as
+// signed POSTs from the PS or AS and are verified before the endpoint (§Token Revocation).
+var tokenInventory = app.MapAAuthIssuerRevocation("/revoke",
     options => options.IsAcceptedIssuer = caller => caller == personServerUrl || caller == accessServerUrl);
 
 app.MapGet("/", () => Results.Ok(new
@@ -168,7 +168,7 @@ app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
         return AAuth.Server.AAuthProblemDetails.Create("invalid_r3_operations", ex.Message, statusCode: StatusCodes.Status400BadRequest);
     }
 
-    var stored = StoreR3Document(documents, operations.Operations.Select(op => op.Id), account, presenter.Person.Issuer);
+    var stored = StoreR3Document(documents, operations.Operations.Select(op => op.Id), account);
     var resourceToken = await BuildResourceTokenAsync(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
     ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
     return Results.Ok(new
@@ -186,13 +186,13 @@ app.MapR3Document("/r3/proposals/{hash}", ctx =>
 {
     var hash = (string?)ctx.Request.RouteValues["hash"];
     return hash is not null && ctx.RequestServices.GetRequiredService<R3ProposalStore>().TryGet(hash, out var bytes) ? bytes : null;
-}, readerPolicy);
+});
 
 app.MapR3Document("/r3/{hash}", ctx =>
 {
     var hash = (string?)ctx.Request.RouteValues["hash"];
     return hash is not null && ctx.RequestServices.GetRequiredService<R3ProposalStore>().TryGet(hash, out var bytes) ? bytes : null;
-}, readerPolicy);
+});
 
 app.MapMethods("/search_availability", ["GET", "POST"], async (HttpContext ctx) =>
 {
@@ -276,7 +276,7 @@ async Task<IResult> CompleteAsync(TokenVerifier.VerifiedToken token, bool perCal
     : (await perCallGrants.ExecuteOnceAsync((string)token.Payload["jti"]!, token.ExpiresAt,
         _ => Task.FromResult(HeldInvocationResult.Json(execute())))).ToResult();
 
-StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requestedOperations, string? account, string personServer)
+StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requestedOperations, string? account)
 {
     var requested = requestedOperations.ToHashSet(StringComparer.Ordinal);
     var ordered = supportedOperations.Where(requested.Contains).Select(R3Operation.OpenApi).ToArray();
@@ -298,12 +298,10 @@ StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requ
         // Access Server — not the resource — decides which operations are per-call
         // (r3 §Auth Token Extensions); Bookings signals irreversibility via `display`.
     };
-    var stored = store.AddBytes(doc.ToUtf8Bytes(), new Uri(resourceUrl), "/r3");
-    // Only the PS the resource token names may read the document (besides the AS).
-    store.Entitle(stored.S256, personServer);
-    return stored;
+    return store.AddBytes(doc.ToUtf8Bytes(), new Uri(resourceUrl), "/r3");
 }
 
+// Minting entitles the token's aud and ps to read the document it names.
 R3Challenge Challenger() => new()
 {
     EgressPolicy = SampleEgress.Policy,
@@ -311,6 +309,7 @@ R3Challenge Challenger() => new()
     Audience = accessServerUrl,
     Key = resourceKey,
     KeyId = ResourceKid,
+    Entitlements = documentEntitlements,
 };
 
 // The resource token names the presented person token (draft-11 §Resource Token Structure).
@@ -368,7 +367,7 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
         {
             var presenter = await VerifyPresenterAsync(ctx, fetcher);
             if (presenter.Person is null) return new AuthOutcome(null, PersonTokenRequired(ctx));
-            var stored = StoreR3Document(ctx.RequestServices.GetRequiredService<R3ProposalStore>(), fallbackTools, account, presenter.Person.Issuer);
+            var stored = StoreR3Document(ctx.RequestServices.GetRequiredService<R3ProposalStore>(), fallbackTools, account);
             var resourceToken = await BuildResourceTokenAsync(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
             ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
             return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("auth_token_required",
@@ -556,7 +555,6 @@ async Task<OperationOutcome> EnforceOperationAsync(HttpContext context, TokenVer
         if (decision.Kind == R3EnforcementDecisionKind.Granted) return new(parameters, isProposal, null);
         if (decision.Kind == R3EnforcementDecisionKind.PerCall)
         {
-            proposals.Entitle(decision.ProposalS256!, (string)token.Payload["ps"]!);
             var resourceToken = await BuildProposalResourceTokenAsync(token, decision.ProposalUri!, decision.ProposalS256!, context.RequestAborted);
             context.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
             return new(parameters, false, AAuthProblemDetails.Create("r3_approval_required", statusCode: 401,

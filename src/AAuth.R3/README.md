@@ -82,6 +82,21 @@ Explicit PS evaluators must use `aauth-person.json`. PS evaluation is the logged
 Q4 interpretation of conflicting draft readership clauses, not an unconditional
 PS entitlement. Agent requests are rejected.
 
+Register the policy with `services.AddAAuthR3Documents(sp => policy)`, which also
+adds the in-memory `IR3DocumentEntitlements` default, and map documents with
+`MapR3Document(pattern, getBytes)`. Each `R3Challenge` mint entitles the token's
+`aud` and `ps` to read its `r3_s256`: `ChallengeAsync(context, …)` and
+`R3EnforcementDecision.ToResultAsync(context, challenge, …)` use
+`R3Challenge.Entitlements` or the DI-registered store. A PS evaluator reads a
+document only when entitled (or admitted by `IsEntitledPersonServer`). Call
+`IR3DocumentEntitlements.EntitleAsync` yourself for resource tokens minted another
+way. Register a shared implementation first to scale out.
+
+The R3 Access Server registers its options with
+`services.AddR3AccessTokenEndpoint(o => { … })` and maps them with
+`app.MapR3AccessTokenEndpoint()`; `Issuer`, `SigningKeys` and `AuditSink` are
+validated at map time.
+
 Custom `FetchAndVerifyAsync` callbacks require `FetchTransportContract`. The SDK
 still validates the URL, deadline, response size, and hash of returned bytes.
 Network callbacks must enforce DNS/connected-address admission and redirect

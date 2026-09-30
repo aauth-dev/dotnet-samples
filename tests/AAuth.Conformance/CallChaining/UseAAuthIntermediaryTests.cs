@@ -170,20 +170,20 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
         var app = builder.Build();
 
         app.UseAAuthIntermediary(
-            new AAuthVerificationOptions
-            {
-                EgressPolicy = TestEgress.Policy,
-                ResourceIdentifier = ResourceId,
-                Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { PsIssuer } } },
-            },
-            new ChallengeOptions
-            {
-                ScopeDescriptions = TestScopeDefinitions.Resource,
-                EgressPolicy = TestEgress.Policy,
-                AccessMode = AAuthAccessMode.RequireAuthToken,
-                ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey),
-                ResourceIdentifier = ResourceId,
-            });
+                verification =>
+                {
+                    verification.EgressPolicy = TestEgress.Policy;
+                    verification.ResourceIdentifier = ResourceId;
+                    verification.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { PsIssuer };
+                },
+                challenge =>
+                {
+                    challenge.ScopeDescriptions = TestScopeDefinitions.Resource;
+                    challenge.EgressPolicy = TestEgress.Policy;
+                    challenge.AccessMode = AAuthAccessMode.RequireAuthToken;
+                    challenge.ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey);
+                    challenge.ResourceIdentifier = ResourceId;
+                });
 
         app.MapGet("/protected", () => Results.Text("hello"));
 

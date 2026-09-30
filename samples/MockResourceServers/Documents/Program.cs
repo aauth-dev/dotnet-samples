@@ -29,11 +29,13 @@ var permissions = new ConcurrentDictionary<string, Permission>();
 var callbacks = new ConcurrentDictionary<string, string>();
 var sessions = new BrowserConsentSessions("AAuth.Documents.Consent",
     builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "document-owner-demo" : null);
-app.UseWhen(context => context.Request.Path == "/document", branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+app.UseWhen(context => context.Request.Path == "/document", branch => branch.UseAAuthVerification(options =>
 {
-    EgressPolicy = SampleEgress.Policy, ResourceIdentifier = issuer, AcceptedSchemes = ["jwt"],
-    ExpectedAccount = _ => "work",
-    Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { person } } },
+    options.EgressPolicy = SampleEgress.Policy;
+    options.ResourceIdentifier = issuer;
+    options.AcceptedSchemes = ["jwt"];
+    options.ExpectedAccount = _ => "work";
+    options.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { person };
 }));
 var challenge = new ChallengeOptions
 {

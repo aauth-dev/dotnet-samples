@@ -28,37 +28,37 @@ app.MapAAuthWellKnown(); // serves /.well-known/aauth-resource.json
 ```
 
 <details>
-<summary>Manual Setup (building block)</summary>
+<summary>All metadata fields</summary>
 
-> `AddAAuthResource(...)` + `app.MapAAuthWellKnown()` is the preferred setup for
-> the common case. Use `MapAAuthResourceWellKnown(...)` directly when the host
-> manages metadata separately from the resource service registration.
-> `RevocationEndpoint` is also available through `AAuthResourceOptions`; it does
-> not require the manual mapper.
+> `AddAAuthResource(...)` + `app.MapAAuthWellKnown()` is the only public way to
+> publish resource metadata; the lower-level mapper is internal. Fields without a
+> typed `AAuthResourceOptions` property go through `AdditionalMetadata`.
+> `RevocationEndpoint` is also available through `AAuthResourceOptions`;
+> map the endpoint itself with `MapAAuthIssuerRevocation`.
 
 ```csharp
-using AAuth.Server.Metadata;
 using AAuth.Crypto;
 
 var signingKey = AAuthKey.Generate();
 
-var app = builder.Build();
-
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
+builder.Services.AddAAuthResource(options =>
 {
-    Issuer = "https://resource.example",
-    SigningKeys = new AAuthSigningKeySet("key-1", signingKey),
-    Name = "My Resource API",
-    DocumentationUri = "https://docs.resource.example",
-    ScopeDescriptions = new Dictionary<string, string>
+    options.Issuer = "https://resource.example";
+    options.SigningKeys["key-1"] = signingKey;
+    options.Name = "My Resource API";
+    options.ScopeDescriptions = new Dictionary<string, string>
     {
         ["read"] = "Read access to your data",
         ["write"] = "Write access to your data"
-    },
-    SignatureWindow = 60,
-    AuthorizationEndpoint = "https://resource.example/authorize",
-    RevocationEndpoint = "https://resource.example/revoke"
+    };
+    options.SignatureWindow = 60;
+    options.AuthorizationEndpoint = "https://resource.example/authorize";
+    options.RevocationEndpoint = "https://resource.example/revoke";
+    options.DocumentationUri = "https://docs.resource.example";
 });
+
+var app = builder.Build();
+app.MapAAuthWellKnown();
 ```
 
 </details>
@@ -96,7 +96,7 @@ The extension maps `GET /.well-known/aauth-resource.json` returning:
 }
 ```
 
-The keys themselves are served separately at `/.well-known/jwks.json` (also mapped by `MapAAuthWellKnown()` / `MapAAuthResourceWellKnown()`).
+The keys themselves are served separately at `/.well-known/jwks.json` (also mapped by `MapAAuthWellKnown()`).
 
 The `authorization_endpoint` belongs to the resource's proactive authorization
 flow. `AccessServer` on the challenge options instead selects the resource

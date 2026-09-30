@@ -451,9 +451,11 @@ public class RevocationLifecycleTests
                 context.Items[AAuthVerificationMiddleware.TokenStoreItemKey] = inventory;
                 await next();
             });
-            app.UseAAuthVerification(new AAuthVerificationOptions
+            app.UseAAuthVerification(options =>
             {
-                EgressPolicy = TestEgress.Policy, ResourceIdentifier = issuer, AcceptedSchemes = ["jwt", "jwks_uri"],
+                options.EgressPolicy = TestEgress.Policy;
+                options.ResourceIdentifier = issuer;
+                options.AcceptedSchemes = ["jwt", "jwks_uri"];
             });
             app.MapGet("/use", () => Results.Ok());
             app.Use(async (context, next) =>
@@ -474,8 +476,9 @@ public class RevocationLifecycleTests
                 }
                 await next();
             });
-            app.MapAAuthRevocationEndpoint(inventory, options => options.IsAcceptedIssuer = caller =>
-                caller == Person || caller == Access && Failing.GetValueOrDefault(issuer) != "unsupported_iss");
+            // Each resource keeps its own inventory; a DI IJtiStore would also turn on replay detection.
+            app.MapRevocationEndpointCore(inventory, options => options.IsAcceptedIssuer = caller =>
+                caller == Person || caller == Access && Failing.GetValueOrDefault(issuer) != "unsupported_iss", "/revoke");
             await app.StartAsync();
             _hosts.Add(issuer, app);
         }

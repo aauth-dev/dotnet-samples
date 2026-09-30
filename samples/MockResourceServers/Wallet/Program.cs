@@ -1,4 +1,5 @@
 using AAuth.Crypto;
+using AAuth.Server;
 using AAuth.Server.Verification;
 
 // ---------------------------------------------------------------------------
@@ -66,9 +67,8 @@ var app = builder.Build();
 app.MapAAuthWellKnown();
 // Revocations are keyed by (verified caller, jti): the AS revokes the auth tokens
 // it issued, a PS the person tokens it issued. Other callers get unsupported_iss.
-AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
-    app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options =>
-        options.IsAcceptedIssuer = caller => caller == accessServerUrl || trustedPersonServers.Contains(caller, StringComparer.Ordinal));
+app.MapAAuthRevocationEndpoint(configure: options =>
+    options.IsAcceptedIssuer = caller => caller == accessServerUrl || trustedPersonServers.Contains(caller, StringComparer.Ordinal));
 
 // One declarative pipeline. Four-party: the resource token's `aud` is the AS,
 // routing the PS to federate; the AS is the trusted auth-token issuer

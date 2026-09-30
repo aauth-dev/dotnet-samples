@@ -116,13 +116,10 @@ accepts the server-signing scheme:
 ```csharp
 using AAuth.Server;
 
-app.MapAAuthRevocationEndpoint(
-    jtiStore,
-    configure: options =>
-    {
-        options.IsAcceptedIssuer = issuer => issuer == "https://ps.example";
-    },
-    path: "/revoke");
+// Records revocations in the DI-registered IJtiStore (AddAAuthResource registers one);
+// mapping throws when none is registered.
+app.MapAAuthRevocationEndpoint("/revoke", options =>
+    options.IsAcceptedIssuer = issuer => issuer == "https://ps.example");
 ```
 
 `IsAcceptedIssuer` decides whose revocations the recipient accepts; assign
@@ -183,11 +180,14 @@ var result = await client.RevokeAsync(
 Advertise it in resource metadata:
 
 ```csharp
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
+builder.Services.AddAAuthResource(options =>
 {
-    Issuer = "https://resource.example",
-    RevocationEndpoint = "https://resource.example/revoke"
+    options.Issuer = "https://resource.example";
+    options.RevocationEndpoint = "https://resource.example/revoke";
 });
+
+// After builder.Build():
+app.MapAAuthWellKnown();
 ```
 
 ## Source Token Lifecycle
@@ -195,7 +195,18 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 Core PS/AS mappers and the R3 AS advertise and map `/revoke` and accept any
 verified issuer; their verification requires `content-type` and
 `content-digest` in the signature. Core PS/AS options expose `RevocationPath`
-and `ConfigureRevocation`; custom issuer hosts can use `MapAAuthIssuerRevocation`.
+and `ConfigureRevocation`. A resource registered with `AddAAuthResource` maps
+the same issuer pipeline with one call; it verifies the server-signing schemes,
+records into the DI `IJtiStore`, cascades to recorded grants and signs downstream
+revocations as the resource with its active key:
+
+```csharp
+var inventory = app.MapAAuthIssuerRevocation("/revoke", options =>
+    options.IsAcceptedIssuer = issuer => issuer is "https://ps.example" or "https://as.example");
+```
+
+`MapAAuthRevocationEndpoint` above is the lower-level endpoint for hosts that
+bring their own verification.
 Register `IJtiStore` in DI to supply a durable inventory and `RevocationClient`
 to supply an admitted custom signed transport. Defaults are in-memory inventory
 and a server-signed, pinned HTTP transport.

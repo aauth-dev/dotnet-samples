@@ -31,13 +31,25 @@ public static class AAuthApplicationBuilderExtensions
     /// and (optionally) JWT issuer signature verification.
     /// </summary>
     /// <param name="app">The application builder.</param>
-    /// <param name="options">Verification options. When null, uses default options (issuer verification enabled).</param>
+    /// <param name="configure">
+    /// Adjusts the options for this pipeline after any DI configuration of
+    /// <see cref="AAuthVerificationOptions"/>. The egress policy defaults to the registered
+    /// <see cref="MetadataClient"/>'s.
+    /// </param>
     public static IApplicationBuilder UseAAuthVerification(
         this IApplicationBuilder app,
-        AAuthVerificationOptions? options = null)
+        Action<AAuthVerificationOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(app);
+        var metadata = app.ApplicationServices.GetService<MetadataClient>();
+        var options = AAuthOptionsResolver.Create(app.ApplicationServices,
+            () => new AAuthVerificationOptions { EgressPolicy = metadata?.Policy ?? AAuthEgressPolicy.Production });
+        configure?.Invoke(options);
+        return app.UseAAuthVerificationCore(options);
+    }
 
+    internal static IApplicationBuilder UseAAuthVerificationCore(this IApplicationBuilder app, AAuthVerificationOptions resolvedOptions)
+    {
         var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
         var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
             ?? new DefaultSignatureKeyResolver(
@@ -46,10 +58,6 @@ public static class AAuthApplicationBuilderExtensions
         var metadata = app.ApplicationServices.GetService<MetadataClient>();
         var jwks = app.ApplicationServices.GetService<JwksClient>();
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
-        var resolvedOptions = options ?? new AAuthVerificationOptions
-        {
-            EgressPolicy = metadata?.Policy ?? AAuthEgressPolicy.Production,
-        };
 
         // Startup footgun guards (diagnostics only — no runtime policy change):
         // throw on a configured-but-ignored trust policy; warn on implicit-open.
@@ -82,10 +90,18 @@ public static class AAuthApplicationBuilderExtensions
     /// agent token is presented. Must be registered AFTER <see cref="UseAAuthVerification"/>.
     /// </summary>
     /// <param name="app">The application builder.</param>
-    /// <param name="options">Challenge options configuring access mode, resource key, and scopes.</param>
+    /// <param name="configure">Adjusts the options after any DI configuration of <see cref="ChallengeOptions"/>.</param>
     public static IApplicationBuilder UseAAuthChallenge(
         this IApplicationBuilder app,
-        ChallengeOptions options)
+        Action<ChallengeOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        var options = AAuthOptionsResolver.Create(app.ApplicationServices, () => new ChallengeOptions());
+        configure?.Invoke(options);
+        return app.UseAAuthChallengeCore(options);
+    }
+
+    internal static IApplicationBuilder UseAAuthChallengeCore(this IApplicationBuilder app, ChallengeOptions options)
     {
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(options);
@@ -206,7 +222,7 @@ public static class AAuthApplicationBuilderExtensions
         WellKnownEndpoints.MapAAuthResourceWellKnown(app, metadataOptions);
 
         // 2. Verification middleware
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerificationCore(new AAuthVerificationOptions
         {
             EgressPolicy = metadataOptions.EgressPolicy,
             ResourceIdentifier = metadataOptions.Issuer,
@@ -217,7 +233,7 @@ public static class AAuthApplicationBuilderExtensions
         // 3. Challenge middleware (only if there's a signing key available)
         if (metadataOptions.SigningKeys is { Count: > 0 } signingKeys)
         {
-            app.UseAAuthChallenge(new ChallengeOptions
+            app.UseAAuthChallengeCore(new ChallengeOptions
             {
                 EgressPolicy = metadataOptions.EgressPolicy,
                 ResourceSigningKeys = signingKeys,
@@ -238,19 +254,16 @@ public static class AAuthApplicationBuilderExtensions
     /// with the supplied options.
     /// </summary>
     /// <param name="app">The application builder.</param>
-    /// <param name="verificationOptions">Verification options (signature + issuer verification).</param>
-    /// <param name="challengeOptions">Challenge options (access mode, resource key, scopes).</param>
+    /// <param name="configureVerification">Adjusts the verification options (signature + issuer verification).</param>
+    /// <param name="configureChallenge">Adjusts the challenge options (access mode, resource key, scopes).</param>
     public static IApplicationBuilder UseAAuthIntermediary(
         this IApplicationBuilder app,
-        AAuthVerificationOptions verificationOptions,
-        ChallengeOptions challengeOptions)
+        Action<AAuthVerificationOptions>? configureVerification = null,
+        Action<ChallengeOptions>? configureChallenge = null)
     {
         ArgumentNullException.ThrowIfNull(app);
-        ArgumentNullException.ThrowIfNull(verificationOptions);
-        ArgumentNullException.ThrowIfNull(challengeOptions);
-
-        app.UseAAuthVerification(verificationOptions);
-        app.UseAAuthChallenge(challengeOptions);
+        app.UseAAuthVerification(configureVerification);
+        app.UseAAuthChallenge(configureChallenge);
         return app;
     }
 }

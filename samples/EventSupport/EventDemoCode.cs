@@ -115,11 +115,11 @@ public static class EventDemoCode
         """;
 
     public const string Example = """
-        builder.Services.AddAAuthEvents();
+        builder.Services.AddAAuthEvents(options => options.EgressPolicy = egressPolicy);
+        // AP endpoint requires a durable transactional quota/outbox store.
+        builder.Services.AddSingleton(providerStore);
         var app = builder.Build();
-        using var http = AAuthHttpTransport.CreateClient(egressPolicy);
-        var protocol = new EventsProtocol(http,
-            app.Services.GetServices<ISignatureTokenVerifier>());
+        var protocol = app.Services.GetRequiredService<EventsProtocol>();
 
         // Public registration uses an AsyncAPI channel URL; protected
         // registration uses the ticket from an authorized Bookings response.
@@ -138,8 +138,8 @@ public static class EventDemoCode
         using var delivery = await protocol.SendAsync(HttpMethod.Post,
             endpoint, resourceKey, eventToken, selfIssued: true, body: payloadBytes);
 
-        // AP endpoint requires a durable transactional quota/outbox store.
-        app.MapAAuthEventEndpoint("/events", protocol, providerStore);
+        // The AP event endpoint resolves the protocol and store from DI.
+        app.MapAAuthEventEndpoint("/events");
 
         // Agent verifies the issuer JWT and context before persisting receipt.
         var receiver = new EventReceiver(protocol, agentStore, agent);

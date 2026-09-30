@@ -11,10 +11,10 @@ public sealed class AAuthAgentMetadataOptions
 {
     public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>HTTPS URL of this agent/agent provider (<c>issuer</c>). REQUIRED.</summary>
-    public required string Issuer { get; set; }
+    public string Issuer { get; set; } = "";
 
     /// <summary>Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. REQUIRED.</summary>
-    public required AAuthSigningKeySet SigningKeys { get; set; }
+    public AAuthSigningKeySet SigningKeys { get; set; } = new();
 
     /// <summary>Optional human-readable name (<c>name</c>).</summary>
     public string? Name { get; set; }

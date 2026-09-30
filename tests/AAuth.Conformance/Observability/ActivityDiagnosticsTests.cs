@@ -353,11 +353,11 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
 
         var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            ResourceIdentifier = ResourceId,
-            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { PsIssuer } } },
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = ResourceId;
+            options.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { PsIssuer };
         });
         app.MapGet("/check-tags", (HttpContext ctx) =>
         {

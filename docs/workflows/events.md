@@ -34,16 +34,21 @@ subscription's one-hour lifetime and the subscribe token's five-minute validity.
 ## SDK Integration
 
 ```csharp
-services.AddAAuthEvents();
-using var http = AAuthHttpTransport.CreateClient(egressPolicy);
-var protocol = new EventsProtocol(http,
-    serviceProvider.GetServices<ISignatureTokenVerifier>());
+services.AddAAuthEvents(options => options.EgressPolicy = egressPolicy);
+// Durable host stores; the endpoints resolve them and the protocol per request.
+services.AddSingleton(durableProviderStore);
+services.AddSingleton(durableResourceStore);
 
-app.MapAAuthEventEndpoint("/events", protocol, durableProviderStore);
-app.MapAAuthSubscriptionEndpoint("/subscriptions/{ticket}", resource,
-    "receiveReservationAvailable", true, protocol, durableResourceStore,
-    validateSubscriptionParameters);
+app.MapAAuthEventEndpoint("/events");
+app.MapAAuthSubscriptionEndpoint("/subscriptions/{ticket}", channel =>
+{
+    channel.Resource = resource; // defaults to the registered AAuthResourceOptions.Issuer
+    channel.Operation = "receiveReservationAvailable";
+    channel.ProtectedChannel = true;
+    channel.ValidateParameters = validateSubscriptionParameters;
+});
 
+var protocol = app.Services.GetRequiredService<EventsProtocol>();
 var endpoint = await protocol.ResolveEventEndpointAsync(subscription.Provider);
 using var response = await protocol.SendAsync(HttpMethod.Post, endpoint,
     resourceKey, eventToken, selfIssued: true, body: payloadBytes);
@@ -51,6 +56,13 @@ using var response = await protocol.SendAsync(HttpMethod.Post, endpoint,
 var receiver = new EventReceiver(protocol, durableAgentStore, agentIdentifier);
 var firstReceipt = await receiver.ReceiveAsync(eventToken, payloadBytes);
 ```
+
+`AddAAuthEvents` registers the Events token verifiers and one `EventsProtocol`
+built from `AAuthEventsOptions` (`EgressPolicy`, `TimeProvider`, and an optional
+`InnerHandler` plus the `TransportContract` it satisfies, for in-process tests).
+`MapAAuthEventEndpoint` needs a registered `IAgentProviderEventStore`;
+`MapAAuthSubscriptionEndpoint` needs an `IResourceEventStore`. Agent-side code that
+only sends and receives may construct its own `EventsProtocol`.
 
 Use `SubscribeTokenBuilder` and `EventTokenBuilder` for issuer-generated tokens.
 AP issuance must persist its subscription record before releasing the subscribe

@@ -38,31 +38,32 @@ builder.Services.AddAAuthDiscovery(options => options.EgressPolicy = SampleEgres
 // auth token or duplicate an audit entry. In-memory here; use a durable store in prod.
 builder.Services.AddSingleton<AAuth.Server.IJtiStore, AAuth.Server.InMemoryJtiStore>();
 
-var app = builder.Build();
-
 // Dedicated R3 Access Server (four-party). It fetches the resource's R3 document
 // (AS-signed), hash-verifies it, splits granted vs per-call per its OWN policy
 // (r3 §Auth Token Extensions — the AS decides, not the resource), mints the R3 auth
 // token, and audits issuance. It guards the Bookings resource. The sibling `Federated`
 // AS stays the scope-based AS for Wallet: one server per concept, mirroring MockResourceServers.
-app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
+builder.Services.AddR3AccessTokenEndpoint(options =>
 {
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = issuer,
-    SigningKeys = new AAuthSigningKeySet { [AsKid] = asKey },
-    Trust = { PersonServers = { Allowed = new HashSet<string>(trustedPersonServers) } },
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Issuer = issuer;
+    options.SigningKeys = new AAuthSigningKeySet { [AsKid] = asKey };
+    options.Trust.PersonServers.Allowed = new HashSet<string>(trustedPersonServers);
     // AS policy decides the granted-vs-per-call split (r3 §Auth Token Extensions).
-    IsPerCallOperation = operation => perCallOperations.Any(identifier =>
-        operation.Matches(Vocabulary.OpenApi, R3Operation.OpenApi(identifier))),
+    options.IsPerCallOperation = operation => perCallOperations.Any(identifier =>
+        operation.Matches(Vocabulary.OpenApi, R3Operation.OpenApi(identifier)));
     // A per-call operation's proposal requires human approval: the AS
     // returns 202 + a consent screen rendering the proposal's `display`, relayed by
     // the PS, and mints the per-call token only on approval (r3 §Per-Call Proposals).
-    RequireProposalConsent = true,
-    BrowserConsent = new AAuth.Server.BrowserConsentSessions("AAuth.R3.Consent",
-        builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-r3-demo" : null),
-    AuditSink = new SqliteR3AuditSink(builder.Configuration["R3AccessServer:AuditPath"] ??
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "aauth-samples", "r3-audit.sqlite")),
+    options.RequireProposalConsent = true;
+    options.BrowserConsent = new AAuth.Server.BrowserConsentSessions("AAuth.R3.Consent",
+        builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-r3-demo" : null);
+    options.AuditSink = new SqliteR3AuditSink(builder.Configuration["R3AccessServer:AuditPath"] ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "aauth-samples", "r3-audit.sqlite"));
 });
+
+var app = builder.Build();
+app.MapR3AccessTokenEndpoint();
 
 app.Run();
 

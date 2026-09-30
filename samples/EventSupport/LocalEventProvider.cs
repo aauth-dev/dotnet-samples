@@ -8,15 +8,19 @@ using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AAuth.Samples.Events;
 
 public static class LocalEventProvider
 {
+    /// <summary>Requires <c>AddAAuthEvents</c> and a registered <see cref="IAgentProviderEventStore"/>.</summary>
     public static void MapLocalEventProvider(this IEndpointRouteBuilder routes, string issuer, IAAuthSigner key,
-        string keyId, EventsProtocol protocol, IAgentProviderEventStore store)
+        string keyId)
     {
-        routes.MapAAuthEventEndpoint("/events", protocol, store);
+        var protocol = routes.ServiceProvider.GetRequiredService<EventsProtocol>();
+        var store = routes.ServiceProvider.GetRequiredService<IAgentProviderEventStore>();
+        routes.MapAAuthEventEndpoint("/events");
         routes.MapPost("/local/events/subscribe", async (HttpContext context) =>
         {
             var assertion = await protocol.VerifyRequestAsync(context, AgentTokenBuilder.TokenType);

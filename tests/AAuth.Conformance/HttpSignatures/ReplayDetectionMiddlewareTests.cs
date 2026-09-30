@@ -58,10 +58,10 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(new AAuth.Discovery.JwksClient(discovery));
 
         var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            ResourceIdentifier = ResourceId,
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = ResourceId;
             // PoP signature + replay are what we exercise here; the auth token's
             // issuer trust chain is covered elsewhere.
         });

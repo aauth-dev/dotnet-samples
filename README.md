@@ -238,10 +238,10 @@ var issuer = "https://my-service.example";
 var app = builder.Build();
 
 // Publish agent metadata so resources can discover the JWKS
-app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+app.MapAAuthAgentWellKnown(options =>
 {
-    Issuer = issuer,
-    SigningKeys = new AAuthSigningKeySet(Kid, key),
+    options.Issuer = issuer;
+    options.SigningKeys = new AAuthSigningKeySet(Kid, key);
 });
 
 // Build signed client with automatic token refresh and challenge handling

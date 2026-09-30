@@ -233,8 +233,9 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton<IJtiStore>(_jtiStore);
         await using var app = builder.Build();
-        app.MapAAuthRevocationEndpoint(_jtiStore);
+        app.MapAAuthRevocationEndpoint();
         await app.StartAsync();
         using var client = app.GetTestClient();
 
@@ -617,12 +618,13 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
             policy: TestEgress.Policy, transportContract: AAuthTransportContract.InProcessOnly));
         var app = builder.Build();
 
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            AcceptedSchemes = ["jwt", "jwks_uri"],
+            options.EgressPolicy = TestEgress.Policy;
+            options.AcceptedSchemes = ["jwt", "jwks_uri"];
         });
-        app.MapAAuthRevocationEndpoint(store ?? _jtiStore, configure);
+        // A DI IJtiStore would also turn on replay detection in this fixed-clock pipeline.
+        app.MapRevocationEndpointCore(store ?? _jtiStore, configure, "/revoke");
         await app.StartAsync();
         _host = app;
     }

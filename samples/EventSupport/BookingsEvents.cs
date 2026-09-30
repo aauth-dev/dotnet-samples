@@ -28,11 +28,23 @@ public sealed class BookingsEvents(string issuer, IAAuthSigner key, string keyId
             event_types = new[] { EventType }, operation = Operation, account };
     }
 
+    /// <summary>The subscription endpoints resolve <see cref="EventsProtocol"/> and <see cref="IResourceEventStore"/> from DI; register the same instances.</summary>
     public void Map(IEndpointRouteBuilder routes)
     {
         routes.MapGet("/asyncapi.json", () => Results.Json(Document()));
-        routes.MapAAuthSubscriptionEndpoint("/events/subscriptions/public", issuer, Operation, false, protocol, store, Validate);
-        routes.MapAAuthSubscriptionEndpoint("/events/subscriptions/{ticket}", issuer, Operation, true, protocol, store, Validate);
+        routes.MapAAuthSubscriptionEndpoint("/events/subscriptions/public", channel =>
+        {
+            channel.Resource = issuer;
+            channel.Operation = Operation;
+            channel.ValidateParameters = Validate;
+        });
+        routes.MapAAuthSubscriptionEndpoint("/events/subscriptions/{ticket}", channel =>
+        {
+            channel.Resource = issuer;
+            channel.Operation = Operation;
+            channel.ProtectedChannel = true;
+            channel.ValidateParameters = Validate;
+        });
         routes.MapPost("/local/events/{eid}/notify", async (HttpContext context, string eid) =>
         {
             var assertion = await protocol.VerifyRequestAsync(context, AgentTokenBuilder.TokenType);

@@ -44,7 +44,11 @@ public class NamingJwtValidationTests : IAsyncLifetime
         builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FixedTimeProvider() });
         builder.Services.AddSingleton<IJtiStore>(new InMemoryJtiStore(new FixedTimeProvider()));
         var app = builder.Build();
-        app.UseAAuthVerification(AAuthVerificationOptions.Generic(new FixedTimeProvider()));
+        app.UseAAuthVerification(options =>
+        {
+            options.AcceptedSchemes = AAuthVerificationOptions.Generic().AcceptedSchemes;
+            options.TimeProvider = new FixedTimeProvider();
+        });
         app.MapGet("/jkt-jwt", () => Results.Ok("ok"));
         await app.StartAsync();
         _host = app;

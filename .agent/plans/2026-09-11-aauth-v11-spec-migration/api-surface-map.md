@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 193 changed public-source files, 725 added/replacement declarations, 372 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 194 changed public-source files, 784 added/replacement declarations, 386 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -392,11 +392,11 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [EventDemoCode.cs](
         }
         """ ;
 + AAuth.Samples.Events.EventDemoCode: public const string Example = """
-        builder.Services.AddAAuthEvents();
+        builder.Services.AddAAuthEvents(options => options.EgressPolicy = egressPolicy);
+        // AP endpoint requires a durable transactional quota/outbox store.
+        builder.Services.AddSingleton(providerStore);
         var app = builder.Build();
-        using var http = AAuthHttpTransport.CreateClient(egressPolicy);
-        var protocol = new EventsProtocol(http,
-            app.Services.GetServices<ISignatureTokenVerifier>());
+        var protocol = app.Services.GetRequiredService<EventsProtocol>();
 
         // Public registration uses an AsyncAPI channel URL; protected
         // registration uses the ticket from an authorized Bookings response.
@@ -415,8 +415,8 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [EventDemoCode.cs](
         using var delivery = await protocol.SendAsync(HttpMethod.Post,
             endpoint, resourceKey, eventToken, selfIssued: true, body: payloadBytes);
 
-        // AP endpoint requires a durable transactional quota/outbox store.
-        app.MapAAuthEventEndpoint("/events", protocol, providerStore);
+        // The AP event endpoint resolves the protocol and store from DI.
+        app.MapAAuthEventEndpoint("/events");
 
         // Agent verifies the issuer JWT and context before persisting receipt.
         var receiver = new EventReceiver(protocol, agentStore, agent);
@@ -492,7 +492,7 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [LocalEventProvider
 
 ```diff
 - AAuth.Samples.Events.LocalEventProvider: public static void MapLocalEventProvider ( this IEndpointRouteBuilder routes , string issuer , IAAuthKey key , string keyId , EventsProtocol protocol , IAgentProviderEventStore store )
-+ AAuth.Samples.Events.LocalEventProvider: public static void MapLocalEventProvider ( this IEndpointRouteBuilder routes , string issuer , IAAuthSigner key , string keyId , EventsProtocol protocol , IAgentProviderEventStore store )
++ AAuth.Samples.Events.LocalEventProvider: public static void MapLocalEventProvider ( this IEndpointRouteBuilder routes , string issuer , IAAuthSigner key , string keyId )
 ```
 
 Public owners: `AAuth.Samples.Events.LocalEventProvider`, `AAuth.Samples.Events`.
@@ -903,9 +903,20 @@ Public owners: `AAuth.Events.EventTokenBuilder`, `AAuth.Events.SubscribeTokenBui
 
 Concept/decision: [events](#events). Source: [EventsEndpoints.cs](../../../src/AAuth.Events/EventsEndpoints.cs).
 
-Public signatures unchanged (3); behavior reviewed under events.
+```diff
+- AAuth.Events.EventsEndpoints: public static IEndpointConventionBuilder MapAAuthEventEndpoint ( this IEndpointRouteBuilder routes , string path , EventsProtocol protocol , IAgentProviderEventStore store )
+- AAuth.Events.EventsEndpoints: public static IEndpointConventionBuilder MapAAuthSubscriptionEndpoint ( this IEndpointRouteBuilder routes , string path , string resource , string operation , bool protectedChannel , EventsProtocol protocol , IResourceEventStore store , Func < JsonObject , bool > validateParameters , TimeSpan ? subscriptionLifetime = null )
++ AAuth.Events.AAuthSubscriptionEndpointOptions: public Func < JsonObject , bool > ? ValidateParameters { get ; set ; }
++ AAuth.Events.AAuthSubscriptionEndpointOptions: public TimeSpan ? SubscriptionLifetime { get ; set ; }
++ AAuth.Events.AAuthSubscriptionEndpointOptions: public bool ProtectedChannel { get ; set ; }
++ AAuth.Events.AAuthSubscriptionEndpointOptions: public string ? Resource { get ; set ; }
++ AAuth.Events.AAuthSubscriptionEndpointOptions: public string Operation { get ; set ; } = ""
++ AAuth.Events.EventsEndpoints: public static IEndpointConventionBuilder MapAAuthEventEndpoint ( this IEndpointRouteBuilder routes , string path )
++ AAuth.Events.EventsEndpoints: public static IEndpointConventionBuilder MapAAuthSubscriptionEndpoint ( this IEndpointRouteBuilder routes , string path , Action < AAuthSubscriptionEndpointOptions > configure )
++ AAuth.Events: public sealed class AAuthSubscriptionEndpointOptions
+```
 
-Public owners: `AAuth.Events.EventsEndpoints`, `AAuth.Events`.
+Public owners: `AAuth.Events.AAuthSubscriptionEndpointOptions`, `AAuth.Events.EventsEndpoints`, `AAuth.Events`.
 
 ### src/AAuth.Events/EventsProtocol.cs
 
@@ -919,6 +930,22 @@ Concept/decision: [events](#events). Source: [EventsProtocol.cs](../../../src/AA
 ```
 
 Public owners: `AAuth.Events.EventsProtocol`, `AAuth.Events`.
+
+### src/AAuth.Events/EventsSignatureTokenVerifier.cs
+
+Concept/decision: [events](#events). Source: [EventsSignatureTokenVerifier.cs](../../../src/AAuth.Events/EventsSignatureTokenVerifier.cs).
+
+```diff
+- AAuth.Events.EventsServiceExtensions: public static IServiceCollection AddAAuthEvents ( this IServiceCollection services )
++ AAuth.Events.AAuthEventsOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
++ AAuth.Events.AAuthEventsOptions: public AAuth . Discovery . AAuthTransportContract ? TransportContract { get ; set ; }
++ AAuth.Events.AAuthEventsOptions: public HttpMessageHandler ? InnerHandler { get ; set ; }
++ AAuth.Events.AAuthEventsOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
++ AAuth.Events.EventsServiceExtensions: public static IServiceCollection AddAAuthEvents ( this IServiceCollection services , Action < AAuthEventsOptions > ? configure = null )
++ AAuth.Events: public sealed class AAuthEventsOptions
+```
+
+Public owners: `AAuth.Events.AAuthEventsOptions`, `AAuth.Events.EventsServiceExtensions`, `AAuth.Events.EventsSignatureTokenVerifier`, `AAuth.Events`.
 
 ### src/AAuth.Events/EventsTokens.cs
 
@@ -1013,6 +1040,7 @@ Public owners: `AAuth.R3.R3AccessAnnotations`, `AAuth.R3`.
 Concept/decision: [r3](#r3). Source: [R3AccessTokenEndpoint.cs](../../../src/AAuth.R3/R3AccessTokenEndpoint.cs).
 
 ```diff
+- AAuth.R3.R3AccessTokenEndpoint: public static WebApplication MapR3AccessTokenEndpoint ( this WebApplication app , R3AccessTokenEndpointOptions options )
 - AAuth.R3.R3AccessTokenEndpointOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuth . Discovery . AAuthEgressPolicy . Production
 - AAuth.R3.R3AccessTokenEndpointOptions: public AAuth . Discovery . AAuthTransportContract ? FetchTransportContract { get ; init ; }
 - AAuth.R3.R3AccessTokenEndpointOptions: public BrowserConsentSessions ? BrowserConsent { get ; init ; }
@@ -1034,8 +1062,11 @@ Concept/decision: [r3](#r3). Source: [R3AccessTokenEndpoint.cs](../../../src/AAu
 - AAuth.R3.R3AccessTokenEndpointOptions: public string PendingPath { get ; init ; } = "/pending"
 - AAuth.R3.R3AccessTokenEndpointOptions: public string Subject { get ; init ; } = "pairwise-sub"
 - AAuth.R3.R3AccessTokenEndpointOptions: public string TokenPath { get ; init ; } = "/token"
++ AAuth.R3.R3AccessTokenEndpoint: public static IServiceCollection AddR3AccessTokenEndpoint ( this IServiceCollection services , Action < R3AccessTokenEndpointOptions > configure )
++ AAuth.R3.R3AccessTokenEndpoint: public static WebApplication MapR3AccessTokenEndpoint ( this WebApplication app )
 + AAuth.R3.R3AccessTokenEndpointOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
 + AAuth.R3.R3AccessTokenEndpointOptions: public AAuth . Discovery . AAuthTransportContract ? FetchTransportContract { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public AAuthSigningKeySet SigningKeys { get ; set ; } = new ( )
 + AAuth.R3.R3AccessTokenEndpointOptions: public AAuthTrustOptions Trust { get ; set ; } = new ( )
 + AAuth.R3.R3AccessTokenEndpointOptions: public BrowserConsentSessions ? BrowserConsent { get ; set ; }
 + AAuth.R3.R3AccessTokenEndpointOptions: public Func < HttpContext , string , string , string , CancellationToken , Task < byte [  ] > > ? FetchAndVerifyAsync { get ; set ; }
@@ -1044,13 +1075,12 @@ Concept/decision: [r3](#r3). Source: [R3AccessTokenEndpoint.cs](../../../src/AAu
 + AAuth.R3.R3AccessTokenEndpointOptions: public Func < R3ProposalDocument , bool > ? IsProposalAllowed { get ; set ; }
 + AAuth.R3.R3AccessTokenEndpointOptions: public Func < string , string , bool > ? IsScopeAllowed { get ; set ; }
 + AAuth.R3.R3AccessTokenEndpointOptions: public HttpMessageHandler ? FetchHttpMessageHandler { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public IR3AuditSink AuditSink { get ; set ; } = null !
 + AAuth.R3.R3AccessTokenEndpointOptions: public R3VocabularySchemas VocabularySchemas { get ; set ; } = R3VocabularySchemas . Standard
 + AAuth.R3.R3AccessTokenEndpointOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
 + AAuth.R3.R3AccessTokenEndpointOptions: public bool RequireProposalConsent { get ; set ; }
-+ AAuth.R3.R3AccessTokenEndpointOptions: public required AAuthSigningKeySet SigningKeys { get ; set ; }
-+ AAuth.R3.R3AccessTokenEndpointOptions: public required IR3AuditSink AuditSink { get ; set ; }
-+ AAuth.R3.R3AccessTokenEndpointOptions: public required string Issuer { get ; set ; }
 + AAuth.R3.R3AccessTokenEndpointOptions: public string ConsentPath { get ; set ; } = "/interaction/consent"
++ AAuth.R3.R3AccessTokenEndpointOptions: public string Issuer { get ; set ; } = ""
 + AAuth.R3.R3AccessTokenEndpointOptions: public string PendingPath { get ; set ; } = "/pending"
 + AAuth.R3.R3AccessTokenEndpointOptions: public string TokenPath { get ; set ; } = "/token"
 ```
@@ -1080,10 +1110,11 @@ Concept/decision: [r3](#r3). Source: [R3Challenge.cs](../../../src/AAuth.R3/R3Ch
 - AAuth.R3.R3Challenge: public required IAAuthKey Key { get ; init ; }
 - AAuth.R3.R3Challenge: public string BuildResourceToken ( TokenVerifier . VerifiedToken verifiedAuthToken , string r3Uri , string r3S256 , string ? scope = null )
 - AAuth.R3.R3Challenge: public string BuildResourceToken ( string agent , string agentJkt , string r3Uri , string r3S256 , string ? scope = null , string ? account = null )
++ AAuth.R3.R3Challenge: public IR3DocumentEntitlements ? Entitlements { get ; init ; }
 + AAuth.R3.R3Challenge: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
++ AAuth.R3.R3Challenge: public ValueTask < string > BuildResourceTokenAsync ( TokenVerifier . VerifiedToken presented , string agentJkt , string r3Uri , string r3S256 , string ? scope = null , string ? account = null , CancellationToken cancellationToken = default )
 + AAuth.R3.R3Challenge: public ValueTask < string > BuildResourceTokenAsync ( TokenVerifier . VerifiedToken verifiedAuthToken , string r3Uri , string r3S256 , string ? scope = null , CancellationToken cancellationToken = default )
 + AAuth.R3.R3Challenge: public async Task < IResult > ChallengeAsync ( HttpContext context , string r3Uri , string r3S256 , string ? scope = null , string ? account = null )
-+ AAuth.R3.R3Challenge: public async ValueTask < string > BuildResourceTokenAsync ( TokenVerifier . VerifiedToken presented , string agentJkt , string r3Uri , string r3S256 , string ? scope = null , string ? account = null , CancellationToken cancellationToken = default )
 + AAuth.R3.R3Challenge: public required IAAuthSigner Key { get ; init ; }
 ```
 
@@ -1104,9 +1135,28 @@ Public owners: `AAuth.R3.R3ClaimReader.AuthTokenClaims`, `AAuth.R3.R3ClaimReader
 
 Concept/decision: [r3](#r3). Source: [R3DocumentEndpoint.cs](../../../src/AAuth.R3/R3DocumentEndpoint.cs).
 
-Public signatures unchanged (11); behavior reviewed under r3.
+```diff
+- AAuth.R3.R3DocumentEndpoint: public static IEndpointRouteBuilder MapR3Document ( this IEndpointRouteBuilder endpoints , string pattern , Func < HttpContext , byte [  ] ? > getBytes , R3DocumentReaderPolicy readerPolicy )
++ AAuth.R3.R3DocumentEndpoint: public static IEndpointRouteBuilder MapR3Document ( this IEndpointRouteBuilder endpoints , string pattern , Func < HttpContext , byte [  ] ? > getBytes )
++ AAuth.R3.R3DocumentEndpoint: public static IServiceCollection AddAAuthR3Documents ( this IServiceCollection services , Func < IServiceProvider , R3DocumentReaderPolicy > readerPolicy )
+```
 
 Public owners: `AAuth.R3.R3DocumentEndpoint`, `AAuth.R3.R3FetchVerificationException`, `AAuth.R3.R3UntrustedJwksUriException`, `AAuth.R3`.
+
+### src/AAuth.R3/R3DocumentEntitlements.cs
+
+Concept/decision: [r3](#r3). Source: [R3DocumentEntitlements.cs](../../../src/AAuth.R3/R3DocumentEntitlements.cs).
+
+```diff
++ AAuth.R3.IR3DocumentEntitlements: ValueTask < bool > IsEntitledAsync ( string s256 , string reader , CancellationToken cancellationToken = default )
++ AAuth.R3.IR3DocumentEntitlements: ValueTask EntitleAsync ( string s256 , string reader , CancellationToken cancellationToken = default )
++ AAuth.R3.InMemoryR3DocumentEntitlements: public ValueTask < bool > IsEntitledAsync ( string s256 , string reader , CancellationToken cancellationToken = default )
++ AAuth.R3.InMemoryR3DocumentEntitlements: public ValueTask EntitleAsync ( string s256 , string reader , CancellationToken cancellationToken = default )
++ AAuth.R3: public interface IR3DocumentEntitlements
++ AAuth.R3: public sealed class InMemoryR3DocumentEntitlements : IR3DocumentEntitlements
+```
+
+Public owners: `AAuth.R3.IR3DocumentEntitlements`, `AAuth.R3.InMemoryR3DocumentEntitlements`, `AAuth.R3`.
 
 ### src/AAuth.R3/R3DocumentReaderPolicy.cs
 
@@ -1152,17 +1202,6 @@ Concept/decision: [r3](#r3). Source: [R3Metadata.cs](../../../src/AAuth.R3/R3Met
 Public signatures unchanged (6); behavior reviewed under r3.
 
 Public owners: `AAuth.R3.R3Metadata`, `AAuth.R3`.
-
-### src/AAuth.R3/R3ProposalStore.cs
-
-Concept/decision: [r3](#r3). Source: [R3ProposalStore.cs](../../../src/AAuth.R3/R3ProposalStore.cs).
-
-```diff
-+ AAuth.R3.R3ProposalStore: public bool IsEntitled ( string s256 , string personServer )
-+ AAuth.R3.R3ProposalStore: public void Entitle ( string s256 , string personServer )
-```
-
-Public owners: `AAuth.R3.R3ProposalStore`, `AAuth.R3`.
 
 ### src/AAuth/AAuthClientBuilder.cs
 
@@ -1743,7 +1782,14 @@ Public owners: `AAuth.AAuthAgentOptions`, `AAuth`.
 
 Concept/decision: [di](#di). Source: [AAuthApplicationBuilderExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthApplicationBuilderExtensions.cs).
 
-Public signatures unchanged (7); behavior reviewed under di.
+```diff
+- Microsoft.AspNetCore.Builder.AAuthApplicationBuilderExtensions: public static IApplicationBuilder UseAAuthChallenge ( this IApplicationBuilder app , ChallengeOptions options )
+- Microsoft.AspNetCore.Builder.AAuthApplicationBuilderExtensions: public static IApplicationBuilder UseAAuthIntermediary ( this IApplicationBuilder app , AAuthVerificationOptions verificationOptions , ChallengeOptions challengeOptions )
+- Microsoft.AspNetCore.Builder.AAuthApplicationBuilderExtensions: public static IApplicationBuilder UseAAuthVerification ( this IApplicationBuilder app , AAuthVerificationOptions ? options = null )
++ Microsoft.AspNetCore.Builder.AAuthApplicationBuilderExtensions: public static IApplicationBuilder UseAAuthChallenge ( this IApplicationBuilder app , Action < ChallengeOptions > ? configure = null )
++ Microsoft.AspNetCore.Builder.AAuthApplicationBuilderExtensions: public static IApplicationBuilder UseAAuthIntermediary ( this IApplicationBuilder app , Action < AAuthVerificationOptions > ? configureVerification = null , Action < ChallengeOptions > ? configureChallenge = null )
++ Microsoft.AspNetCore.Builder.AAuthApplicationBuilderExtensions: public static IApplicationBuilder UseAAuthVerification ( this IApplicationBuilder app , Action < AAuthVerificationOptions > ? configure = null )
+```
 
 Public owners: `Microsoft.AspNetCore.Builder.AAuthApplicationBuilderExtensions`, `Microsoft.AspNetCore.Builder`.
 
@@ -1816,8 +1862,13 @@ Concept/decision: [di](#di). Source: [AAuthResourceOptions.cs](../../../src/AAut
 - AAuth.AAuthResourceOptions: public TimeSpan MaxFutureSkew { get ; set ; } = TimeSpan . FromSeconds ( 5 )
 + AAuth.AAuthResourceOptions: public AAuthSigningKeySet SigningKeys { get ; set ; } = new ( )
 + AAuth.AAuthResourceOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
++ AAuth.AAuthResourceOptions: public string ? DocumentationUri { get ; set ; }
 + AAuth.AAuthResourceOptions: public string ? KeyHandle { get ; set ; }
 + AAuth.AAuthResourceOptions: public string ? KeyId { get ; set ; }
++ AAuth.AAuthResourceOptions: public string ? LogoDarkUri { get ; set ; }
++ AAuth.AAuthResourceOptions: public string ? LogoUri { get ; set ; }
++ AAuth.AAuthResourceOptions: public string ? PolicyUri { get ; set ; }
++ AAuth.AAuthResourceOptions: public string ? TosUri { get ; set ; }
 ```
 
 Public owners: `AAuth.AAuthResourceOptions`, `AAuth`.
@@ -2583,22 +2634,48 @@ Public owners: `AAuth.Server.Governance.MissionPersonTokenExtensions`, `AAuth.Se
 Concept/decision: [server-contracts](#server-contracts). Source: [HeldInvocations.cs](../../../src/AAuth/Server/HeldInvocations.cs).
 
 ```diff
-+ AAuth.Server.AAuthHeldInvocationExtensions: public static IEndpointConventionBuilder MapAAuthHeldInvocations ( this IEndpointRouteBuilder endpoints , AAuthHeldInvocations held )
-+ AAuth.Server.AAuthHeldInvocations: public AAuthHeldInvocations ( string pathPrefix = "/aauth/held" , TimeSpan ? pendingLifetime = null , TimeProvider ? timeProvider = null )
-+ AAuth.Server.AAuthHeldInvocations: public IResult Hold ( string resourceToken , IReadOnlyCollection < string > requiredScopes , Func < HttpContext , CancellationToken , Task < HeldInvocationResult > > execute )
-+ AAuth.Server.AAuthHeldInvocations: public TimeSpan PendingLifetime { get ; }
-+ AAuth.Server.AAuthHeldInvocations: public async Task < IResult > PollAsync ( HttpContext context , string id )
-+ AAuth.Server.AAuthHeldInvocations: public string PathPrefix { get ; }
-+ AAuth.Server.AAuthSingleUseGrants: public async Task < HeldInvocationResult > ExecuteOnceAsync ( string jti , DateTimeOffset expiresAt , Func < CancellationToken , Task < HeldInvocationResult > > execute , CancellationToken cancellationToken = default )
++ AAuth.Server.AAuthHeldInvocationExtensions: public static IEndpointConventionBuilder MapAAuthHeldInvocations ( this IEndpointRouteBuilder endpoints )
++ AAuth.Server.AAuthHeldInvocationExtensions: public static IServiceCollection AddAAuthHeldInvocations ( this IServiceCollection services , Action < AAuthHeldInvocationOptions > ? configure = null )
++ AAuth.Server.AAuthHeldInvocationExtensions: public static TBuilder WithHeldInvocation < TBuilder > ( this TBuilder builder , string operation , Func < HttpContext , JsonObject ? , CancellationToken , Task < HeldInvocationResult > > execute , TimeSpan ? pendingLifetime = null ) where TBuilder : IEndpointConventionBuilder
++ AAuth.Server.AAuthHeldInvocationOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
++ AAuth.Server.AAuthHeldInvocationOptions: public TimeSpan PendingLifetime { get ; set ; } = TimeSpan . FromMinutes ( 10 )
++ AAuth.Server.AAuthHeldInvocationOptions: public string PathPrefix { get ; set ; } = "/aauth/held"
++ AAuth.Server.AAuthSingleUseGateExtensions: public static async Task < HeldInvocationResult > ExecuteOnceAsync ( this IAAuthSingleUseGate gate , string jti , DateTimeOffset expiresAt , Func < CancellationToken , Task < HeldInvocationResult > > execute , CancellationToken cancellationToken = default )
++ AAuth.Server.HeldInvocation: public string ? ConsumedBy { get ; init ; }
 + AAuth.Server.HeldInvocationResult: public IResult ToResult ( )
 + AAuth.Server.HeldInvocationResult: public static HeldInvocationResult Json ( object value , int statusCode = StatusCodes . Status200OK )
-+ AAuth.Server: public sealed class AAuthHeldInvocations
-+ AAuth.Server: public sealed class AAuthSingleUseGrants ( TimeProvider ? timeProvider = null )
++ AAuth.Server.IAAuthHeldInvocationStore: ValueTask < HeldInvocation ? > GetAsync ( string id , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthHeldInvocationStore: ValueTask < bool > TryConsumeAsync ( string id , string jti , DateTimeOffset retainUntil , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthHeldInvocationStore: ValueTask AddAsync ( HeldInvocation invocation , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthHeldInvocations: Task < IResult > HoldAsync ( HttpContext context , string resourceToken , IReadOnlyCollection < string > requiredScopes , JsonObject ? state = null )
++ AAuth.Server.IAAuthHeldInvocations: Task < IResult > PollAsync ( HttpContext context , string id )
++ AAuth.Server.IAAuthHeldInvocations: string PathPrefix { get ; }
++ AAuth.Server.IAAuthSingleUseGate: ValueTask < HeldInvocationResult ? > GetResultAsync ( string key , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthSingleUseGate: ValueTask < SingleUseClaim > TryClaimAsync ( string key , DateTimeOffset expiresAt , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthSingleUseGate: ValueTask CompleteAsync ( string key , HeldInvocationResult result , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthSingleUseGate: ValueTask ReleaseAsync ( string key , CancellationToken cancellationToken = default )
++ AAuth.Server.InMemoryHeldInvocationStore: public ValueTask < HeldInvocation ? > GetAsync ( string id , CancellationToken cancellationToken = default )
++ AAuth.Server.InMemoryHeldInvocationStore: public ValueTask < bool > TryConsumeAsync ( string id , string jti , DateTimeOffset retainUntil , CancellationToken cancellationToken = default )
++ AAuth.Server.InMemoryHeldInvocationStore: public ValueTask AddAsync ( HeldInvocation invocation , CancellationToken cancellationToken = default )
++ AAuth.Server.InMemorySingleUseGate: public ValueTask < HeldInvocationResult ? > GetResultAsync ( string key , CancellationToken cancellationToken = default )
++ AAuth.Server.InMemorySingleUseGate: public ValueTask < SingleUseClaim > TryClaimAsync ( string key , DateTimeOffset expiresAt , CancellationToken cancellationToken = default )
++ AAuth.Server.InMemorySingleUseGate: public ValueTask CompleteAsync ( string key , HeldInvocationResult result , CancellationToken cancellationToken = default )
++ AAuth.Server.InMemorySingleUseGate: public ValueTask ReleaseAsync ( string key , CancellationToken cancellationToken = default )
++ AAuth.Server: public interface IAAuthHeldInvocationStore
++ AAuth.Server: public interface IAAuthHeldInvocations
++ AAuth.Server: public interface IAAuthSingleUseGate
++ AAuth.Server: public readonly record struct SingleUseClaim ( bool Claimed , HeldInvocationResult ? Result )
++ AAuth.Server: public sealed class AAuthHeldInvocationOptions
++ AAuth.Server: public sealed class InMemoryHeldInvocationStore ( TimeProvider ? timeProvider = null ) : IAAuthHeldInvocationStore
++ AAuth.Server: public sealed class InMemorySingleUseGate ( TimeProvider ? timeProvider = null ) : IAAuthSingleUseGate
++ AAuth.Server: public sealed record HeldInvocation ( string Id , string Operation , string ResourceToken , string AgentJkt , IReadOnlyList < string > RequiredScopes , DateTimeOffset PendingExpiresAt , JsonObject ? State = null )
++ AAuth.Server: public sealed record HeldInvocationEndpointMetadata ( string Operation , Func < HttpContext , JsonObject ? , CancellationToken , Task < HeldInvocationResult > > Execute , TimeSpan ? PendingLifetime = null )
 + AAuth.Server: public sealed record HeldInvocationResult ( int StatusCode , string ? ContentType , byte [  ] Body )
 + AAuth.Server: public static class AAuthHeldInvocationExtensions
++ AAuth.Server: public static class AAuthSingleUseGateExtensions
 ```
 
-Public owners: `AAuth.Server.AAuthHeldInvocationExtensions`, `AAuth.Server.AAuthHeldInvocations`, `AAuth.Server.AAuthSingleUseGrants`, `AAuth.Server.HeldInvocationResult`, `AAuth.Server`.
+Public owners: `AAuth.Server.AAuthHeldInvocationExtensions`, `AAuth.Server.AAuthHeldInvocationOptions`, `AAuth.Server.AAuthSingleUseGateExtensions`, `AAuth.Server.HeldInvocationResult`, `AAuth.Server.HeldInvocation`, `AAuth.Server.IAAuthHeldInvocationStore`, `AAuth.Server.IAAuthHeldInvocations`, `AAuth.Server.IAAuthSingleUseGate`, `AAuth.Server.InMemoryHeldInvocationStore`, `AAuth.Server.InMemorySingleUseGate`, `AAuth.Server`.
 
 ### src/AAuth/Server/IJtiStore.cs
 
@@ -2673,8 +2750,7 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthAgentMeta
 - AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? PolicyUri { get ; init ; }
 - AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? TosUri { get ; init ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
-+ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public required AAuthSigningKeySet SigningKeys { get ; set ; }
-+ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public required string Issuer { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public AAuthSigningKeySet SigningKeys { get ; set ; } = new ( )
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? CallbackEndpoint { get ; set ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? Description { get ; set ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? DocumentationUri { get ; set ; }
@@ -2683,6 +2759,7 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthAgentMeta
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? Name { get ; set ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? PolicyUri { get ; set ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? TosUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string Issuer { get ; set ; } = ""
 ```
 
 Public owners: `AAuth.Server.Metadata.AAuthAgentMetadataOptions`, `AAuth.Server.Metadata`.
@@ -2752,6 +2829,10 @@ Concept/decision: [server-contracts](#server-contracts). Source: [WellKnownEndpo
 - AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? PolicyUri { get ; init ; }
 - AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? RevocationEndpoint { get ; init ; }
 - AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? TosUri { get ; init ; }
+- AAuth.Server.Metadata.WellKnownEndpoints: public static IEndpointRouteBuilder MapAAuthAccessServerWellKnown ( this IEndpointRouteBuilder endpoints , AAuthAccessServerMetadataOptions options )
+- AAuth.Server.Metadata.WellKnownEndpoints: public static IEndpointRouteBuilder MapAAuthAgentWellKnown ( this IEndpointRouteBuilder endpoints , AAuthAgentMetadataOptions options )
+- AAuth.Server.Metadata.WellKnownEndpoints: public static IEndpointRouteBuilder MapAAuthPersonServerWellKnown ( this IEndpointRouteBuilder endpoints , AAuthPersonServerMetadataOptions options )
+- AAuth.Server.Metadata.WellKnownEndpoints: public static IEndpointRouteBuilder MapAAuthResourceWellKnown ( this IEndpointRouteBuilder endpoints , AAuthResourceMetadataOptions options )
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public AAuthSigningKeySet ? SigningKeys { get ; set ; }
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public IReadOnlyDictionary < string , JsonNode ? > ? AdditionalMetadata { get ; set ; }
@@ -2768,6 +2849,7 @@ Concept/decision: [server-contracts](#server-contracts). Source: [WellKnownEndpo
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? PolicyUri { get ; set ; }
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? RevocationEndpoint { get ; set ; }
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? TosUri { get ; set ; }
++ AAuth.Server.Metadata.WellKnownEndpoints: public static IEndpointRouteBuilder MapAAuthAgentWellKnown ( this IEndpointRouteBuilder endpoints , Action < AAuthAgentMetadataOptions > configure )
 ```
 
 Public owners: `AAuth.Server.Metadata.AAuthResourceMetadataOptions`, `AAuth.Server.Metadata.WellKnownEndpoints`, `AAuth.Server.Metadata`.
@@ -2789,8 +2871,11 @@ Public owners: `AAuth.Server.RevocationClient`, `AAuth.Server`.
 Concept/decision: [revocation](#revocation). Source: [RevocationEndpoint.cs](../../../src/AAuth/Server/RevocationEndpoint.cs).
 
 ```diff
+- AAuth.Server.RevocationEndpoint: public static IEndpointRouteBuilder MapAAuthRevocationEndpoint ( this IEndpointRouteBuilder endpoints , IJtiStore jtiStore , Action < AAuthRevocationOptions > ? configure , string path = "/revoke" )
+- AAuth.Server.RevocationEndpoint: public static IEndpointRouteBuilder MapAAuthRevocationEndpoint ( this IEndpointRouteBuilder endpoints , IJtiStore jtiStore , string path = "/revoke" )
 - AAuth.Server.RevocationEndpoint: public static IJtiStore MapAAuthIssuerRevocation ( this WebApplication app , string issuer , string dwk , AAuth . Crypto . IAAuthKey signingKey , string signingKid , string path , AAuth . Discovery . AAuthEgressPolicy egressPolicy , TimeProvider clock , Action < AAuthRevocationOptions > ? configure )
-+ AAuth.Server.RevocationEndpoint: public static IJtiStore MapAAuthIssuerRevocation ( this WebApplication app , string issuer , string dwk , AAuth . Crypto . AAuthSigningKeySet signingKeys , string path , AAuth . Discovery . AAuthEgressPolicy egressPolicy , TimeProvider clock , Action < AAuthRevocationOptions > ? configure , IJtiStore ? inventory = null )
++ AAuth.Server.RevocationEndpoint: public static IEndpointRouteBuilder MapAAuthRevocationEndpoint ( this IEndpointRouteBuilder endpoints , string path = "/revoke" , Action < AAuthRevocationOptions > ? configure = null )
++ AAuth.Server.RevocationEndpoint: public static IJtiStore MapAAuthIssuerRevocation ( this WebApplication app , string path = "/revoke" , Action < AAuthRevocationOptions > ? configure = null )
 ```
 
 Public owners: `AAuth.Server.RevocationEndpoint`, `AAuth.Server`.

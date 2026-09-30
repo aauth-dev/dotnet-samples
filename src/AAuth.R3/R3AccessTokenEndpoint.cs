@@ -19,10 +19,21 @@ namespace AAuth.R3;
 /// <summary>Self-contained R3 Access Server metadata, JWKS, and token endpoint.</summary>
 public static class R3AccessTokenEndpoint
 {
-    public static WebApplication MapR3AccessTokenEndpoint(this WebApplication app, R3AccessTokenEndpointOptions options)
+    /// <summary>Register the R3 Access Server token endpoint's options; map it with <see cref="MapR3AccessTokenEndpoint"/>.</summary>
+    public static IServiceCollection AddR3AccessTokenEndpoint(this IServiceCollection services,
+        Action<R3AccessTokenEndpointOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configure);
+        services.AddOptions<R3AccessTokenEndpointOptions>().Configure(configure);
+        return services;
+    }
+
+    /// <summary>Map the R3 Access Server token, pending, consent and revocation endpoints from the registered options.</summary>
+    public static WebApplication MapR3AccessTokenEndpoint(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        ArgumentNullException.ThrowIfNull(options);
+        var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<R3AccessTokenEndpointOptions>>().Value;
         options.Validate();
 
         options.EgressPolicy.ValidateIdentifier(options.Issuer);
@@ -652,8 +663,8 @@ public sealed class R3AccessTokenEndpointOptions
 {
     public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     public AAuth.Discovery.AAuthTransportContract? FetchTransportContract { get; set; }
-    public required string Issuer { get; set; }
-    public required AAuthSigningKeySet SigningKeys { get; set; }
+    public string Issuer { get; set; } = "";
+    public AAuthSigningKeySet SigningKeys { get; set; } = new();
     public string TokenPath { get; set; } = "/token";
     /// <summary>
     /// Trust for this Access Server. <see cref="AAuthTrustOptions.PersonServers"/> is
@@ -675,7 +686,7 @@ public sealed class R3AccessTokenEndpointOptions
     /// Required audit persistence. Completion must mean the token association is committed;
     /// failure prevents token release. In-memory implementations are not crash-durable.
     /// </summary>
-    public required IR3AuditSink AuditSink { get; set; }
+    public IR3AuditSink AuditSink { get; set; } = null!;
     public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
     public R3VocabularySchemas VocabularySchemas { get; set; } = R3VocabularySchemas.Standard;
     public Func<R3OperationIdentity, bool>? IsOperationAllowed { get; set; }

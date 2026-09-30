@@ -415,7 +415,75 @@ PROCEEDED.
   - Full Playwright: 78 passed, 1 skipped, `--retries=0`.
   - Keycloak profile: `federated-deferred` 1 passed; container removed.
 
+### [2026-09-29] [Phase 5] Server feature seams
+
+PROCEEDED.
+- **Held invocations (Q10).** `AAuthSingleUseGrants` and the concrete
+  `AAuthHeldInvocations` class are replaced by serializable seams:
+  - `IAAuthSingleUseGate` (`TryClaimAsync`/`CompleteAsync`/`GetResultAsync`,
+    plus `ReleaseAsync` so a failed execution can retry) with
+    `InMemorySingleUseGate`; `ExecuteOnceAsync` is an extension that waits
+    on another instance's in-progress claim by polling.
+  - `IAAuthHeldInvocationStore` (`HeldInvocation` record with operation name
+    and `JsonObject` state; strict `TryConsumeAsync`) with
+    `InMemoryHeldInvocationStore`.
+  - The execute delegate is endpoint metadata
+    (`.WithHeldInvocation(operation, execute, pendingLifetime?)`), found by
+    operation name through `EndpointDataSource`, never stored. The handler
+    calls `IAAuthHeldInvocations.HoldAsync(context, token, scopes, state)`.
+  - `AddAAuthHeldInvocations(o => ...)`; `MapAAuthHeldInvocations()` is
+    parameterless and warns on in-memory defaults outside Development.
+  - A poll claims the gate first, then consumes the entry once, so a lapsed
+    retention can never re-run the invocation (the migration exposed this;
+    `RepeatedAuthToken_ReturnsRetainedResult` covers it). A failure after
+    consumption now leaves the invocation consumed.
+- **R3 (Q12).** `IR3DocumentEntitlements` + `InMemoryR3DocumentEntitlements`.
+  `R3Challenge` entitles `aud` and `ps` on every mint (its `Entitlements`
+  property, else the DI store for `ChallengeAsync` and per-call
+  `ToResultAsync`). `R3ProposalStore.Entitle`/`IsEntitled` removed.
+  `AddAAuthR3Documents(readerPolicy)`; `MapR3Document(pattern, getBytes)`
+  resolves policy and entitlements from DI and checks PS readers against the
+  SHA-256 of the served bytes (or `IsEntitledPersonServer`). The AS reader
+  stays governed by the designated-AS policy.
+  `AddR3AccessTokenEndpoint(o => ...)` + `MapR3AccessTokenEndpoint()`.
+- **Events.** `AddAAuthEvents(o => ...)` registers a shared `EventsProtocol`;
+  `MapAAuthEventEndpoint(path)` and
+  `MapAAuthSubscriptionEndpoint(path, o => ...)` resolve protocol and stores
+  from DI per request.
+- **Revocation.** `MapAAuthRevocationEndpoint(path, configure?)` resolves
+  `IJtiStore` from DI. The positional issuer overload is internal (R3 via
+  `InternalsVisibleTo`); resources get a public DI form,
+  `app.MapAAuthIssuerRevocation(path, configure?)`, reading identity and keys
+  from `AddAAuthResource` (Bookings uses it).
+- **Middleware options from DI.** `UseAAuthVerification(configure?)`,
+  `UseAAuthChallenge(configure?)`, `UseAAuthIntermediary(configureVerification?,
+  configureChallenge?)` start from DI configuration (internal
+  `AAuthOptionsResolver`); SDK role mappers use internal instance cores.
+- **Well-known.** Resource/PS/AS well-known mappers are internal (use
+  `MapAAuthWellKnown()` and the role mappers); `MapAAuthAgentWellKnown(o => ...)`.
+  `AAuthResourceOptions` gained `LogoUri`, `LogoDarkUri`, `DocumentationUri`,
+  `TosUri`, `PolicyUri` so resource metadata stays fully expressible.
+- **Tests.** `SingleUseGateTests` (5), `R3AutoEntitlementTests` (2),
+  `EventsDependencyInjectionTests` (3), `RevocationEndpointDependencyInjectionTests`
+  (2). A subagent migrated tests, samples and docs; verified independently.
+  Two revocation conformance hosts use the internal endpoint core because a
+  DI `IJtiStore` also enables replay detection against their fixed clocks.
+- **Consent-dashboard seams: moved to Phase 10.** The pending-store observer
+  and out-of-band decision API are shaped by the sample consent surface;
+  design them with the sample migration. `Pending202` ruling stays open.
+- **Gates.**
+  - Build clean.
+  - Test projects: AAuth.Tests 1741, AAuth.Conformance 1257,
+    AAuth.R3.Tests 330, AAuth.Events.Tests 83.
+  - ApiSurface: +784/-386 cumulative (from +725/-372 at Phase 4).
+    Docs inventory refreshed; e2e typecheck clean.
+  - Full Playwright: 78 passed, 1 skipped, `--retries=0`.
+
 ## Deviations from plan
+
+### [2026-09-29] [Phase 5] Consent-dashboard seams moved to Phase 10
+
+PROCEEDED. See the Phase 5 entry.
 
 ### [2026-09-29] [Phase 4] Seam defaults are keyed forwarding factories
 

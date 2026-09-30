@@ -72,12 +72,11 @@ public class TrustConfigDiagnosticsTests
         builder.Services.AddSingleton(new AAuthVerifier());
         var app = builder.Build();
 
-        app.UseAAuthVerification(
-            new AAuthVerificationOptions
-            {
-                EgressPolicy = TestEgress.Policy,
-                Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { "https://ps.example" } } },
-            });
+        app.UseAAuthVerification(options =>
+        {
+            options.EgressPolicy = TestEgress.Policy;
+            options.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { "https://ps.example" };
+        });
     }
 
     private sealed class CapturingLogger : ILogger

@@ -26,7 +26,11 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 > `AAuthVerificationOptions` and `ChallengeOptions` are the low-level building
 > blocks `UseAAuth` configures from each endpoint's `.RequireAAuth(...)` /
 > `.RequireAAuthSignature(...)` requirement; use them directly only for custom
-> pipelines.
+> pipelines. `UseAAuthVerification(o => ...)`, `UseAAuthChallenge(o => ...)` and
+> `UseAAuthIntermediary(verify => ..., challenge => ...)` take configure delegates:
+> each starts from `services.Configure<TOptions>(...)` registrations (verification
+> also seeds `EgressPolicy` from the registered `MetadataClient`), then applies the
+> delegate for that pipeline.
 
 ### AAuthVerificationOptions (via UseAAuthVerification)
 

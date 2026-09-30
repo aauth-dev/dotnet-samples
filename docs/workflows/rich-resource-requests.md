@@ -96,6 +96,43 @@ the R3 document itself carries only the spec fields (`operations` + `display`):
 - **Per-call digest match** — the resource rejects a retry whose parameters differ from
   the approved proposal.
 
+## Serving R3 documents
+
+`AddAAuthR3Documents` registers the `R3DocumentReaderPolicy` and an in-memory
+`IR3DocumentEntitlements`; `MapR3Document(pattern, getBytes)` resolves both from DI.
+Every resource token minted through `R3Challenge` entitles its `aud` (the AS) and
+`ps` (the PS) to read the document it names, keyed by the document's `r3_s256`. A
+PS evaluator reads only documents it is entitled to (or that the policy's
+`IsEntitledPersonServer` predicate admits); other documents look absent (`404`).
+
+```csharp
+builder.Services.AddAAuthR3Documents(_ =>
+    new R3DocumentReaderPolicy(asIssuer, [psIssuer], egressPolicy));
+var documents = new R3ProposalStore();
+
+// After builder.Build():
+app.MapR3Document("/r3/{hash}", ctx =>
+    documents.TryGet((string)ctx.Request.RouteValues["hash"]!, out var bytes) ? bytes : null);
+
+// ChallengeAsync(context, ...) and per-call ToResultAsync(context, challenge, ...) use
+// the DI entitlements; set Entitlements when minting with BuildResourceTokenAsync.
+var entitlements = app.Services.GetRequiredService<IR3DocumentEntitlements>();
+var challenge = new R3Challenge
+{
+    ResourceIssuer = resourceUrl, Audience = asIssuer,
+    Key = resourceKey, KeyId = ResourceKid, Entitlements = entitlements,
+};
+
+// A resource token minted without R3Challenge must entitle its readers itself.
+var stored = documents.AddBytes("{}"u8.ToArray(), new Uri(resourceUrl), "/r3");
+await entitlements.EntitleAsync(stored.S256, asIssuer);
+await entitlements.EntitleAsync(stored.S256, psIssuer);
+```
+
+The in-memory entitlements are per process. Behind a load balancer, register a
+shared `IR3DocumentEntitlements` before `AddAAuthR3Documents` so every instance
+serving the document sees the grants.
+
 Every Bookings route supports granted, per-call, and rejected outcomes;
 confirmation is per-call only because of the demo AS policy. GET search/hold
 use `searchAvailability` and `holdReservation`; POST variants use

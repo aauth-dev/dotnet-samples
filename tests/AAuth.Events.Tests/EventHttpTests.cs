@@ -10,6 +10,7 @@ using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
@@ -388,6 +389,11 @@ public class EventHttpTests
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseUrls("http://127.0.0.1:0");
             builder.Logging.ClearProviders();
+            // The issuer is known only once the host listens; the protocol is built on first resolution.
+            builder.Services.AddAAuthEvents(options => options.EgressPolicy =
+                new AAuthEgressPolicy(otherProvider is null ? [host.Issuer] : [host.Issuer, otherProvider]));
+            builder.Services.AddSingleton<IAgentProviderEventStore>(host.Store);
+            builder.Services.AddSingleton<IResourceEventStore>(host.Store);
             host._app = builder.Build();
             host._app.Use(async (context, next) =>
             {
@@ -413,10 +419,21 @@ public class EventHttpTests
             host.Issuer = host._app.Urls.Single();
             if (localhost) host.Issuer = host.Issuer.Replace("127.0.0.1", "localhost");
             host.Http = AAuthHttpTransport.CreateClient(new AAuthEgressPolicy(otherProvider is null ? [host.Issuer] : [host.Issuer, otherProvider]));
-            host.Protocol = new EventsProtocol(host.Http, [new EventsSignatureTokenVerifier(true), new EventsSignatureTokenVerifier(false)]);
-            host._app.MapLocalEventProvider(host.Issuer, host.ResourceKey, "key", host.Protocol, host.Store);
-            host._app.MapAAuthSubscriptionEndpoint("/subscribe/public", host.Issuer, "receive", false, host.Protocol, host.Store, Validate);
-            host._app.MapAAuthSubscriptionEndpoint("/subscribe/{ticket}", host.Issuer, "receive", true, host.Protocol, host.Store, Validate);
+            host.Protocol = host._app.Services.GetRequiredService<EventsProtocol>();
+            host._app.MapLocalEventProvider(host.Issuer, host.ResourceKey, "key");
+            host._app.MapAAuthSubscriptionEndpoint("/subscribe/public", channel =>
+            {
+                channel.Resource = host.Issuer;
+                channel.Operation = "receive";
+                channel.ValidateParameters = Validate;
+            });
+            host._app.MapAAuthSubscriptionEndpoint("/subscribe/{ticket}", channel =>
+            {
+                channel.Resource = host.Issuer;
+                channel.Operation = "receive";
+                channel.ProtectedChannel = true;
+                channel.ValidateParameters = Validate;
+            });
             new BookingsEvents(host.Issuer, host.ResourceKey, "key", host.Protocol, host.Store).Map(host._app);
             host._app.MapSampleAgentEnrollment(host.Issuer, host.ResourceKey, "key", host.Protocol.TokenVerifier.EgressPolicy,
                 new SampleAgentRegistry(Path.Combine(host._directory, "agents.db")));

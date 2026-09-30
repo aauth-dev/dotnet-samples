@@ -7,23 +7,53 @@ using AAuth.Server.Verification;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AAuth.R3;
 
 /// <summary>Maps signature-verified R3 document/proposal endpoints.</summary>
 public static class R3DocumentEndpoint
 {
-    public static IEndpointRouteBuilder MapR3Document(this IEndpointRouteBuilder endpoints,
-        string pattern, Func<HttpContext, byte[]?> getBytes, R3DocumentReaderPolicy readerPolicy)
+    /// <summary>
+    /// Register the R3 document reader policy and the in-memory <see cref="IR3DocumentEntitlements"/>
+    /// default (register your own first to share entitlements across instances).
+    /// </summary>
+    public static IServiceCollection AddAAuthR3Documents(this IServiceCollection services,
+        Func<IServiceProvider, R3DocumentReaderPolicy> readerPolicy)
     {
+        ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(readerPolicy);
+        services.TryAddSingleton(readerPolicy);
+        services.TryAddSingleton<IR3DocumentEntitlements, InMemoryR3DocumentEntitlements>();
+        return services;
+    }
+
+    /// <summary>
+    /// Map an R3 document using the DI-registered <see cref="R3DocumentReaderPolicy"/>. A Person
+    /// Server reads only documents it is entitled to (<see cref="IR3DocumentEntitlements"/>, or the
+    /// policy's <see cref="R3DocumentReaderPolicy.IsEntitledPersonServer"/>); others look absent.
+    /// </summary>
+    public static IEndpointRouteBuilder MapR3Document(this IEndpointRouteBuilder endpoints,
+        string pattern, Func<HttpContext, byte[]?> getBytes)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(getBytes);
-        // A PS evaluator reads only the documents it is entitled to; others look absent.
-        return endpoints.MapR3Document(pattern, context =>
-            readerPolicy.IsEntitledPersonServer is { } entitled
-                && context.GetAAuthParsedKey() is { Dwk: AAuthConstants.DwkFiles.Person, Identifier: { } personServer }
-                && !entitled(context, personServer)
-                ? null : getBytes(context), readerPolicy.Allows);
+        var readerPolicy = endpoints.ServiceProvider.GetService<R3DocumentReaderPolicy>()
+            ?? throw new InvalidOperationException("MapR3Document requires AddAAuthR3Documents.");
+        var entitlements = endpoints.ServiceProvider.GetService<IR3DocumentEntitlements>();
+        return endpoints.MapR3DocumentCore(pattern, async context =>
+        {
+            var bytes = getBytes(context);
+            if (bytes is null
+                || context.GetAAuthParsedKey() is not { Dwk: AAuthConstants.DwkFiles.Person, Identifier: { } personServer })
+                return bytes;
+            if (entitlements is null && readerPolicy.IsEntitledPersonServer is null) return bytes;
+            var entitled = readerPolicy.IsEntitledPersonServer?.Invoke(context, personServer) == true
+                || entitlements is not null && await entitlements.IsEntitledAsync(R3Hash.ComputeS256(bytes), personServer,
+                    context.RequestAborted).ConfigureAwait(false);
+            return entitled ? bytes : null;
+        }, readerPolicy.Allows);
     }
 
     public static IEndpointRouteBuilder MapR3Document(
@@ -32,9 +62,18 @@ public static class R3DocumentEndpoint
         Func<HttpContext, byte[]?> getBytes,
         Func<R3VerifiedFetcher, bool> isTrustedFetcher)
     {
+        ArgumentNullException.ThrowIfNull(getBytes);
+        return endpoints.MapR3DocumentCore(pattern, context => ValueTask.FromResult(getBytes(context)), isTrustedFetcher);
+    }
+
+    private static IEndpointRouteBuilder MapR3DocumentCore(
+        this IEndpointRouteBuilder endpoints,
+        string pattern,
+        Func<HttpContext, ValueTask<byte[]?>> getBytes,
+        Func<R3VerifiedFetcher, bool> isTrustedFetcher)
+    {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentException.ThrowIfNullOrEmpty(pattern);
-        ArgumentNullException.ThrowIfNull(getBytes);
         ArgumentNullException.ThrowIfNull(isTrustedFetcher);
 
         endpoints.MapGet(pattern, async (HttpContext context) =>
@@ -58,7 +97,7 @@ public static class R3DocumentEndpoint
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_fetcher", statusCode: StatusCodes.Status403Forbidden);
             }
 
-            var bytes = getBytes(context);
+            var bytes = await getBytes(context).ConfigureAwait(false);
             return bytes is null
                 ? Results.NotFound()
                 : Results.Bytes(bytes, "application/json");

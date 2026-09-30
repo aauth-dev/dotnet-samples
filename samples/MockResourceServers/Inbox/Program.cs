@@ -73,7 +73,7 @@ var store = app.Services.GetRequiredService<IOpaqueTokenStore>();
 // Well-known metadata + JWKS from the DI-registered resource metadata. Served
 // unsigned (no endpoint requirement metadata, so UseAAuth passes it through).
 app.MapAAuthWellKnown();
-app.MapAAuthRevocationEndpoint(app.Services.GetRequiredService<IJtiStore>(), options => options.IsAcceptedIssuer = AAuthTrust.Any);
+app.MapAAuthRevocationEndpoint(configure: options => options.IsAcceptedIssuer = AAuthTrust.Any);
 
 // Resource-managed (two-party) access: the protected endpoints declare
 // .RequireAAuthSignature(); this single post-routing middleware verifies the

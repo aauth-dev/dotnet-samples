@@ -49,7 +49,7 @@ public class ResourceManagedFlowTests : IAsyncLifetime
         var app = builder.Build();
 
         // Two-party: HTTP-signature-only verification (no issuer / PS).
-        app.UseAAuthVerification(AAuthVerificationOptions.Generic());
+        app.UseAAuthVerification(options => options.AcceptedSchemes = AAuthVerificationOptions.Generic().AcceptedSchemes);
         app.MapAAuthInteractionPoll("/pending/{code}");
 
         // Proactive authorization_endpoint: authorize on identity, issue a token.

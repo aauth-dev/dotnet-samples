@@ -371,24 +371,24 @@ This is the highest-blast-radius server change.
 
 ### Definition of Done
 
-- [ ] No public `Map*`/`Use*` takes a store, protocol, verifier, or options
+- [x] No public `Map*`/`Use*` takes a store, protocol, verifier, or options
       **instance**. Per-route lambdas and route patterns are allowed.
       `ApiSurface` diff is attached to the log.
-- [ ] Tests:
-  - [ ] `SingleUseGateTests`:
+- [x] Tests:
+  - [x] `SingleUseGateTests`:
     - a custom gate is used;
     - single use holds under concurrency;
     - a fake shared-store gate stays single-use across two app instances
       (scale-out simulation).
-  - [ ] `R3AutoEntitlementTests`:
+  - [x] `R3AutoEntitlementTests`:
     - minting entitles both `aud` and `ps`;
     - a third signer is rejected;
     - a host-minted token entitles through `EntitleAsync`.
-  - [ ] Events DI tests.
-  - [ ] A revocation-endpoint DI test.
-- [ ] Bookings has no `new AAuthSingleUseGrants()`, no `Entitle(` call, and no
+  - [x] Events DI tests.
+  - [x] A revocation-endpoint DI test.
+- [x] Bookings has no `new AAuthSingleUseGrants()`, no `Entitle(` call, and no
       `IsEntitledPersonServer` wiring beyond an optional policy override.
-- [ ] Gates pass.
+- [x] Gates pass.
 
 ## Phase 6 — Revocation service (F-S6; Q11)
 

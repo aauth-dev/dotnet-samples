@@ -62,10 +62,10 @@ builder.Services.AddAAuthAgent("self-issued", options =>
 });
 
 // Also publish agent metadata so verifiers can discover the JWKS
-app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+app.MapAAuthAgentWellKnown(options =>
 {
-    Issuer = issuer,
-    SigningKeys = new AAuthSigningKeySet(Kid, key),
+    options.Issuer = issuer;
+    options.SigningKeys = new AAuthSigningKeySet(Kid, key);
 });
 ```
 

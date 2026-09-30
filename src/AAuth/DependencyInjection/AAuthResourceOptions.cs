@@ -72,6 +72,21 @@ public sealed class AAuthResourceOptions
     /// <summary>Optional Markdown description for metadata (consent display).</summary>
     public string? Description { get; set; }
 
+    /// <summary>Optional logo URL for metadata (<c>logo_uri</c>).</summary>
+    public string? LogoUri { get; set; }
+
+    /// <summary>Optional dark-mode logo URL for metadata (<c>logo_dark_uri</c>).</summary>
+    public string? LogoDarkUri { get; set; }
+
+    /// <summary>Optional documentation URL for metadata (<c>documentation_uri</c>).</summary>
+    public string? DocumentationUri { get; set; }
+
+    /// <summary>Optional terms-of-service URL for metadata (<c>tos_uri</c>).</summary>
+    public string? TosUri { get; set; }
+
+    /// <summary>Optional policy URL for metadata (<c>policy_uri</c>).</summary>
+    public string? PolicyUri { get; set; }
+
     /// <summary>Optional scope descriptions for metadata.</summary>
     public Dictionary<string, string>? ScopeDescriptions { get; set; }
 

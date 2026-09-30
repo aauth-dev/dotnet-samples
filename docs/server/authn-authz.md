@@ -190,12 +190,16 @@ var app = builder.Build();
 
 app.MapAAuthWellKnown();
 
-app.UseAAuthVerification(new AAuthVerificationOptions
+app.UseAAuthVerification(options =>
 {
-    ResourceIdentifier = resourceUrl,
-    Trust = { AuthTokenIssuers = { Allowed = trustedPersonServers } },
+    options.ResourceIdentifier = resourceUrl;
+    options.Trust.AuthTokenIssuers.Allowed = trustedPersonServers;
 });
-app.UseAAuthChallenge(challengeOptions);
+app.UseAAuthChallenge(options =>
+{
+    options.ResourceSigningKeys = new AAuthSigningKeySet("key-1", resourceKey);
+    options.ResourceIdentifier = resourceUrl;
+});
 
 app.UseAuthentication();
 app.UseAuthorization();

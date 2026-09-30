@@ -41,9 +41,11 @@ public class GovernancePendingSignatureTests
         builder.Services.AddSingleton(new MetadataClient(discovery));
         builder.Services.AddSingleton(new JwksClient(discovery));
         await using var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy, ResourceIdentifier = "https://ps.example", AcceptedSchemes = ["jwt"],
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = "https://ps.example";
+            options.AcceptedSchemes = ["jwt"];
         });
         app.MapAAuthGovernance(options => options.PersonServer = "https://ps.example");
         await app.StartAsync();

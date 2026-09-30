@@ -63,12 +63,12 @@ var app = builder.Build();
 app.MapAAuthWellKnown();
 
 // Agent metadata: downstream resources discover this to verify our identity.
-app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+app.MapAAuthAgentWellKnown(options =>
 {
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = conciergeUrl,
-    Name = "Concierge Demo",
-    SigningKeys = new AAuthSigningKeySet { [ConciergeKid] = conciergeKey },
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Issuer = conciergeUrl;
+    options.Name = "Concierge Demo";
+    options.SigningKeys = new AAuthSigningKeySet { [ConciergeKid] = conciergeKey };
 });
 
 // -----------------------------------------------------------------------
@@ -88,19 +88,19 @@ bool IsWalletPath(PathString path) => path == "/wallet" || path.StartsWithSegmen
 app.UseWhen(
     ctx => !ctx.Request.Path.StartsWithSegments("/.well-known") && !IsWalletPath(ctx.Request.Path),
     branch => branch.UseAAuthIntermediary(
-        new AAuthVerificationOptions
+        verification =>
         {
-            EgressPolicy = SampleEgress.Policy,
-            ResourceIdentifier = conciergeUrl,
-            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { psUrl } } },
+            verification.EgressPolicy = SampleEgress.Policy;
+            verification.ResourceIdentifier = conciergeUrl;
+            verification.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { psUrl };
         },
-        new ChallengeOptions
+        challenge =>
         {
-            EgressPolicy = SampleEgress.Policy,
-            AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKeys = new AAuthSigningKeySet(ConciergeKid, conciergeKey),
-            ResourceIdentifier = conciergeUrl,
-            DefaultScopes = ConciergeScope,
+            challenge.EgressPolicy = SampleEgress.Policy;
+            challenge.AccessMode = AAuthAccessMode.RequireAuthToken;
+            challenge.ResourceSigningKeys = new AAuthSigningKeySet(ConciergeKid, conciergeKey);
+            challenge.ResourceIdentifier = conciergeUrl;
+            challenge.DefaultScopes = ConciergeScope;
         }));
 
 // -----------------------------------------------------------------------
@@ -129,20 +129,21 @@ app.UseWhen(
 // PS the upstream token names (its `ps`); a `mission_s256` in the upstream token
 // governs every hop (§Call Chaining).
 app.UseWhen(ctx => IsWalletPath(ctx.Request.Path), branch => branch.UseAAuthIntermediary(
-    new AAuthVerificationOptions
+    verification =>
     {
-        EgressPolicy = SampleEgress.Policy, ResourceIdentifier = conciergeUrl,
-        Trust =
-        {
-            AuthTokenIssuers = { Allowed = new HashSet<string> { accessServerUrl } },
-            PersonServers = { Allowed = new HashSet<string> { psUrl } },
-        },
+        verification.EgressPolicy = SampleEgress.Policy;
+        verification.ResourceIdentifier = conciergeUrl;
+        verification.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { accessServerUrl };
+        verification.Trust.PersonServers.Allowed = new HashSet<string> { psUrl };
     },
-    new ChallengeOptions
+    challenge =>
     {
-        EgressPolicy = SampleEgress.Policy, ResourceSigningKeys = new AAuthSigningKeySet(ConciergeKid, conciergeKey),
-        ResourceIdentifier = conciergeUrl, AccessServer = accessServerUrl, DefaultScopes = "wallet.read",
-        ScopeDescriptions = new Dictionary<string, string> { ["wallet.read"] = "Read the travel wallet through the concierge" },
+        challenge.EgressPolicy = SampleEgress.Policy;
+        challenge.ResourceSigningKeys = new AAuthSigningKeySet(ConciergeKid, conciergeKey);
+        challenge.ResourceIdentifier = conciergeUrl;
+        challenge.AccessServer = accessServerUrl;
+        challenge.DefaultScopes = "wallet.read";
+        challenge.ScopeDescriptions = new Dictionary<string, string> { ["wallet.read"] = "Read the travel wallet through the concierge" };
     }));
 
 async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string downstreamBase, string downstreamPath)

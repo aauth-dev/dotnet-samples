@@ -209,7 +209,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 
 | Type | Purpose |
 |------|---------|
-| `WellKnownEndpoints` | `MapAAuthResourceWellKnown()` for ASP.NET minimal APIs |
+| `WellKnownEndpoints` | `MapAAuthAgentWellKnown(o => ...)` for agent metadata; resources use `MapAAuthWellKnown()`, PS/AS publish through their role mappers |
 
 ### `AAuth.Server.CallChaining` — Delegation routing
 

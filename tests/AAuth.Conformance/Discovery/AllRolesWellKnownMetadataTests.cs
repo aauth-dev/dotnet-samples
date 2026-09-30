@@ -48,14 +48,14 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         var agentApp = WebApplication.CreateBuilder();
         agentApp.WebHost.UseTestServer();
         var a = agentApp.Build();
-        a.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+        a.MapAAuthAgentWellKnown(options =>
         {
-            Issuer = AgentIssuer,
-            Name = "Test Agent",
-            Description = "**Test Agent** drafts email on your behalf.",
-            DocumentationUri = $"{AgentIssuer}/docs",
-            SigningKeys = new AAuthSigningKeySet { [AgentKid] = _agentKey },
-            CallbackEndpoint = $"{AgentIssuer}/callback",
+            options.Issuer = AgentIssuer;
+            options.Name = "Test Agent";
+            options.Description = "**Test Agent** drafts email on your behalf.";
+            options.DocumentationUri = $"{AgentIssuer}/docs";
+            options.SigningKeys = new AAuthSigningKeySet { [AgentKid] = _agentKey };
+            options.CallbackEndpoint = $"{AgentIssuer}/callback";
         });
         await a.StartAsync();
         _agentHost = a;
@@ -100,10 +100,10 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
             Issuer = AgentIssuer,
             SigningKeys = new AAuthSigningKeySet { [ResourceKid] = _resourceKey },
         });
-        c.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+        c.MapAAuthAgentWellKnown(options =>
         {
-            Issuer = AgentIssuer,
-            SigningKeys = new AAuthSigningKeySet { [AgentKid] = _agentKey },
+            options.Issuer = AgentIssuer;
+            options.SigningKeys = new AAuthSigningKeySet { [AgentKid] = _agentKey };
         });
         await c.StartAsync();
         _combinedHost = c;

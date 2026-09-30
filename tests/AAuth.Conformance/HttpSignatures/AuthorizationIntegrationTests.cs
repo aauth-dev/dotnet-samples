@@ -117,12 +117,12 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         var app = builder.Build();
 
         // Verification middleware populates Features.
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            AcceptedSchemes = ["jwt", "hwk"],
-            ResourceIdentifier = ResourceId,
-            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { PsIssuer } } },
+            options.EgressPolicy = TestEgress.Policy;
+            options.AcceptedSchemes = ["jwt", "hwk"];
+            options.ResourceIdentifier = ResourceId;
+            options.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { PsIssuer };
         });
         app.UseAuthentication();
         app.UseAuthorization();

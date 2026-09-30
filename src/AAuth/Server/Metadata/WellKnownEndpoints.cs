@@ -16,7 +16,7 @@ namespace AAuth.Server.Metadata;
 public static class WellKnownEndpoints
 {
     /// <summary>Map both the resource metadata and JWKS endpoints.</summary>
-    public static IEndpointRouteBuilder MapAAuthResourceWellKnown(
+    internal static IEndpointRouteBuilder MapAAuthResourceWellKnown(
         this IEndpointRouteBuilder endpoints,
         AAuthResourceMetadataOptions options)
     {
@@ -45,10 +45,12 @@ public static class WellKnownEndpoints
     /// </remarks>
     public static IEndpointRouteBuilder MapAAuthAgentWellKnown(
         this IEndpointRouteBuilder endpoints,
-        AAuthAgentMetadataOptions options)
+        Action<AAuthAgentMetadataOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
-        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(configure);
+        var options = new AAuthAgentMetadataOptions();
+        configure(options);
         options.Validate();
 
         endpoints.MapGet("/.well-known/aauth-agent.json", () => Results.Json(
@@ -65,7 +67,7 @@ public static class WellKnownEndpoints
     /// <c>/.well-known/jwks.json</c>), the JWKS endpoint is not re-registered.
     /// Otherwise, this method also maps the JWKS endpoint with the PS's signing keys.
     /// </remarks>
-    public static IEndpointRouteBuilder MapAAuthPersonServerWellKnown(
+    internal static IEndpointRouteBuilder MapAAuthPersonServerWellKnown(
         this IEndpointRouteBuilder endpoints,
         AAuthPersonServerMetadataOptions options)
     {
@@ -87,7 +89,7 @@ public static class WellKnownEndpoints
     /// <c>/.well-known/jwks.json</c>), the JWKS endpoint is not re-registered.
     /// Otherwise, this method also maps the JWKS endpoint with the AS's signing keys.
     /// </remarks>
-    public static IEndpointRouteBuilder MapAAuthAccessServerWellKnown(
+    internal static IEndpointRouteBuilder MapAAuthAccessServerWellKnown(
         this IEndpointRouteBuilder endpoints,
         AAuthAccessServerMetadataOptions options)
     {

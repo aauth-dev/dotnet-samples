@@ -88,22 +88,25 @@ var confirm = await client.SendAsync(confirmRequest);</code></pre>
 // (AS-signed), rejects it unless the bytes hash to r3_s256,
 // then splits operations into granted vs per-call by its
 // OWN policy (r3 §Auth Token Extensions — the AS decides).
-app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
+builder.Services.AddR3AccessTokenEndpoint(options =&gt;
 {
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = issuer,
-    SigningKeys = signingKeys,
-    Trust = { PersonServers = { Allowed = new HashSet&lt;string&gt;(trustedPersonServers) } },
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Issuer = issuer;
+    options.SigningKeys = signingKeys;
+    options.Trust.PersonServers.Allowed = new HashSet&lt;string&gt;(trustedPersonServers);
     // confirmReservation charges a deposit → per-call.
-    IsPerCallOperation = operation =&gt;
+    options.IsPerCallOperation = operation =&gt;
         operation.Matches(Vocabulary.OpenApi,
-            R3Operation.OpenApi("confirmReservation")),
+            R3Operation.OpenApi("confirmReservation"));
     // Require human approval for the per-call proposal:
     // 202 → consent screen → mint on approval.
-    RequireProposalConsent = true,
-    BrowserConsent = new BrowserConsentSessions("R3.Consent"),
-    AuditSink = new SqliteR3AuditSink(auditPath),
-});</code></pre>
+    options.RequireProposalConsent = true;
+    options.BrowserConsent = new BrowserConsentSessions("R3.Consent");
+    options.AuditSink = new SqliteR3AuditSink(auditPath);
+});
+
+// After builder.Build():
+app.MapR3AccessTokenEndpoint();</code></pre>
 </div>
 </div>
 

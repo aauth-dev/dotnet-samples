@@ -206,8 +206,8 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
         }
 
         var proposal = RequirePerCallProposal();
-        var resourceToken = await challenge.BuildResourceTokenAsync(verifiedAuthToken, proposal.Uri, proposal.S256, scope,
-            context.RequestAborted).ConfigureAwait(false);
+        var resourceToken = await challenge.BuildForAuthTokenAsync(verifiedAuthToken, proposal.Uri, proposal.S256, scope,
+            challenge.EntitlementsFor(context), context.RequestAborted).ConfigureAwait(false);
         return ToPerCallChallengeResult(context, resourceToken);
     }
 

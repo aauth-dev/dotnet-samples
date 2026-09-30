@@ -19,11 +19,11 @@ using AAuth.Server.Challenge;
 using AAuth.Server.Verification;
 
 // Must be registered AFTER UseAAuthVerification
-app.UseAAuthChallenge(new ChallengeOptions
-{
-    AccessMode = AAuthAccessMode.RequireAuthToken,
-});
+app.UseAAuthChallenge(options => options.AccessMode = AAuthAccessMode.RequireAuthToken);
 ```
+
+The options start from any `services.Configure<ChallengeOptions>(...)`
+registrations; the delegate then adjusts them for this pipeline.
 
 ## Access Modes
 
@@ -109,11 +109,11 @@ copies it into the resource token, and the PS rejects a resource token whose
 Verification). There is no mission request header to read.
 
 ```csharp
-app.UseAAuthChallenge(new ChallengeOptions
+app.UseAAuthChallenge(options =>
 {
-    AccessMode = AAuthAccessMode.RequireAuthToken,
-    ResourceSigningKeys = new AAuthSigningKeySet(keyId, resourceKey),
-    ResourceIdentifier = resourceUrl,
+    options.AccessMode = AAuthAccessMode.RequireAuthToken;
+    options.ResourceSigningKeys = new AAuthSigningKeySet(keyId, resourceKey);
+    options.ResourceIdentifier = resourceUrl;
     // mission_s256 and tenant are copied from the presented token automatically
 });
 ```
@@ -130,15 +130,9 @@ threads through the tokens, and
 > only for fully custom pipelines.
 
 ```csharp
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    ResourceIdentifier = "https://resource.example",
-});
+app.UseAAuthVerification(options => options.ResourceIdentifier = "https://resource.example");
 
-app.UseAAuthChallenge(new ChallengeOptions
-{
-    AccessMode = AAuthAccessMode.RequireAuthToken,
-});
+app.UseAAuthChallenge(options => options.AccessMode = AAuthAccessMode.RequireAuthToken);
 
 // Endpoints below here see only authorized requests
 app.MapGet("/data", (HttpContext ctx) =>
@@ -180,7 +174,7 @@ of endpoints.
 A resource can deliver `requirement=auth-token` as a `202 Accepted` instead of a
 `401`. It holds the invocation, and the agent completes it by polling the
 pending URL with signed `GET`s. Use this for a non-idempotent call the agent
-shouldn't resend. `AAuthHeldInvocations` does the bookkeeping:
+shouldn't resend. `IAAuthHeldInvocations` does the bookkeeping:
 
 - the first poll that presents a valid auth token for the resource token's
   `agent_jkt` and required scopes runs the invocation, once;
@@ -188,16 +182,48 @@ shouldn't resend. `AAuthHeldInvocations` does the bookkeeping:
   a repeat of the same token gets it back without running the invocation again;
 - a different token after completion gets `410`, and another key gets `404`.
 
-```csharp
-var held = new AAuthHeldInvocations();          // pending URLs are /aauth/held/{id}
+The endpoint declares its operation with `WithHeldInvocation(name, execute)`, and
+its handler parks the request with `HoldAsync`, passing the request data the
+operation needs as `state`. Only the operation name and that state are stored;
+the `execute` delegate stays in process, registered on the endpoint.
 
-app.MapPost("/orders", () =>
-    held.Hold(resourceToken, ["orders.write"], (context, ct) =>
-        Task.FromResult(HeldInvocationResult.Json(new { order = 1 }, StatusCodes.Status201Created))));
-app.MapAAuthHeldInvocations(held);              // behind the resource's AAuth verification
+```csharp
+builder.Services.AddAAuthHeldInvocations();     // pending URLs are /aauth/held/{id}
+
+// After builder.Build():
+app.MapPost("/orders", (HttpContext context, IAAuthHeldInvocations held) =>
+        held.HoldAsync(context, resourceToken, ["orders.write"], new JsonObject { ["item"] = "hotel" }))
+    .WithHeldInvocation("orders", (context, state, ct) =>
+        Task.FromResult(HeldInvocationResult.Json(new { order = 1, item = (string?)state?["item"] },
+            StatusCodes.Status201Created)));
+app.MapAAuthHeldInvocations();                  // behind the resource's AAuth verification
 ```
 
 The agent side needs no configuration: the challenge handler exchanges the
 resource token for an auth token, then polls the `Location`. It never resends
-the original request body. The store is in-memory; the shipped samples keep
-answering with `401`.
+the original request body. The shipped samples keep answering with `401`.
+
+`AddAAuthHeldInvocations(o => ...)` sets `PathPrefix`, `PendingLifetime` (or pass
+`pendingLifetime` to `WithHeldInvocation`) and `TimeProvider`. It registers three
+seams with `TryAdd`, so an implementation registered first wins:
+
+- `IAAuthHeldInvocationStore` — parked invocations (`InMemoryHeldInvocationStore`);
+- `IAAuthSingleUseGate` — one execution per auth-token `jti` and the retained
+  result (`InMemorySingleUseGate`);
+- `IAAuthHeldInvocations` — the hold and poll logic over the two stores.
+
+The in-memory defaults lose state on restart and are not shared across
+instances; `MapAAuthHeldInvocations` logs a warning when they are used outside
+Development. To scale out, register shared implementations of both stores before
+`AddAAuthHeldInvocations`, and keep operation names unique and stable across
+instances.
+
+The gate also enforces R3 per-call single use without a `202`: `ExecuteOnceAsync`
+runs once per grant and answers later presentations from the retained result.
+
+```csharp
+var gate = app.Services.GetRequiredService<IAAuthSingleUseGate>();
+var retained = await gate.ExecuteOnceAsync("auth-token-jti", DateTimeOffset.UtcNow.AddMinutes(5),
+    ct => Task.FromResult(HeldInvocationResult.Json(new { confirmed = true })));
+IResult reply = retained.ToResult();
+```
