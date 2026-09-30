@@ -186,12 +186,12 @@ public class RevocationLifecycleTests
         response.Dispose();
     }
 
-    private const string Person = "https://person.example";
-    private const string Access = "https://access.example";
-    private const string FirstProvider = "https://first-ap.example";
-    private const string SecondProvider = "https://second-ap.example";
-    private const string FirstResource = "https://first-resource.example";
-    private const string SecondResource = "https://second-resource.example";
+    internal const string Person = "https://person.example";
+    internal const string Access = "https://access.example";
+    internal const string FirstProvider = "https://first-ap.example";
+    internal const string SecondProvider = "https://second-ap.example";
+    internal const string FirstResource = "https://first-resource.example";
+    internal const string SecondResource = "https://second-resource.example";
     private const string Agent = "aauth:demo@agent.example";
 
     [Theory]
@@ -362,16 +362,16 @@ public class RevocationLifecycleTests
         Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(second, FirstResource));
     }
 
-    private static JsonObject Decode(string token) => TokenVerifier.DecodeJsonSegment(token.Split('.')[1], "payload");
+    internal static JsonObject Decode(string token) => TokenVerifier.DecodeJsonSegment(token.Split('.')[1], "payload");
 
-    private static Task<RevocationResult> Revoke(HttpClient signer, string recipient, string token)
+    internal static Task<RevocationResult> Revoke(HttpClient signer, string recipient, string token)
     {
         var payload = Decode(token);
         return new RevocationClient(signer).RevokeAsync(new Uri(recipient + "/revoke"), (string)payload["jti"]!,
             DateTimeOffset.FromUnixTimeSeconds((long)payload["exp"]!));
     }
 
-    private sealed class Graph : IAsyncDisposable
+    internal sealed class Graph : IAsyncDisposable
     {
         private readonly Dictionary<string, AAuthKey> _keys = new();
         private readonly Dictionary<string, WebApplication> _hosts = new();
@@ -569,6 +569,20 @@ public class RevocationLifecycleTests
         public async ValueTask DisposeAsync()
         {
             foreach (var host in _hosts.Values) await host.DisposeAsync();
+        }
+
+        public IServiceProvider PersonServices => _hosts[Person].Services;
+
+        public IAAuthRevocationService PersonRevocation
+            => PersonServices.GetRequiredKeyedService<IAAuthRevocationService>(AAuthPersonServerBuilder.DefaultName);
+
+        // A person token issued from an upstream token (#call-chaining).
+        public async Task<string> IssueChainedPersonTokenAsync(string agentToken, string resource, string upstream)
+        {
+            using var client = AgentClient(agentToken);
+            using var response = await client.PostAsJsonAsync(Person + "/person", new { resource, upstream_token = upstream });
+            Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            return (string)(await response.Content.ReadFromJsonAsync<JsonObject>())!["person_token"]!;
         }
 
         private sealed class Router(Graph graph) : HttpMessageHandler

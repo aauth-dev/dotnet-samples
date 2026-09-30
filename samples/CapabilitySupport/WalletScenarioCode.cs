@@ -43,15 +43,13 @@ public static class WalletScenarioCode
         """;
 
     public const string Revocation = """
-        public static async Task<RevocationResult> RevokePresentedPersonTokenAsync(HttpClient signedPersonServer,
-            MetadataClient metadata, string accessServer, string personTokenId, DateTimeOffset personTokenExpiresAt,
-            CancellationToken cancellationToken)
+        public static Task<RevocationCascadeResult> RevokePersonTokenAsync(IServiceProvider services,
+            string personTokenId, CancellationToken cancellationToken)
         {
-            // The PS revokes, at the AS, the person token it presented; the AS cascades to the Wallet.
-            var endpoint = (await metadata.FetchAccessServerMetadataAsync(accessServer, cancellationToken)).RevocationEndpoint
-                ?? throw new InvalidOperationException("The Access Server publishes no revocation_endpoint.");
-            return await new RevocationClient(signedPersonServer).RevokeAsync(new Uri(endpoint),
-                personTokenId, personTokenExpiresAt, cancellationToken);
+            // The PS revokes its person token at its resource and at every AS it presented it to;
+            // each AS cascades to the auth tokens it issued against it.
+            var revocation = services.GetRequiredKeyedService<IAAuthRevocationService>(AAuthPersonServerBuilder.DefaultName);
+            return revocation.RevokeTokenAsync(personTokenId, cancellationToken);
         }
 
         public static Task<string> RecoverAsync(HttpClient signedAgent, MetadataClient metadata,

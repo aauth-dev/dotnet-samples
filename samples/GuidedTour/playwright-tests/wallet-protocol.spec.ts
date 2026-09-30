@@ -69,7 +69,7 @@ test.describe('Wallet Protocol (Guided Tour)', () => {
 
     await selectStepTitled(page, /Agent POSTs Wallet \/revoke → 403 unsupported_iss/);
     await expectResponse(page, 403, ['unsupported_iss']);
-    await selectStepTitled(page, /PS revokes its person token at the AS → 200/);
+    await selectStepTitled(page, /PS revokes its person token at the Wallet and the AS → 200/);
     await expectResponse(page, 200, [Urls.accessServer, Urls.wallet]);
     await selectStepTitled(page, /GET \/wallet with revoked grant → 401/);
     await expectResponse(page, 401);

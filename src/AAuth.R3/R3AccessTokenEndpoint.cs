@@ -38,8 +38,11 @@ public static class R3AccessTokenEndpoint
 
         options.EgressPolicy.ValidateIdentifier(options.Issuer);
         var issuer = options.Issuer;
-        var inventory = app.MapAAuthIssuerRevocation(issuer, AuthTokenBuilder.AccessDwk,
-            options.SigningKeys, "/revoke", options.EgressPolicy, options.TimeProvider, configure: null);
+        var revocation = AAuthRevocationService.ForIdentity(app.Services,
+            new AAuthServerIdentity("R3AccessServer", issuer, AuthTokenBuilder.AccessDwk, options.SigningKeys, options.EgressPolicy),
+            app.Services.GetService<IJtiStore>() ?? new InMemoryJtiStore(options.TimeProvider), options.TimeProvider, key: null);
+        app.Lifetime.ApplicationStopped.Register(revocation.Dispose);
+        var inventory = RevocationEndpoint.MapIssuerRevocationCore(app, app, static _ => true, revocation, "/revoke", configure: null);
         var tokenPath = "/" + options.TokenPath.Trim('/');
 
         WellKnownEndpoints.MapAAuthAccessServerWellKnown(app, new AAuthAccessServerMetadataOptions

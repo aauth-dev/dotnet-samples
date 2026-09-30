@@ -111,7 +111,18 @@ public sealed class AAuthResourceOptions
     /// When absent, the resource issues challenges for authorization instead.
     /// </summary>
     public string? AuthorizationEndpoint { get; set; }
+
+    /// <summary>
+    /// Optional <c>revocation_endpoint</c> URL, published in resource metadata. Map it with
+    /// <c>app.MapAAuthResourceRevocation()</c>.
+    /// </summary>
     public string? RevocationEndpoint { get; set; }
+
+    /// <summary>
+    /// Adjusts the revocation endpoint mapped by <c>MapAAuthResourceRevocation</c>. It accepts any
+    /// verified issuer unless this narrows <see cref="AAuth.Server.AAuthRevocationOptions.IsAcceptedIssuer"/>.
+    /// </summary>
+    public Action<AAuth.Server.AAuthRevocationOptions>? ConfigureRevocation { get; set; }
 
     /// <summary>
     /// Optional extension metadata merged verbatim into the resource well-known

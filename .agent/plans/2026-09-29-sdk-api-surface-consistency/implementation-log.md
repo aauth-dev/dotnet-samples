@@ -479,7 +479,80 @@ PROCEEDED.
     Docs inventory refreshed; e2e typecheck clean.
   - Full Playwright: 78 passed, 1 skipped, `--retries=0`.
 
+### [2026-09-30] [Phase 6] Revocation service
+
+PROCEEDED.
+- **Records gap (L2758), checked first.** The token inventory already held
+  issued grants with their resource and `exp`, the presented person token as
+  a source of AS-issued grants, and the upstream `(iss, jti)` as a source of
+  chained tokens. Missing: the agent token's `sub`, a lookup of a token's own
+  grant (to revoke by `jti` alone), and any mission index. Added
+  `IJtiStore.RecordSubjectAsync`/`GetSubjectAsync` and `GetGrantAsync`. The PS
+  registers two index keys as sources of everything it issues to an agent: the
+  agent identity `(agent iss, sub)` and, under a mission, the mission `s256`.
+  The agent index is walked, never revoked, so the binding and later agent
+  tokens are unaffected.
+- **`IAAuthRevocationService`** (keyed per PS/AS instance; unkeyed for a
+  resource): `RevokeAtAsync`, `RevokeTokenAsync(jti)`, `CascadeAsync(token,
+  exp)`, `RevokeMissionAsync(s256)` (marks the mission terminated, revokes the
+  mission index), `RevokeAgentAsync(iss, sub)`. Results are
+  `RevocationCascadeResult` with per-recipient `RevocationDownstreamResult`
+  entries, which now nest the recipient's own `Downstream`. Delivery failures
+  are reported, never thrown. The cascade engine moved out of
+  `RevocationEndpoint`; the endpoint and app code share it. An AP revocation of
+  an agent token now cascades by `sub` across the agent's agent tokens.
+- **Signing.** The service signs through `IAAuthServerIdentity`; a
+  `RevocationClient` keyed by instance name, else unkeyed, overrides the
+  transport (tests route in process this way).
+- **Endpoint.** `MapAAuthIssuerRevocation` deleted. PS/AS role mappers map the
+  endpoint over their service; the R3 AS builds an internal one. Resources:
+  `AAuthResourceOptions.ConfigureRevocation` + parameterless
+  `app.MapAAuthResourceRevocation()` at the path of `RevocationEndpoint`.
+  `AAuthRevocationOptions.RevokeGrantAsync` applies to the generic
+  `MapAAuthRevocationEndpoint` only; a role endpoint rejects it.
+- **Samples.** MockPersonServer `/local/wallet/revoke` calls
+  `RevokeTokenAsync`, so the PS now revokes at the Wallet (`aud`) as well as
+  the AS; tour and CapabilitySupport step titles say so. The agent-signed
+  `unsupported_iss` demos post `{jti, exp}` directly. Bookings uses
+  `MapAAuthResourceRevocation`. Grep: no `new RevocationClient(` outside the
+  SDK.
+- **Tests.** `PersonTokenRevocationCascadeTests` (3),
+  `AgentTokenRevocationCascadeTests` (3), `MissionRevocationCascadeTests` (1),
+  `BackgroundRevocationTests` (2, one over real loopback HTTP asserting the
+  `Signature-Key` names the PS identity and key). They reuse the
+  `RevocationLifecycleTests.Graph` harness, now internal. Mutation check:
+  disabling the `sub` start fails 2 of 3 agent tests. Ledger rows added to the
+  draft-11 conformance ledger.
+- **Gates.**
+  - Build clean.
+  - Test projects: AAuth.Tests 1741, AAuth.Conformance 1266 (+9),
+    AAuth.R3.Tests 330, AAuth.Events.Tests 83.
+  - ApiSurface: +800/-386 cumulative. Docs inventory refreshed; e2e typecheck
+    clean.
+  - First full Playwright run: 2 failures, both expectations of the old
+    wording (tour step title, wallet snippet `RevokeAsync`); updated. The
+    guided-tour "AS clarification" test fails when run alone on HEAD too
+    (order-dependent, pre-existing); it passes in the full suite.
+  - Full Playwright rerun: 78 passed, 1 skipped, `--retries=0`.
+  - Keycloak `federated-deferred`: 1 passed.
+
 ## Deviations from plan
+
+### [2026-09-30] [Phase 6] `RevokeTokenAsync` instead of `RevokePersonTokenAsync`
+
+PROCEEDED. One cascade covers PS person tokens, PS auth tokens and AS auth
+tokens: revoke at the token's recipient, then walk what was issued against it.
+A person-token-only name would leave AS and three-party revocations without an
+entry. `CascadeAsync` is public so hosts can record a revocation learned out of
+band.
+
+### [2026-09-30] [Phase 6] Resource endpoint mapped by `MapAAuthResourceRevocation()`
+
+PROCEEDED. The resource role has no single role mapper that every resource
+uses (Bookings composes `MapAAuthWellKnown` and its own pipeline), so the
+endpoint keeps a parameterless mapper that reads path, identity and acceptance
+from `AddAAuthResource`. The five resources on the generic
+`MapAAuthRevocationEndpoint` stay on it: they cascade nothing.
 
 ### [2026-09-29] [Phase 5] Consent-dashboard seams moved to Phase 10
 

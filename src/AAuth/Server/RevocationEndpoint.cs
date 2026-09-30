@@ -20,60 +20,33 @@ namespace AAuth.Server;
 public static class RevocationEndpoint
 {
     /// <summary>
-    /// Map the revocation endpoint of the resource registered with <c>AddAAuthResource</c>:
-    /// verifies the caller (<c>jwks_uri</c>, <c>jwks</c> or <c>self-jwt</c>), records revocations
-    /// in the DI <see cref="IJtiStore"/> (or an in-memory one), cascades to recorded grants, and
-    /// signs downstream revocations as the resource with its active key. Accepts any verified
-    /// issuer unless <paramref name="configure"/> narrows <see cref="AAuthRevocationOptions.IsAcceptedIssuer"/>.
+    /// Map the revocation endpoint of the resource registered with <c>AddAAuthResource</c>, at the
+    /// path of its <see cref="AAuthResourceOptions.RevocationEndpoint"/>. It verifies the caller
+    /// (<c>jwks_uri</c>, <c>jwks</c> or <c>self-jwt</c>), records revocations in the resource's
+    /// token inventory (the DI <see cref="IJtiStore"/>), and cascades through the resource's
+    /// <see cref="IAAuthRevocationService"/>. Accepts any verified issuer unless
+    /// <see cref="AAuthResourceOptions.ConfigureRevocation"/> narrows <see cref="AAuthRevocationOptions.IsAcceptedIssuer"/>.
     /// </summary>
-    /// <returns>The token inventory verification consults for revoked tokens.</returns>
-    public static IJtiStore MapAAuthIssuerRevocation(this WebApplication app, string path = "/revoke",
-        Action<AAuthRevocationOptions>? configure = null)
+    public static WebApplication MapAAuthResourceRevocation(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        var metadata = app.Services.GetService<AAuth.Server.Metadata.AAuthResourceMetadataOptions>()
-            ?? throw new InvalidOperationException("MapAAuthIssuerRevocation requires AddAAuthResource.");
-        if (metadata.SigningKeys is not { Count: > 0 } keys)
-            throw new InvalidOperationException("MapAAuthIssuerRevocation requires resource signing keys.");
-        var clock = app.Services.GetService<Microsoft.Extensions.Options.IOptions<AAuthResourceOptions>>()?.Value.TimeProvider
-            ?? TimeProvider.System;
-        return MapIssuerRevocationCore(app, app, static _ => true, metadata.Issuer, AAuth.Tokens.ResourceTokenBuilder.ResourceDwk,
-            keys, path, metadata.EgressPolicy, clock, configure,
-            app.Services.GetService<IJtiStore>() ?? new InMemoryJtiStore(clock));
+        var options = app.Services.GetService<Microsoft.Extensions.Options.IOptions<AAuthResourceOptions>>()?.Value
+            ?? throw new InvalidOperationException("MapAAuthResourceRevocation requires AddAAuthResource.");
+        if (options.RevocationEndpoint is not { } endpoint)
+            throw new InvalidOperationException("MapAAuthResourceRevocation requires AAuthResourceOptions.RevocationEndpoint.");
+        MapIssuerRevocationCore(app, app, static _ => true, app.Services.GetRequiredService<AAuthRevocationService>(),
+            new Uri(endpoint).AbsolutePath, options.ConfigureRevocation);
+        return app;
     }
-    /// <summary>
-    /// Map a verified revocation endpoint for a token-issuing server (PS, AS, or resource)
-    /// that cascades over the returned inventory, signing downstream revocations as
-    /// <paramref name="issuer"/>. Accepts any verified issuer unless <paramref name="configure"/>
-    /// narrows <see cref="AAuthRevocationOptions.IsAcceptedIssuer"/>.
-    /// </summary>
-    internal static IJtiStore MapAAuthIssuerRevocation(this WebApplication app, string issuer, string dwk,
-        AAuth.Crypto.AAuthSigningKeySet signingKeys, string path,
-        AAuth.Discovery.AAuthEgressPolicy egressPolicy, TimeProvider clock, Action<AAuthRevocationOptions>? configure,
-        IJtiStore? inventory = null)
-        => MapIssuerRevocationCore(app, app, static _ => true, issuer, dwk, signingKeys, path, egressPolicy, clock,
-            configure, inventory ?? app.Services.GetService<IJtiStore>() ?? new InMemoryJtiStore(clock));
 
     // `routes` and `inScope` confine the endpoint and its middleware to one role instance's host.
     internal static IJtiStore MapIssuerRevocationCore(WebApplication app, IEndpointRouteBuilder routes,
-        Func<HttpContext, bool> inScope, string issuer, string dwk,
-        AAuth.Crypto.AAuthSigningKeySet signingKeys, string path,
-        AAuth.Discovery.AAuthEgressPolicy egressPolicy, TimeProvider clock, Action<AAuthRevocationOptions>? configure,
-        IJtiStore inventory)
+        Func<HttpContext, bool> inScope, AAuthRevocationService service, string path, Action<AAuthRevocationOptions>? configure)
     {
         var metadata = app.Services.GetRequiredService<AAuth.Discovery.MetadataClient>();
-        var client = app.Services.GetService<RevocationClient>();
-        if (client is null)
-        {
-            var signing = new AAuth.HttpSig.AAuthSigningKeySetHandler(signingKeys, issuer, dwk)
-            {
-                InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(egressPolicy),
-            };
-            var http = AAuth.Discovery.AAuthHttpTransport.AttachPolicy(new System.Net.Http.HttpClient(signing),
-                egressPolicy, AAuth.Discovery.AAuthTransportContract.EnforcesEgressPolicy);
-            app.Lifetime.ApplicationStopped.Register(http.Dispose);
-            client = new RevocationClient(http);
-        }
+        var inventory = service.Inventory;
+        var egressPolicy = service.EgressPolicy;
+        var clock = service.Clock;
         app.Use(async (context, next) =>
         {
             if (inScope(context)) context.Items[AAuthVerificationMiddleware.TokenStoreItemKey] = inventory;
@@ -99,26 +72,11 @@ public static class RevocationEndpoint
                     TimeProvider = clock,
                 }).InvokeAsync));
 
-        async Task<RevocationDownstreamError?> RevokeAtAsync(TokenGrant grant, string recipientDwk, CancellationToken cancellationToken)
-        {
-            var document = await metadata.FetchAsync(metadata.GetUrl(grant.Resource, recipientDwk), cancellationToken);
-            if ((string?)document["revocation_endpoint"] is not { } endpoint) return RevocationDownstreamError.RevocationUnsupported;
-            var endpointUri = egressPolicy.ValidateUrl(endpoint, endpoint: true);
-            if (endpointUri.GetLeftPart(UriPartial.Authority) != new Uri(grant.Resource).GetLeftPart(UriPartial.Authority))
-                return RevocationDownstreamError.RevocationUnsupported;
-            return (await client.RevokeAsync(endpointUri, grant.Token.TokenId, grant.ExpiresAt, cancellationToken)).Failure;
-        }
-
-        routes.MapRevocationEndpointCore(inventory, options =>
-        {
-            options.IsAcceptedIssuer = AAuthTrust.Any;
-            options.Issuer = issuer;
-            options.Clock = clock;
-            options.RevokeGrantAsync = (grant, cancellationToken) => RevokeAtAsync(grant, "aauth-resource.json", cancellationToken);
-            options.RevokeAtAccessServerAsync = (grant, cancellationToken) =>
-                RevokeAtAsync(grant, AAuth.Tokens.AuthTokenBuilder.AccessDwk, cancellationToken);
-            configure?.Invoke(options);
-        }, path);
+        var options = new AAuthRevocationOptions { IsAcceptedIssuer = AAuthTrust.Any };
+        configure?.Invoke(options);
+        if (options.RevokeGrantAsync is not null)
+            throw new InvalidOperationException("A role's revocation endpoint delivers through its IAAuthRevocationService; RevokeGrantAsync applies to MapAAuthRevocationEndpoint only.");
+        MapRevocationEndpointCore(routes, service, options, path);
         return inventory;
     }
 
@@ -158,8 +116,16 @@ public static class RevocationEndpoint
 
         var options = new AAuthRevocationOptions();
         configure?.Invoke(options);
-        var limiter = options.Limits is { } limits ? new RevocationIssuerLimiter(limits, options.Clock) : null;
-        var pending = new RevocationPendingStore(options.Clock);
+        return MapRevocationEndpointCore(endpoints,
+            new AAuthRevocationService(jtiStore, TimeProvider.System, options.RevokeGrantAsync), options, path);
+    }
+
+    private static IEndpointRouteBuilder MapRevocationEndpointCore(IEndpointRouteBuilder endpoints,
+        AAuthRevocationService service, AAuthRevocationOptions options, string path)
+    {
+        var jtiStore = service.Inventory;
+        var limiter = options.Limits is { } limits ? new RevocationIssuerLimiter(limits, service.Clock) : null;
+        var pending = new RevocationPendingStore(service.Clock);
         var stopping = endpoints.ServiceProvider.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>()?.ApplicationStopping
             ?? CancellationToken.None;
         var pendingPath = path.TrimEnd('/') + "/pending";
@@ -207,7 +173,7 @@ public static class RevocationEndpoint
 
             if (string.IsNullOrWhiteSpace(jti) || exp is not { } expSeconds || expSeconds <= 0)
                 return Error(RevocationErrorCode.InvalidRequest, "a JSON body with a 'jti' string and an integer 'exp' is required.");
-            if (expSeconds > (options.Clock.GetUtcNow() + options.MaxTokenLifetime + ClockSkew).ToUnixTimeSeconds())
+            if (expSeconds > (service.Clock.GetUtcNow() + options.MaxTokenLifetime + ClockSkew).ToUnixTimeSeconds())
                 return Error(RevocationErrorCode.InvalidRequest, "'exp' is later than the longest token lifetime this recipient accepts.");
 
             var token = new TokenKey(callerId, jti);
@@ -227,10 +193,11 @@ public static class RevocationEndpoint
             }
 
             // A recipient with nothing downstream MUST NOT answer 202.
-            if ((await jtiStore.GetGrantsAsync(token, cancellationToken)).Count == 0)
+            var starts = await service.StartsAsync(token, expiresAt, cancellationToken);
+            if (!await service.HasDownstreamAsync(starts, cancellationToken))
                 return Results.Ok();
             // The cascade outlives the request when it is deferred.
-            var cascade = CascadeAsync(token, expiresAt, stopping);
+            var cascade = CascadeAsync(starts, stopping);
             if (await HoldAsync(cascade, context, options.DeferAfter)) return await cascade;
             return Pending(context, pendingPath + "/" + pending.Add(callerId, cascade));
         }).WithMetadata(new AAuth.Server.Endpoints.AAuthEndpointRequirement
@@ -254,38 +221,16 @@ public static class RevocationEndpoint
             AcceptedSchemes = ["jwks_uri", "jwks", "self-jwt"],
         });
 
-        async Task<IResult> CascadeAsync(TokenKey token, DateTimeOffset expiresAt, CancellationToken cancellationToken)
+        async Task<IResult> CascadeAsync(IReadOnlyList<AAuthRevocationService.CascadeSource> starts, CancellationToken cancellationToken)
         {
-            var outcomes = new Dictionary<string, RevocationDownstreamError?>(StringComparer.Ordinal);
-            var visited = new HashSet<TokenKey> { token };
-            var federated = new HashSet<(TokenKey, string)>();
-            var remaining = new Queue<(TokenKey Token, DateTimeOffset ExpiresAt)>();
-            remaining.Enqueue((token, expiresAt));
-            while (remaining.TryDequeue(out var source))
-            {
-                foreach (var grant in await jtiStore.GetGrantsAsync(source.Token, cancellationToken))
-                {
-                    var own = options.Issuer is null || grant.Token.Issuer == options.Issuer;
-                    // Four-party: a token another server issued against one of ours is terminated by
-                    // revoking ours at that AS, which cascades to what it issued (#revocation-cascade).
-                    if (!own && source.Token.Issuer == options.Issuer && federated.Add((source.Token, grant.Token.Issuer)))
-                        Record(outcomes, grant.Token.Issuer, await DeliverAsync(options.RevokeAtAccessServerAsync,
-                            new TokenGrant(source.Token, grant.Token.Issuer, source.ExpiresAt), cancellationToken));
-                    if (!visited.Add(grant.Token)) continue;
-                    remaining.Enqueue((grant.Token, grant.ExpiresAt));
-                    await jtiStore.RevokeAsync(grant.Token, grant.ExpiresAt, cancellationToken);
-                    if (own)
-                        Record(outcomes, grant.Resource, await DeliverAsync(options.RevokeGrantAsync, grant, cancellationToken));
-                }
-            }
-
-            if (!options.ReportDownstream || outcomes.Count == 0)
+            var result = await service.WalkAsync(starts, new(StringComparer.Ordinal), cancellationToken);
+            if (!options.ReportDownstream || result.Downstream.Count == 0)
                 return Results.Ok();
             var downstream = new JsonArray();
-            foreach (var (recipient, error) in outcomes)
+            foreach (var outcome in result.Downstream)
             {
-                var entry = new JsonObject { ["recipient"] = recipient };
-                if (error is { } failure) entry["error"] = RevocationError.ToWireCode(failure);
+                var entry = new JsonObject { ["recipient"] = outcome.Recipient };
+                if (outcome.Error is { } failure) entry["error"] = RevocationError.ToWireCode(failure);
                 downstream.Add(entry);
             }
             return Results.Json(new JsonObject { ["downstream"] = downstream }, statusCode: StatusCodes.Status200OK);
@@ -323,27 +268,4 @@ public static class RevocationEndpoint
 
     private static IResult Error(RevocationErrorCode code, string detail)
         => AAuthProblemDetails.Create(RevocationError.ToWireCode(code), detail, statusCode: RevocationError.StatusCode(code));
-
-    private static async Task<RevocationDownstreamError?> DeliverAsync(
-        Func<TokenGrant, CancellationToken, Task<RevocationDownstreamError?>>? revoke, TokenGrant grant, CancellationToken cancellationToken)
-    {
-        if (revoke is null) return RevocationDownstreamError.RevocationUnsupported;
-        try
-        {
-            return await revoke(grant, cancellationToken);
-        }
-        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or AAuthMetadataException or ArgumentException
-            or InvalidOperationException or JsonException || ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-        {
-            return RevocationDownstreamError.RevocationUnavailable;
-        }
-    }
-
-    // Keep the worst outcome per recipient: unavailable (retryable) over unsupported over recorded.
-    private static void Record(Dictionary<string, RevocationDownstreamError?> outcomes, string recipient, RevocationDownstreamError? error)
-    {
-        if (!outcomes.TryGetValue(recipient, out var current) || current is null
-            || error == RevocationDownstreamError.RevocationUnavailable)
-            outcomes[recipient] = error ?? current;
-    }
 }

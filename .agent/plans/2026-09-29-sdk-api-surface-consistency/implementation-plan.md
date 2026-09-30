@@ -423,19 +423,19 @@ This is the highest-blast-radius server change.
 
 ### Definition of Done
 
-- [ ] Samples construct no `new RevocationClient(` or hand-built PS-signed
+- [x] Samples construct no `new RevocationClient(` or hand-built PS-signed
       client. Grep evidence covers MockPersonServer, GuidedTour, and
       CapabilitySupport.
-- [ ] Tests:
-  - [ ] `PersonTokenRevocationCascadeTests`: fan-out to `aud` and to every
+- [x] Tests:
+  - [x] `PersonTokenRevocationCascadeTests`: fan-out to `aud` and to every
         recorded AS; an upstream-derived token is revoked.
-  - [ ] `MissionRevocationCascadeTests`.
-  - [ ] `AgentTokenRevocationCascadeTests`, by `sub`, across two agent tokens.
-  - [ ] `BackgroundRevocationTests`: invoked with no `HttpContext`.
-  - [ ] A test that the endpoint is signed with the role identity.
-- [ ] The conformance ledger rows for L2752, L2754, and L2755 point at the new
+  - [x] `MissionRevocationCascadeTests`.
+  - [x] `AgentTokenRevocationCascadeTests`, by `sub`, across two agent tokens.
+  - [x] `BackgroundRevocationTests`: invoked with no `HttpContext`.
+  - [x] A test that the endpoint is signed with the role identity.
+- [x] The conformance ledger rows for L2752, L2754, and L2755 point at the new
       tests.
-- [ ] Gates pass, including the Keycloak profile.
+- [x] Gates pass, including the Keycloak profile.
 
 ## Phase 7 — Client registration, factory, configuration (F-C1, F-C6; Q1, Q2, Q3, Q6)
 

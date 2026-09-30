@@ -38,4 +38,16 @@ public interface IJtiStore
 
     /// <summary>Return unexpired grants issued or provided for the exact source token.</summary>
     Task<IReadOnlyList<TokenGrant>> GetGrantsAsync(TokenKey source, CancellationToken ct = default);
+
+    /// <summary>Return the unexpired grant recorded for <paramref name="token"/> itself, if any.</summary>
+    Task<TokenGrant?> GetGrantAsync(TokenKey token, CancellationToken ct = default);
+
+    /// <summary>
+    /// Record the <c>sub</c> a registered agent token carried, so a revocation of that token
+    /// cascades by agent identity (#revocation-cascade, Records).
+    /// </summary>
+    Task RecordSubjectAsync(TokenKey token, string subject, CancellationToken ct = default);
+
+    /// <summary>The <c>sub</c> recorded for <paramref name="token"/>, if any.</summary>
+    Task<string?> GetSubjectAsync(TokenKey token, CancellationToken ct = default);
 }

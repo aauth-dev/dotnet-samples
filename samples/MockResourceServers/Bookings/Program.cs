@@ -68,6 +68,8 @@ builder.Services.AddAAuthResource(o =>
     o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
     o.RevocationEndpoint = $"{resourceUrl}/revoke";
+    o.ConfigureRevocation = revocation =>
+        revocation.IsAcceptedIssuer = caller => caller == personServerUrl || caller == accessServerUrl;
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
     o.SigningKeys[ResourceKid] = resourceKey;
     o.Name = "Aria Reservations";
@@ -101,8 +103,8 @@ var documentEntitlements = app.Services.GetRequiredService<IR3DocumentEntitlemen
 app.MapAAuthWellKnown();
 // The token inventory lets verification reject revoked tokens; revocations arrive as
 // signed POSTs from the PS or AS and are verified before the endpoint (§Token Revocation).
-var tokenInventory = app.MapAAuthIssuerRevocation("/revoke",
-    options => options.IsAcceptedIssuer = caller => caller == personServerUrl || caller == accessServerUrl);
+app.MapAAuthResourceRevocation();
+var tokenInventory = app.Services.GetRequiredService<IJtiStore>();
 
 app.MapGet("/", () => Results.Ok(new
 {

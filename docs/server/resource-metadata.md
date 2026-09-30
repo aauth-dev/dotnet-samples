@@ -34,7 +34,7 @@ app.MapAAuthWellKnown(); // serves /.well-known/aauth-resource.json
 > publish resource metadata; the lower-level mapper is internal. Fields without a
 > typed `AAuthResourceOptions` property go through `AdditionalMetadata`.
 > `RevocationEndpoint` is also available through `AAuthResourceOptions`;
-> map the endpoint itself with `MapAAuthIssuerRevocation`.
+> map the endpoint itself with `MapAAuthResourceRevocation`.
 
 ```csharp
 using AAuth.Crypto;

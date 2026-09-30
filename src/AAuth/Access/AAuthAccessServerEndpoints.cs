@@ -120,9 +120,8 @@ public static class AAuthAccessServerEndpoints
 
         var issuer = options.Issuer;
         var (routes, inScope) = AAuthServerRoles.Scope(app, issuer, options.MatchIssuerHost);
-        var inventory = RevocationEndpoint.MapIssuerRevocationCore(app, routes, inScope, issuer, AuthTokenBuilder.AccessDwk,
-            options.SigningKeys, options.RevocationPath, options.EgressPolicy, options.TimeProvider, options.ConfigureRevocation,
-            app.Services.GetRequiredKeyedService<IJtiStore>(name));
+        var inventory = RevocationEndpoint.MapIssuerRevocationCore(app, routes, inScope,
+            app.Services.GetRequiredKeyedService<AAuthRevocationService>(name), options.RevocationPath, options.ConfigureRevocation);
         var loginPath = "/" + options.InteractionLoginPath.Trim('/');
         var interactionPrefix = loginPath.Split('/', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } seg
             ? "/" + seg[0]

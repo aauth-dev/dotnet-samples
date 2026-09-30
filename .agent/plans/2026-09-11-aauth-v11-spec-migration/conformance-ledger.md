@@ -178,6 +178,20 @@ Optional items:
 | PS-90 | Partly selected (Phase 3): the SDK reports `termination_reason: expired`. `IMissionStore` records no other reasons, so they are omitted. | `PersonServerMapperTests.Mission_Terminated_Rejected`; `GovernanceEndpointMapperTests.MissionAuthorization_RejectsInvalidContext` |
 | PS-96 | Host capability: a PS completes a hosted interaction over its own channel by calling `IPersonPendingStore.MarkAllowed` or `MarkDenied`. No sample demonstrates a non-browser channel. | `IPersonPendingStore` |
 
+## Revocation cascade: executed checks
+
+Recorded 2026-09-30 by the SDK API surface plan, Phase 6
+([log](../2026-09-29-sdk-api-surface-consistency/implementation-log.md)).
+The cascades run through `IAAuthRevocationService`, which the inbound endpoint
+and app code share.
+
+| Requirement | Governing clause | Executed discriminatory checks |
+|---|---|---|
+| PS revokes a person token at its `aud` and at every AS it presented it to; SHOULD revoke person tokens issued from it as an upstream token | [P2752](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2752), `#revocation-cascade` | `PersonTokenRevocationCascadeTests.RevokeToken_ReachesAudienceAndEveryAccessServer`, `.RevokeToken_RevokesUpstreamDerivedPersonTokens` |
+| PS revokes a mission: later requests under its `s256` are denied; SHOULD revoke the tokens issued under it | [P2754](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2754), `#revocation-cascade` | `MissionRevocationCascadeTests.RevokeMission_TerminatesAndRevokesMissionTokens` |
+| AP revokes an agent token: the PS MUST deny it and SHOULD revoke what it issued to that agent's `sub`, whichever agent token it presented; the binding is unaltered | [P2755](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2755), `#revocation-cascade` | `AgentTokenRevocationCascadeTests.ProviderRevoke_CascadesBySubAcrossAgentTokens`, `.RevokeAgent_RevokesIssuedTokensOnly` |
+| Records: agent token `(iss, jti)` with its `sub`; issued tokens with resource and `exp`; upstream `(iss, jti)` | [P2758](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2758), `#revocation-cascade` | Covered by the three rows above; `IJtiStore.RecordSubjectAsync` and `GetGrantAsync` close the gap |
+
 ## Evidence state
 
 Implementation must record exact commands, failures, fixes/reruns, API/docs

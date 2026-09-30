@@ -161,12 +161,12 @@ var ps = app.Services.GetRequiredKeyedService<IAAuthServerIdentity>(AAuthPersonS
 // supplies the demo's policy.
 app.MapAAuthPersonServer();
 
-// Demo route: the agent asks this PS to terminate access it federated. Per
-// #revocation-cascade the PS revokes, at the AS, the person token it presented
-// there; the AS then revokes the auth tokens it issued against it at the Wallet.
-app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient metadata,
+// Demo route: the agent asks this PS to revoke a person token it issued. Per
+// #revocation-cascade the PS revokes it at its resource and at every AS it was
+// presented to; each AS then revokes the auth tokens it issued against it.
+app.MapPost("/local/wallet/revoke", async (HttpContext context,
     [FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] TokenVerifier verifier,
-    [FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] IJtiStore tokenInventory) =>
+    [FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] IAAuthRevocationService revocation) =>
 {
     var owner = context.GetAAuthVerification();
     if (owner is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true, Agent: not null })
@@ -188,32 +188,22 @@ app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient m
     {
         return AAuthProblemDetails.Create("denied", statusCode: 403);
     }
-    using var signed = ps.CreateSignedClient();
     var jti = (string)verified.Payload["jti"]!;
-    // Only the Access Servers this person token was presented to: each recorded an auth token as its grant.
-    var presentedTo = (await tokenInventory.GetGrantsAsync(new TokenKey(ps.Issuer, jti), context.RequestAborted))
-        .Select(grant => grant.Token.Issuer).Where(trustedAccessServers.Contains).Distinct(StringComparer.Ordinal);
-    var results = new JsonArray();
-    var recorded = true;
-    foreach (var accessServer in presentedTo)
+    var result = await revocation.RevokeTokenAsync(jti, context.RequestAborted);
+    var complete = result.Downstream.All(entry => entry.Error != RevocationDownstreamError.RevocationUnavailable);
+    return Results.Json(new JsonObject
     {
-        var endpoint = (await metadata.FetchAccessServerMetadataAsync(accessServer, context.RequestAborted)).RevocationEndpoint;
-        if (endpoint is null) { recorded = false; continue; }
-        var result = await new RevocationClient(signed).RevokeAsync(new Uri(endpoint), jti, verified.ExpiresAt, context.RequestAborted);
-        recorded &= result.Failure is null;
-        results.Add(new JsonObject
-        {
-            ["access_server"] = accessServer,
-            ["status"] = (int)result.StatusCode,
-            ["downstream"] = new JsonArray(result.Downstream.Select(entry => (JsonNode)new JsonObject
-            {
-                ["recipient"] = entry.Recipient,
-                ["error"] = entry.Error is { } error ? AAuth.Errors.RevocationError.ToWireCode(error) : null,
-            }).ToArray()),
-        });
-    }
-    return Results.Json(new JsonObject { ["jti"] = jti, ["exp"] = verified.ExpiresAt.ToUnixTimeSeconds(), ["revocations"] = results },
-        statusCode: recorded ? 200 : 502);
+        ["jti"] = jti,
+        ["exp"] = verified.ExpiresAt.ToUnixTimeSeconds(),
+        ["revocations"] = new JsonArray(result.Downstream.Select(Report).ToArray()),
+    }, statusCode: complete ? 200 : 502);
+
+    static JsonNode Report(RevocationDownstreamResult entry) => new JsonObject
+    {
+        ["recipient"] = entry.Recipient,
+        ["error"] = entry.Error is { } error ? RevocationError.ToWireCode(error) : null,
+        ["downstream"] = new JsonArray(entry.Downstream.Select(Report).ToArray()),
+    };
 });
 
 // -----------------------------------------------------------------------

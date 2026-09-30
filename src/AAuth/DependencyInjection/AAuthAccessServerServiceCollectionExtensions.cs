@@ -135,6 +135,10 @@ public static class AAuthAccessServerServiceCollectionExtensions
         });
         services.TryAddKeyedSingleton<IJtiStore>(name, (sp, key) => sp.GetService<IJtiStore>()
             ?? new InMemoryJtiStore(sp.GetRequiredService<IOptionsMonitor<AAuthAccessServerOptions>>().Get((string)key!).TimeProvider));
+        services.TryAddKeyedSingleton<AAuthRevocationService>(name, (sp, key) => AAuthRevocationService.ForIdentity(sp,
+            sp.GetRequiredKeyedService<IAAuthServerIdentity>(key), sp.GetRequiredKeyedService<IJtiStore>(key),
+            sp.GetRequiredService<IOptionsMonitor<AAuthAccessServerOptions>>().Get((string)key!).TimeProvider, key));
+        services.TryAddKeyedSingleton<IAAuthRevocationService>(name, (sp, key) => sp.GetRequiredKeyedService<AAuthRevocationService>(key));
         return builder;
     }
 

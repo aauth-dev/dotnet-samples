@@ -37,6 +37,9 @@ public interface IJtiStore
     Task<bool> IsRevokedAsync(TokenKey token, CancellationToken ct = default);
     Task<bool> RegisterGrantAsync(IReadOnlyCollection<TokenKey> sources, TokenGrant grant, CancellationToken ct = default);
     Task<IReadOnlyList<TokenGrant>> GetGrantsAsync(TokenKey source, CancellationToken ct = default);
+    Task<TokenGrant?> GetGrantAsync(TokenKey token, CancellationToken ct = default);
+    Task RecordSubjectAsync(TokenKey token, string subject, CancellationToken ct = default);
+    Task<string?> GetSubjectAsync(TokenKey token, CancellationToken ct = default);
 }
 ```
 
@@ -47,7 +50,10 @@ seen it, so a later registration or presentation is refused; an unseen entry is
 kept until `expiresAt` plus retention, and repeating a revocation changes
 nothing. `RegisterGrantAsync` atomically checks
 all source tokens and records the issued or provided token's exact issuer, ID,
-resource recipient, and expiration. Do not populate this inventory from unverified
+resource recipient, and expiration. `GetGrantAsync` returns that record for a
+token the server issued, so it can revoke the token by `jti` alone.
+`RecordSubjectAsync` keeps the `sub` a registered agent token carried, so its
+revocation cascades by agent identity. Do not populate this inventory from unverified
 JWT claims.
 
 ## Built-in: InMemoryJtiStore
@@ -165,17 +171,10 @@ failed with `5xx`, or sent a malformed response. A `200` with nothing downstream
 has an empty body, and a PS always answers its agent provider with an empty body
 (`ReportDownstream = false`).
 
-`RevocationClient` accepts a signed, admitted `HttpClient`, sends `{jti, exp}`
-with `content-type` and `content-digest` covered, and parses the answer:
-
-```csharp
-var client = new RevocationClient(signedHttp);
-var result = await client.RevokeAsync(
-    new Uri("https://resource.example/revoke"),
-    "token-id-to-revoke",
-    DateTimeOffset.FromUnixTimeSeconds(1788727813));
-// result.Failure is null once recorded; result.Downstream carries the recipient's report.
-```
+`RevocationClient` is the wire primitive: it accepts a signed, admitted
+`HttpClient`, sends `{jti, exp}` with `content-type` and `content-digest`
+covered, and parses the answer. A registered role does not build one; it revokes
+through its `IAAuthRevocationService` (below).
 
 Advertise it in resource metadata:
 
@@ -196,20 +195,30 @@ Core PS/AS mappers and the R3 AS advertise and map `/revoke` and accept any
 verified issuer; their verification requires `content-type` and
 `content-digest` in the signature. Core PS/AS options expose `RevocationPath`
 and `ConfigureRevocation`. A resource registered with `AddAAuthResource` maps
-the same issuer pipeline with one call; it verifies the server-signing schemes,
-records into the DI `IJtiStore`, cascades to recorded grants and signs downstream
-revocations as the resource with its active key:
+the same issuer pipeline at the path of its `RevocationEndpoint`; it verifies
+the server-signing schemes, records into the DI `IJtiStore`, cascades to
+recorded grants and signs downstream revocations as the resource with its active
+key:
 
 ```csharp
-var inventory = app.MapAAuthIssuerRevocation("/revoke", options =>
-    options.IsAcceptedIssuer = issuer => issuer is "https://ps.example" or "https://as.example");
+builder.Services.AddAAuthResource(options =>
+{
+    options.Issuer = "https://resource.example";
+    options.RevocationEndpoint = "https://resource.example/revoke";
+    options.ConfigureRevocation = revocation =>
+        revocation.IsAcceptedIssuer = issuer => issuer is "https://ps.example" or "https://as.example";
+});
+
+// After builder.Build():
+app.MapAAuthResourceRevocation();
 ```
 
 `MapAAuthRevocationEndpoint` above is the lower-level endpoint for hosts that
 bring their own verification.
 Register `IJtiStore` in DI to supply a durable inventory and `RevocationClient`
-to supply an admitted custom signed transport. Defaults are in-memory inventory
-and a server-signed, pinned HTTP transport.
+(keyed by role instance name, or unkeyed) to supply an admitted custom signed
+transport. Defaults are in-memory inventory and a server-signed, pinned HTTP
+transport.
 
 The PS records the verified parent and child source tokens, retains their keys
 through consent and federation, and records grants with each exact resource
@@ -220,6 +229,12 @@ PS's (a presented person token or an upstream token), the PS revokes that token
 at the AS, and the AS revokes the auth tokens it issued against it. Deferred
 delivery rechecks the original source, so a fresh agent token cannot revive
 consent tied to a revoked predecessor.
+
+The PS also records, for each agent token it accepts, the `sub` it carried, and
+indexes every token it issues by that agent identity and by its mission. An agent
+provider's revocation of one agent token therefore cascades to everything the PS
+issued to that agent, whichever agent token it presented; the agent-person
+binding is not altered.
 
 Local revocation is not rolled back when delivery fails. Repeating a revocation
 records nothing new and re-attempts every downstream revocation. A resource
@@ -232,6 +247,37 @@ bounded by token lifetime, at most one hour for auth tokens. See the
 Deployments needing shorter exposure should issue shorter-lived tokens and use a
 durable retry mechanism. The SDK's in-memory sample does not provide restart-safe
 delivery or a background retry service.
+
+## Revoking from App Code
+
+Each registered role has an `IAAuthRevocationService`: keyed by instance name
+for a Person Server or Access Server, unkeyed for a resource. The inbound
+endpoint and app code (an admin page, a background job, a webhook) share it, and
+it needs no `HttpContext`. It signs as the role, never throws for a downstream
+failure, and reports each recipient:
+
+```csharp
+var revocation = app.Services.GetRequiredKeyedService<IAAuthRevocationService>(
+    AAuthPersonServerBuilder.DefaultName);
+
+// A person token: its resource, every AS it was presented to, and person tokens
+// later issued from it as an upstream_token.
+var result = await revocation.RevokeTokenAsync("person-token-jti");
+
+// Everything issued under a mission, which is marked terminated.
+await revocation.RevokeMissionAsync("mission-s256");
+
+// Everything issued to one agent, whichever agent token it presented.
+await revocation.RevokeAgentAsync("https://agent-provider.example", "aauth:assistant@agent-provider.example");
+
+foreach (var entry in result.Downstream)
+    Console.WriteLine($"{entry.Recipient}: {entry.Error?.ToString() ?? "recorded"}");
+```
+
+Repeating any call records nothing new and re-attempts each downstream
+revocation, so a job can retry `RevocationUnavailable` entries.
+`RevokeAtAsync(endpoint, jti, exp)` revokes one token of the role's at one
+endpoint.
 
 ## Further Reading
 

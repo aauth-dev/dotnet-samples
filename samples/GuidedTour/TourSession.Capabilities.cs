@@ -404,7 +404,7 @@ public sealed partial class TourSession
                             CodeSnippets.ReplayWithAuthToken, ct));
                     yield return Act("Agent POSTs Wallet /revoke → 403 unsupported_iss", "An agent is not a server revoker: only the issuer may revoke its token.",
                         Actor.Agent, Actor.Resource, CapAgentRevokeAsync);
-                    yield return Act("PS revokes its person token at the AS", "POST PS /local/wallet/revoke; the PS revokes at the AS, which cascades to the Wallet.",
+                    yield return Act("PS revokes its person token at the Wallet and the AS", "POST PS /local/wallet/revoke; the PS revokes at the Wallet and at the AS, which cascades to the Wallet.",
                         Actor.Agent, Actor.PersonServer, CapPsRevokeAsync);
                     yield return Act("GET /wallet with revoked grant → 401", "The Wallet recorded the cascaded revocation and refuses the old auth token.",
                         Actor.Agent, Actor.Resource, ct => CapAuthorizedRequestAsync(wallet, Actor.Resource, "Wallet",
@@ -1064,9 +1064,8 @@ public sealed partial class TourSession
         using var signed = new SampleHttpClient(BuildSigningHandler(() => _agentToken!, capture, (_, b) => signatureBase = b));
         var claims = JsonNode.Parse(DecodeJwt(_authToken)!.Value.Payload)!;
         var endpoint = WalletUrl + "/revoke";
-        var result = await new RevocationClient(signed).RevokeAsync(new Uri(endpoint), (string)claims["jti"]!,
-            DateTimeOffset.FromUnixTimeSeconds((long)claims["exp"]!), ct);
-        CapRecord($"Agent POSTs Wallet /revoke → {(int)result.StatusCode} unsupported_iss", Actor.Agent, Actor.Resource,
+        using var response = await signed.PostAsJsonAsync(endpoint, new { jti = (string)claims["jti"]!, exp = (long)claims["exp"]! }, ct);
+        CapRecord($"Agent POSTs Wallet /revoke → {(int)response.StatusCode} unsupported_iss", Actor.Agent, Actor.Resource,
             "The agent tries to revoke its own grant at the Wallet's `revocation_endpoint`, signing with its agent token. " +
             "Revocation is keyed by **issuer**: only the Access Server that issued the auth token (or the PS for its own " +
             "person tokens) may revoke it. The Wallet answers `403` with `unsupported_iss` (§Token Revocation).",
@@ -1090,15 +1089,16 @@ public sealed partial class TourSession
             last = exchange;
             signatureBase = sig;
         }
-        CapRecord($"PS revokes its person token at the AS → {Status(last!)}", Actor.Agent, Actor.PersonServer,
-            "The agent asks its PS (a local demo route) to end the federated access. Per §Revocation Cascade the PS " +
-            "revokes, at the Access Server, the **person token it presented** there (`{jti, exp}`, signed by the PS). The " +
-            "AS then revokes every auth token it issued against that person token at the Wallet and reports each " +
-            "downstream recipient. The call is repeated once to show the cascade is idempotent.",
+        CapRecord($"PS revokes its person token at the Wallet and the AS → {Status(last!)}", Actor.Agent, Actor.PersonServer,
+            "The agent asks its PS (a local demo route) to revoke a person token. Per §Revocation Cascade the PS " +
+            "revokes it (`{jti, exp}`, signed by the PS) at the Wallet named in its `aud` and at the **Access Server it " +
+            "presented it to**. The AS then revokes every auth token it issued against that person token at the Wallet " +
+            "and reports each downstream recipient. The call is repeated once to show the cascade is idempotent.",
             last, endpoint, signatureBase, WalletScenarioCode.Revocation,
             decoded: $"First call:  {first!.StatusLine}\nSecond call: {last!.StatusLine}",
             subSteps:
             [
+                new("POST Wallet /revoke {jti, exp} (person token)", Actor.PersonServer, Actor.Resource),
                 new("POST AS /revoke {jti, exp} (person token)", Actor.PersonServer, Actor.AccessServer),
                 new("POST Wallet /revoke {jti, exp} (AS auth token)", Actor.AccessServer, Actor.Resource),
             ],

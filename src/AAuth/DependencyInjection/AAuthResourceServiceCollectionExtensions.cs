@@ -129,6 +129,15 @@ public static class AAuthResourceServiceCollectionExtensions
             AAuthServerRoles.LoadKeyHandle(options.SigningKeys, options.KeyHandle, options.KeyId, sp, nameof(AAuthResourceOptions));
             return metadataOptions;
         });
+        services.TryAddSingleton(sp =>
+        {
+            _ = sp.GetRequiredService<AAuthResourceMetadataOptions>();
+            var identity = new AAuthServerIdentity("Resource", options.Issuer, AAuth.Tokens.ResourceTokenBuilder.ResourceDwk,
+                options.SigningKeys, options.EgressPolicy);
+            return AAuthRevocationService.ForIdentity(sp, identity,
+                sp.GetService<IJtiStore>() ?? new InMemoryJtiStore(options.TimeProvider), options.TimeProvider, key: null);
+        });
+        services.TryAddSingleton<IAAuthRevocationService>(sp => sp.GetRequiredService<AAuthRevocationService>());
 
         return services;
     }

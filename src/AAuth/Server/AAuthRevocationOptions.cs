@@ -51,14 +51,11 @@ public sealed class AAuthRevocationOptions
     public bool ReportDownstream { get; set; } = true;
 
     /// <summary>
-    /// Revoke <see cref="TokenGrant.Token"/> at its recipient <see cref="TokenGrant.Resource"/>,
+    /// For <see cref="RevocationEndpoint.MapAAuthRevocationEndpoint(Microsoft.AspNetCore.Routing.IEndpointRouteBuilder, string, Action{AAuthRevocationOptions}?)"/>
+    /// only: revoke <see cref="TokenGrant.Token"/> at its recipient <see cref="TokenGrant.Resource"/>,
     /// returning <see langword="null"/> once recorded there. Unset means every downstream
-    /// revocation is <see cref="RevocationDownstreamError.RevocationUnsupported"/>.
+    /// revocation is <see cref="RevocationDownstreamError.RevocationUnsupported"/>. A role's own
+    /// endpoint delivers through its <see cref="IAAuthRevocationService"/> and rejects this hook.
     /// </summary>
     public Func<TokenGrant, CancellationToken, Task<RevocationDownstreamError?>>? RevokeGrantAsync { get; set; }
-
-    // Set by MapAAuthIssuerRevocation: the recipient's own identity, clock, and AS federation path.
-    internal string? Issuer { get; set; }
-    internal TimeProvider Clock { get; set; } = TimeProvider.System;
-    internal Func<TokenGrant, CancellationToken, Task<RevocationDownstreamError?>>? RevokeAtAccessServerAsync { get; set; }
 }

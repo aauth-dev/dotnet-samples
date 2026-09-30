@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 194 changed public-source files, 784 added/replacement declarations, 386 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 195 changed public-source files, 800 added/replacement declarations, 386 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -202,15 +202,13 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [WalletScenarioCode
         public static ClarificationResponse Cancel() => ClarificationResponse.Cancel();
         """ ;
 + AAuth.Samples.Capabilities.WalletScenarioCode: public const string Revocation = """
-        public static async Task<RevocationResult> RevokePresentedPersonTokenAsync(HttpClient signedPersonServer,
-            MetadataClient metadata, string accessServer, string personTokenId, DateTimeOffset personTokenExpiresAt,
-            CancellationToken cancellationToken)
+        public static Task<RevocationCascadeResult> RevokePersonTokenAsync(IServiceProvider services,
+            string personTokenId, CancellationToken cancellationToken)
         {
-            // The PS revokes, at the AS, the person token it presented; the AS cascades to the Wallet.
-            var endpoint = (await metadata.FetchAccessServerMetadataAsync(accessServer, cancellationToken)).RevocationEndpoint
-                ?? throw new InvalidOperationException("The Access Server publishes no revocation_endpoint.");
-            return await new RevocationClient(signedPersonServer).RevokeAsync(new Uri(endpoint),
-                personTokenId, personTokenExpiresAt, cancellationToken);
+            // The PS revokes its person token at its resource and at every AS it presented it to;
+            // each AS cascades to the auth tokens it issued against it.
+            var revocation = services.GetRequiredKeyedService<IAAuthRevocationService>(AAuthPersonServerBuilder.DefaultName);
+            return revocation.RevokeTokenAsync(personTokenId, cancellationToken);
         }
 
         public static Task<string> RecoverAsync(HttpClient signedAgent, MetadataClient metadata,
@@ -1861,6 +1859,7 @@ Concept/decision: [di](#di). Source: [AAuthResourceOptions.cs](../../../src/AAut
 - AAuth.AAuthResourceOptions: public Func < DateTimeOffset > ? Clock { get ; set ; }
 - AAuth.AAuthResourceOptions: public TimeSpan MaxFutureSkew { get ; set ; } = TimeSpan . FromSeconds ( 5 )
 + AAuth.AAuthResourceOptions: public AAuthSigningKeySet SigningKeys { get ; set ; } = new ( )
++ AAuth.AAuthResourceOptions: public Action < AAuth . Server . AAuthRevocationOptions > ? ConfigureRevocation { get ; set ; }
 + AAuth.AAuthResourceOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
 + AAuth.AAuthResourceOptions: public string ? DocumentationUri { get ; set ; }
 + AAuth.AAuthResourceOptions: public string ? KeyHandle { get ; set ; }
@@ -2270,6 +2269,21 @@ Concept/decision: [revocation](#revocation). Source: [AAuthRevocationOptions.cs]
 ```
 
 Public owners: `AAuth.Server.AAuthRevocationOptions`, `AAuth.Server`.
+
+### src/AAuth/Server/AAuthRevocationService.cs
+
+Concept/decision: [revocation](#revocation). Source: [AAuthRevocationService.cs](../../../src/AAuth/Server/AAuthRevocationService.cs).
+
+```diff
++ AAuth.Server.IAAuthRevocationService: Task < RevocationCascadeResult > CascadeAsync ( TokenKey token , DateTimeOffset expiresAt , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthRevocationService: Task < RevocationCascadeResult > RevokeAgentAsync ( string agentIssuer , string sub , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthRevocationService: Task < RevocationCascadeResult > RevokeMissionAsync ( string s256 , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthRevocationService: Task < RevocationCascadeResult > RevokeTokenAsync ( string jti , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthRevocationService: Task < RevocationDownstreamResult > RevokeAtAsync ( Uri endpoint , string jti , DateTimeOffset expiresAt , CancellationToken cancellationToken = default )
++ AAuth.Server: public interface IAAuthRevocationService
+```
+
+Public owners: `AAuth.Server.IAAuthRevocationService`, `AAuth.Server`.
 
 ### src/AAuth/Server/AAuthServerIdentity.cs
 
@@ -2683,6 +2697,9 @@ Concept/decision: [revocation](#revocation). Source: [IJtiStore.cs](../../../src
 
 ```diff
 - AAuth.Server.IJtiStore: Task < bool > RevokeAsync ( TokenKey token , CancellationToken ct = default )
++ AAuth.Server.IJtiStore: Task < TokenGrant ? > GetGrantAsync ( TokenKey token , CancellationToken ct = default )
++ AAuth.Server.IJtiStore: Task < string ? > GetSubjectAsync ( TokenKey token , CancellationToken ct = default )
++ AAuth.Server.IJtiStore: Task RecordSubjectAsync ( TokenKey token , string subject , CancellationToken ct = default )
 + AAuth.Server.IJtiStore: Task RevokeAsync ( TokenKey token , DateTimeOffset expiresAt , CancellationToken ct = default )
 ```
 
@@ -2694,6 +2711,9 @@ Concept/decision: [revocation](#revocation). Source: [InMemoryJtiStore.cs](../..
 
 ```diff
 - AAuth.Server.InMemoryJtiStore: public Task < bool > RevokeAsync ( TokenKey token , CancellationToken ct = default )
++ AAuth.Server.InMemoryJtiStore: public Task < TokenGrant ? > GetGrantAsync ( TokenKey token , CancellationToken ct = default )
++ AAuth.Server.InMemoryJtiStore: public Task < string ? > GetSubjectAsync ( TokenKey token , CancellationToken ct = default )
++ AAuth.Server.InMemoryJtiStore: public Task RecordSubjectAsync ( TokenKey token , string subject , CancellationToken ct = default )
 + AAuth.Server.InMemoryJtiStore: public Task RevokeAsync ( TokenKey token , DateTimeOffset expiresAt , CancellationToken ct = default )
 ```
 
@@ -2875,7 +2895,7 @@ Concept/decision: [revocation](#revocation). Source: [RevocationEndpoint.cs](../
 - AAuth.Server.RevocationEndpoint: public static IEndpointRouteBuilder MapAAuthRevocationEndpoint ( this IEndpointRouteBuilder endpoints , IJtiStore jtiStore , string path = "/revoke" )
 - AAuth.Server.RevocationEndpoint: public static IJtiStore MapAAuthIssuerRevocation ( this WebApplication app , string issuer , string dwk , AAuth . Crypto . IAAuthKey signingKey , string signingKid , string path , AAuth . Discovery . AAuthEgressPolicy egressPolicy , TimeProvider clock , Action < AAuthRevocationOptions > ? configure )
 + AAuth.Server.RevocationEndpoint: public static IEndpointRouteBuilder MapAAuthRevocationEndpoint ( this IEndpointRouteBuilder endpoints , string path = "/revoke" , Action < AAuthRevocationOptions > ? configure = null )
-+ AAuth.Server.RevocationEndpoint: public static IJtiStore MapAAuthIssuerRevocation ( this WebApplication app , string path = "/revoke" , Action < AAuthRevocationOptions > ? configure = null )
++ AAuth.Server.RevocationEndpoint: public static WebApplication MapAAuthResourceRevocation ( this WebApplication app )
 ```
 
 Public owners: `AAuth.Server.RevocationEndpoint`, `AAuth.Server`.
@@ -2898,15 +2918,18 @@ Public owners: `AAuth.Server.RevocationLimits`, `AAuth.Server`.
 Concept/decision: [revocation](#revocation). Source: [RevocationResult.cs](../../../src/AAuth/Server/RevocationResult.cs).
 
 ```diff
++ AAuth.Server.RevocationCascadeResult: public IReadOnlyList < RevocationDownstreamResult > Downstream { get ; init ; } = [ ]
++ AAuth.Server.RevocationDownstreamResult: public IReadOnlyList < RevocationDownstreamResult > Downstream { get ; init ; } = [ ]
 + AAuth.Server.RevocationResult: public IReadOnlyList < RevocationDownstreamResult > Downstream { get ; init ; } = [ ]
 + AAuth.Server.RevocationResult: public RevocationDownstreamError ? Failure { get ; init ; }
 + AAuth.Server.RevocationResult: public required HttpStatusCode StatusCode { get ; init ; }
 + AAuth.Server.RevocationResult: public string ? Error { get ; init ; }
++ AAuth.Server: public sealed record RevocationCascadeResult
 + AAuth.Server: public sealed record RevocationDownstreamResult ( string Recipient , RevocationDownstreamError ? Error )
 + AAuth.Server: public sealed record RevocationResult
 ```
 
-Public owners: `AAuth.Server.RevocationResult`, `AAuth.Server`.
+Public owners: `AAuth.Server.RevocationCascadeResult`, `AAuth.Server.RevocationDownstreamResult`, `AAuth.Server.RevocationResult`, `AAuth.Server`.
 
 ### src/AAuth/Server/TokenRegistration.cs
 

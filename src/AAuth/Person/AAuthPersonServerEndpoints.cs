@@ -166,13 +166,13 @@ public static class AAuthPersonServerEndpoints
 
         var issuer = options.Issuer;
         var (routes, inScope) = AAuthServerRoles.Scope(app, issuer, options.MatchIssuerHost);
-        var inventory = RevocationEndpoint.MapIssuerRevocationCore(app, routes, inScope, issuer, AuthTokenBuilder.PersonDwk,
-            options.SigningKeys, options.RevocationPath, options.EgressPolicy, options.TimeProvider, revocation =>
+        var inventory = RevocationEndpoint.MapIssuerRevocationCore(app, routes, inScope,
+            app.Services.GetRequiredKeyedService<AAuthRevocationService>(name), options.RevocationPath, revocation =>
             {
                 // A PS answers an agent provider's revocation with an empty 200.
                 revocation.ReportDownstream = false;
                 options.ConfigureRevocation?.Invoke(revocation);
-            }, app.Services.GetRequiredKeyedService<IJtiStore>(name));
+            });
         var interactionPath = "/" + options.InteractionPath.Trim('/');
         var interactionPrefix = interactionPath.Split('/', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } seg
             ? "/" + seg[0]
@@ -389,14 +389,28 @@ public static class AAuthPersonServerEndpoints
         }
 
         async Task<(IReadOnlyList<TokenRegistration>? Sources, IResult? Failure)> RegisterSourcesAsync(
-            AgentIssuanceContext issuance, TokenVerifier.VerifiedToken? presented, System.Threading.CancellationToken ct)
+            AgentIssuanceContext issuance, TokenVerifier.VerifiedToken? presented, string? missionS256, System.Threading.CancellationToken ct)
         {
             var registrations = new List<TokenRegistration>(issuance.SourceTokens);
             if (presented is not null) registrations.Add(TokenRegistration.FromVerified(presented, TokenCredential.Presented));
             // A chained request neither uses nor establishes a binding (#agent-person-binding).
             if (issuance.Upstream is null) registrations.Add(AgentPersonBinding.Registration(issuer, issuance.AgentIssuer, issuance.AgentId));
-            try { await TokenRegistration.RegisterAsync(inventory, registrations, ct); return (registrations, null); }
+            AddCascadeIndexes(registrations, issuance.AgentIssuer, issuance.AgentId, missionS256);
+            try
+            {
+                await TokenRegistration.RegisterAsync(inventory, registrations, ct);
+                await inventory.RecordSubjectAsync(issuance.SourceTokens[0].Token, issuance.AgentId, ct);
+                return (registrations, null);
+            }
             catch (TokenVerificationException ex) { return (null, AAuthProblemDetails.SourceRevoked(ex)); }
+        }
+
+        // #revocation-cascade Records: what the PS issues to an agent is found again by its sub and mission.
+        void AddCascadeIndexes(List<TokenRegistration> registrations, string agentIssuer, string agentId, string? missionS256)
+        {
+            registrations.Add(RevocationRecords.Registration(RevocationRecords.Subject(issuer, agentIssuer, agentId)));
+            if (missionS256 is not null)
+                registrations.Add(RevocationRecords.Registration(RevocationRecords.Mission(issuer, missionS256)));
         }
 
         static IReadOnlyList<TokenKey> Keys(IReadOnlyList<TokenRegistration> sources) => sources.Select(source => source.Token).ToArray();
@@ -428,8 +442,14 @@ public static class AAuthPersonServerEndpoints
             IReadOnlyList<TokenKey> sources;
             try
             {
-                sources = await TokenRegistration.RegisterAsync(inventory, [.. request.SourceTokens,
-                    AgentPersonBinding.Registration(issuer, request.SourceTokens[0].Token.Issuer, request.AgentId)], ct);
+                var agentIssuer = request.SourceTokens[0].Token.Issuer;
+                var registrations = new List<TokenRegistration>(request.SourceTokens)
+                {
+                    AgentPersonBinding.Registration(issuer, agentIssuer, request.AgentId),
+                };
+                AddCascadeIndexes(registrations, agentIssuer, request.AgentId, request.MissionS256);
+                sources = await TokenRegistration.RegisterAsync(inventory, registrations, ct);
+                await inventory.RecordSubjectAsync(request.SourceTokens[0].Token, request.AgentId, ct);
             }
             catch (TokenVerificationException) { return tokens; }
             var ceiling = request.MissionExpiresAt is { } missionExpiry
@@ -492,7 +512,7 @@ public static class AAuthPersonServerEndpoints
             }
             var ceiling = missionExpiresAt is { } missionExpiry ? Earliest(issuance!.ExpiresAt, missionExpiry) : issuance!.ExpiresAt;
 
-            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented: null, ctx.RequestAborted);
+            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented: null, missionS256, ctx.RequestAborted);
             if (sourceFailure is not null) return sourceFailure;
             var sources = registered!;
 
@@ -998,7 +1018,7 @@ public static class AAuthPersonServerEndpoints
                 { return ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode); }
             }
 
-            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented, ctx.RequestAborted);
+            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented, missionS256, ctx.RequestAborted);
             if (sourceFailure is not null) return sourceFailure;
             var sourceTokens = registered!;
 
@@ -1196,7 +1216,7 @@ public static class AAuthPersonServerEndpoints
                 catch (AAuthTokenExchangeException ex)
                 { return ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode); }
             }
-            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented, ctx.RequestAborted);
+            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented, federatedMission, ctx.RequestAborted);
             if (sourceFailure is not null) return sourceFailure;
             var sourceTokens = registered!;
 

@@ -178,6 +178,11 @@ public static class AAuthPersonServerServiceCollectionExtensions
         services.TryAddKeyedSingleton<TokenVerifier>(name, (sp, key) => sp.GetService<TokenVerifier>() ?? Verifier(sp, (string)key!));
         services.TryAddKeyedSingleton<IJtiStore>(name, (sp, key) => sp.GetService<IJtiStore>()
             ?? new InMemoryJtiStore(sp.GetRequiredService<IOptionsMonitor<AAuthPersonServerOptions>>().Get((string)key!).TimeProvider));
+        services.TryAddKeyedSingleton<AAuthRevocationService>(name, (sp, key) => AAuthRevocationService.ForIdentity(sp,
+            sp.GetRequiredKeyedService<IAAuthServerIdentity>(key), sp.GetRequiredKeyedService<IJtiStore>(key),
+            sp.GetRequiredService<IOptionsMonitor<AAuthPersonServerOptions>>().Get((string)key!).TimeProvider, key,
+            sp.GetService<IMissionStore>()));
+        services.TryAddKeyedSingleton<IAAuthRevocationService>(name, (sp, key) => sp.GetRequiredKeyedService<AAuthRevocationService>(key));
         return builder;
 
         static TokenVerifier Verifier(IServiceProvider sp, string instance)

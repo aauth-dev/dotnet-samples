@@ -148,6 +148,44 @@ public sealed class InMemoryJtiStore : IJtiStore
         }
     }
 
+    public Task<TokenGrant?> GetGrantAsync(TokenKey token, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            MaybeCleanup();
+            return Task.FromResult(_tokens.TryGetValue(token, out var entry) && entry.Expiration > _clock.GetUtcNow()
+                ? entry.Grant : null);
+        }
+    }
+
+    public Task RecordSubjectAsync(TokenKey token, string subject, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        ArgumentException.ThrowIfNullOrWhiteSpace(subject);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            MaybeCleanup();
+            if (!_tokens.TryGetValue(token, out var entry))
+                throw new InvalidOperationException("Register the token before recording its subject.");
+            entry.Subject = subject;
+            return Task.CompletedTask;
+        }
+    }
+
+    public Task<string?> GetSubjectAsync(TokenKey token, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            MaybeCleanup();
+            return Task.FromResult(_tokens.TryGetValue(token, out var entry) ? entry.Subject : null);
+        }
+    }
+
     private bool HasRevokedAncestor(TokenKey token) => Ancestry(token).Any(ancestor =>
         _tokens.TryGetValue(ancestor, out var entry) && entry.Revoked);
 
@@ -179,6 +217,7 @@ public sealed class InMemoryJtiStore : IJtiStore
     {
         public DateTimeOffset Expiration { get; } = expiration;
         public bool Revoked { get; set; }
+        public string? Subject { get; set; }
         public TokenGrant? Grant { get; set; }
         public HashSet<TokenKey> Sources { get; } = new();
     }

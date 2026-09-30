@@ -35,7 +35,7 @@ public sealed class WalletDemoSession(string provider, string person, string wal
     {
         WalletFlow.Clarification => ["Enroll agent", "Request wallet review", "Answer AS clarification and consent", "Read approved wallet review", "Reject a charge outside the grant"],
         WalletFlow.AsGrantChaining => ["Enroll agent", "Request concierge wallet access", "Approve upstream AS grant", "Delegate wallet read through the PS", "Reject upstream token at Wallet", "Repeat the delegated read"],
-        _ => ["Enroll agent", "Request wallet access", "Approve wallet grant", "Read wallet", "Reject agent as revoker", "PS revokes its person token at the AS", "Reject revoked grant", "Approve a fresh grant and recover"],
+        _ => ["Enroll agent", "Request wallet access", "Approve wallet grant", "Read wallet", "Reject agent as revoker", "PS revokes its person token at the Wallet and the AS", "Reject revoked grant", "Approve a fresh grant and recover"],
     };
     private string Resource => Flow == WalletFlow.AsGrantChaining ? concierge : wallet;
     private string Path => Flow == WalletFlow.Clarification ? "/wallet/review" : "/wallet";
@@ -76,10 +76,10 @@ public sealed class WalletDemoSession(string provider, string person, string wal
                 {
                     // An agent signs with its agent token, not as a server: unsupported_iss.
                     var claims = ScenarioWireHandler.Claims(_authToken!);
-                    var rejected = await new RevocationClient(signed).RevokeAsync(new Uri(wallet + "/revoke"),
-                        (string)claims["jti"]!, DateTimeOffset.FromUnixTimeSeconds((long)claims["exp"]!), cancellationToken);
+                    using var rejected = await signed.PostAsJsonAsync(wallet + "/revoke",
+                        new { jti = (string)claims["jti"]!, exp = (long)claims["exp"]! }, cancellationToken);
                     Require(rejected.StatusCode, HttpStatusCode.Forbidden);
-                    Result = JsonSerializer.Serialize(rejected, Pretty);
+                    Result = await rejected.Content.ReadAsStringAsync(cancellationToken);
                 }
                 break;
             case 5:

@@ -24,4 +24,19 @@ public sealed record RevocationResult
 }
 
 /// <summary>One <c>downstream</c> entry: the recipient revoked at, and why it did not succeed (absent on success).</summary>
-public sealed record RevocationDownstreamResult(string Recipient, RevocationDownstreamError? Error);
+public sealed record RevocationDownstreamResult(string Recipient, RevocationDownstreamError? Error)
+{
+    /// <summary>What the recipient itself reported of its own cascade (an AS to a PS).</summary>
+    public IReadOnlyList<RevocationDownstreamResult> Downstream { get; init; } = [];
+}
+
+/// <summary>
+/// The outcome of a revocation cascade (#revocation-cascade): one entry per downstream
+/// recipient, each terminal. <see cref="RevocationDownstreamError.RevocationUnavailable"/>
+/// entries may be retried by repeating the revocation.
+/// </summary>
+public sealed record RevocationCascadeResult
+{
+    /// <summary>Each recipient revoked at, with its worst outcome.</summary>
+    public IReadOnlyList<RevocationDownstreamResult> Downstream { get; init; } = [];
+}

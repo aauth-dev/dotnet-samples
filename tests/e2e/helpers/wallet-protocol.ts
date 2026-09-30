@@ -55,7 +55,7 @@ export function walletProtocolTests() {
         await expect(root).toHaveAttribute('data-flow', flow);
         await expectSyntaxHighlighted(root.locator('.wallet-code code'));
         await expect(root.locator('.wallet-code code')).toContainText(
-          flow === 'Clarification' ? 'ClarifyAsync' : flow === 'AsGrantChaining' ? 'ReadWalletAsync' : 'RevokeAsync',
+          flow === 'Clarification' ? 'ClarifyAsync' : flow === 'AsGrantChaining' ? 'ReadWalletAsync' : 'RevokeTokenAsync',
         );
         await expectReadableLinks(page);
         for (const step of [1, 2]) {
@@ -105,8 +105,8 @@ export function walletProtocolTests() {
           expect(result.exchanges.map((entry: { status: number }) => entry.status)).toEqual([401, 401, 200]);
           await expect(root).toContainText('HTTP 401');
         } else {
-          // draft-11: an agent is not a server revoker; the PS revokes its presented
-          // person token at the AS, which cascades to the Wallet and reports it.
+          // draft-11: an agent is not a server revoker; the PS revokes its person
+          // token at the Wallet and at the AS, which cascades to the Wallet and reports it.
           await expect(root).toContainText('unsupported_iss');
           await expect(root).toContainText('HTTP 401');
           await expect(root).toContainText('http://localhost:5500');
