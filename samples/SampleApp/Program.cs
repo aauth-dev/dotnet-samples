@@ -21,21 +21,29 @@ builder.Services.AddSingleton<EnrollmentService>();
 builder.Services.AddAAuthAgentFactory();
 
 // -----------------------------------------------------------------------
-// Self-issued agent identity: SampleApp is a hosted service with a stable
-// URL, so it is its own AP (spec §Self-Hosted Agents). The signing key and
-// metadata are used by JWT, Deferred, and CallChain pages.
+// Aria, the self-issued agent: SampleApp is a hosted service with a stable
+// URL, so it is its own AP (spec §Self-Hosted Agents). Its identity, Person
+// Server and polling budgets bind from AAuth:Agents:aria; the key is
+// generated here. Pages resolve the agent by name and never build clients.
 // -----------------------------------------------------------------------
 var selfIssuedKey = AAuthKey.Generate();
-const string SelfIssuedKid = "sample-app-1";
-var sampleAppUrl = builder.Configuration["AAuth:SelfIssuer"] ?? "http://localhost:5240";
-var sampleAppAgentId = builder.Configuration["AAuth:SelfAgentId"] ?? "aauth:sample-app@localhost";
-builder.Services.AddSingleton(new SelfIssuedIdentity(selfIssuedKey, SelfIssuedKid, sampleAppUrl, sampleAppAgentId));
+var aria = builder.Configuration.GetSection("AAuth:Agents:" + SampleAgents.Aria);
+var selfIssuedKid = aria["SelfIssued:KeyId"]!;
+var sampleAppUrl = aria["SelfIssued:Issuer"]!;
+var sampleAppAgentId = aria["SelfIssued:Subject"]!;
+builder.Services.AddSingleton(new SelfIssuedIdentity(selfIssuedKey, selfIssuedKid, sampleAppUrl, sampleAppAgentId));
+builder.Services.AddAAuthAgent(SampleAgents.Aria, aria, options =>
+{
+    options.Signer = selfIssuedKey;
+    options.EgressPolicy = SampleEgress.Policy;
+});
+builder.Services.AddSingleton<SampleAgents>();
 // Resource metadata for the federated-worker scenario, published by MapAAuthWellKnown.
 builder.Services.AddAAuthResource(options =>
 {
     options.EgressPolicy = SampleEgress.Policy;
     options.Issuer = sampleAppUrl;
-    options.SigningKeys[SelfIssuedKid] = selfIssuedKey;
+    options.SigningKeys[selfIssuedKid] = selfIssuedKey;
     options.ScopeDescriptions = new(FederatedWorkerScenario.ScopeDescriptions);
 });
 
@@ -52,7 +60,7 @@ app.MapAAuthAgentWellKnown(options =>
     options.EgressPolicy = SampleEgress.Policy;
     options.Issuer = sampleAppUrl;
     options.Name = "SampleApp Demo";
-    options.SigningKeys = new AAuthSigningKeySet { [SelfIssuedKid] = selfIssuedKey };
+    options.SigningKeys = new AAuthSigningKeySet { [selfIssuedKid] = selfIssuedKey };
 });
 
 app.UseAntiforgery();

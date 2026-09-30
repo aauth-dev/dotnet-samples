@@ -6,7 +6,10 @@
 @inject IConfiguration Configuration
 
 @code {
-    private string PersonServerUrl => Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
+    /// <summary>The Person Server; defaults to <c>AAuth:PersonServer</c>.</summary>
+    [Parameter] public string? PersonServer { get; set; }
+
+    private string PersonServerUrl => PersonServer ?? Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
 }
 @implements IDisposable
 
@@ -155,7 +158,7 @@
         _session = new EventDemoSession(directory,
             Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
             Configuration["AAuth:Bookings"] ?? "http://localhost:5005",
-            Configuration["AAuth:PersonServer"] ?? "http://localhost:5100");
+            PersonServerUrl);
         _session.Changed = () => InvokeAsync(StateHasChanged);
     }
 

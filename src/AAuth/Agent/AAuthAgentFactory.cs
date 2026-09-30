@@ -163,7 +163,34 @@ internal sealed class AAuthAgentChannel : IDisposable
         Governance.GovernanceOptions? governanceDefaults = null)
     {
         var builder = AAuthAgentComposer.CreateBuilder(options, services, name);
-        return new(builder, services, builder.PersonServer, governanceDefaults);
+        return new(builder, services, builder.PersonServer,
+            governanceDefaults ?? GovernanceDefaults(options, services, name));
+    }
+
+    // Governance calls wait on the same Person Server as challenge handling, so they share its
+    // callbacks (options delegate, then the handler keyed by agent name, then unkeyed) and budget.
+    private static Governance.GovernanceOptions GovernanceDefaults(AAuthAgentOptions options, IServiceProvider services,
+        string name)
+    {
+        var challenge = options.Challenge;
+        var interaction = AAuthAgentComposer.Handler<IAAuthInteractionHandler>(services, name);
+        var clarification = AAuthAgentComposer.Handler<IAAuthClarificationHandler>(services, name);
+        return new()
+        {
+            OnInteractionRequired = challenge.OnInteractionRequired
+                ?? (interaction is null ? null : interaction.OnInteractionRequiredAsync),
+            OnClarificationRequired = challenge.OnClarificationRequired
+                ?? (clarification is null ? null : clarification.OnClarificationRequiredAsync),
+            MaxClarificationRounds = challenge.MaxClarificationRounds,
+            PollerOptions = new DeferredPollerOptions
+            {
+                MaxTotalWait = challenge.PollingTimeout,
+                DefaultPollInterval = challenge.DefaultPollInterval,
+                PreferWaitSeconds = challenge.PreferWaitSeconds,
+                MinPollInterval = challenge.MinPollInterval,
+                OnPoll = challenge.OnPoll,
+            },
+        };
     }
 
     public HttpClient Signed { get; }

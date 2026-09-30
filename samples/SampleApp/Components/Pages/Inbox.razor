@@ -2,6 +2,8 @@
 @using AAuth
 @using AAuth.Crypto
 @using AAuth.HttpSig
+@using AAuth.Agent
+@implements IAAuthInteractionHandler
 @inject IJSRuntime JS
 @inject EnrollmentService Enrollment
 @rendermode InteractiveServer
@@ -38,25 +40,27 @@
 <pre><code class="language-csharp">// The injected EnrollmentService discovers AP metadata, signs enrollment
 // with a persisted durable key, and retains the key handle and refresh URL.
 await Enrollment.EnsureEnrolledAsync();
-var inbox = Config["AAuth:Inbox"]!.TrimEnd('/');
 
-using var client = AAuthClientBuilder.Enrolled(Enrollment.Key)
-    .WithEgressPolicy(SampleEgress.Policy)
-    .RefreshingFrom(Enrollment.RefreshEndpoint, Enrollment.LocalKeyHandle)
-    .WithKeyStore(Enrollment.KeyStore)
-    .WithResourceManagedAccess()
-    .WithInteractionHandling(o =&gt;
-    {
-        o.OnInteractionRequired = (interaction, ct) =&gt;
-        {
-            // Show the user the Inbox consent URL.
-            return Task.CompletedTask;
-        };
-    })
-    .Build();
+// Once enrolled, it creates ONE agent for that identity and keeps it as
+// Enrollment.Agent (disposed with the service):
+var agent = factory.Create(new AAuthAgentDescriptor("sample-app-enrolled")
+{
+    EgressPolicy = SampleEgress.Policy,
+    KeyHandle = Enrollment.LocalKeyHandle,  // loaded from the key store
+    AgentProvider = { RefreshEndpoint = Enrollment.RefreshEndpoint },
+    EnableResourceManagedAccess = true,
+    HandleInteractions = true,
+});
+
+// Page: reuse the enrolled agent's client. This request's consent handler
+// shows the user the Inbox consent URL (interaction.BuildUserUrl()).
+var inbox = Config["AAuth:Inbox"]!.TrimEnd('/');
+var client = Enrollment.Agent.HttpClient;
 
 // First call drives the 202 → consent → poll handshake.
-await client.GetAsync($"{inbox}/messages");
+using var request = new HttpRequestMessage(HttpMethod.Get, $"{inbox}/messages");
+request.Options.Set(AAuthRequestOptions.InteractionHandler, consent);
+await client.SendAsync(request);
 // Subsequent calls replay Authorization: AAuth, bound to the signature.
 var resp = await client.GetAsync($"{inbox}/messages");</code></pre>
 </div>
@@ -181,28 +185,17 @@ app.MapAAuthInteractionPoll().RequireAAuthSignature();</code></pre>
         {
             await Enrollment.EnsureEnrolledAsync();
             var inbox = Config["AAuth:Inbox"]!.TrimEnd('/');
+            var client = Enrollment.Agent.HttpClient;
 
-            using var client = AAuthClientBuilder.Enrolled(Enrollment.Key)
-                .WithEgressPolicy(SampleEgress.Policy)
-                .RefreshingFrom(Enrollment.RefreshEndpoint, Enrollment.LocalKeyHandle)
-                .WithKeyStore(Enrollment.KeyStore)
-                .WithResourceManagedAccess()
-                .WithInteractionHandling(o =>
-                {
-                    o.OnInteractionRequired = async (interaction, ct) =>
-                    {
-                        // Surface the Inbox's own consent URL to the user, then
-                        // keep polling until they approve.
-                        _consentUrl = interaction.BuildUserUrl();
-                        await InvokeAsync(StateHasChanged);
-                    };
-                    o.DefaultPollInterval = TimeSpan.FromSeconds(1);
-                })
-                .Build();
+            // Demo: start without the Inbox's access token so every run asks for consent.
+            Enrollment.StartOver(inbox);
 
             // 1. Drive the 202 → consent → poll handshake (blocks until approved).
-            var first = await client.GetAsync($"{inbox}/messages");
-            first.Dispose();
+            using (var request = new HttpRequestMessage(HttpMethod.Get, $"{inbox}/messages"))
+            {
+                request.Options.Set(AAuthRequestOptions.InteractionHandler, this);
+                using var first = await client.SendAsync(request);
+            }
 
             // 2. Replay the captured token to read the inbox.
             using var response = await client.GetAsync($"{inbox}/messages");
@@ -229,5 +222,12 @@ app.MapAAuthInteractionPoll().RequireAAuthSignature();</code></pre>
         {
             _loading = false;
         }
+    }
+
+    // Surface the Inbox's own consent URL; the SDK keeps polling until the user decides.
+    public async Task OnInteractionRequiredAsync(AAuth.Headers.Interaction interaction, CancellationToken cancellationToken)
+    {
+        _consentUrl = interaction.BuildUserUrl();
+        await InvokeAsync(StateHasChanged);
     }
 }

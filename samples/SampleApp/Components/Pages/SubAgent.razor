@@ -6,6 +6,7 @@
 @using AAuth.Tokens
 @using Microsoft.IdentityModel.Tokens
 @inject IJSRuntime JS
+@inject SampleAgents Agents
 @rendermode InteractiveServer
 
 <PageTitle>Sub-Agents — Parent-Mediated Workers</PageTitle>
@@ -130,7 +131,7 @@ var authToken = await exchange.ExchangeAsync(
     <div class="alert alert-warning mt-3">
         <h5>Consent Required</h5>
         <p>The parent-mediated exchange is paused until you complete the current consent step.</p>
-        <PersonServerApprovalPrompt PersonServer="@(Config["AAuth:PersonServer"] ?? "http://localhost:5100")" Interaction="_interaction"
+        <PersonServerApprovalPrompt PersonServer="@Agents.PersonServer" Interaction="_interaction"
                                     ExternalLabel="Open Access Server consent page" />
     </div>
 }
@@ -210,8 +211,11 @@ var authToken = await exchange.ExchangeAsync(
         _steps.Clear();
         _error = _subAgentClaims = _authClaims = _resourceResponse = null;
         _interaction = null;
+        // The parent, worker and original caller are distinct identities with their own keys
+        // (the page's lesson), so the scenario presents each held token itself rather than
+        // through Aria's registered client.
         using var flow = new FederatedWorkerScenario(_identity.Key, _identity.KeyId, _identity.Issuer,
-            Config["AAuth:PersonServer"] ?? "http://localhost:5100", Config["AAuth:Wallet"] ?? "http://localhost:5003");
+            Agents.PersonServer, Config["AAuth:Wallet"] ?? "http://localhost:5003");
         flow.OnInteraction = async (interaction, _) =>
         {
             _interaction = interaction;

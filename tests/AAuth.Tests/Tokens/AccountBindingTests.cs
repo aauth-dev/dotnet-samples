@@ -130,7 +130,13 @@ public class AccountBindingTests
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
             Key = issuerKey, KeyId = "ps1", Subject = "person", Account = tokenAccount,
         }.BuildAsync();
-        var holder = new AAuth.Agent.AAuthTokenHolder(authToken);
+        var holder = new AAuth.Agent.AAuthTokenHolder();
+        using (var obtained = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data"))
+        {
+            if (tokenAccount is not null) obtained.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, tokenAccount);
+            holder.SelectForRequest(obtained, agentToken, agentKey.ComputeJwkThumbprint());
+            await Store(holder, obtained, agentKey, authToken);
+        }
         using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data");
         if (requestedAccount is not null) request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, requestedAccount);
         Assert.Equal(reused ? authToken : agentToken, holder.SelectForRequest(request, agentToken, agentKey.ComputeJwkThumbprint()));
@@ -140,11 +146,12 @@ public class AccountBindingTests
     }
 
     [Theory]
-    [InlineData(null)]
-    [InlineData("work")]
-    public async Task CachedPersonToken_IsSelectedForAnyAccount(string? requestedAccount)
+    [InlineData(null, true)]
+    [InlineData("work", false)]
+    public async Task CachedPersonToken_IsKeyedByTheRequestedAccount(string? requestedAccount, bool reused)
     {
-        // A person token never carries `account`; the resource token it earns binds the account.
+        // A person token never carries `account`, but the cache keys it by the account the request
+        // named: a request for another account obtains its own person token.
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var agentToken = await new AgentTokenBuilder
@@ -158,10 +165,15 @@ public class AccountBindingTests
             ConfirmationKey = agentKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
             Key = issuerKey, KeyId = "ps1",
         }.BuildAsync();
-        var holder = new AAuth.Agent.AAuthTokenHolder(personToken);
+        var holder = new AAuth.Agent.AAuthTokenHolder();
+        using (var obtained = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data"))
+        {
+            holder.SelectForRequest(obtained, agentToken, agentKey.ComputeJwkThumbprint());
+            await Store(holder, obtained, agentKey, personToken);
+        }
         using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data");
         if (requestedAccount is not null) request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, requestedAccount);
-        Assert.Equal(personToken, holder.SelectForRequest(request, agentToken, agentKey.ComputeJwkThumbprint()));
+        Assert.Equal(reused ? personToken : agentToken, holder.SelectForRequest(request, agentToken, agentKey.ComputeJwkThumbprint()));
     }
 
     [Theory]

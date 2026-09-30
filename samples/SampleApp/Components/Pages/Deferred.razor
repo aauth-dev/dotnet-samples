@@ -3,7 +3,9 @@
 @using AAuth.Crypto
 @using AAuth.Headers
 @using AAuth.HttpSig
+@implements IAAuthInteractionHandler
 @inject IJSRuntime JS
+@inject SampleAgents Agents
 @rendermode InteractiveServer
 
 <PageTitle>Deferred — User Consent</PageTitle>
@@ -28,25 +30,21 @@
 <div class="row">
 <div class="col-md-6">
 <h5>Client Code</h5>
-<pre><code class="language-csharp">using var client = AAuthClientBuilder.Enrolled(key).WithEgressPolicy(SampleEgress.Policy)
-    .RefreshingFrom(refreshEndpoint, localKeyHandle)
-    .WithKeyStore(keyStore)
-    .WithPersonServer(personServer)
-    .WithChallengeHandling(opts =>
-    {
-        opts.OnInteractionRequired =
-            async (interaction, ct) =>
-        {
-            // The poll starts right after this returns. Point the
-            // user at the PS dashboard ({ps}/dashboard), or at
-            // interaction.BuildUserUrl() for this one request.
-        };
-        opts.PollingTimeout =
-            TimeSpan.FromMinutes(2);
-        opts.DefaultPollInterval =
-            TimeSpan.FromSeconds(1);
-    })
-    .Build();</code></pre>
+<pre><code class="language-csharp">// Program.cs: one agent for the app, bound from AAuth:Agents:aria
+// (Person Server, self-issued identity, polling budgets).
+builder.Services.AddAAuthAgent("aria",
+    builder.Configuration.GetSection("AAuth:Agents:aria"),
+    options =&gt; options.Signer = key);
+
+// Page: reuse the agent's client and hand this request its own
+// consent callback. The page implements IAAuthInteractionHandler:
+// OnInteractionRequiredAsync points the user at the PS dashboard
+// ({ps}/dashboard) or interaction.BuildUserUrl(); the SDK polls
+// once it returns.
+var client = clients.CreateClient("aria");
+using var request = new HttpRequestMessage(HttpMethod.Get, $"{calendar}/events");
+request.Options.Set(AAuthRequestOptions.InteractionHandler, consent);
+var response = await client.SendAsync(request);</code></pre>
 </div>
 <div class="col-md-6">
 <h5>Server Code</h5>
@@ -121,7 +119,7 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
         <h5>User Approval Required</h5>
         <ConsentProgress />
         <p>The Person Server returned <code>202 Accepted</code> and the SDK is already polling the pending endpoint.</p>
-        <PersonServerApprovalPrompt PersonServer="@Config["AAuth:PersonServer"]" Interaction="_interaction" PollCount="_pollCount" />
+        <PersonServerApprovalPrompt PersonServer="@Agents.PersonServer" Interaction="_interaction" PollCount="_pollCount" />
     </div>
 }
 
@@ -170,29 +168,9 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
 
         try
         {
-            // Revoke consent so the deferred path triggers fresh each time
+            // Demo: start from no grant so the deferred path triggers fresh each time.
+            Agents.StartOver();
             await RevokeConsentAsync();
-
-            var personServer = Config["AAuth:PersonServer"]!;
-
-            // Self-issued token refresh + deferred consent support
-            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key).WithEgressPolicy(SampleEgress.Policy)
-                .As(_identity.Issuer, _identity.AgentId)
-                .WithKid(_identity.KeyId)
-                .WithPersonServer(personServer)
-                .WithChallengeHandling(opts =>
-                {
-                    opts.OnInteractionRequired = async (interaction, ct) =>
-                    {
-                        // Surface the interaction URL in the UI
-                        _interaction = interaction;
-                        _waitingForApproval = true;
-                        await InvokeAsync(StateHasChanged);
-                    };
-                    opts.PollingTimeout = TimeSpan.FromMinutes(2);
-                    opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
-                })
-                .Build();
 
             var resourceUrl = Config["AAuth:Calendar"]!;
 
@@ -207,7 +185,9 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
                 }
             });
 
-            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/events");
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{resourceUrl.TrimEnd('/')}/events");
+            request.Options.Set(AAuthRequestOptions.InteractionHandler, this);
+            var response = await Agents.AriaClient.SendAsync(request);
 
             // Stop the poll counter
             pollTimer.Dispose();
@@ -240,9 +220,17 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
         }
     }
 
+    // Surface the interaction in the UI; the SDK polls once this returns.
+    public async Task OnInteractionRequiredAsync(AAuth.Headers.Interaction interaction, CancellationToken cancellationToken)
+    {
+        _interaction = interaction;
+        _waitingForApproval = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
     private async Task RevokeConsentAsync()
     {
-        var personServer = Config["AAuth:PersonServer"];
+        var personServer = Agents.PersonServer;
         if (string.IsNullOrEmpty(personServer)) return;
 
         var agentId = _identity.AgentId;

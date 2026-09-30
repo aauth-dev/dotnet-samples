@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 203 changed public-source files, 891 added/replacement declarations, 403 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 204 changed public-source files, 904 added/replacement declarations, 405 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -855,11 +855,33 @@ Public owners: `Wallet`.
 Concept/decision: [sample-runtime](#sample-runtime). Source: [EnrollmentService.cs](../../../samples/SampleApp/EnrollmentService.cs).
 
 ```diff
+- SampleApp.EnrollmentService: public EnrollmentService ( IConfiguration config )
 - SampleApp.EnrollmentService: public IAAuthKey Key
+- SampleApp: public sealed class EnrollmentService
++ SampleApp.EnrollmentService: public AAuthAgent Agent
++ SampleApp.EnrollmentService: public EnrollmentService ( IConfiguration config , SampleAgents agents , IAAuthAgentFactory factory )
 + SampleApp.EnrollmentService: public IAAuthSigner Key
++ SampleApp.EnrollmentService: public void Dispose ( )
++ SampleApp.EnrollmentService: public void StartOver ( string resource )
++ SampleApp: public sealed class EnrollmentService : IDisposable
 ```
 
 Public owners: `SampleApp.EnrollmentService`, `SampleApp`.
+
+### samples/SampleApp/SampleAgents.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [SampleAgents.cs](../../../samples/SampleApp/SampleAgents.cs).
+
+```diff
++ SampleApp.SampleAgents: public DeferredPollerOptions PollerOptions { get ; }
++ SampleApp.SampleAgents: public HttpClient AriaClient
++ SampleApp.SampleAgents: public const string Aria = "aria" ;
++ SampleApp.SampleAgents: public string PersonServer
++ SampleApp.SampleAgents: public void StartOver ( )
++ SampleApp: public sealed class SampleAgents ( IHttpClientFactory clients , IOptionsMonitor < AAuthAgentOptions > options , IServiceProvider services )
+```
+
+Public owners: `SampleApp.SampleAgents`, `SampleApp`.
 
 ### src/AAuth.Events/EventReceiver.cs
 
@@ -1407,10 +1429,12 @@ Concept/decision: [agent-clients](#agent-clients). Source: [AAuthTokenCache.cs](
 ```diff
 + AAuth.Agent.IAAuthTokenCache: Task < string > AcquireAsync ( AAuthTokenCacheKey key , string ? presented , Func < CancellationToken , Task < string > > acquire , CancellationToken cancellationToken )
 + AAuth.Agent.IAAuthTokenCache: string ? Get ( AAuthTokenCacheKey key )
++ AAuth.Agent.IAAuthTokenCache: void Clear ( )
 + AAuth.Agent.IAAuthTokenCache: void Set ( AAuthTokenCacheKey key , string token , DateTimeOffset expiresAt )
 + AAuth.Agent.InMemoryAAuthTokenCache: public InMemoryAAuthTokenCache ( TimeProvider ? timeProvider = null )
 + AAuth.Agent.InMemoryAAuthTokenCache: public async Task < string > AcquireAsync ( AAuthTokenCacheKey key , string ? presented , Func < CancellationToken , Task < string > > acquire , CancellationToken cancellationToken )
 + AAuth.Agent.InMemoryAAuthTokenCache: public string ? Get ( AAuthTokenCacheKey key )
++ AAuth.Agent.InMemoryAAuthTokenCache: public void Clear ( )
 + AAuth.Agent.InMemoryAAuthTokenCache: public void Set ( AAuthTokenCacheKey key , string token , DateTimeOffset expiresAt )
 + AAuth.Agent: public interface IAAuthTokenCache
 + AAuth.Agent: public sealed class InMemoryAAuthTokenCache : IAAuthTokenCache

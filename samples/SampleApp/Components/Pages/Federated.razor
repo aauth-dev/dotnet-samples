@@ -3,7 +3,9 @@
 @using AAuth.Crypto
 @using AAuth.Headers
 @using AAuth.HttpSig
+@implements IAAuthInteractionHandler
 @inject IJSRuntime JS
+@inject SampleAgents Agents
 @rendermode InteractiveServer
 
 <PageTitle>Federated — Four-Party (Access Server)</PageTitle>
@@ -52,28 +54,15 @@
 <pre><code class="language-csharp">// Identical to three-party deferred — the agent never
 // talks to the Access Server. Federation happens at the
 // PS when resource_token.aud != PS. A 202 from the AS is
-// relayed by the PS and arrives on THIS callback.
-using var client = AAuthClientBuilder.SelfIssuing(key).WithEgressPolicy(SampleEgress.Policy)
-    .As(issuer, agentId)
-    .WithKid(keyId)
-    .WithPersonServer(personServer)
-    .WithChallengeHandling(opts =&gt;
-    {
-        opts.OnInteractionRequired =
-            async (interaction, ct) =&gt;
-        {
-            var url = interaction.BuildUserUrl();
-            // Surface URL to user (AS consent screen / Keycloak)
-        };
-        opts.PollingTimeout =
-            TimeSpan.FromMinutes(2);
-        opts.DefaultPollInterval =
-            TimeSpan.FromSeconds(1);
-    })
-    .Build();
+// relayed by the PS and arrives on THIS request's consent
+// handler: OnInteractionRequiredAsync surfaces
+// interaction.BuildUserUrl() (AS consent screen / Keycloak).
+var client = clients.CreateClient("aria");
 
 // Calls the resource's /wallet branch (aud = AS).
-var response = await client.GetAsync($"{resource}/wallet");</code></pre>
+using var request = new HttpRequestMessage(HttpMethod.Get, $"{resource}/wallet");
+request.Options.Set(AAuthRequestOptions.InteractionHandler, consent);
+var response = await client.SendAsync(request);</code></pre>
 </div>
 <div class="col-md-6">
 <h5>Person Server (federation) Code</h5>
@@ -129,7 +118,7 @@ app.MapAAuthPersonServer();</code></pre>
         </p>
         @if (_interaction is not null)
         {
-            <PersonServerApprovalPrompt PersonServer="@Config["AAuth:PersonServer"]" Interaction="_interaction" PollCount="_pollCount"
+            <PersonServerApprovalPrompt PersonServer="@Agents.PersonServer" Interaction="_interaction" PollCount="_pollCount"
                                         ExternalLabel="Open Access Server interaction" />
         }
     </div>
@@ -165,7 +154,7 @@ app.MapAAuthPersonServer();</code></pre>
     private string? _statusCode;
     private bool _success;
     private string? _accessServer;
-    private bool IsPersonConsent => _interactionUrl?.StartsWith(Config["AAuth:PersonServer"]!.TrimEnd('/') + "/", StringComparison.Ordinal) == true;
+    private bool IsPersonConsent => _interactionUrl?.StartsWith(Agents.PersonServer.TrimEnd('/') + "/", StringComparison.Ordinal) == true;
 
     protected override void OnInitialized()
     {
@@ -188,31 +177,9 @@ app.MapAAuthPersonServer();</code></pre>
 
         try
         {
-            // Revoke any standing consent so the federated path triggers fresh.
+            // Demo: start from no grant so the federated path triggers fresh each time.
+            Agents.StartOver();
             await RevokeConsentAsync();
-
-            var personServer = Config["AAuth:PersonServer"]!;
-
-            // Self-issued token refresh + interaction relay. A 202 from the AS
-            // (via the PS) surfaces a consent URL here; the SDK then polls and
-            // resumes. This is byte-for-byte the three-party deferred agent.
-            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key).WithEgressPolicy(SampleEgress.Policy)
-                .As(_identity.Issuer, _identity.AgentId)
-                .WithKid(_identity.KeyId)
-                .WithPersonServer(personServer)
-                .WithChallengeHandling(opts =>
-                {
-                    opts.OnInteractionRequired = async (interaction, ct) =>
-                    {
-                        _interactionUrl = interaction.BuildUserUrl();
-                        _interaction = interaction;
-                        _waitingForApproval = true;
-                        await InvokeAsync(StateHasChanged);
-                    };
-                    opts.PollingTimeout = TimeSpan.FromMinutes(2);
-                    opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
-                })
-                .Build();
 
             var resourceUrl = Config["AAuth:Wallet"]!;
 
@@ -227,7 +194,10 @@ app.MapAAuthPersonServer();</code></pre>
                 }
             });
 
-            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/wallet");
+            // A 202 from the AS (relayed by the PS) reaches OnInteractionRequiredAsync.
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{resourceUrl.TrimEnd('/')}/wallet");
+            request.Options.Set(AAuthRequestOptions.InteractionHandler, this);
+            var response = await Agents.AriaClient.SendAsync(request);
 
             pollTimer.Dispose();
 
@@ -259,9 +229,18 @@ app.MapAAuthPersonServer();</code></pre>
         }
     }
 
+    // Surface the PS or AS interaction in the UI; the SDK polls once this returns.
+    public async Task OnInteractionRequiredAsync(AAuth.Headers.Interaction interaction, CancellationToken cancellationToken)
+    {
+        _interactionUrl = interaction.BuildUserUrl();
+        _interaction = interaction;
+        _waitingForApproval = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
     private async Task RevokeConsentAsync()
     {
-        var personServer = Config["AAuth:PersonServer"];
+        var personServer = Agents.PersonServer;
         if (string.IsNullOrEmpty(personServer)) return;
 
         var agentId = _identity.AgentId;

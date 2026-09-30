@@ -19,9 +19,7 @@ import { CONSENT_ACTION } from '../../../tests/e2e/helpers/dashboard';
  *
  * On run, the page scripts the PS for an interactive demo and seeds `trips.read`
  * in-scope, so the three out-of-mission gates each surface their own PS consent
- * page while the two in-mission gates resolve without a prompt. Each gate hits
- * the resource with a freshly-minted agent token (a new `jti`) so the resource's
- * replay detection never rejects a second access (§Agent Token).
+ * page while the two in-mission gates resolve without a prompt.
  *
  * The approval banner (`.alert-warning`) is a single shared element reused for
  * every prompt — between two prompted gates the silent gate resolves and the

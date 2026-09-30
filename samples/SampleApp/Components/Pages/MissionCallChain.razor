@@ -10,7 +10,10 @@
 @using AAuth.Headers
 @using AAuth.HttpSig
 @using AAuth.Tokens
+@implements IAAuthInteractionHandler
+@implements IAAuthClarificationHandler
 @inject IJSRuntime JS
+@inject SampleAgents Agents
 @rendermode InteractiveServer
 
 <PageTitle>Mission Call Chain — clarification + governed delegation</PageTitle>
@@ -34,13 +37,14 @@
     <li>
         <strong>Clarification chat</strong> (§Clarification Chat) — accessing an out-of-mission
         elevated scope, the Person Server first asks the agent a question; the SDK surfaces it
-        through <code>ChallengeHandlingOptions.OnClarificationRequired</code> (and the lower-level
+        through the request's <code>AAuthRequestOptions.ClarificationHandler</code> (agent-wide:
+        <code>ChallengeHandlingOptions.OnClarificationRequired</code>; lower-level:
         <code>TokenExchangeRequest.OnClarificationRequired</code>), the agent answers, then the
         user approves.
     </li>
     <li>
         <strong>Mission-forwarded call chain</strong> (§Mission Context at Resources, §Call Chaining) —
-        the same mission is carried (<code>WithMission(...)</code>) to the Concierge, whose
+        the same mission is carried (<code>AAuthRequestOptions.MissionS256</code>) to the Concierge, whose
         downstream Trips hop is requested under the upstream token, so the mission governs every hop.
     </li>
     <li>
@@ -60,50 +64,45 @@
 <div class="row">
     <div class="col-md-6">
         <h5>Client Code — the clarification callback</h5>
-        <pre><code class="language-csharp">// One mission, threaded through every step by the bound session.
-var governance = new AAuthGovernanceClient(signed, metadata, personServer, options);
+        <pre><code class="language-csharp">// One mission, threaded through every step. governance is Aria's keyed
+// AAuthGovernanceClient; deferred handling is passed per call.
 var session = await governance.ProposeMissionAsync(
-    new MissionProposal("Plan my weekend trip to Seattle."));
+    new MissionProposal("Plan my weekend trip to Seattle."),
+    new GovernanceOptions { OnInteractionRequired = consent.OnInteractionRequiredAsync });
 var mission = session.Mission;
 
 // Out-of-mission elevated scope: the PS asks a question first. The SDK
-// surfaces it via OnClarificationRequired; the agent answers (or updates /
-// cancels), then the normal interaction approval runs (§Clarification Chat).
-var authToken = await exchange.ExchangeAsync(personServer, resourceToken,
-    new TokenExchangeRequest
-    {
-        OnInteractionRequired = SurfaceInteractionAsync,
-        OnClarificationRequired = (question, ct) =&gt;
-        {
-            // question.Clarification is UNTRUSTED Markdown — render it
-            // sanitized (Blazor HTML-encodes it) before showing the user.
-            SurfaceClarification(question.Clarification);
-            return Task.FromResult(ClarificationResponse.Respond(
-                "Booking the trip needs permission to reserve and pay."));
-        },
-    });</code></pre>
+// surfaces it via this request's clarification handler; the agent answers
+// (or updates / cancels), then the normal interaction approval runs
+// (§Clarification Chat). The page implements IAAuthClarificationHandler:
+// question.Clarification is UNTRUSTED Markdown — render it sanitized
+// (Blazor HTML-encodes it), then return ClarificationResponse.Respond(
+//     "Booking the trip needs permission to reserve and pay.").
+var client = clients.CreateClient("aria");
+using var request = new HttpRequestMessage(HttpMethod.Get, elevatedUrl);
+request.Options.Set(AAuthRequestOptions.MissionS256, mission.S256);
+request.Options.Set(AAuthRequestOptions.MissionPersonTokens, mission.PersonTokens);
+request.Options.Set(AAuthRequestOptions.InteractionHandler, consent);
+request.Options.Set(AAuthRequestOptions.ClarificationHandler, clarify);
+using var elevated = await client.SendAsync(request);</code></pre>
     </div>
     <div class="col-md-6">
         <h5>Client Code — the mission-forwarded chain</h5>
-        <pre><code class="language-csharp">// Carry the SAME mission to the Concierge. WithMission requests the
-// person token with mission_s256; the Concierge copies it into its
-// resource token, so the agent->concierge exchange is governed by the
-// mission. The Concierge's downstream hop carries the auth token as
-// upstream_token, which keeps the same mission (§Call Chaining).
-using var chain = AAuthClientBuilder.SelfIssuing(identity.Key).WithEgressPolicy(SampleEgress.Policy)
-    .As(identity.Issuer, identity.AgentId)
-    .WithKid(identity.KeyId)
-    .WithPersonServer(personServer)
-    .WithMission(mission)
-    .WithChallengeHandling(o =&gt; o.OnInteractionRequired =
-        (i, ct) =&gt; SurfaceInteractionAsync(i, ct))
-    .WithInteractionHandling(o =&gt; o.OnInteractionRequired =
-        (interaction, ct) =&gt; SurfaceInteraction(interaction.BuildUserUrl()))
-    .Build();
+        <pre><code class="language-csharp">// Carry the SAME mission to the Concierge on Aria's client. MissionS256
+// requests the person token with mission_s256; the Concierge copies it
+// into its resource token, so the agent-&gt;concierge exchange is governed
+// by the mission. The Concierge's downstream hop carries the auth token
+// as upstream_token, which keeps the same mission (§Call Chaining).
+// The consent handler receives PS interactions (Source == PersonServer)
+// and the Concierge's resource 202s (Source == Resource) alike.
+using var chainRequest = new HttpRequestMessage(HttpMethod.Get, $"{concierge}/mission");
+chainRequest.Options.Set(AAuthRequestOptions.MissionS256, mission.S256);
+chainRequest.Options.Set(AAuthRequestOptions.MissionPersonTokens, mission.PersonTokens);
+chainRequest.Options.Set(AAuthRequestOptions.InteractionHandler, consent);
 
 // "/mission" is the Concierge's mission-aware twin of "/": it chains to
 // Trips' "/trips" so the forwarded mission re-binds at the next hop.
-var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
+var response = await clients.CreateClient("aria").SendAsync(chainRequest);</code></pre>
     </div>
 </div>
 
@@ -185,7 +184,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
             This step fell <strong>outside</strong> the mission, so the Person Server returned
             <code>202 Accepted</code>. The SDK is already polling while it waits for your decision.
         </p>
-        <PersonServerApprovalPrompt PersonServer="@Config["AAuth:PersonServer"]" Interaction="_interaction" />
+        <PersonServerApprovalPrompt PersonServer="@Agents.PersonServer" Interaction="_interaction" />
     </div>
 }
 
@@ -227,6 +226,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
 @code {
     [Inject] private SelfIssuedIdentity _identity { get; set; } = default!;
     [Inject] private IConfiguration Config { get; set; } = default!;
+    [Inject(Key = SampleAgents.Aria)] private AAuthGovernanceClient Governance { get; set; } = default!;
 
     private readonly List<Step> _steps = new();
     private bool _running;
@@ -237,8 +237,6 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
     private string? _clarificationAnswer;
     private IReadOnlyList<LogEntry>? _missionLog;
     private string? _error;
-
-    private string _agentToken = string.Empty;
 
     private sealed record Step(
         int Number,
@@ -274,7 +272,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
         _missionLog = null;
         ClearWaiting();
 
-        var personServer = Config["AAuth:PersonServer"]!.TrimEnd('/');
+        var personServer = Agents.PersonServer.TrimEnd('/');
         var resourceOrigin = Config["AAuth:Trips"]!.TrimEnd('/');
         var conciergeUrl = Config["AAuth:Concierge"]!.TrimEnd('/');
         var elevatedUrl = $"{resourceOrigin}/trips/book";
@@ -287,29 +285,23 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
             // at approval, so it must be seeded BEFORE proposing.
             await ConfigurePersonServerAsync(personServer, resourceOrigin, conciergeUrl);
 
-            _agentToken = await MintAgentTokenAsync(personServer);
-            var handler = new AAuthSigningHandler(_identity.Key, () => _agentToken)
-                { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
-            using var signed = new SampleHttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-            var metadata = new MetadataClient(new SampleHttpClient());
-            var poller = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(2) };
+            // Demo: start from no grant, as each run did with its own client.
+            Agents.StartOver();
 
-            GovernanceOptions GovernanceFor() => new()
+            // Aria's governance client takes deferred handling per call.
+            var governanceOptions = new GovernanceOptions
             {
-                OnInteractionRequired = SurfaceInteractionAsync,
-                PollerOptions = poller,
+                OnInteractionRequired = OnInteractionRequiredAsync,
+                PollerOptions = Agents.PollerOptions,
             };
-
-            var governance = new AAuthGovernanceClient(signed, metadata, personServer, GovernanceFor());
-            var exchange = new TokenExchangeClient(signed, metadata);
 
             // ---- Step 1: propose the mission (PROMPT) ----------------------
             _currentGate = "Mission creation";
-            var session = await governance.ProposeMissionAsync(new MissionProposal(
+            var session = await Governance.ProposeMissionAsync(new MissionProposal(
                 "Plan my weekend trip to Seattle.")
             {
                 Tools = new[] { new MissionTool("compare_options", "Compare flight and hotel options") },
-            });
+            }, governanceOptions);
             var mission = session.Mission;
             ClearWaiting();
             _steps.Add(new Step(1, "Mission creation", Prompted: true, Outcome: "approved",
@@ -321,8 +313,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
 
             // ---- Step 2: elevated scope via a clarification round (PROMPT) -
             _currentGate = "Elevated scope (with clarification)";
-            var elevated = await AccessElevatedWithClarificationAsync(
-                signed, exchange, personServer, elevatedUrl, mission, poller);
+            var elevated = await AccessElevatedWithClarificationAsync(elevatedUrl, mission);
             ClearWaiting();
             _steps.Add(new Step(2, "Elevated scope + clarification", Prompted: true, Outcome: "granted",
                 Summary: "The elevated scope falls outside the mission's intent, so the PS asked a " +
@@ -334,9 +325,9 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
 
             // ---- Step 3: mission-forwarded call chain (SILENT) -------------
             _currentGate = "Mission call chain";
-            var chainJson = await RunMissionChainAsync(personServer, conciergeUrl, mission);
+            var chainJson = await RunMissionChainAsync(conciergeUrl, mission);
             _steps.Add(new Step(3, "Mission call chain", Prompted: false, Outcome: "granted",
-                Summary: "The same mission was carried to the Concierge (WithMission), whose " +
+                Summary: "The same mission was carried to the Concierge (mission_s256 request option), whose " +
                          "downstream Trips hop kept it through the upstream token. Both hops were in-scope, " +
                          "so the chain resolved without a prompt — the mission governed every hop.",
                 Payload: chainJson,
@@ -366,105 +357,51 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
         }
     }
 
-    private ValueTask<string> MintAgentTokenAsync(string personServer) => new AgentTokenBuilder
+    // A request on Aria's client under the mission: the SDK requests the person token
+    // with mission_s256 (or reuses one the approval issued) and runs the challenge.
+    private HttpRequestMessage MissionRequest(string url, AAuth.Agent.Mission mission)
     {
-        EgressPolicy = SampleEgress.Policy,
-        Issuer = _identity.Issuer,
-        Subject = _identity.AgentId,
-        KeyId = _identity.KeyId,
-        Key = _identity.Key,
-        PersonServer = personServer,
-        Lifetime = TimeSpan.FromHours(1),
-    }.BuildAsync();
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Options.Set(AAuthRequestOptions.MissionS256, mission.S256);
+        request.Options.Set(AAuthRequestOptions.MissionPersonTokens, mission.PersonTokens);
+        request.Options.Set(AAuthRequestOptions.InteractionHandler, this);
+        return request;
+    }
 
-    // Challenge -> token exchange (with a clarification round) -> retry. The
-    // clarification callback surfaces the (sanitized) question and answers it;
-    // the PS then prompts the user for the out-of-mission scope.
+    // Challenge -> token exchange (with a clarification round) -> retry, inside the
+    // SDK. OnClarificationRequiredAsync surfaces the (sanitized) question and answers
+    // it; the PS then prompts the user for the out-of-mission scope.
     private async Task<JsonObject?> AccessElevatedWithClarificationAsync(
-        HttpClient signed,
-        TokenExchangeClient exchange,
-        string personServer,
         string resourceUrl,
-        AAuth.Agent.Mission mission,
-        DeferredPollerOptions poller)
+        AAuth.Agent.Mission mission)
     {
-        _agentToken = await MintAgentTokenAsync(personServer);
-
-        var personToken = await exchange.RequestPersonTokenAsync(personServer,
-            new Uri(resourceUrl).GetLeftPart(UriPartial.Authority), new TokenExchangeRequest
-            {
-                MissionS256 = mission.S256,
-                OnInteractionRequired = SurfaceInteractionAsync,
-                PollerOptions = poller,
-            });
-        var personHandler = new AAuthSigningHandler(_identity.Key, () => personToken)
-            { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
-        using var personClient = new SampleHttpClient(personHandler);
-        using var challenge = await personClient.GetAsync(resourceUrl);
-        if (challenge.StatusCode != HttpStatusCode.Unauthorized)
-        {
-            throw new InvalidOperationException(
-                $"Expected 401 challenge from the resource, got {(int)challenge.StatusCode}.");
-        }
-
-        var requirement = string.Join(", ", challenge.Headers.GetValues(AAuthRequirementHeader.Name));
-        var resourceToken = AAuthRequirementHeader.Parse(requirement).ResourceToken
-            ?? throw new InvalidOperationException("Challenge did not carry a resource token.");
-
-        var authToken = await exchange.ExchangeAsync(personServer, resourceToken, new TokenExchangeRequest
-        {
-            PresentedToken = personToken,
-            OnInteractionRequired = SurfaceInteractionAsync,
-            // The clarification callback: the PS asks a question during review.
-            OnClarificationRequired = (question, ct) =>
-            {
-                // question.Clarification is UNTRUSTED Markdown from the PS. We
-                // store it for HTML-encoded (sanitized) rendering only — never as
-                // raw markup (§Markdown — sanitize before rendering).
-                _clarificationAnswer =
-                    "Booking the trip needs permission to reserve and pay.";
-                SurfaceClarification(question.Clarification);
-                return Task.FromResult(ClarificationResponse.Respond(_clarificationAnswer));
-            },
-            PollerOptions = poller,
-        });
-
-        var authHandler = new AAuthSigningHandler(_identity.Key, () => authToken)
-            { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
-        using var authClient = new SampleHttpClient(authHandler);
-        using var ok = await authClient.GetAsync(resourceUrl);
+        using var request = MissionRequest(resourceUrl, mission);
+        request.Options.Set(AAuthRequestOptions.ClarificationHandler, this);
+        using var ok = await Agents.AriaClient.SendAsync(request);
         ok.EnsureSuccessStatusCode();
         return await ok.Content.ReadFromJsonAsync<JsonObject>();
     }
 
-    // Carry the mission to the Concierge's "/mission" endpoint. WithMission
-    // requests the person token with mission_s256; the Concierge copies it into
-    // its resource token (so the exchange is governed by the mission), and its
-    // downstream Trips hop keeps the mission through the upstream token.
-    private async Task<string> RunMissionChainAsync(
-        string personServer, string conciergeUrl, AAuth.Agent.Mission mission)
+    // The PS asks a question during review. question.Clarification is UNTRUSTED
+    // Markdown from the PS: we store it for HTML-encoded (sanitized) rendering only,
+    // never as raw markup (§Markdown — sanitize before rendering).
+    public Task<ClarificationResponse> OnClarificationRequiredAsync(
+        ClarificationRequirement question, CancellationToken cancellationToken)
     {
-        using var chain = AAuthClientBuilder.SelfIssuing(_identity.Key).WithEgressPolicy(SampleEgress.Policy)
-            .As(_identity.Issuer, _identity.AgentId)
-            .WithKid(_identity.KeyId)
-            .WithPersonServer(personServer)
-            .WithMission(mission)
-            .WithChallengeHandling(opts =>
-            {
-                opts.OnInteractionRequired = (interaction, ct) =>
-                    SurfaceInteractionAsync(interaction, ct);
-                opts.PollingTimeout = TimeSpan.FromMinutes(2);
-                opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
-            })
-            .WithInteractionHandling(opts =>
-            {
-                opts.OnInteractionRequired = (interaction, ct) => SurfaceInteraction(PersonServerConsent.FromUserUrl(interaction.BuildUserUrl(), interaction.Code), ct);
-                opts.PollingTimeout = TimeSpan.FromMinutes(2);
-                opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
-            })
-            .Build();
+        _clarificationAnswer = "Booking the trip needs permission to reserve and pay.";
+        SurfaceClarification(question.Clarification);
+        return Task.FromResult(ClarificationResponse.Respond(_clarificationAnswer));
+    }
 
-        using var response = await chain.GetAsync($"{conciergeUrl}/mission");
+    // Carry the mission to the Concierge's "/mission" endpoint. The mission_s256
+    // request option requests the person token under the mission; the Concierge
+    // copies it into its resource token (so the exchange is governed by the
+    // mission), and its downstream Trips hop keeps the mission through the
+    // upstream token.
+    private async Task<string> RunMissionChainAsync(string conciergeUrl, AAuth.Agent.Mission mission)
+    {
+        using var request = MissionRequest($"{conciergeUrl}/mission", mission);
+        using var response = await Agents.AriaClient.SendAsync(request);
         var raw = await response.Content.ReadAsStringAsync();
         try
         {
@@ -517,8 +454,12 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
     private void SurfaceClarification(string question)
         => _ = SurfaceClarificationAsync(question);
 
-    private async Task SurfaceInteractionAsync(Interaction interaction, CancellationToken ct)
-        => await SurfaceInteraction(interaction, ct);
+    // PS interactions (mission, token exchange) surface as-is; the Concierge's resource
+    // 202 points at the PS consent page.
+    public Task OnInteractionRequiredAsync(Interaction interaction, CancellationToken ct)
+        => SurfaceInteraction(interaction.Source == InteractionSource.Resource
+            ? PersonServerConsent.FromUserUrl(interaction.BuildUserUrl(), interaction.Code)
+            : interaction, ct);
 
     private async Task SurfaceInteraction(Interaction interaction, CancellationToken ct)
     {

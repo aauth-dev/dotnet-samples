@@ -172,7 +172,8 @@ else
             var jwksUri = _enrollment.JwksUri
                 ?? $"{Config["AAuth:AgentProvider"]!.TrimEnd('/')}/agents/{Config["AAuth:AgentId"]}/jwks.json";
 
-            // Build client with jwks_uri mode — identity-based, no token exchange
+            // This page teaches the jwks_uri signing primitive, so it builds its own client;
+            // the app's agents are registered with AddAAuthAgent.
             using var client = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
                 .UseJwks(jwksUri, kid)
                 .Build();

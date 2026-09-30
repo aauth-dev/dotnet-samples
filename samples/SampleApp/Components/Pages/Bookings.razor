@@ -4,9 +4,10 @@
 @using AAuth.Crypto
 @using AAuth.Headers
 @using AAuth.HttpSig
+@implements IAAuthInteractionHandler
 @inject IJSRuntime JS
+@inject SampleAgents Agents
 @rendermode InteractiveServer
-@implements IDisposable
 
 <PageTitle>Rich Resource Requests — R3 (Bookings)</PageTitle>
 
@@ -45,31 +46,19 @@
 <div class="row">
 <div class="col-md-6">
 <h5>Agent (Client) Code</h5>
-<pre><code class="language-csharp">// Ordinary four-party self-issued agent — the R3 detail
-// is carried in the tokens, not the client. A per-call
-// operation triggers a per-call proposal that needs your
-// approval, so wire OnInteractionRequired to surface the
-// R3 Access Server's consent link; the SDK then polls.
-using var client = AAuthClientBuilder.SelfIssuing(key).WithEgressPolicy(SampleEgress.Policy)
-    .As(issuer, agentId)
-    .WithKid(keyId)
-    .WithPersonServer(personServer)
-    .WithChallengeHandling(opts =&gt;
-    {
-        opts.OnInteractionRequired = (interaction, ct) =&gt;
-        {
-            var url = interaction.BuildUserUrl();
-            // Surface url to the user, then the SDK polls.
-            return Task.CompletedTask;
-        };
-    })
-    .Build();
+<pre><code class="language-csharp">// Ordinary four-party self-issued agent (Aria, registered with
+// AddAAuthAgent) — the R3 detail is carried in the tokens, not the
+// client. A per-call operation triggers a per-call proposal that needs
+// your approval: the page's consent handler surfaces the R3 Access
+// Server's consent link (interaction.BuildUserUrl()); the SDK then polls.
+var client = clients.CreateClient("aria");
 
 // The resource owns the account namespace; the request option
 // binds the local credential cache and token exchange to it.
 using var searchRequest = new HttpRequestMessage(HttpMethod.Get,
     $"{bookings}/search_availability?account={Uri.EscapeDataString(account)}");
 searchRequest.Options.Set(AAuthRequestOptions.Account, account);
+searchRequest.Options.Set(AAuthRequestOptions.InteractionHandler, consent);
 var search = await client.SendAsync(searchRequest);
 
 // Per-call operation — Bookings challenges with a per-call
@@ -80,6 +69,7 @@ using var confirmRequest = new HttpRequestMessage(HttpMethod.Post,
     $"{bookings}/confirm_reservation?account={Uri.EscapeDataString(account)}")
     { Content = JsonContent.Create(reservation) };
 confirmRequest.Options.Set(AAuthRequestOptions.Account, account);
+confirmRequest.Options.Set(AAuthRequestOptions.InteractionHandler, consent);
 var confirm = await client.SendAsync(confirmRequest);</code></pre>
 </div>
 <div class="col-md-6">
@@ -160,7 +150,7 @@ app.MapR3AccessTokenEndpoint();</code></pre>
         </p>
         @if (_interaction is not null)
         {
-            <PersonServerApprovalPrompt PersonServer="@Config["AAuth:PersonServer"]" Interaction="_interaction"
+            <PersonServerApprovalPrompt PersonServer="@Agents.PersonServer" Interaction="_interaction"
                                         ExternalLabel="Open per-call approval page" />
         }
     </div>
@@ -188,7 +178,7 @@ app.MapR3AccessTokenEndpoint();</code></pre>
 
     private bool _loading;
     private bool _waitingForApproval;
-    private bool IsPersonConsent => _interactionUrl?.StartsWith(Config["AAuth:PersonServer"]!.TrimEnd('/') + "/", StringComparison.Ordinal) == true;
+    private bool IsPersonConsent => _interactionUrl?.StartsWith(Agents.PersonServer.TrimEnd('/') + "/", StringComparison.Ordinal) == true;
     private string? _interactionUrl;
     private AAuth.Headers.Interaction? _interaction;
     private string? _response;
@@ -199,7 +189,7 @@ app.MapR3AccessTokenEndpoint();</code></pre>
     private string? _r3AccessServer;
     private string _account = "";
     private AccountChoice[] _accounts = [];
-    private HttpClient? _client;
+    private bool _startedOver;
     private string? _lastAuthToken;
     private string? _lastAccount;
     private sealed record AccountChoice(string Id, string Name);
@@ -211,12 +201,11 @@ app.MapR3AccessTokenEndpoint();</code></pre>
         _accounts = await discovery.GetFromJsonAsync<AccountChoice[]>(Config["AAuth:Bookings"]!.TrimEnd('/') + "/accounts") ?? [];
     }
 
-    public void Dispose() => _client?.Dispose();
-
     private HttpRequestMessage AccountRequest(HttpMethod method, string url, HttpContent? content = null)
     {
         var request = new HttpRequestMessage(method, url + (_account.Length == 0 ? "" : "?account=" + Uri.EscapeDataString(_account))) { Content = content };
         if (_account.Length != 0) request.Options.Set(AAuthRequestOptions.Account, _account);
+        request.Options.Set(AAuthRequestOptions.InteractionHandler, this);
         return request;
     }
 
@@ -262,6 +251,7 @@ app.MapR3AccessTokenEndpoint();</code></pre>
         var token = _lastAuthToken!;
         await RunAsync(async (_, bookings) =>
         {
+            // Deliberately presents one held auth token, so it signs with that token alone.
             using var previous = new AAuthClientBuilder(_identity.Key).UseJwt(token).WithEgressPolicy(SampleEgress.Policy).Build();
             using var request = AccountRequest(HttpMethod.Get, $"{bookings}/search_availability");
             return await previous.SendAsync(request);
@@ -279,31 +269,16 @@ app.MapR3AccessTokenEndpoint();</code></pre>
 
         try
         {
-            var personServer = Config["AAuth:PersonServer"]!;
             var bookings = Config["AAuth:Bookings"]!.TrimEnd('/');
 
-            var client = _client ??= AAuthClientBuilder.SelfIssuing(_identity.Key).WithEgressPolicy(SampleEgress.Policy)
-                .As(_identity.Issuer, _identity.AgentId)
-                .WithKid(_identity.KeyId)
-                .WithPersonServer(personServer)
-                .WithChallengeHandling(opts =>
-                {
-                    // A per-call operation's proposal comes back as a 202
-                    // interaction (relayed by the PS from the R3 AS). Surface the consent
-                    // link and let the SDK poll until the user approves.
-                    opts.OnInteractionRequired = async (interaction, _) =>
-                    {
-                        _interactionUrl = interaction.BuildUserUrl();
-                        _interaction = interaction;
-                        _waitingForApproval = true;
-                        await InvokeAsync(StateHasChanged);
-                    };
-                    opts.PollingTimeout = TimeSpan.FromMinutes(2);
-                    opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
-                })
-                .Build();
+            // Demo: each visit to this page starts without Aria's cached grants.
+            if (!_startedOver)
+            {
+                Agents.StartOver();
+                _startedOver = true;
+            }
 
-            var response = await call(client, bookings);
+            var response = await call(Agents.AriaClient, bookings);
             _waitingForApproval = false;
             if (response.IsSuccessStatusCode && response.RequestMessage?.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presentedToken) == true)
             {
@@ -335,5 +310,15 @@ app.MapR3AccessTokenEndpoint();</code></pre>
             _waitingForApproval = false;
             _loading = false;
         }
+    }
+
+    // A per-call proposal comes back as a 202 interaction (relayed by the PS from the
+    // R3 AS). Surface the consent link; the SDK polls until the user decides.
+    public async Task OnInteractionRequiredAsync(AAuth.Headers.Interaction interaction, CancellationToken cancellationToken)
+    {
+        _interactionUrl = interaction.BuildUserUrl();
+        _interaction = interaction;
+        _waitingForApproval = true;
+        await InvokeAsync(StateHasChanged);
     }
 }

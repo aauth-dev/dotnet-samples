@@ -3,7 +3,9 @@
 @using AAuth.Crypto
 @using AAuth.Headers
 @using AAuth.HttpSig
+@implements IAAuthInteractionHandler
 @inject IJSRuntime JS
+@inject SampleAgents Agents
 @rendermode InteractiveServer
 
 <PageTitle>Call Chain — Multi-Agent</PageTitle>
@@ -53,29 +55,17 @@
 <div class="row">
 <div class="col-md-6">
 <h5>Agent (Client) Code</h5>
-<pre><code class="language-csharp">// Agent A wires TWO callbacks. Hop 1 (the PS exchange
-// 202) flows through the challenge pipeline; hop 2 (the
-// Concierge's CHAINED resource 202) flows through the
-// interaction pipeline. Both surface a consent URL.
-using var client = AAuthClientBuilder.SelfIssuing(key).WithEgressPolicy(SampleEgress.Policy)
-    .As(issuer, agentId)
-    .WithKid(keyId)
-    .WithPersonServer(personServer)
-    .WithChallengeHandling(opts =&gt;
-    {   // hop 1: PS exchange 202
-        opts.OnInteractionRequired =
-            (interaction, ct) =&gt;
-                Surface(interaction.BuildUserUrl());
-    })
-    .WithInteractionHandling(opts =&gt;
-    {   // hop 2: Concierge's chained 202
-        opts.OnInteractionRequired =
-            (interaction, ct) =&gt; Surface(interaction.BuildUserUrl());
-    })
-    .Build();
+<pre><code class="language-csharp">// Agent A is Aria, registered with AddAAuthAgent. Its
+// consent handler sees BOTH hops: hop 1 (the PS exchange
+// 202, interaction.Source == PersonServer) and hop 2 (the
+// Concierge's CHAINED resource 202, Source == Resource).
+// Each surfaces interaction.BuildUserUrl() to the user.
+var client = clients.CreateClient("aria");
 
 // Calls the Concierge (not Calendar directly).
-var response = await client.GetAsync(conciergeUrl);</code></pre>
+using var request = new HttpRequestMessage(HttpMethod.Get, conciergeUrl);
+request.Options.Set(AAuthRequestOptions.InteractionHandler, consent);
+var response = await client.SendAsync(request);</code></pre>
 </div>
 <div class="col-md-6">
 <h5>Concierge Handler (interaction chaining)</h5>
@@ -154,7 +144,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
             @_currentHop
         </h5>
         <p>A <code>202 Accepted</code> was returned and the SDK is already polling for your decision.</p>
-        <PersonServerApprovalPrompt PersonServer="@Config["AAuth:PersonServer"]" Interaction="_interaction!" PollCount="_pollCount"
+        <PersonServerApprovalPrompt PersonServer="@Agents.PersonServer" Interaction="_interaction!" PollCount="_pollCount"
                                     Lead="@(_currentHopNumber == 1
                                         ? $"Approval {_currentHopNumber} of 2. Decide it on your Person Server; a second approval (hop 2) follows."
                                         : $"Approval {_currentHopNumber} of 2, the last one. The chain completes after it.")" />
@@ -193,6 +183,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
     private AAuth.Headers.Interaction? _interaction;
     private string? _currentHop;
     private int _currentHopNumber;
+    private int _hopIndex;
     private readonly List<string> _approvedHops = new();
     private int _pollCount;
     private string? _response;
@@ -214,13 +205,17 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
         _interaction = null;
         _currentHop = null;
         _currentHopNumber = 0;
+        _hopIndex = 0;
         _approvedHops.Clear();
         _pollCount = 0;
 
         try
         {
-            var personServer = Config["AAuth:PersonServer"]!;
+            var personServer = Agents.PersonServer;
             var conciergeUrl = Config["AAuth:Concierge"]!;
+
+            // Demo: start from no grant so hop 1 prompts every run.
+            Agents.StartOver();
 
             // Reset the PS consent store so BOTH hops always surface their own
             // approval. The hop-2 consent — (Concierge, Calendar, calendar.read) —
@@ -235,50 +230,6 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
             }
             catch { /* swallow — the admin reset endpoint is demo-only */ }
 
-            var hopIndex = 0;
-
-            // Surfaces a consent URL to the UI. Hop 1 (PS exchange 202) arrives
-            // via the challenge pipeline; hop 2 (the Concierge's chained 202)
-            // arrives via the top-level interaction pipeline. Both funnel here.
-            async Task SurfaceInteraction(AAuth.Headers.Interaction interaction)
-            {
-                if (_currentHop is not null)
-                {
-                    _approvedHops.Add(_currentHop);
-                }
-                hopIndex++;
-                _currentHopNumber = hopIndex;
-                _currentHop = hopIndex == 1
-                    ? "Hop 1: Agent → Concierge (concierge)"
-                    : "Hop 2: Concierge → Calendar (calendar.read, chained)";
-                _interaction = interaction;
-                _waitingForApproval = true;
-                await InvokeAsync(StateHasChanged);
-            }
-
-            // Self-issued token refresh + interaction relay. A 202 from the PS
-            // (hop 1) or the Concierge's chained 202 (hop 2) both surface a
-            // consent URL here; the SDK then polls and resumes.
-            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key).WithEgressPolicy(SampleEgress.Policy)
-                .As(_identity.Issuer, _identity.AgentId)
-                .WithKid(_identity.KeyId)
-                .WithPersonServer(personServer)
-                .WithChallengeHandling(opts =>
-                {
-                    opts.OnInteractionRequired = (interaction, ct) =>
-                        SurfaceInteraction(interaction);
-                    opts.PollingTimeout = TimeSpan.FromMinutes(2);
-                    opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
-                })
-                .WithInteractionHandling(opts =>
-                {
-                    opts.OnInteractionRequired = (interaction, ct) =>
-                        SurfaceInteraction(PersonServerConsent.FromUserUrl(interaction.BuildUserUrl(), interaction.Code));
-                    opts.PollingTimeout = TimeSpan.FromMinutes(2);
-                    opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
-                })
-                .Build();
-
             // Background timer to update the poll count in the UI.
             using var pollTimer = new PeriodicTimer(TimeSpan.FromSeconds(1));
             var pollTask = Task.Run(async () =>
@@ -290,7 +241,11 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
                 }
             });
 
-            var response = await client.GetAsync(conciergeUrl);
+            // Hop 1 (the PS exchange 202) and hop 2 (the Concierge's chained 202)
+            // both reach OnInteractionRequiredAsync; the SDK then polls and resumes.
+            using var request = new HttpRequestMessage(HttpMethod.Get, conciergeUrl);
+            request.Options.Set(AAuthRequestOptions.InteractionHandler, this);
+            var response = await Agents.AriaClient.SendAsync(request);
 
             pollTimer.Dispose();
 
@@ -325,5 +280,27 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
         {
             _loading = false;
         }
+    }
+
+    // Hop 1 comes from the PS exchange; hop 2 is the Concierge's chained resource 202,
+    // whose URL points at the PS consent page.
+    public async Task OnInteractionRequiredAsync(AAuth.Headers.Interaction interaction, CancellationToken cancellationToken)
+    {
+        if (interaction.Source == AAuth.Headers.InteractionSource.Resource)
+        {
+            interaction = PersonServerConsent.FromUserUrl(interaction.BuildUserUrl(), interaction.Code);
+        }
+        if (_currentHop is not null)
+        {
+            _approvedHops.Add(_currentHop);
+        }
+        _hopIndex++;
+        _currentHopNumber = _hopIndex;
+        _currentHop = _hopIndex == 1
+            ? "Hop 1: Agent → Concierge (concierge)"
+            : "Hop 2: Concierge → Calendar (calendar.read, chained)";
+        _interaction = interaction;
+        _waitingForApproval = true;
+        await InvokeAsync(StateHasChanged);
     }
 }

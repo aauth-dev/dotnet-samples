@@ -37,6 +37,12 @@ public interface IAAuthTokenCache
     /// </summary>
     Task<string> AcquireAsync(AAuthTokenCacheKey key, string? presented, Func<CancellationToken, Task<string>> acquire,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Forget every cached token, for example when the person signs out. In-flight acquisitions
+    /// still complete for their callers.
+    /// </summary>
+    void Clear();
 }
 
 /// <summary>The in-memory <see cref="IAAuthTokenCache"/>: per agent by default, shareable across clients.</summary>
@@ -64,6 +70,11 @@ public sealed class InMemoryAAuthTokenCache : IAAuthTokenCache
             _entries[key] = (token, expiresAt);
             if (_entries.Count > 1024) Prune();
         }
+    }
+
+    public void Clear()
+    {
+        lock (_gate) _entries.Clear();
     }
 
     public async Task<string> AcquireAsync(AAuthTokenCacheKey key, string? presented,

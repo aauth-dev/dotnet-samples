@@ -7,7 +7,10 @@
 @inject IConfiguration Configuration
 
 @code {
-    private string PersonServerUrl => Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
+    /// <summary>The Person Server; defaults to <c>AAuth:PersonServer</c>.</summary>
+    [Parameter] public string? PersonServer { get; set; }
+
+    private string PersonServerUrl => PersonServer ?? Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
 }
 @implements IDisposable
 
@@ -103,7 +106,7 @@
     private void Create(string service = "destinations")
     {
         _session = new(Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
-            Configuration["AAuth:PersonServer"] ?? "http://localhost:5100", Configuration["AAuth:Catalog"] ?? "http://localhost:5006") { Service = service };
+            PersonServerUrl, Configuration["AAuth:Catalog"] ?? "http://localhost:5006") { Service = service };
         _session.Changed = () => InvokeAsync(StateHasChanged);
     }
     private async Task Next()

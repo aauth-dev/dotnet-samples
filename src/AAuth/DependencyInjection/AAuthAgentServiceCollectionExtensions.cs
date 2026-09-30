@@ -296,7 +296,7 @@ internal static class AAuthAgentComposer
         => KeyStore(services).LoadAsync(keyHandle).GetAwaiter().GetResult()
             ?? throw new InvalidOperationException($"AAuthAgentOptions.KeyHandle '{keyHandle}' was not found in the key store.");
 
-    private static T? Handler<T>(IServiceProvider services, string name) where T : class
+    internal static T? Handler<T>(IServiceProvider services, string name) where T : class
         => services.GetKeyedService<T>(name) ?? services.GetService<T>();
 
     private static void CopyInto<T>(T source, T target)

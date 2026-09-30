@@ -1,5 +1,6 @@
 @page "/documents"
 @rendermode InteractiveServer
+@inject SampleAgents Agents
 
 <PageTitle>Document Release</PageTitle>
-<AAuth.Samples.Capabilities.DocumentWalkthrough />
+<AAuth.Samples.Capabilities.DocumentWalkthrough PersonServer="@Agents.PersonServer" />

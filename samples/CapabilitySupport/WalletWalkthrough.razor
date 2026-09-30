@@ -8,7 +8,10 @@
 @inject AAuth.Agent.IAAuthAgentFactory Agents
 
 @code {
-    private string PersonServerUrl => Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
+    /// <summary>The Person Server; defaults to <c>AAuth:PersonServer</c>.</summary>
+    [Parameter] public string? PersonServer { get; set; }
+
+    private string PersonServerUrl => PersonServer ?? Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
 }
 @implements IDisposable
 
@@ -181,7 +184,7 @@
     private void Create(WalletFlow flow = WalletFlow.Clarification)
     {
         _session = new(Agents, Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
-            Configuration["AAuth:PersonServer"] ?? "http://localhost:5100",
+            PersonServerUrl,
             Configuration["AAuth:Wallet"] ?? "http://localhost:5003",
             Configuration["AAuth:Concierge"] ?? "http://localhost:5200") { Flow = flow };
         _session.Changed = () => InvokeAsync(StateHasChanged);

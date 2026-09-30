@@ -119,7 +119,8 @@ app.MapGet("/pseudonymous", (HttpContext ctx) =&gt;
             // Generate a fresh key (in production, load from keystore)
             var key = AAuthKey.Generate();
 
-            // Build the signed client — hwk mode, no enrollment
+            // This page teaches the hwk signing primitive, so it builds its own client;
+            // the app's agents are registered with AddAAuthAgent.
             using var client = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
                 .UseHwk()
                 .Build();

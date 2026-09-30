@@ -204,6 +204,8 @@ else
         {
             // Ephemeral key signs the HTTP request; naming JWT proves delegation from durable key.
             var namingJwt = _namingJwt!;
+            // This page teaches the jkt-jwt signing primitive, so it builds its own client;
+            // the app's agents are registered with AddAAuthAgent.
             using var client = new AAuthClientBuilder(_ephemeralKey!).WithEgressPolicy(SampleEgress.Policy)
                 .UseJktJwt(() => namingJwt)
                 .Build();

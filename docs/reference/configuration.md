@@ -451,7 +451,7 @@ SDK-required), shown here as a reference for wiring your own hosts.
 | `AAuth:PersonServer` | `string` | Concierge | Downstream Person Server URL (a sample value, not the SDK's `AAuth:PersonServer` options section). |
 | `AAuth:Downstream` | `string` | Concierge | Downstream resource URL. |
 | `AAuth:AgentId` | `string` | Concierge | The agent identifier this host signs as. |
-| `AAuth:SelfIssuer` / `AAuth:SelfAgentId` | `string` | SampleApp | Self-issued agent issuer / identifier. |
+| `AAuth:Agents:aria` | `AAuthAgentOptions` section | SampleApp | Aria, the self-issued agent every page uses: `PersonServer`, `SelfIssued:Issuer` / `Subject` / `KeyId`, polling budgets. The key is generated at startup. |
 
 ## Further Reading
 

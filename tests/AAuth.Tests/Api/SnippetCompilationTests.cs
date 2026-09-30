@@ -546,6 +546,12 @@ public sealed class SnippetCompilationTests
                 private GuidedTour.TourAgentIdentity _selfIdentity = null!;
                 private GuidedTour.TourOptions _options = null!;
                 private WebApplicationBuilder builder = null!;
+                private IHttpClientFactory clients = null!;
+                private IAAuthInteractionHandler consent = null!;
+                private IAAuthClarificationHandler clarify = null!;
+                private IAAuthAgentFactory factory = null!;
+                private SampleApp.SampleAgents Agents = null!;
+                private string calendar = "https://calendar.example";
             """ + context + DocumentationSnippetContext.Fields
             + (hasReturn ? "public async Task<object?> RunAsync() {\n" : "public async Task RunAsync() {\n")
             + (member ? "\n}\n" + snippet + "\n}" : "\n" + snippet + (hasReturn ? "\nreturn null;" : "") + "\n}}")

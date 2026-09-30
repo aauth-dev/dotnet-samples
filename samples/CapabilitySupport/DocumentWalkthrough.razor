@@ -8,7 +8,10 @@
 @inject AAuth.Agent.IAAuthAgentFactory Agents
 
 @code {
-    private string PersonServerUrl => Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
+    /// <summary>The Person Server; defaults to <c>AAuth:PersonServer</c>.</summary>
+    [Parameter] public string? PersonServer { get; set; }
+
+    private string PersonServerUrl => PersonServer ?? Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
 }
 @implements IDisposable
 
@@ -157,7 +160,7 @@
     private void Create()
     {
         _session = new(Agents, Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
-            Configuration["AAuth:PersonServer"] ?? "http://localhost:5100", Configuration["AAuth:Documents"] ?? "http://localhost:5007");
+            PersonServerUrl, Configuration["AAuth:Documents"] ?? "http://localhost:5007");
         _session.Changed = () => InvokeAsync(StateHasChanged);
     }
     private async Task Next()

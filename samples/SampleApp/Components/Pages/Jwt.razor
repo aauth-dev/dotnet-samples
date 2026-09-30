@@ -2,6 +2,7 @@
 @using AAuth.Crypto
 @using AAuth.HttpSig
 @inject IJSRuntime JS
+@inject SampleAgents Agents
 @rendermode InteractiveServer
 
 <PageTitle>JWT — Agent Token</PageTitle>
@@ -28,7 +29,9 @@
 <div class="col-md-6">
 <h5>Client Code</h5>
 <pre><code class="language-csharp">// _identity is the injected SelfIssuedIdentity published by this host.
-var personServer = Config["AAuth:PersonServer"]!;
+// This page teaches the jwt signing primitive, so it builds its own client;
+// the app's agents are registered with AddAAuthAgent.
+var personServer = Agents.PersonServer;
 var calendar = Config["AAuth:Calendar"]!.TrimEnd('/');
 using var client = AAuthClientBuilder.SelfIssuing(_identity.Key)
     .WithEgressPolicy(SampleEgress.Policy)
@@ -140,14 +143,15 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
 
         try
         {
-            var personServer = Config["AAuth:PersonServer"]!;
+            var personServer = Agents.PersonServer;
             var resourceUrl = Config["AAuth:Calendar"]!;
 
             // Pre-grant consent so the PS issues a token immediately
             // (autonomous / direct-grant mode — no user interaction)
             await GrantConsentAsync();
 
-            // Self-issued token refresh — no AP round-trip needed
+            // This page teaches the jwt signing primitive, so it builds its own client;
+            // the app's agents are registered with AddAAuthAgent.
             using var client = AAuthClientBuilder.SelfIssuing(_identity.Key).WithEgressPolicy(SampleEgress.Policy)
                 .As(_identity.Issuer, _identity.AgentId)
                 .WithKid(_identity.KeyId)
@@ -175,7 +179,7 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
 
     private async Task GrantConsentAsync()
     {
-        var personServer = Config["AAuth:PersonServer"];
+        var personServer = Agents.PersonServer;
         if (string.IsNullOrEmpty(personServer)) return;
 
         var agentId = _identity.AgentId;

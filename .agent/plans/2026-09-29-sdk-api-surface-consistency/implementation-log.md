@@ -657,7 +657,60 @@ PROCEEDED.
     snippet. Now it expects `agent.TokenExchange`. The documents and wallet specs
     then passed 12/12, which drives both migrated sessions end to end.
 
+### [2026-09-30] [Phase 10a] SampleApp on the registered agent
+
+PROCEEDED (Phase 10 part 1 of 4: SampleApp; then Concierge/MissionAgent/
+AgentConsole/EventSupport, the consent-dashboard seams, and teaching panes).
+- **Registration:** `AddAAuthAgent("aria", AAuth:Agents:aria)` (Person Server,
+  self-issued identity, polling budgets; key generated at startup).
+  `AAuth:PersonServer`, `AAuth:SelfIssuer` and `AAuth:SelfAgentId` are gone from
+  SampleApp. `SampleAgents` exposes Aria's client, Person Server, a poller budget
+  for per-call governance options, and `StartOver()`.
+- **Pages** (Deferred by hand, the rest by a subagent, verified): Deferred,
+  Federated, Bookings, CallChain, MissionCallChain and Inbox send through a
+  registered agent with a per-request `IAAuthInteractionHandler` (the page), and
+  CallChain branches on `Interaction.Source`. Mission and MissionCallChain use
+  Aria's keyed `AAuthGovernanceClient`/`TokenExchangeClient`. Inbox uses one
+  enrolled agent that `EnrollmentService` creates through `IAAuthAgentFactory`
+  after enrolment. The CapabilitySupport and EventSupport walkthroughs take a
+  `PersonServer` parameter from the host page.
+- **Builder kept, with a comment:** the signing-mode lessons Hwk, Jwt, JwksUri
+  and JktJwt; Bookings `CheckPreviousGrant` and Mission gates 2-3, which present
+  one specific held token (the lesson); the CallChain Concierge server pane.
+- **SDK:** `IAAuthTokenCache.Clear()` (sign-out). `SelectForRequest` now reads
+  only the cache: it fell back to the holder's latest carrier, so a cleared cache
+  still presented the old auth token (found by the Deferred e2e). The keyed
+  `AAuthGovernanceClient` now defaults to the agent's challenge callbacks
+  (options, keyed handler, unkeyed handler) and polling budget when
+  `WithGovernance` sets none.
+- **Tests.** `Clear_ForcesAFreshExchange`; `AccountBindingTests` rewritten for
+  cache keys (a person token is keyed by the requested account). Snippet context
+  gained `clients`, `consent`, `calendar`, `clarify`, `factory`, `Agents`.
+- **Gates.** Build clean. AAuth.Tests 1750, AAuth.Conformance 1286, R3 330,
+  Events 83. ApiSurface +904/-405. Docs inventory refreshed. Playwright
+  `sample-app` project: 35 passed, 1 skipped, `--retries=0`.
+
 ## Deviations from plan
+
+### [2026-09-30] [Phase 10a] Demo pages clear the token cache per run
+
+PROCEEDED. The pages used to build a client per click, so every run started
+without tokens and asked for consent; the e2e specs rely on that. A shared agent
+keeps its tokens, so each consent demo calls `SampleAgents.StartOver()`
+(`IAAuthTokenCache.Clear()`) first. Real agents should not.
+
+### [2026-09-30] [Phase 10a] Open: scope step-up answers 403
+
+PROCEEDED, open for Phase 12. `RequireAAuth(scope:)` answers a valid auth token
+that lacks the scope with 403, not a 401 with a fresh resource token, so a cached
+narrower token cannot step up. Mission gate 3 therefore keeps its hand-walked
+flow.
+
+### [2026-09-30] [Phase 10a] Person tokens are cached per requested account
+
+PROCEEDED. The old single-slot carrier reused a person token for any account.
+The cache key includes the requested account, so another account obtains its own
+person token (one extra round trip, never a wrong binding).
 
 ### [2026-09-30] [Phase 9] Agent-token source no longer serializes requests
 

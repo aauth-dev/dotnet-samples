@@ -10,6 +10,7 @@
 @using AAuth.HttpSig
 @using AAuth.Tokens
 @inject IJSRuntime JS
+@inject SampleAgents Agents
 @rendermode InteractiveServer
 
 <PageTitle>Mission — PS-Governed Agent</PageTitle>
@@ -44,22 +45,14 @@
 <div class="row">
     <div class="col-md-6">
         <h5>Client Code</h5>
-        <pre><code class="language-csharp">// Self-issued agent token signs every governance call.
-var agentToken = await new AgentTokenBuilder
-{
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = identity.Issuer,
-    Subject = identity.AgentId,
-    KeyId = identity.KeyId,
-    Key = identity.Key,
-    PersonServer = personServer,
-}.BuildAsync();
-
-using var signed = new AAuthClientBuilder(identity.Key)
-    .WithEgressPolicy(SampleEgress.Policy).UseJwt(agentToken).Build();
-// Bind the PS once; the bound client returns a MissionSession that
-// threads the mission's mission_s256 into every later call.
-var governance = new AAuthGovernanceClient(signed, metadata, personServer, governanceOptions);
+        <pre><code class="language-csharp">// governance and exchange are Aria's keyed typed clients: AddAAuthAgent
+// registers them, bound to Aria's PS and signed with its agent token.
+//   [Inject(Key = "aria")] AAuthGovernanceClient governance
+//   [Inject(Key = "aria")] TokenExchangeClient exchange
+// Governance calls take their deferred-handling options per call; the
+// MissionSession then threads the mission's mission_s256 into later calls.
+var personServer = governance.PersonServer;
+var governanceOptions = new GovernanceOptions { OnInteractionRequired = SurfaceInteractionAsync };
 
 // 1. Propose a mission (PROMPT — the human approves intent + tools).
 //    A proposal carries a Markdown description, an optional `tools`
@@ -75,7 +68,8 @@ var session = await governance.ProposeMissionAsync(
             new MissionTool("compare_options", "Compare options"),
         },
         Resources = new[] { resourceOrigin }, // approval returns person_tokens for these
-    });
+    },
+    governanceOptions);
 var mission = session.Mission; // session threads mission_s256 + PS for you
 
 // 2. Access a scope-protected resource (SILENT — the PS judges the scope
@@ -92,7 +86,8 @@ var personToken = mission.PersonTokens.TryGetValue(resourceOrigin, out var appro
 
 //    b) GET the resource presenting the person token. Having no auth token
 //       yet, the resource answers 401 with a resource token (aud = the PS)
-//       naming the person token and copying its mission_s256.
+//       naming the person token and copying its mission_s256. This step
+//       deliberately presents one held token, so it signs with it alone.
 using var personClient = new AAuthClientBuilder(identity.Key)
     .WithEgressPolicy(SampleEgress.Policy).UseJwt(personToken).Build();
 using var challenge = await personClient.GetAsync($"{resourceOrigin}/trips"); // 401
@@ -107,32 +102,28 @@ var resourceToken = AAuthRequirementHeader
 var authToken = await exchange.ExchangeAsync(personServer, resourceToken, personToken);
 
 //    d) Retry the SAME request, now signing with the auth token. 200 OK.
+//       Again one held token, so it signs with it alone.
 using var authed = new AAuthClientBuilder(identity.Key)
     .WithEgressPolicy(SampleEgress.Policy).UseJwt(authToken).Build();
 using var ok = await authed.GetAsync($"{resourceOrigin}/trips");
 var who = await ok.Content.ReadFromJsonAsync&lt;JsonObject&gt;();   // the profile
 
 // 3. Access an ELEVATED scope (PROMPT — out of mission). The same
-//    challenge -> exchange -> retry, but against an endpoint requiring
-//    `trips.book`. The mission's intent does not cover this
-//    scope, so the PS cannot grant it silently: it prompts the user.
+//    challenge -> exchange -> retry (a-d), but against `/trips/book`,
+//    which requires `trips.book`. The mission's intent does not cover
+//    this scope, so the PS cannot grant it silently: it prompts the user.
 //    A user deny throws AAuthInteractionDeniedException (denied);
 //    otherwise the consent accrues to the mission (§Scopes, gate 3).
-using var elevatedClient = AAuthClientBuilder.SelfIssuing(identity.Key)
-    .WithEgressPolicy(SampleEgress.Policy).As(identity.Issuer, identity.AgentId)
-    .WithKid(identity.KeyId).WithPersonServer(personServer).WithMission(mission)
-    .WithChallengeHandling(options =&gt; options.OnInteractionRequired = SurfaceInteractionAsync)
-    .Build();
-using var elevated = await elevatedClient.GetAsync($"{resourceOrigin}/trips/book");
 
 // 4. Permission for a pre-approved tool (SILENT — no PS call).
 //    We still hold the addToCalendarTool reference from the proposal above.
-var addToCalendar = await session.RequestPermissionAsync(addToCalendarTool.ToAction());
+var addToCalendar = await session.RequestPermissionAsync(addToCalendarTool.ToAction(),
+    options: governanceOptions);
 
 // 5. Permission for a non-approved tool (PROMPT — the PS asks). The
-//    session injects the mission claim and the bound options.
+//    session injects the mission claim.
 var cancelBooking = await session.RequestPermissionAsync(
-    new MissionAction("cancel_booking"));</code></pre>
+    new MissionAction("cancel_booking"), options: governanceOptions);</code></pre>
     </div>
     <div class="col-md-6">
         <h5>Resource — protecting the action with a scope</h5>
@@ -296,7 +287,7 @@ if (cancelBooking.IsGranted)
             mission, so the Person Server returned <code>202 Accepted</code>. The SDK is already
             polling while it waits for your decision.
         </p>
-        <PersonServerApprovalPrompt PersonServer="@Config["AAuth:PersonServer"]" Interaction="_interaction" PollCount="_pollCount" />
+        <PersonServerApprovalPrompt PersonServer="@Agents.PersonServer" Interaction="_interaction" PollCount="_pollCount" />
     </div>
 }
 
@@ -308,6 +299,8 @@ if (cancelBooking.IsGranted)
 @code {
     [Inject] private SelfIssuedIdentity _identity { get; set; } = default!;
     [Inject] private IConfiguration Config { get; set; } = default!;
+    [Inject(Key = SampleAgents.Aria)] private AAuthGovernanceClient Governance { get; set; } = default!;
+    [Inject(Key = SampleAgents.Aria)] private TokenExchangeClient Exchange { get; set; } = default!;
 
     private readonly List<GateStep> _steps = new();
     private bool _running;
@@ -317,9 +310,6 @@ if (cancelBooking.IsGranted)
     private int _pollCount;
     private string? _resourceJson;
     private string? _error;
-
-    // Reused across the flow so each gate signs with the same agent identity.
-    private string _agentToken = string.Empty;
 
     private sealed record GateStep(
         int Number,
@@ -353,7 +343,7 @@ if (cancelBooking.IsGranted)
         _waitingForApproval = false;
         _pollCount = 0;
 
-        var personServer = Config["AAuth:PersonServer"]!.TrimEnd('/');
+        var personServer = Agents.PersonServer.TrimEnd('/');
         var resourceOrigin = Config["AAuth:Trips"]!.TrimEnd('/');
         var resourceUrl = $"{resourceOrigin}/trips";
         var elevatedUrl = $"{resourceOrigin}/trips/book";
@@ -366,31 +356,19 @@ if (cancelBooking.IsGranted)
             // only the scripted fallback used outside interactive mode.
             await ConfigurePersonServerAsync(personServer, resourceOrigin);
 
-            // Self-issued signing channel: SampleApp is its own AP (§Self-Hosted
-            // Agents), so it mints its own short-lived agent token.
-            _agentToken = await MintAgentTokenAsync(personServer);
-            var handler = new AAuthSigningHandler(_identity.Key, () => _agentToken)
-                { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
-            using var signed = new SampleHttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-            var metadata = new MetadataClient(new SampleHttpClient());
-            var poller = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(2) };
-
-            GovernanceOptions GovernanceFor() => new()
+            // Aria's typed clients sign every PS call with its self-issued agent token.
+            // Governance calls take their deferred-handling options per call.
+            var poller = Agents.PollerOptions;
+            var governanceOptions = new GovernanceOptions
             {
                 OnInteractionRequired = SurfaceInteractionAsync,
                 PollerOptions = poller,
             };
 
-            // Bind the PS and the default deferred-handling options once. The
-            // bound client hands back a MissionSession that threads the
-            // mission's mission_s256 into every later governed call.
-            var governance = new AAuthGovernanceClient(signed, metadata, personServer, GovernanceFor());
-            var exchange = new TokenExchangeClient(signed, metadata);
-
             // ---- Gate 1: propose the mission (PROMPT) ----------------------
             _currentGate = "Mission creation";
             var addToCalendarTool = new MissionTool("add_to_calendar", "Add an itinerary item to the calendar");
-            var session = await governance.ProposeMissionAsync(new MissionProposal(
+            var session = await Governance.ProposeMissionAsync(new MissionProposal(
                 "Plan my weekend trip to Seattle.")
             {
                 Tools = new[]
@@ -400,7 +378,7 @@ if (cancelBooking.IsGranted)
                 },
                 // The approval returns a person token for each named resource (person_tokens).
                 Resources = new[] { resourceOrigin },
-            });
+            }, governanceOptions);
             // The session wraps the approved mission and threads its claim + PS
             // into every subsequent permission / audit / interaction call.
             var mission = session.Mission;
@@ -417,8 +395,7 @@ if (cancelBooking.IsGranted)
 
             // ---- Gate 2: access a mission-aware resource (SILENT, in scope) -
             _currentGate = "Resource token";
-            var who = await AccessMissionResourceAsync(
-                signed, exchange, personServer, resourceUrl, mission, poller);
+            var who = await AccessMissionResourceAsync(personServer, resourceUrl, mission, poller);
             _resourceJson = Pretty(who);
             ClearWaiting();
             _steps.Add(new GateStep(2, "Resource token (trips.read)", Prompted: false,
@@ -440,8 +417,7 @@ if (cancelBooking.IsGranted)
             _currentGate = "Resource token (elevated)";
             try
             {
-                var elevated = await AccessMissionResourceAsync(
-                    signed, exchange, personServer, elevatedUrl, mission, poller);
+                var elevated = await AccessMissionResourceAsync(personServer, elevatedUrl, mission, poller);
                 ClearWaiting();
                 _steps.Add(new GateStep(3, "Resource token (elevated)", Prompted: true,
                     Outcome: "granted",
@@ -471,7 +447,8 @@ if (cancelBooking.IsGranted)
             // We still hold the addToCalendarTool reference from Gate 1, so we ask
             // via tool.ToAction() rather than re-typing the action name. The
             // session injects the mission claim automatically.
-            var addToCalendar = await session.RequestPermissionAsync(addToCalendarTool.ToAction());
+            var addToCalendar = await session.RequestPermissionAsync(addToCalendarTool.ToAction(),
+                options: governanceOptions);
             _steps.Add(new GateStep(4, "Permission add_to_calendar", Prompted: false,
                 Outcome: addToCalendar.IsGranted ? "granted" : "denied",
                 Summary: "Pre-approved tool — resolved locally without a PS round-trip.",
@@ -485,11 +462,10 @@ if (cancelBooking.IsGranted)
             _currentGate = "Permission cancel_booking";
             try
             {
-                // Not a pre-approved tool: the session threads the mission claim
-                // and the bound deferred-handling options, so the PS prompt is
-                // surfaced automatically.
+                // Not a pre-approved tool: the session threads the mission claim,
+                // so the PS prompt is surfaced through governanceOptions.
                 var cancelBooking = await session.RequestPermissionAsync(
-                    new MissionAction("cancel_booking"));
+                    new MissionAction("cancel_booking"), options: governanceOptions);
                 ClearWaiting();
                 _steps.Add(new GateStep(5, "Permission cancel_booking", Prompted: true,
                     Outcome: cancelBooking.IsGranted ? "granted" : "denied",
@@ -533,36 +509,20 @@ if (cancelBooking.IsGranted)
         }
     }
 
-    // Build a fresh self-issued agent token (a new jti each call satisfies the
-    // resource's replay detection on repeated access).
-    private ValueTask<string> MintAgentTokenAsync(string personServer) => new AgentTokenBuilder
-    {
-        EgressPolicy = SampleEgress.Policy,
-        Issuer = _identity.Issuer,
-        Subject = _identity.AgentId,
-        KeyId = _identity.KeyId,
-        Key = _identity.Key,
-        PersonServer = personServer,
-        Lifetime = TimeSpan.FromHours(1),
-    }.BuildAsync();
-
     // Person token under the mission -> challenge -> token exchange (governed by
     // the PS) -> retry. The person token carries mission_s256, which the resource
-    // copies into its resource token (§Mission Log).
+    // copies into its resource token (§Mission Log). The page drives these steps
+    // itself because they are its lesson, so the resource calls present one held
+    // token each; Aria's typed TokenExchangeClient mints the tokens.
     private async Task<JsonObject?> AccessMissionResourceAsync(
-        HttpClient signed,
-        TokenExchangeClient exchange,
         string personServer,
         string resourceUrl,
         AAuth.Agent.Mission mission,
         DeferredPollerOptions poller)
     {
-        // Refresh the agent token for a fresh jti before each resource access.
-        _agentToken = await MintAgentTokenAsync(personServer);
-
         var personToken = mission.PersonTokens.TryGetValue(new Uri(resourceUrl).GetLeftPart(UriPartial.Authority), out var approved)
             ? approved
-            : await exchange.RequestPersonTokenAsync(personServer,
+            : await Exchange.RequestPersonTokenAsync(personServer,
                 new Uri(resourceUrl).GetLeftPart(UriPartial.Authority), new TokenExchangeRequest
                 {
                     MissionS256 = mission.S256,
@@ -595,7 +555,7 @@ if (cancelBooking.IsGranted)
         var resourceToken = parsed.ResourceToken
             ?? throw new InvalidOperationException("Challenge did not carry a resource token.");
 
-        var authToken = await exchange.ExchangeAsync(personServer, resourceToken, new TokenExchangeRequest
+        var authToken = await Exchange.ExchangeAsync(personServer, resourceToken, new TokenExchangeRequest
         {
             PresentedToken = personToken,
             OnInteractionRequired = SurfaceInteractionAsync,

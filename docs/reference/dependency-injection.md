@@ -430,7 +430,8 @@ Challenge handling caches the person tokens and auth tokens it obtains in an
 `IAAuthTokenCache`. A token is reused only for a request with the same agent
 token, upstream token, mission, resource, account and signing key. Concurrent
 requests that need the same token share one exchange. An agent that alternates
-between resources keeps one entry per resource.
+between resources keeps one entry per resource. `Clear()` forgets every entry,
+for example when the person signs out; the next request exchanges again.
 
 Each registered agent gets an in-memory cache, keyed by its name. It is shared by
 every `HttpClient` resolved for the agent. To share a cache between agents, set

@@ -1,5 +1,6 @@
 @page "/catalog-gateway"
 @rendermode InteractiveServer
+@inject SampleAgents Agents
 
 <PageTitle>Travel Catalog</PageTitle>
-<AAuth.Samples.Capabilities.CatalogWalkthrough />
+<AAuth.Samples.Capabilities.CatalogWalkthrough PersonServer="@Agents.PersonServer" />

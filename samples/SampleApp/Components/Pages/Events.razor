@@ -1,5 +1,6 @@
 @page "/events"
 @rendermode InteractiveServer
+@inject SampleAgents Agents
 
 <PageTitle>Bookings Events</PageTitle>
-<AAuth.Samples.Events.EventWalkthrough />
+<AAuth.Samples.Events.EventWalkthrough PersonServer="@Agents.PersonServer" />

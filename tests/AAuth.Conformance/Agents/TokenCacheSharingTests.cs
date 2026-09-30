@@ -111,6 +111,22 @@ public class TokenCacheSharingTests
         Assert.Equal(4, host.PersonServerPosts);
     }
 
+    [Fact(DisplayName = "IAAuthTokenCache — Clear (sign-out) makes the next request exchange again")]
+    public async Task Clear_ForcesAFreshExchange()
+    {
+        await using var host = await AgentFlowHost.StartAsync();
+        var key = AAuthKey.Generate();
+        var cache = new InMemoryAAuthTokenCache();
+        using var client = Build(host, key, await host.AgentTokenAsync(key, AgentId), cache);
+
+        var first = await client.GetStringAsync(host.Origin + "/data");
+        cache.Clear();
+        var second = await client.GetStringAsync(host.Origin + "/data");
+
+        Assert.NotEqual(first, second);
+        Assert.Equal(4, host.PersonServerPosts);
+    }
+
     private static HttpClient Build(AgentFlowHost host, AAuthKey key, string token, IAAuthTokenCache cache)
         => new AAuthClientBuilder(key).UseJwt(token).WithEgressPolicy(host.Egress)
             .WithChallengeHandling(host.Origin).WithTokenCache(cache).Build();
