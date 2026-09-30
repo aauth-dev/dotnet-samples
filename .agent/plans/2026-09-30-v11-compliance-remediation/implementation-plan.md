@@ -327,7 +327,7 @@ This phase has the highest blast radius. It defines the single inventory model
       and `Location`, then completes the original request.
 - [x] Insufficient scope on a valid auth token gets 401 with a new resource
       token. The agent steps up and retries.
-- [ ] The gates, including Keycloak, are green.
+- [x] The gates, including Keycloak, are green.
 
 ## Phase 6 — R3 single use, audit and entitlement (R04)
 

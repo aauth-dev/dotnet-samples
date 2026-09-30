@@ -832,6 +832,36 @@ RESOLVED (Q5).
   docs inventory, snippets/links, e2e typecheck, and `ApiSurface --write`
   passed.
 
+### [2026-09-30] [Phase 5] e2e regressions
+
+RESOLVED.
+
+- The Concierge's intermediary-owned `/chain-interaction/{id}` URL was still
+  behind the resource verification/challenge middleware. Browser visits were
+  unsigned, so hop-2 chained approvals parked on a blank 401 instead of
+  redirecting to the downstream PS/AS interaction. The endpoint is now public
+  like a normal interaction URL; the pending URLs remain AAuth-protected.
+- Guided Tour call-chain assertions still assumed both approvals surfaced as
+  PS-dashboard prompts. Draft-11 interaction chaining now legitimately shows
+  the intermediary's own interaction URL for hop 2, which redirects onward, so
+  the test uses the generic consent driver and still requires exactly two
+  approvals plus the final 15-step result.
+- R06 scope step-up changed the wallet clarification negative control: a valid
+  `wallet.review` auth token presented to `wallet.charge` now yields `401
+  requirement=auth-token` with a new resource token, not a terminal `403`.
+  Sample walkthroughs and e2e assertions now expect the step-up response.
+
+### [2026-09-30] [Phase 5] Gates and wrap-up
+
+RESOLVED.
+
+Gates after the e2e-regression fixes (see the entry above):
+
+- The build is clean.
+- Tests: AAuth.Tests 1821, Conformance 1358, R3 332, Events 89.
+- e2e: full Playwright 78 passed, 1 skipped.
+- Keycloak profile: `federated-deferred` 1 passed; container removed.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 1] SMP-01 matches the exact agent id, not id plus key

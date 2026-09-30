@@ -36,8 +36,8 @@ test.describe('Wallet Protocol (Guided Tour)', () => {
 
     await selectStepTitled(page, /GET \/wallet\/review with auth token → 200/);
     await expectResponse(page, 200, ['wallet.review']);
-    await selectStepTitled(page, /GET \/wallet\/charge with the same grant → 403/);
-    await expectResponse(page, 403);
+    await selectStepTitled(page, /GET \/wallet\/charge with the same grant → 401/);
+    await expectResponse(page, 401);
   });
 
   test('the Concierge chains an AS-issued grant to the Wallet', async ({ page }) => {

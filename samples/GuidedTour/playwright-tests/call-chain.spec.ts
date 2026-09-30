@@ -2,12 +2,12 @@ import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import {
   openTour,
   selectFlow,
-  runAll,
   selectStep,
   expectResponse,
   readResponseJson,
   doneSteps,
-  decidePersonServerPrompt,
+  driveTour,
+  decideConsent,
   TourMode,
 } from '../../../tests/e2e/helpers/tour';
 import { Urls } from '../../../tests/e2e/helpers/agents';
@@ -43,15 +43,10 @@ test.describe('Call Chain (Guided Tour)', () => {
     await openTour(page);
     await selectFlow(page, TourMode.CallChain);
 
-    // One "Run all" drives both hops; each waiting step is recorded on arrival
-    // and the agent polls while the person decides on the PS dashboard.
-    await runAll(page);
-
-    // Hop 1 — Agent → Concierge (8 steps + the waiting step).
-    const hop1 = await decidePersonServerPrompt(page, 'approve', { done: 9 });
-
-    // Hop 2 — the Concierge's chained 202 for Concierge → Calendar (12 + 1).
-    await decidePersonServerPrompt(page, 'approve', { previous: hop1, done: 13 });
+    // One "Run all" drives both hops. Hop 1 is PS-hosted; hop 2 is now the
+    // Concierge's own interaction URL, which redirects to the PS consent page.
+    const decisions = await driveTour(page, (popup) => decideConsent(popup, true), 2);
+    expect(decisions).toBe(2);
 
     // The Concierge pending URL resolves the chained 200 and the inspect step runs.
     await expect(doneSteps(page)).toHaveCount(15, { timeout: 120_000 });

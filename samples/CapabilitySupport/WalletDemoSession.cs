@@ -70,7 +70,7 @@ public sealed class WalletDemoSession(IAAuthAgentFactory agents, string provider
             case 3 when Flow == WalletFlow.AsGrantChaining: await DelegateAsync(cancellationToken); break;
             case 3: await AccessAsync(Resource + Path, _authToken!, HttpStatusCode.OK, cancellationToken); break;
             case 4 when Flow == WalletFlow.Clarification:
-                await AccessAsync(wallet + "/wallet/charge", _authToken!, HttpStatusCode.Forbidden, cancellationToken); break;
+                await AccessAsync(wallet + "/wallet/charge", _authToken!, HttpStatusCode.Unauthorized, cancellationToken); break;
             case 4 when Flow == WalletFlow.AsGrantChaining:
                 await AccessAsync(wallet + "/wallet", _authToken!, HttpStatusCode.Unauthorized, cancellationToken); break;
             case 5 when Flow == WalletFlow.AsGrantChaining:

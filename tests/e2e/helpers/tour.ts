@@ -274,7 +274,9 @@ export async function driveTour(
     await expect.poll(async () => {
       if (await fresh()) return 'consent';
       if (await page.getByText('Running…').count()) return 'busy';
-      return await primary.isVisible() ? 'ready' : 'busy';
+      const label = await primary.innerText().catch(() => '');
+      if (label.trim() === 'Done' || label.trim() === 'Aborted') return 'ready';
+      return await primary.isVisible() && await primary.isEnabled() ? 'ready' : 'busy';
     }, { timeout: 150_000 }).not.toBe('busy');
     const consent = await fresh();
     if (consent) {

@@ -107,9 +107,12 @@ app.MapAAuthAgentWellKnown(options =>
 // resource token requiring an auth token for access.
 // -----------------------------------------------------------------------
 bool IsWalletPath(PathString path) => path == "/wallet" || path.StartsWithSegments("/wallet-pending");
+bool IsPublicInteractionPath(PathString path) => path.StartsWithSegments("/chain-interaction");
 
 app.UseWhen(
-    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known") && !IsWalletPath(ctx.Request.Path),
+    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
+        && !IsWalletPath(ctx.Request.Path)
+        && !IsPublicInteractionPath(ctx.Request.Path),
     branch => branch.UseAAuthIntermediary(
         verification =>
         {

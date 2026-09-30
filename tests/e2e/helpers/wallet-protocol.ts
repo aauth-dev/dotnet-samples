@@ -87,7 +87,7 @@ export function walletProtocolTests() {
         if (flow === 'Clarification') {
           await expect(root).toContainText('clarification_response');
           await expect(root).toContainText('wallet.review');
-          await expect(page.locator('.wallet-exchange[data-status="403"]')).toHaveCount(1);
+          await expect(page.locator('.wallet-exchange[data-status="401"]').filter({ hasText: '/wallet/charge' })).toHaveCount(1);
         } else if (flow === 'AsGrantChaining') {
           const result = JSON.parse(await page.getByTestId('wallet-result').innerText());
           expect(result.upstream.issuer).toBe('http://localhost:5500');

@@ -452,11 +452,11 @@ public sealed partial class TourSession
                             "The Wallet accepts the AS-issued grant for `wallet.review` — issued only after the agent explained " +
                             "why and the user approved.",
                             CodeSnippets.ReplayWithAuthToken, ct));
-                    yield return Act("GET /wallet/charge with same grant → 403", "wallet.charge is outside the grant; the Wallet rejects it.",
+                    yield return Act("GET /wallet/charge with same grant → 401", "wallet.charge is outside the grant; the Wallet steps the agent up.",
                         Actor.Agent, Actor.Resource, ct => CapAuthorizedRequestAsync(WalletUrl + "/wallet/charge", Actor.Resource, "Wallet",
-                            "GET /wallet/charge with the same grant → 403",
+                            "GET /wallet/charge with the same grant → 401",
                             "The same auth token is presented for a charge. It carries `wallet.review`, not `wallet.charge`, so the " +
-                            "Wallet refuses (`403`). A clarified grant is exactly as wide as what was approved.",
+                            "Wallet asks for a fresh auth-token grant (`401` step-up). A clarified grant is exactly as wide as what was approved.",
                             CodeSnippets.ReplayWithAuthToken, ct));
                     break;
                 }
