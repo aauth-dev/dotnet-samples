@@ -318,12 +318,12 @@ This phase has the highest blast radius. It defines the single inventory model
       sent to the AS (spy AS). The agent then sees `403 revoked` with a
       detail.
 - [ ] A revocation that races the send is cancelled through the linked token.
-- [ ] An upstream AS auth token with no PS provenance record is rejected with
+- [x] An upstream AS auth token with no PS provenance record is rejected with
       `invalid_upstream_token`. A matching record plus a revoked
       binding/agent token is rejected with `revoked_upstream_token`.
-- [ ] Provenance is pruned at `exp + skew`, and a quota breach answers 429
+- [x] Provenance is pruned at `exp + skew`, and a quota breach answers 429
       before minting.
-- [ ] An intermediary re-emits `202 requirement=interaction` with its own code
+- [x] An intermediary re-emits `202 requirement=interaction` with its own code
       and `Location`, then completes the original request.
 - [x] Insufficient scope on a valid auth token gets 401 with a new resource
       token. The agent steps up and retries.

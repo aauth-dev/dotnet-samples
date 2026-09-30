@@ -27,9 +27,10 @@ internal sealed class AgentFlowHost : IAsyncDisposable
     private readonly WebApplication _app;
     private readonly AAuthKey _issuerKey;
     private readonly Counter _posts;
+    private readonly IJtiStore _inventory;
 
     private AgentFlowHost(WebApplication app, string origin, string secondOrigin, AAuthKey issuerKey, ConsentScript consent,
-        Counter posts)
+        Counter posts, IJtiStore inventory)
     {
         _app = app;
         Origin = origin;
@@ -37,6 +38,7 @@ internal sealed class AgentFlowHost : IAsyncDisposable
         _issuerKey = issuerKey;
         Consent = consent;
         _posts = posts;
+        _inventory = inventory;
     }
 
     public string Origin { get; }
@@ -60,6 +62,7 @@ internal sealed class AgentFlowHost : IAsyncDisposable
         var egress = AAuthEgressPolicy.ForDevelopmentLoopback(origin, secondOrigin);
         var posts = new Counter();
         var issuerKey = AAuthKey.Generate();
+        var inventory = new InMemoryJtiStore();
         var consent = new ConsentScript();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseKestrel().UseUrls(origin, secondOrigin);
@@ -78,7 +81,7 @@ internal sealed class AgentFlowHost : IAsyncDisposable
             o.EgressPolicy = egress;
             o.SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey };
             o.UnsignedPathPrefixes = ["/data"];
-        });
+        }).UseTokenInventory(inventory);
         var app = builder.Build();
         app.Use(async (context, next) =>
         {
@@ -121,7 +124,7 @@ internal sealed class AgentFlowHost : IAsyncDisposable
             return Results.StatusCode(401);
         });
         await app.StartAsync();
-        return new AgentFlowHost(app, origin, secondOrigin, issuerKey, consent, posts);
+        return new AgentFlowHost(app, origin, secondOrigin, issuerKey, consent, posts, inventory);
     }
 
     private static string ReserveOrigin()
@@ -154,12 +157,17 @@ internal sealed class AgentFlowHost : IAsyncDisposable
     }.BuildAsync();
 
     /// <summary>An upstream auth token for an intermediary chaining on behalf of <paramref name="person"/>.</summary>
-    public ValueTask<string> UpstreamAsync(string person, string? mission = null) => new AuthTokenBuilder
+    public async ValueTask<string> UpstreamAsync(string person, string? mission = null)
+    {
+        var token = await new AuthTokenBuilder
     {
         EgressPolicy = Egress, Issuer = Origin, Audience = Origin, PersonServer = Origin, Key = _issuerKey, KeyId = "key",
         Subject = person, Scope = "read", MissionS256 = mission, AgentConfirmationKey = AAuthKey.Generate(),
         AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
-    }.BuildAsync();
+        }.BuildAsync();
+        await UpstreamProvenanceTestSupport.RecordAsync(_inventory, token, Origin);
+        return token;
+    }
 
     public Task SaveMissionAsync(string agentId) => _app.Services.GetRequiredService<IMissionStore>()
         .SaveAsync(new StoredMission(Mission, Origin, agentId, ReadOnlyMemory<byte>.Empty));

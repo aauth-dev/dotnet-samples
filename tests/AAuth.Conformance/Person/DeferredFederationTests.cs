@@ -863,6 +863,7 @@ public class DeferredFederationTests
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1), Subject = "upstream-only-person", Scope = "unrelated.scope",
             MissionS256 = mission,
         }.BuildAsync();
+        await UpstreamProvenanceTestSupport.RecordAsync(fixture.Inventory, upstreamToken, Fixture.PsIssuer);
         var body = await fixture.BodyAsync("read", mission: mission, agentKey: child ? childKey : fixture.AgentKey);
         if (child) body["subagent_token"] = childToken;
         if (upstream) body["upstream_token"] = upstreamToken;
@@ -1248,19 +1249,25 @@ public class DeferredFederationTests
         public required string AgentToken;
         public required Policy Policy;
         public required Store Store;
+        public required IJtiStore Inventory;
         public required Discovery DiscoveryTransport;
         public required Logs Logs { get; init; }
         public DirectCapture? DirectRequest;
         public AccessPendingEntry AsEntry => Store.Last!;
 
         // An AS-issued upstream auth token naming this PS, audienced to the intermediary (ap.test).
-        public ValueTask<string> UpstreamTokenAsync() => new AuthTokenBuilder
+        public async ValueTask<string> UpstreamTokenAsync()
+        {
+            var token = await new AuthTokenBuilder
         {
             Issuer = AsIssuer, Dwk = AuthTokenBuilder.AccessDwk, Audience = "https://ap.test", PersonServer = PsIssuer,
             Subject = "upstream-person", Scope = "upstream.read",
             Key = AsKey, KeyId = "key", AgentConfirmationKey = AAuthKey.Generate(),
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
-        }.BuildAsync();
+            }.BuildAsync();
+            await UpstreamProvenanceTestSupport.RecordAsync(Inventory, token, PsIssuer);
+            return token;
+        }
 
         // The person token the PS issued the agent for the resource (one per mission and key).
         public async Task<string> PersonTokenAsync(string? mission = null, AAuthKey? confirmationKey = null)
@@ -1406,6 +1413,7 @@ public class DeferredFederationTests
             var personBuilder = WebApplication.CreateBuilder();
             personBuilder.WebHost.UseTestServer();
             var logs = new Logs();
+            var inventory = new InMemoryJtiStore();
             personBuilder.Logging.AddProvider(logs);
             personBuilder.Services.AddSingleton(metadata).AddSingleton(jwks).AddSingleton(new TokenVerifier())
                 .AddSingleton(new AAuthVerifier()).AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>()
@@ -1420,7 +1428,7 @@ public class DeferredFederationTests
                 o.SigningKeys = new AAuthSigningKeySet { ["key"] = psKey };
                 o.TriageClarificationAsync = outcome == "local"
                     ? (_, _, _) => Task.FromResult<ClarificationResponse?>(ClarificationResponse.Respond("mission context answers this")) : null;
-            });
+            }).UseTokenInventory(inventory);
             var person = personBuilder.Build();
             person.MapAAuthPersonServer();
             var sessions = new BrowserConsentSessions("consent-tests", "authenticated-demo-person", isolatedDemoAccess: _ => true);
@@ -1476,6 +1484,7 @@ public class DeferredFederationTests
                 AsKey = asKey,
                 Policy = policy,
                 Store = store,
+                Inventory = inventory,
                 DiscoveryTransport = discoveryTransport,
                 Logs = logs,
             };

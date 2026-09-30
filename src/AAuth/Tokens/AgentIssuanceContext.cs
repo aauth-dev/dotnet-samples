@@ -47,7 +47,7 @@ public sealed record AgentIssuanceContext
         string agentToken, string? subagentToken, string? upstreamToken, string personServer,
         TokenVerifier verifier, MetadataClient metadata, JwksClient jwks,
         Func<string, CancellationToken, ValueTask<bool>> isTrustedAuthTokenIssuer, CancellationToken cancellationToken = default,
-        TokenCredential? agentTokenCredential = null)
+        TokenCredential? agentTokenCredential = null, IJtiStore? upstreamInventory = null)
     {
         async Task<TokenVerifier.VerifiedToken> VerifyAgentAsync(string token, TokenCredential credential)
         {
@@ -76,8 +76,12 @@ public sealed record AgentIssuanceContext
         {
             // The upstream aud must equal the iss of the intermediary's agent token:
             // the intermediary is its own agent provider (§Intermediary Agent Identity).
-            var upstream = await new UpstreamTokenValidator(metadata, jwks, verifier).ValidateAsync(
-                upstreamToken, parent.Issuer, personServer, isTrustedAuthTokenIssuer, cancellationToken);
+            var upstreamValidator = new UpstreamTokenValidator(metadata, jwks, verifier);
+            var upstream = upstreamInventory is null
+                ? await upstreamValidator.ValidateAsync(
+                    upstreamToken, parent.Issuer, personServer, isTrustedAuthTokenIssuer, cancellationToken)
+                : await upstreamValidator.ValidateAtPersonServerAsync(
+                    upstreamToken, parent.Issuer, personServer, upstreamInventory, isTrustedAuthTokenIssuer, cancellationToken);
             if (!upstream.IsValid || upstream.ExpiresAt is not { } upstreamExpiry)
                 throw new TokenVerificationException(upstream.FailureCode, upstream.Error ?? "Invalid upstream token.")
                 { Credential = TokenCredential.Upstream };

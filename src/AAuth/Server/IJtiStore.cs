@@ -36,6 +36,12 @@ public interface IJtiStore
     /// <summary>Atomically attach a grant to known live sources, rejecting revoked local ancestry and dependency cycles.</summary>
     Task<bool> RegisterGrantAsync(IReadOnlyCollection<TokenKey> sources, TokenGrant grant, CancellationToken ct = default);
 
+    /// <summary>
+    /// Check whether adding a provenance record for this caller/resource would fit
+    /// the store's backpressure limits. False lets callers answer 429 before minting.
+    /// </summary>
+    Task<bool> CheckProvenanceQuotaAsync(UpstreamCallerRecord caller, string resource, CancellationToken ct = default);
+
     /// <summary>Return unexpired grants issued or provided for the exact source token.</summary>
     Task<IReadOnlyList<TokenGrant>> GetGrantsAsync(TokenKey source, CancellationToken ct = default);
 

@@ -18,14 +18,18 @@ public sealed class InMemoryJtiStore : IJtiStore
     private readonly TimeProvider _clock;
     private readonly int _capacity;
     private readonly TimeSpan _retention;
+    private readonly int _provenanceResourceQuota;
     private DateTimeOffset _nextCleanup;
 
-    public InMemoryJtiStore(TimeProvider? timeProvider = null, int capacity = 100_000, TimeSpan? retention = null)
+    public InMemoryJtiStore(TimeProvider? timeProvider = null, int capacity = 100_000, TimeSpan? retention = null,
+        int provenanceResourceQuota = 1_000)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(provenanceResourceQuota);
         _clock = timeProvider ?? TimeProvider.System;
         _capacity = capacity;
         _retention = retention ?? TimeSpan.FromHours(1);
+        _provenanceResourceQuota = provenanceResourceQuota;
         if (_retention < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(retention));
     }
 
@@ -117,6 +121,8 @@ public sealed class InMemoryJtiStore : IJtiStore
             if (sources.Count == 0 || grant.ExpiresAt <= now || sources.Any(source =>
                 !_tokens.TryGetValue(source, out var entry) || HasRevokedAncestor(source) || entry.Expiration <= now
                 || grant.ExpiresAt > entry.Expiration || Ancestry(source).Contains(grant.Token))) return Task.FromResult(false);
+            if (grant.Provenance is { } provenance && !CheckProvenanceQuotaCore(provenance.Caller, grant.Resource))
+                return Task.FromResult(false);
             if (_tokens.TryGetValue(grant.Token, out var existing))
             {
                 if (HasRevokedAncestor(grant.Token) || existing.Expiration != grant.ExpiresAt
@@ -131,6 +137,18 @@ public sealed class InMemoryJtiStore : IJtiStore
             existing.Grant = grant;
             existing.Sources.UnionWith(sources);
             return Task.FromResult(true);
+        }
+    }
+
+    public Task<bool> CheckProvenanceQuotaAsync(UpstreamCallerRecord caller, string resource, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentException.ThrowIfNullOrWhiteSpace(resource);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            MaybeCleanup();
+            return Task.FromResult(CheckProvenanceQuotaCore(caller, resource));
         }
     }
 
@@ -155,7 +173,9 @@ public sealed class InMemoryJtiStore : IJtiStore
         lock (_gate)
         {
             MaybeCleanup();
-            return Task.FromResult(_tokens.TryGetValue(token, out var entry) && entry.Expiration > _clock.GetUtcNow()
+            var now = _clock.GetUtcNow();
+            return Task.FromResult(_tokens.TryGetValue(token, out var entry)
+                && (entry.Expiration > now || entry.Grant?.Provenance is not null && entry.Expiration + _retention > now)
                 ? entry.Grant : null);
         }
     }
@@ -188,6 +208,15 @@ public sealed class InMemoryJtiStore : IJtiStore
 
     private bool HasRevokedAncestor(TokenKey token) => Ancestry(token).Any(ancestor =>
         _tokens.TryGetValue(ancestor, out var entry) && entry.Revoked);
+
+    private bool CheckProvenanceQuotaCore(UpstreamCallerRecord caller, string resource)
+    {
+        var resources = _tokens.Values
+            .Where(entry => entry.Grant?.Provenance?.Caller == caller && entry.Expiration > _clock.GetUtcNow())
+            .Select(entry => entry.Grant!.Resource)
+            .ToHashSet(StringComparer.Ordinal);
+        return resources.Contains(resource) || resources.Count < _provenanceResourceQuota;
+    }
 
     private IEnumerable<TokenKey> Ancestry(TokenKey token)
     {

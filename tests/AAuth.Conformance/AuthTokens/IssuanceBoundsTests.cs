@@ -11,6 +11,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Person;
+using AAuth.Server;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -185,6 +186,7 @@ public class IssuanceBoundsTests
         public required AAuthKey PsKey { get; init; }
         public required AAuthKey ApKey { get; init; }
         public required AAuthKey ResourceKey { get; init; }
+        public required IJtiStore Inventory { get; init; }
         public AAuthKey ParentKey { get; } = AAuthKey.Generate();
         public AAuthKey ChildKey { get; } = AAuthKey.Generate();
 
@@ -195,6 +197,7 @@ public class IssuanceBoundsTests
             var psKey = access ? AAuthKey.Generate() : issuerKey;
             var apKey = AAuthKey.Generate();
             var resourceKey = AAuthKey.Generate();
+            var inventory = new InMemoryJtiStore(clock);
             var discovery = new DiscoveryHandler(new Dictionary<string, IAAuthKey>
             {
                 [Ps] = psKey, [As] = issuerKey, [Ap] = apKey, [Resource] = resourceKey,
@@ -229,7 +232,7 @@ public class IssuanceBoundsTests
                     o.SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey };
                     o.Trust.AccessServers.Allowed = new HashSet<string>();
                     o.TimeProvider = clock;
-                });
+                }).UseTokenInventory(inventory);
             var app = builder.Build();
             if (access)
                 app.MapAAuthAccessServer();
@@ -237,7 +240,7 @@ public class IssuanceBoundsTests
                 app.MapAAuthPersonServer();
             await app.StartAsync();
             return new IssuerFixture { App = app, Access = access, Clock = clock, IssuerKey = issuerKey,
-                PsKey = psKey, ApKey = apKey, ResourceKey = resourceKey };
+                PsKey = psKey, ApKey = apKey, ResourceKey = resourceKey, Inventory = inventory };
         }
 
         private ValueTask<string> AgentTokenAsync(int seconds, bool child = false) => new AgentTokenBuilder
@@ -288,7 +291,9 @@ public class IssuanceBoundsTests
                 ["presented_token"] = personToken,
             };
             if (childSeconds != 0) body["subagent_token"] = await AgentTokenAsync(childSeconds, child: true);
-            if (upstream) body["upstream_token"] = await new AuthTokenBuilder
+            if (upstream)
+            {
+                var upstreamToken = await new AuthTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
                 Issuer = Access ? As : Ps, Audience = Ap, PersonServer = Ps, Subject = "upstream-person",
@@ -297,6 +302,9 @@ public class IssuanceBoundsTests
                 Dwk = Access ? AuthTokenBuilder.AccessDwk : AuthTokenBuilder.PersonDwk,
                 MissionS256 = mission,
             }.BuildAsync();
+                if (!Access) await UpstreamProvenanceTestSupport.RecordAsync(Inventory, upstreamToken, Ps);
+                body["upstream_token"] = upstreamToken;
+            }
             return body;
         }
 

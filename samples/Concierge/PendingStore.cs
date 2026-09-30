@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using AAuth.Server;
+using AAuth.Server.CallChaining;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Concierge;
@@ -14,10 +15,9 @@ namespace Concierge;
 /// <c>202 requirement=interaction</c>, the Concierge (which has no user of
 /// its own) cannot relay the interaction. Instead it persists an entry here,
 /// re-emits its <em>own</em> <c>202</c> to the caller with
-/// <c>Location=/pending/{id}</c>, and passes through the downstream PS's
-/// interaction <c>url</c> + <c>code</c>. The caller relays the user to the PS
-/// and polls <c>GET /pending/{id}</c>; each poll re-drives the chained call
-/// with the stored upstream auth token until consent resolves.</para>
+/// <c>Location=/pending/{id}</c> and an intermediary interaction URL. That URL
+/// redirects the browser to the downstream PS interaction; the caller polls
+/// <c>GET /pending/{id}</c> until consent resolves.</para>
 /// <para>A production intermediary would persist these durably and expire them
 /// on a timer; this demo store is in-memory and never GCs.</para>
 /// </remarks>
@@ -26,8 +26,7 @@ public sealed class PendingStore
     public sealed record Entry(
         string Id,
         string UpstreamToken,
-        string InteractionUrl,
-        string InteractionCode,
+        ChainedInteractionEntry Interaction,
         string DownstreamBase,
         string DownstreamPath,
         string PendingPrefix)
@@ -42,8 +41,8 @@ public sealed class PendingStore
 
     /// <summary>
     /// Create a pending entry capturing the upstream auth token (used to
-    /// re-drive the chained call on each poll) and the pass-through PS
-    /// interaction <c>url</c> + <c>code</c>. <paramref name="downstreamBase"/> +
+    /// re-drive the chained call on each poll) and the SDK-owned chained
+    /// interaction. <paramref name="downstreamBase"/> +
     /// <paramref name="downstreamPath"/> are the downstream resource origin and
     /// path re-driven on each poll (e.g. Calendar <c>/events</c> or the
     /// mission-aware Trips <c>/trips</c>); <paramref name="pendingPrefix"/>
@@ -52,18 +51,16 @@ public sealed class PendingStore
     /// </summary>
     public Entry Add(
         string upstreamToken,
-        string interactionUrl,
-        string interactionCode,
+        ChainedInteractionEntry interaction,
         string downstreamBase = "http://localhost:5001",
         string downstreamPath = "/events",
         string pendingPrefix = "/pending")
     {
         foreach (var pair in _entries)
             if (pair.Value.ExpiresAt.AddHours(1) <= DateTimeOffset.UtcNow) _entries.TryRemove(pair.Key, out _);
-        var id = Guid.NewGuid().ToString("N");
         var entry = new Entry(
-            id, upstreamToken, interactionUrl, interactionCode, downstreamBase, downstreamPath, pendingPrefix);
-        _entries[id] = entry;
+            interaction.Id, upstreamToken, interaction, downstreamBase, downstreamPath, pendingPrefix);
+        _entries[interaction.Id] = entry;
         return entry;
     }
 

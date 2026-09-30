@@ -240,12 +240,13 @@ public static class AAuthPersonServerEndpoints
             "default). Configure a policy to restrict, or assign AAuthTrust.Any to declare intentional open " +
             "federation and silence this warning.");
 
-        // An upstream auth token is this PS's own, or from an Access Server the PS is
-        // configured to trust; open federation does not extend to upstream tokens.
+        // Provenance is mandatory for AS-issued upstream auth tokens. A configured
+        // Access Server trust policy further restricts those records; when open,
+        // provenance proves this PS actually federated to that AS for the token.
         async ValueTask<bool> IsTrustedAuthTokenIssuer(string candidate, HttpContext ctx)
             => string.Equals(candidate, issuer, StringComparison.Ordinal)
-                || (options.Trust.IsConfigured(AAuthTrustedParty.AccessServer, ctx.RequestServices)
-                    && await options.Trust.IsTrustedAsync(candidate, AAuthTrustedParty.AccessServer,
+                || (!options.Trust.IsConfigured(AAuthTrustedParty.AccessServer, ctx.RequestServices)
+                    || await options.Trust.IsTrustedAsync(candidate, AAuthTrustedParty.AccessServer,
                         ctx.RequestServices, ctx, AuthTokenBuilder.TokenType,
                         cancellationToken: ctx.RequestAborted).ConfigureAwait(false));
 
@@ -259,13 +260,20 @@ public static class AAuthPersonServerEndpoints
                 entry.Subject ?? throw new TokenVerificationException("Approved identity assertion is missing its directed subject."),
                 entry.Tenant, entry.AgentConfirmationKey!, entry.MissionS256,
                 entry.AgentTokenExpiresAt, entry.AuthorizationExpiresAt),
-                entry.ExpiresAt, inventory, entry.SourceTokens, "person_token", options.TimeProvider)
+                entry.ExpiresAt, inventory, entry.SourceTokens, "person_token", options.TimeProvider,
+                provenance: ProvenanceFor(entry.SourceTokens, entry.UpstreamAuthorization, entry.AgentId,
+                    AAuthConstants.TokenTypes.PersonToken, entry.ResourceUrl,
+                    entry.Subject ?? throw new TokenVerificationException("Approved identity assertion is missing its directed subject.")))
             : AuthTokenResponse.CreateTrackedAsync(ct => MintAuth(ct,
                 entry.ResourceUrl, entry.Scope, entry.AgentConfirmationKey!,
                 entry.PersonSubject ?? throw new TokenVerificationException("Pending request is missing its verified subject."),
                 entry.PersonTenant, entry.Roles, entry.Groups, entry.AdditionalClaims, entry.MissionS256,
                 entry.AgentTokenExpiresAt, entry.AuthorizationExpiresAt, entry.Account),
-                entry.ExpiresAt, inventory, entry.SourceTokens, options.TimeProvider);
+                entry.ExpiresAt, inventory, entry.SourceTokens, "auth_token", options.TimeProvider,
+                provenance: ProvenanceFor(entry.SourceTokens, entry.UpstreamAuthorization, entry.AgentId,
+                    AAuthConstants.TokenTypes.AuthToken, entry.ResourceUrl,
+                    entry.PersonSubject ?? throw new TokenVerificationException("Pending request is missing its verified subject."),
+                    entry.SourceTokens.FirstOrDefault(source => source.Credential == TokenCredential.Presented)?.Token));
 
         ValueTask<string> MintPerson(CancellationToken cancellationToken,
             string resource, string subject, string? tenant, IAAuthKey confirmationKey, string? missionS256,
@@ -353,7 +361,8 @@ public static class AAuthPersonServerEndpoints
             {
                 var issuance = await AgentIssuanceContext.VerifyAsync(parsed.Jwt!,
                     StringMember(body, "subagent_token"), StringMember(body, "upstream_token"), issuer,
-                    selfVerifier, metadataClient, jwksClient, (candidate, _) => IsTrustedAuthTokenIssuer(candidate, ctx), ctx.RequestAborted);
+                    selfVerifier, metadataClient, jwksClient, (candidate, _) => IsTrustedAuthTokenIssuer(candidate, ctx),
+                    ctx.RequestAborted, upstreamInventory: inventory);
                 return (issuance, body, null);
             }
             catch (TokenVerificationException ex) { return (null, body, AAuthProblemDetails.TokenFailure(ex)); }
@@ -454,6 +463,29 @@ public static class AAuthPersonServerEndpoints
                 registrations.Add(RevocationRecords.Registration(RevocationRecords.Mission(issuer, missionS256)));
         }
 
+        UpstreamCallerRecord CallerRecord(string agentIssuer, string agentId, TokenKey agentToken,
+            UpstreamTokenValidationResult? upstream)
+            => upstream?.Caller ?? new UpstreamCallerRecord(agentIssuer, agentId, agentToken,
+                AgentPersonBinding.Key(issuer, agentIssuer, agentId));
+
+        AAuthTokenProvenance ProvenanceFor(IReadOnlyList<TokenRegistration> sources,
+            UpstreamTokenValidationResult? upstream, string agentId, string tokenType, string audience, string subject,
+            TokenKey? presented = null)
+        {
+            var agentToken = sources.First(source => source.Credential is null or TokenCredential.Agent);
+            var caller = CallerRecord(agentToken.Token.Issuer, agentId, agentToken.Token, upstream);
+            var upstreamToken = sources.FirstOrDefault(source => source.Credential == TokenCredential.Upstream)?.Token;
+            return new AAuthTokenProvenance(tokenType, audience, subject, issuer, caller)
+            {
+                UpstreamToken = upstreamToken,
+                PresentedToken = presented,
+            };
+        }
+
+        static TokenKey? PresentedKey(PersonPendingEntry entry)
+            => entry.PresentedToken is null ? null
+                : TokenRegistration.FromPayload(TokenVerifier.DecodeJsonSegment(entry.PresentedToken.Split('.')[1], "payload")).Token;
+
         IResult? MissionExpired(string? missionS256) => missionS256 is null ? null
             : GovernanceEndpoints.MissionTerminated(AAuthConstants.MissionTerminationReasons.Expired);
 
@@ -512,7 +544,9 @@ public static class AAuthPersonServerEndpoints
                 var (token, _) = await AuthTokenResponse.MintTrackedAsync(ct => MintPerson(ct,
                     resource, assertion.Subject, assertion.Tenant, request.ConfirmationKey, request.MissionS256,
                     request.AgentTokenExpiresAt, ceiling), ceiling, inventory, sources, options.TimeProvider,
-                    AuthTokenResponse.Expired, ct);
+                    AuthTokenResponse.Expired, ct,
+                    ProvenanceFor(sources, upstream: null, request.AgentId,
+                        AAuthConstants.TokenTypes.PersonToken, resource, assertion.Subject));
                 if (token is not null) tokens[resource] = token;
             }
             return tokens;
@@ -583,7 +617,9 @@ public static class AAuthPersonServerEndpoints
                     return await AuthTokenResponse.CreateTrackedAsync(ct => MintPerson(ct,
                         resource, assertion.Subject, assertion.Tenant, issuance.ConfirmationKey, missionS256,
                         issuance.AgentTokenExpiresAt, ceiling), ceiling, inventory, sources, "person_token",
-                        options.TimeProvider, ctx.RequestAborted, MissionExpired(missionS256));
+                        options.TimeProvider, ctx.RequestAborted, MissionExpired(missionS256),
+                        ProvenanceFor(sources, issuance.Upstream, issuance.AgentId,
+                            AAuthConstants.TokenTypes.PersonToken, resource, assertion.Subject));
                 case IdentityAssertionKind.Deny:
                     return AAuthProblemDetails.Create("denied", assertion.Reason, statusCode: StatusCodes.Status403Forbidden);
                 case IdentityAssertionKind.NeedsConsent:
@@ -694,7 +730,11 @@ public static class AAuthPersonServerEndpoints
                     if (entry.Status == PersonPendingStatus.Allowed && entry.AuthToken is not null)
                     {
                         return await AuthTokenResponse.CreateTrackedAsync(_ => ValueTask.FromResult(entry.AuthToken), entry.ExpiresAt,
-                            inventory, entry.SourceTokens, options.TimeProvider, ctx.RequestAborted);
+                            inventory, entry.SourceTokens, "auth_token", options.TimeProvider, ctx.RequestAborted,
+                            provenance: ProvenanceFor(entry.SourceTokens, entry.UpstreamAuthorization, entry.AgentId,
+                                AAuthConstants.TokenTypes.AuthToken, entry.ResourceUrl,
+                                entry.PersonSubject ?? throw new TokenVerificationException("Pending request is missing its verified subject."),
+                                PresentedKey(entry)));
                     }
                     if (entry.Status == PersonPendingStatus.Denied)
                     {
@@ -1161,7 +1201,10 @@ public static class AAuthPersonServerEndpoints
                             audience, requestedScope, issuance.ConfirmationKey, subject, tenant, granted.Roles,
                             granted.Groups, granted.AdditionalClaims, missionS256,
                             issuance.AgentTokenExpiresAt, ceiling, account), ceiling, inventory, sourceTokens, "auth_token",
-                            options.TimeProvider, ceilingExpired: MissionExpired(missionS256));
+                            options.TimeProvider, ceilingExpired: MissionExpired(missionS256),
+                            provenance: ProvenanceFor(sourceTokens, issuance.Upstream, issuance.AgentId,
+                                AAuthConstants.TokenTypes.AuthToken, audience, subject,
+                                TokenRegistration.FromVerified(presented).Token));
                         if (response is IStatusCodeHttpResult { StatusCode: StatusCodes.Status200OK })
                             await AppendMissionTokenAsync(missionLog, missionS256, audience, requestedScope, consentDetail,
                                 account, issuance.AgentId, agentKeyThumbprint);
@@ -1208,7 +1251,9 @@ public static class AAuthPersonServerEndpoints
                         audience, requestedScope, issuance.ConfirmationKey, subject, tenant, assertion.Roles,
                         assertion.Groups, assertion.AdditionalClaims, missionS256: null,
                         issuance.AgentTokenExpiresAt, ceiling, account), ceiling, inventory, sourceTokens, "auth_token",
-                        options.TimeProvider, ctx.RequestAborted);
+                        options.TimeProvider, ctx.RequestAborted, provenance: ProvenanceFor(sourceTokens,
+                            issuance.Upstream, issuance.AgentId, AAuthConstants.TokenTypes.AuthToken,
+                            audience, subject, TokenRegistration.FromVerified(presented).Token));
                 case IdentityAssertionKind.Deny:
                     return AAuth.Server.AAuthProblemDetails.Create("denied", assertion.Reason, statusCode: StatusCodes.Status403Forbidden);
                 case IdentityAssertionKind.NeedsConsent:
@@ -1513,7 +1558,11 @@ public static class AAuthPersonServerEndpoints
                     }
                     await ThrowIfMissionTerminatedAsync();
                     var tracked = await AuthTokenResponse.CreateTrackedAsync(_ => ValueTask.FromResult(token!), entry.ExpiresAt,
-                        inventory, entry.SourceTokens, options.TimeProvider, entry.FederationCancellation.Token);
+                        inventory, entry.SourceTokens, "auth_token", options.TimeProvider, entry.FederationCancellation.Token,
+                        provenance: ProvenanceFor(entry.SourceTokens, entry.UpstreamAuthorization, entry.AgentId,
+                            AAuthConstants.TokenTypes.AuthToken, entry.ResourceUrl,
+                            entry.PersonSubject ?? throw new TokenVerificationException("Pending request is missing its verified subject."),
+                            PresentedKey(entry)));
                     if (tracked is not IStatusCodeHttpResult { StatusCode: StatusCodes.Status200OK })
                         throw new AAuthInteractionDeniedException("Source authorization was revoked before federation completed.");
                     if (entry.MissionS256 is { } grantedMission)
@@ -1603,7 +1652,11 @@ public static class AAuthPersonServerEndpoints
             if (entry.Status == PersonPendingStatus.Allowed)
             {
                 return await AuthTokenResponse.CreateTrackedAsync(_ => ValueTask.FromResult(entry.AuthToken!), entry.ExpiresAt,
-                    inventory, entry.SourceTokens, options.TimeProvider, ctx.RequestAborted);
+                    inventory, entry.SourceTokens, "auth_token", options.TimeProvider, ctx.RequestAborted,
+                    provenance: ProvenanceFor(entry.SourceTokens, entry.UpstreamAuthorization, entry.AgentId,
+                        AAuthConstants.TokenTypes.AuthToken, entry.ResourceUrl,
+                        entry.PersonSubject ?? throw new TokenVerificationException("Pending request is missing its verified subject."),
+                        PresentedKey(entry)));
             }
 
             if (!string.IsNullOrEmpty(entry.ErrorLocation))

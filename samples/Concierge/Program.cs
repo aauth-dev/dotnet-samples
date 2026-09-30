@@ -138,8 +138,8 @@ app.UseWhen(
 // OnInteractionRequired callback therefore throws
 // AAuthInteractionChainedException, which aborts the in-flight exchange before
 // it blocks-polls. The handler catches it, parks a pending entry, and re-emits
-// its OWN 202 + requirement=interaction to the caller (passing through the PS's
-// interaction url/code, swapping only Location for its own pending URL).
+// its OWN 202 + requirement=interaction to the caller. The user first visits a
+// Concierge interaction URL, which redirects to the downstream PS interaction.
 // -----------------------------------------------------------------------
 
 // Run the downstream chained call with the given upstream auth token. Returns
@@ -214,18 +214,21 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string downstreamBase, string
 }
 
 // Re-emit the Concierge's own 202 requirement=interaction for a parked
-// chained request: its own Location (the pending URL, keyed by the entry's
-// poll-route prefix), the PS's pass-through interaction url/code. Spec
-// §Interaction Chaining + §Deferred Responses.
+// chained request: its own Location, interaction URL and interaction code.
 IResult ReEmitChainedInteraction(HttpContext ctx, PendingStore.Entry entry)
-{
-    ctx.Response.Headers.Location = $"{entry.PendingPrefix}/{entry.Id}";
-    ctx.Response.Headers["Retry-After"] = "1";
-    ctx.Response.Headers["Cache-Control"] = "no-store";
-    ctx.Response.Headers[AAuthRequirementHeader.Name] =
-        Interaction.Format(entry.InteractionUrl, entry.InteractionCode, SampleEgress.Policy);
-    return Results.Json(new { status = "interaction_required" }, statusCode: StatusCodes.Status202Accepted);
-}
+    => AAuthChainedInteractions.Accepted(ctx, entry.Interaction, SampleEgress.Policy);
+
+ChainedInteractionEntry ParkChainedInteraction(AAuthInteractionChainedException ex, string upstreamToken,
+    string pendingPrefix, string downstreamBase, string downstreamPath)
+    => AAuthChainedInteractions.Park(conciergeUrl, pendingPrefix, "/chain-interaction", ex,
+        "concierge.downstream",
+        new JsonObject
+        {
+            ["downstream_base"] = downstreamBase,
+            ["downstream_path"] = downstreamPath,
+        },
+        DateTimeOffset.FromUnixTimeSeconds(
+            JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(upstreamToken.Split('.')[1]))!["exp"]!.GetValue<long>()));
 
 app.MapGet("/wallet", async (HttpContext context, PendingStore pending) =>
 {
@@ -237,7 +240,8 @@ app.MapGet("/wallet", async (HttpContext context, PendingStore pending) =>
     }
     catch (AAuthInteractionChainedException ex)
     {
-        var entry = pending.Add(upstream, ex.Interaction.Url, ex.Interaction.Code,
+        var chained = ParkChainedInteraction(ex, upstream, "/wallet-pending", walletUrl, "/wallet");
+        var entry = pending.Add(upstream, chained,
             downstreamBase: walletUrl, downstreamPath: "/wallet", pendingPrefix: "/wallet-pending");
         return ReEmitChainedInteraction(context, entry);
     }
@@ -258,7 +262,8 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
     catch (AAuthInteractionChainedException ex)
     {
         // Downstream needs the user's consent. Park it and chain the 202 up.
-        var entry = pending.Add(upstreamToken, ex.Interaction.Url, ex.Interaction.Code);
+        var chained = ParkChainedInteraction(ex, upstreamToken, "/pending", downstreamUrl, "/events");
+        var entry = pending.Add(upstreamToken, chained);
         return ReEmitChainedInteraction(ctx, entry);
     }
 });
@@ -281,11 +286,21 @@ app.MapGet("/mission", async (HttpContext ctx, PendingStore pending) =>
     }
     catch (AAuthInteractionChainedException ex)
     {
+        var chained = ParkChainedInteraction(ex, upstreamToken, "/mission-pending", missionDownstreamUrl, "/trips");
         var entry = pending.Add(
-            upstreamToken, ex.Interaction.Url, ex.Interaction.Code,
+            upstreamToken, chained,
             downstreamBase: missionDownstreamUrl, downstreamPath: "/trips", pendingPrefix: "/mission-pending");
         return ReEmitChainedInteraction(ctx, entry);
     }
+});
+
+app.MapGet("/chain-interaction/{id}", (string id, string? code, PendingStore pending) =>
+{
+    var entry = pending.Get(id);
+    if (entry is null || !AAuthInteractionCode.Matches(entry.Interaction.Code, code ?? string.Empty))
+        return AAuth.Server.AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode,
+            extensions: new Dictionary<string, object?> { ["id"] = id });
+    return AAuthChainedInteractions.RedirectToDownstream(entry.Interaction);
 });
 
 // -----------------------------------------------------------------------

@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Discovery;
 using AAuth.HttpSig;
+using AAuth.Server;
 
 namespace AAuth.Tokens;
 
@@ -46,6 +47,12 @@ public sealed record UpstreamTokenValidationResult
     public string? Tenant { get; init; }
     public TokenVerifier.VerifiedToken? Verified { get; init; }
     public string? Account => Verified?.Account;
+
+    /// <summary>The original calling agent identified from PS provenance records.</summary>
+    public UpstreamCallerRecord? Caller { get; init; }
+
+    /// <summary>The PS provenance record for the upstream token.</summary>
+    public AAuthTokenProvenance? Provenance { get; init; }
 }
 
 /// <summary>
@@ -148,5 +155,48 @@ public sealed class UpstreamTokenValidator
         };
     }
 
-    private static UpstreamTokenValidationResult Invalid(string error) => new() { IsValid = false, Error = error };
+    /// <summary>
+    /// Validates an upstream token at a Person Server, including the PS inventory
+    /// provenance checks required by §Upstream Token Verification steps 2 and 4.
+    /// </summary>
+    public async Task<UpstreamTokenValidationResult> ValidateAtPersonServerAsync(
+        string upstreamToken,
+        string intermediary,
+        string personServer,
+        IJtiStore inventory,
+        Func<string, CancellationToken, ValueTask<bool>> isTrustedAuthTokenIssuer,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(inventory);
+        var result = await ValidateAsync(upstreamToken, intermediary, personServer, isTrustedAuthTokenIssuer, ct)
+            .ConfigureAwait(false);
+        if (!result.IsValid || result.Verified is null)
+            return result;
+
+        var key = TokenRegistration.FromVerified(result.Verified).Token;
+        if (await inventory.IsRevokedAsync(key, ct).ConfigureAwait(false))
+            return Invalid("upstream token is revoked.", AAuth.Errors.SignatureErrorCode.RevokedJwt);
+
+        var grant = await inventory.GetGrantAsync(key, ct).ConfigureAwait(false);
+        if (grant?.Provenance is not { } provenance)
+            return Invalid("PS has no provenance record for upstream_token.");
+        if (!string.Equals(provenance.TokenType, result.TokenType, StringComparison.Ordinal)
+            || !string.Equals(provenance.PersonServer, personServer, StringComparison.Ordinal)
+            || !string.Equals(provenance.Audience, result.Audience, StringComparison.Ordinal)
+            || !string.Equals(provenance.Subject, result.Subject, StringComparison.Ordinal))
+            return Invalid("PS provenance record does not match upstream_token.");
+        if (result.TokenType == AuthTokenBuilder.TokenType
+            && !string.Equals(result.Issuer, personServer, StringComparison.Ordinal)
+            && provenance.PresentedToken is null)
+            return Invalid("PS has no federated provenance for upstream auth token.");
+        if (await inventory.IsRevokedAsync(provenance.Caller.AgentToken, ct).ConfigureAwait(false)
+            || await inventory.IsRevokedAsync(provenance.Caller.AgentPersonBinding, ct).ConfigureAwait(false))
+            return Invalid("original calling agent or binding is revoked.", AAuth.Errors.SignatureErrorCode.RevokedJwt);
+
+        return result with { Caller = provenance.Caller, Provenance = provenance };
+    }
+
+    private static UpstreamTokenValidationResult Invalid(string error,
+        AAuth.Errors.SignatureErrorCode code = AAuth.Errors.SignatureErrorCode.InvalidJwt)
+        => new() { IsValid = false, Error = error, FailureCode = code };
 }

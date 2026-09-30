@@ -1,6 +1,8 @@
 using System;
 using System.Threading.Tasks;
+using AAuth;
 using AAuth.Server;
+using Microsoft.AspNetCore.Http;
 using Xunit;
 
 namespace AAuth.Conformance.Discovery;
@@ -145,6 +147,94 @@ public class TokenInventoryTests
         Assert.True(await store.IsRevokedAsync(root));
         Assert.False(await store.RegisterGrantAsync([root], new TokenGrant(new TokenKey("https://ps.example", "late"),
             "https://resource.example", rootExpiry)));
+    }
+
+    [Fact]
+    public async Task Provenance_PrunesAtTokenExpiryPlusRetention()
+    {
+        var clock = new MutableClock();
+        var store = new InMemoryJtiStore(clock, retention: TimeSpan.FromMinutes(1));
+        var source = new TokenKey("https://ap.example", "agent");
+        var binding = new TokenKey("https://ps.example", "agent-person-binding https://ap.example aauth:agent@example");
+        var issued = new TokenKey("https://ps.example", "person");
+        var caller = new UpstreamCallerRecord("https://ap.example", "aauth:agent@example", source, binding);
+        var sourceExpiry = clock.GetUtcNow().AddMinutes(10);
+        var issuedExpiry = clock.GetUtcNow().AddMinutes(1);
+        await store.RegisterAsync(source, sourceExpiry);
+        await store.RegisterAsync(binding, DateTimeOffset.MaxValue.AddDays(-1));
+        Assert.True(await store.RegisterGrantAsync([source, binding], new TokenGrant(issued, "https://r.example", issuedExpiry)
+        {
+            Provenance = new AAuthTokenProvenance(AAuthConstants.TokenTypes.PersonToken,
+                "https://r.example", "person-sub", "https://ps.example", caller),
+        }));
+
+        clock.Now = issuedExpiry.AddSeconds(30);
+        store.Cleanup();
+        Assert.NotNull((await store.GetGrantAsync(issued))?.Provenance);
+
+        clock.Now = issuedExpiry.AddMinutes(2);
+        store.Cleanup();
+        Assert.Null(await store.GetGrantAsync(issued));
+    }
+
+    [Fact]
+    public async Task Provenance_DistinctResourceQuotaRejectsBeforeAdditionalMint()
+    {
+        var clock = new MutableClock();
+        var store = new InMemoryJtiStore(clock, provenanceResourceQuota: 1);
+        var source = new TokenKey("https://ap.example", "agent");
+        var binding = new TokenKey("https://ps.example", "agent-person-binding https://ap.example aauth:agent@example");
+        var caller = new UpstreamCallerRecord("https://ap.example", "aauth:agent@example", source, binding);
+        var expiry = clock.GetUtcNow().AddMinutes(10);
+        await store.RegisterAsync(source, expiry);
+        await store.RegisterAsync(binding, DateTimeOffset.MaxValue.AddDays(-1));
+
+        Assert.True(await store.CheckProvenanceQuotaAsync(caller, "https://r1.example"));
+        Assert.True(await store.RegisterGrantAsync([source, binding], new TokenGrant(
+            new TokenKey("https://ps.example", "one"), "https://r1.example", expiry)
+        {
+            Provenance = new AAuthTokenProvenance(AAuthConstants.TokenTypes.PersonToken,
+                "https://r1.example", "person-sub", "https://ps.example", caller),
+        }));
+        Assert.True(await store.CheckProvenanceQuotaAsync(caller, "https://r1.example"));
+        Assert.False(await store.CheckProvenanceQuotaAsync(caller, "https://r2.example"));
+        Assert.False(await store.RegisterGrantAsync([source, binding], new TokenGrant(
+            new TokenKey("https://ps.example", "two"), "https://r2.example", expiry)
+        {
+            Provenance = new AAuthTokenProvenance(AAuthConstants.TokenTypes.PersonToken,
+                "https://r2.example", "person-sub", "https://ps.example", caller),
+        }));
+    }
+
+    [Fact]
+    public async Task Provenance_QuotaBreachReturns429BeforeMinting()
+    {
+        var clock = new MutableClock();
+        var store = new InMemoryJtiStore(clock, provenanceResourceQuota: 1);
+        var source = new TokenKey("https://ap.example", "agent");
+        var binding = new TokenKey("https://ps.example", "agent-person-binding https://ap.example aauth:agent@example");
+        var caller = new UpstreamCallerRecord("https://ap.example", "aauth:agent@example", source, binding);
+        var expiry = clock.GetUtcNow().AddMinutes(10);
+        await store.RegisterAsync(source, expiry);
+        await store.RegisterAsync(binding, DateTimeOffset.MaxValue.AddDays(-1));
+        Assert.True(await store.RegisterGrantAsync([source, binding], new TokenGrant(
+            new TokenKey("https://ps.example", "one"), "https://r1.example", expiry)
+        {
+            Provenance = new AAuthTokenProvenance(AAuthConstants.TokenTypes.PersonToken,
+                "https://r1.example", "person-sub", "https://ps.example", caller),
+        }));
+
+        var minted = false;
+        var result = await AuthTokenResponse.CreateTrackedAsync(_ =>
+        {
+            minted = true;
+            return ValueTask.FromResult("not-a-token");
+        }, expiry, store, [new TokenRegistration(source, expiry), new TokenRegistration(binding, DateTimeOffset.MaxValue.AddDays(-1))],
+            "person_token", clock, provenance: new AAuthTokenProvenance(AAuthConstants.TokenTypes.PersonToken,
+                "https://r2.example", "person-sub", "https://ps.example", caller));
+
+        Assert.False(minted);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
     }
 
     private sealed class MutableClock : TimeProvider

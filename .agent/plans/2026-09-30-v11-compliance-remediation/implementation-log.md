@@ -798,6 +798,40 @@ RESOLVED (Q5/Q7/Q8).
   mission gate hand-walk notes) remains for Phase 11 unless orchestrator e2e
   finds breakage.
 
+### [2026-09-30] [Phase 5] R05 — Upstream provenance and interaction chaining
+
+RESOLVED (Q5).
+
+- Extended the single `IJtiStore` inventory with provenance-bearing
+  `TokenGrant`s, `UpstreamCallerRecord`s, provenance quota preflight, and
+  in-memory retention through token `exp + skew`. `RegisterAsync` of an unseen
+  upstream token still creates no provenance.
+- `AgentIssuanceContext.VerifyAsync` now uses the PS-aware
+  `UpstreamTokenValidator.ValidateAtPersonServerAsync` primitive. Missing
+  provenance fails closed as `invalid_upstream_token`; revoked recorded caller
+  agent tokens or agent-person bindings fail as `revoked_upstream_token`.
+  Static `Trust.AccessServers` can restrict AS issuers but never substitutes
+  for provenance.
+- PS person/auth issuance and federated AS auth returns record provenance
+  atomically with grant registration. Quota failure returns `429
+  invalid_request` before minting.
+- Added the call-chaining interaction helper (`ChainedInteractionEntry` and
+  `AAuthChainedInteractions`) and reshaped
+  `AAuthInteractionChainedException` to carry `DownstreamInteraction`.
+  Concierge now emits its own interaction code and `Location`, with a
+  Concierge-owned redirect to the downstream PS/AS interaction.
+- Negative controls landed in `UpstreamTokenValidationTests`,
+  `TokenInventoryTests`, `InteractionChainingTests`, and updated call-chain
+  fixture tests that synthesize upstream tokens with explicit provenance.
+- Docs updated in `docs/advanced/interaction-chaining.md` and
+  `docs/workflows/call-chaining.md`; `CallChain.razor` and Concierge samples
+  now describe/use intermediary-owned interaction URLs. Owner-edited
+  `samples/MockPersonServer/*` files were not touched.
+- Validation: build clean; tests passed — AAuth.Tests 1821,
+  AAuth.Conformance 1358, AAuth.R3.Tests 332, AAuth.Events.Tests 89;
+  docs inventory, snippets/links, e2e typecheck, and `ApiSurface --write`
+  passed.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 1] SMP-01 matches the exact agent id, not id plus key

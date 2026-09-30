@@ -23,31 +23,40 @@ public static class AuthTokenResponse
     /// </summary>
     public static async Task<IResult> CreateTrackedAsync(Func<CancellationToken, ValueTask<string>> mint, DateTimeOffset ceiling,
         IJtiStore inventory, IReadOnlyCollection<TokenRegistration> sources, string member, TimeProvider? timeProvider = null,
-        CancellationToken cancellationToken = default, IResult? ceilingExpired = null)
+        CancellationToken cancellationToken = default, IResult? ceilingExpired = null,
+        AAuthTokenProvenance? provenance = null)
     {
         ArgumentNullException.ThrowIfNull(sources);
         var clock = timeProvider ?? TimeProvider.System;
         IResult Expired() => AAuthProblemDetails.SourceExpired(sources, clock.GetUtcNow(), ceilingExpired);
         var (token, failure) = await MintTrackedAsync(mint, ceiling, inventory, sources, clock,
-            Expired, cancellationToken);
+            Expired, cancellationToken, provenance);
         return failure ?? Create(token!, ceiling, clock, member, Expired);
     }
 
     // Mint a token and record it as a grant of its sources; a failure is expired or revoked.
     internal static async Task<(string? Token, IResult? Failure)> MintTrackedAsync(Func<CancellationToken, ValueTask<string>> mint, DateTimeOffset ceiling,
         IJtiStore inventory, IReadOnlyCollection<TokenRegistration> sources, TimeProvider clock,
-        Func<IResult> expired, CancellationToken cancellationToken)
+        Func<IResult> expired, CancellationToken cancellationToken, AAuthTokenProvenance? provenance = null)
     {
         if (ceiling.ToUnixTimeSeconds() <= clock.GetUtcNow().ToUnixTimeSeconds()) return (null, expired());
         if (await AAuthSourceGuard.CheckAsync(inventory, sources, clock, cancellationToken).ConfigureAwait(false) is { } failure)
             return (null, failure.ToFreshResult(sources, clock.GetUtcNow(), expired()));
+        if (provenance is not null
+            && !await inventory.CheckProvenanceQuotaAsync(provenance.Caller, provenance.Audience, cancellationToken).ConfigureAwait(false))
+            return (null, AAuthProblemDetails.Create("invalid_request",
+                "Token provenance quota exceeded for this agent/resource set.",
+                statusCode: StatusCodes.Status429TooManyRequests));
         string token;
         try { token = await mint(cancellationToken); }
         catch (AuthTokenExpiredException) { return (null, expired()); }
         var payload = TokenVerifier.DecodeJsonSegment(token.Split('.')[1], "payload");
         var registration = TokenRegistration.FromPayload(payload);
         var grant = new TokenGrant(registration.Token,
-            (string?)payload["aud"] ?? throw new TokenVerificationException("Issued token missing aud."), registration.ExpiresAt);
+            (string?)payload["aud"] ?? throw new TokenVerificationException("Issued token missing aud."), registration.ExpiresAt)
+        {
+            Provenance = provenance,
+        };
         var keys = sources.Where(source => source.Credential != TokenCredential.Resource)
             .Select(source => source.Token).ToArray();
         if (registration.ExpiresAt > ceiling || !await inventory.RegisterGrantAsync(keys, grant, cancellationToken))

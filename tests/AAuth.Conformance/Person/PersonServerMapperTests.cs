@@ -207,9 +207,11 @@ public class PersonServerMapperTests
     // token's `iss` (= https://ap.example) per §Upstream Token Verification, and it
     // MUST name this PS. A PS-issued token is verified with this PS's own key; an
     // AS-issued one via the stub JWKS (ResourceKey).
-    private static ValueTask<string> UpstreamTokenAsync(string issuer, string? missionS256 = null, string audience = "https://ap.example")
-        => issuer == PsIssuer
-            ? new PersonTokenBuilder
+    private static async ValueTask<string> UpstreamTokenAsync(string issuer, string? missionS256 = null,
+        string audience = "https://ap.example", IJtiStore? inventory = null)
+    {
+        var token = issuer == PsIssuer
+            ? await new PersonTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
                 Issuer = PsIssuer,
@@ -221,7 +223,7 @@ public class PersonServerMapperTests
                 KeyId = PsKid,
                 MissionS256 = missionS256,
             }.BuildAsync()
-            : new AuthTokenBuilder
+            : await new AuthTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
                 AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
@@ -236,6 +238,10 @@ public class PersonServerMapperTests
                 Subject = "upstream-user",
                 MissionS256 = missionS256,
             }.BuildAsync();
+        if (inventory is not null)
+            await UpstreamProvenanceTestSupport.RecordAsync(inventory, token, PsIssuer);
+        return token;
+    }
 
     private static JsonObject DecodePayload(string jwt)
     {
@@ -282,7 +288,8 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         var now = DateTimeOffset.UtcNow;
-        using var host = await BuildHostAsync();
+        var inventory = new InMemoryJtiStore();
+        using var host = await BuildHostAsync(inventory: inventory);
         const string missionS256 = "Q7cOX4Oq4Fmc5L8FJbfyLmXDVz-lEVJbzsUNr8dlc2E";
         await host.Services.GetRequiredService<IMissionStore>().SaveAsync(
             new StoredMission(missionS256, PsIssuer, AgentId, new byte[] { 4, 5, 6 }) { ExpiresAt = now.AddMinutes(5) });
@@ -291,11 +298,15 @@ public class PersonServerMapperTests
         var body = new JsonObject { ["resource"] = ResourceUrl };
         if (bound == "mission") body["mission_s256"] = missionS256;
         if (bound == "upstream")
-            body["upstream_token"] = await new PersonTokenBuilder
+        {
+            var upstream = await new PersonTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy, Issuer = PsIssuer, Audience = "https://ap.example", Subject = "upstream-user",
                 ConfirmationKey = AAuthKey.Generate(), AgentTokenExpiresAt = now.AddMinutes(7), Key = PsKey, KeyId = PsKid,
             }.BuildAsync();
+            await UpstreamProvenanceTestSupport.RecordAsync(inventory, upstream, PsIssuer);
+            body["upstream_token"] = upstream;
+        }
 
         using var response = await http.PostAsJsonAsync("/person", body);
 
@@ -1252,10 +1263,11 @@ public class PersonServerMapperTests
     public async Task CallChaining_ThreePartyUpstream_NoMission_Allowed()
     {
         var agentKey = AAuthKey.Generate();
-        using var host = await BuildHostAsync();
+        var inventory = new InMemoryJtiStore();
+        using var host = await BuildHostAsync(inventory: inventory);
         using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
         var request = await TokenRequestAsync(agentKey);
-        request["upstream_token"] = await UpstreamTokenAsync(PsIssuer);
+        request["upstream_token"] = await UpstreamTokenAsync(PsIssuer, inventory: inventory);
 
         using var response = await http.PostAsJsonAsync("/token", request);
 
@@ -1274,10 +1286,11 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-        using var host = await BuildHostAsync();
+        var inventory = new InMemoryJtiStore();
+        using var host = await BuildHostAsync(inventory: inventory);
         using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
         var request = await TokenRequestAsync(agentKey, missionS256: s256);
-        request["upstream_token"] = await UpstreamTokenAsync(AsIssuer, s256);
+        request["upstream_token"] = await UpstreamTokenAsync(AsIssuer, s256, inventory: inventory);
 
         using var response = await http.PostAsJsonAsync("/token", request);
 
@@ -1290,10 +1303,11 @@ public class PersonServerMapperTests
     public async Task CallChaining_UpstreamMissionMustBeRetained()
     {
         var agentKey = AAuthKey.Generate();
-        using var host = await BuildHostAsync();
+        var inventory = new InMemoryJtiStore();
+        using var host = await BuildHostAsync(inventory: inventory);
         using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
         var request = await TokenRequestAsync(agentKey);
-        request["upstream_token"] = await UpstreamTokenAsync(AsIssuer, S256);
+        request["upstream_token"] = await UpstreamTokenAsync(AsIssuer, S256, inventory: inventory);
 
         using var response = await http.PostAsJsonAsync("/token", request);
 
@@ -1309,13 +1323,15 @@ public class PersonServerMapperTests
     public async Task Clarification_UpstreamMissionCannotBeStrippedOrChanged(bool changed)
     {
         var key = AAuthKey.Generate();
-        using var host = await BuildHostAsync(consent: new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?")));
+        var inventory = new InMemoryJtiStore();
+        using var host = await BuildHostAsync(consent: new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?")),
+            inventory: inventory);
         var missions = host.Services.GetRequiredService<IMissionStore>();
         await missions.SaveAsync(new StoredMission(S256, PsIssuer, "aauth:upstream-caller@ap.example", new byte[] { 1 }));
         using var client = await SignedAgentClientAsync(host, key, AgentId);
         var request = await TokenRequestAsync(key, missionS256: S256);
         var original = (string)request["resource_token"]!;
-        request["upstream_token"] = await UpstreamTokenAsync(AsIssuer, S256);
+        request["upstream_token"] = await UpstreamTokenAsync(AsIssuer, S256, inventory: inventory);
         using var initial = await client.PostAsJsonAsync("/token", request);
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         var store = host.Services.GetRequiredService<IPersonPendingStore>();

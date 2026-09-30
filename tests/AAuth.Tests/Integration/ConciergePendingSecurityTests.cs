@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Headers;
+using AAuth.Server.CallChaining;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -43,7 +45,10 @@ public class ConciergePendingSecurityTests
         const string agent = "aauth:owner@ap.example";
         var original = await TokenAsync(ownerKey, agent);
         _ = factory.Server;
-        var pending = factory.Services.GetRequiredService<Concierge.PendingStore>().Add(original, person + "/interaction", "ABCDEFGH");
+        var chained = new ChainedInteractionEntry("pending-test", "ABCDEFGH", resource + "/chain-interaction/pending-test",
+            "/pending/pending-test", new Interaction(person + "/interaction", "DOWNSTREAM1"), "test", new JsonObject(),
+            DateTimeOffset.UtcNow.AddMinutes(10));
+        var pending = factory.Services.GetRequiredService<Concierge.PendingStore>().Add(original, chained);
         var foreignKey = variant == "key" ? AAuthKey.Generate() : ownerKey;
         var foreign = await TokenAsync(foreignKey, variant == "agent" ? "aauth:foreign@ap.example" : agent);
         using var caller = new AAuthClientBuilder(foreignKey).UseJwt(foreign).WithEgressPolicy(TestEgress.Policy)

@@ -9,6 +9,7 @@ using AAuth.Agent;
 using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.Headers;
+using AAuth.Server.CallChaining;
 using Xunit;
 
 namespace AAuth.Tests.Agent;
@@ -49,17 +50,34 @@ public class InteractionChainingTests
                     },
                 }));
 
-        // The interaction (PS url + code) is carried on the exception so the
-        // intermediary can pass it through when re-emitting its own 202.
+        // The downstream interaction is carried on the exception so the
+        // intermediary can wrap it in an intermediary-owned code and URL.
         Assert.NotNull(captured);
-        Assert.Same(captured, ex.Interaction);
-        Assert.Equal(InteractionUrl, ex.Interaction.Url);
-        Assert.Equal(InteractionCode, ex.Interaction.Code);
+        Assert.Same(captured, ex.DownstreamInteraction);
+        Assert.Equal(InteractionUrl, ex.DownstreamInteraction.Url);
+        Assert.Equal(InteractionCode, ex.DownstreamInteraction.Code);
 
         // The poll (GET on the pending Location) must NEVER run — the throw
         // unwinds the exchange before DeferredPoller.PollAsync is reached.
         Assert.False(handler.PendingPolled,
             "DeferredPoller must not poll the pending URL when the callback aborts via AAuthInteractionChainedException.");
+    }
+
+    [Fact(DisplayName = "Chaining — SDK helper emits an intermediary code and keeps downstream code private")]
+    public void ChainedInteraction_ParksOwnCodeAndRedirectsToDownstream()
+    {
+        var downstream = new Interaction(InteractionUrl, InteractionCode);
+        var entry = AAuthChainedInteractions.Park(
+            "http://localhost:5200", "/pending", "/chain-interaction",
+            new AAuthInteractionChainedException(downstream),
+            "calendar.events", new JsonObject { ["path"] = "/events" },
+            DateTimeOffset.UtcNow.AddMinutes(5));
+
+        Assert.NotEqual(InteractionCode, entry.Code);
+        Assert.Equal("http://localhost:5200/chain-interaction/" + entry.Id, entry.InteractionUrl);
+        Assert.Equal("/pending/" + entry.Id, entry.PendingUrl);
+        Assert.Equal(downstream, entry.DownstreamInteraction);
+        Assert.Equal("calendar.events", entry.OperationName);
     }
 
     [Fact(DisplayName = "Chaining — direct-interaction callback (returns normally) still blocking-polls to the auth token")]

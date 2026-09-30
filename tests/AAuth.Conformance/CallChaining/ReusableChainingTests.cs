@@ -40,6 +40,7 @@ public class ReusableChainingTests
             ConfirmationKey = agentKey, PersonServer = origin,
         }.BuildAsync();
         var asserter = new Asserter();
+        var inventory = new InMemoryJtiStore();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseKestrel().UseUrls(origin);
         builder.Services.AddSingleton(new MetadataClient(policy: egress));
@@ -57,7 +58,7 @@ public class ReusableChainingTests
             o.EgressPolicy = egress;
             o.SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey };
             o.UnsignedPathPrefixes = ["/data"];
-        });
+        }).UseTokenInventory(inventory);
         await using var app = builder.Build();
         app.MapAAuthPersonServer();
         foreach (var dwk in new[] { AAuthConstants.DwkFiles.Agent, AAuthConstants.DwkFiles.Resource })
@@ -93,7 +94,9 @@ public class ReusableChainingTests
         await app.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
             mission, origin, "aauth:caller-a@origin.test", ReadOnlyMemory<byte>.Empty));
         var callerKey = AAuthKey.Generate();
-        ValueTask<string> UpstreamAsync(bool second) => new AuthTokenBuilder
+        async ValueTask<string> UpstreamAsync(bool second)
+        {
+            var token = await new AuthTokenBuilder
         {
             EgressPolicy = egress, Issuer = origin, Audience = origin, PersonServer = origin, Key = issuerKey, KeyId = "key",
             Subject = second && changed == "subject" ? "person-b" : "person-a",
@@ -101,7 +104,10 @@ public class ReusableChainingTests
             MissionS256 = second && changed == "mission" ? mission : null,
             AgentConfirmationKey = second && changed == "key" ? AAuthKey.Generate() : callerKey,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
-        }.BuildAsync();
+            }.BuildAsync();
+            await RecordUpstreamProvenanceAsync(inventory, token, origin);
+            return token;
+        }
         var current = await UpstreamAsync(false);
         using var client = new AAuthClientBuilder(agentKey).UseJwt(agentToken).WithCallChaining(() => current)
             .WithEgressPolicy(egress).Build();
@@ -118,6 +124,25 @@ public class ReusableChainingTests
         Assert.Equal(changed == "subject" ? "downstream-person-b" : "downstream-person-a", (string?)payload["sub"]);
         Assert.Equal(changed == "mission" ? mission : null, (string?)payload["mission_s256"]);
         Assert.Equal(4, asserter.Calls);
+    }
+
+    private static async Task RecordUpstreamProvenanceAsync(IJtiStore inventory, string authToken, string issuer)
+    {
+        var payload = TokenVerifier.DecodeJsonSegment(authToken.Split('.')[1], "payload");
+        var token = new TokenKey(payload["iss"]!.GetValue<string>(), payload["jti"]!.GetValue<string>());
+        var expires = DateTimeOffset.FromUnixTimeSeconds(payload["exp"]!.GetValue<long>());
+        var callerToken = new TokenKey(issuer, "caller-agent");
+        var binding = AgentPersonBinding.Key(issuer, issuer, "aauth:caller@origin.test");
+        var bindingExpires = new DateTimeOffset(9000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        await inventory.RegisterAsync(callerToken, bindingExpires);
+        await inventory.RegisterAsync(binding, bindingExpires);
+        var caller = new UpstreamCallerRecord(issuer, "aauth:caller@origin.test", callerToken, binding);
+        await inventory.RegisterGrantAsync([callerToken, binding], new TokenGrant(
+            token, payload["aud"]!.GetValue<string>(), expires)
+        {
+            Provenance = new AAuthTokenProvenance(AAuthConstants.TokenTypes.AuthToken,
+                payload["aud"]!.GetValue<string>(), payload["sub"]!.GetValue<string>(), issuer, caller),
+        });
     }
 
     private sealed class Asserter : IIdentityClaimsAsserter

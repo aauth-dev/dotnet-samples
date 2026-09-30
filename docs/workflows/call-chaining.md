@@ -321,66 +321,54 @@ receives, and the PS attributes the chain.
 
 ## PS-Side — Upstream Token Validation
 
-When a PS receives an `upstream_token` parameter during a call-chaining request, it must validate the token per §Upstream Token Verification. Use `UpstreamTokenValidator`:
-
-> **Upstream trust is tight by default — the inverse of first-hop federation.**
-> First-hop PS→AS federation (`Trust.AccessServers` on the PS) is *open* by default:
-> an unconfigured rule lets the PS federate to the AS named in a verified resource token's
-> `aud` (§PS-AS Trust Establishment). Call-chaining (§Upstream Token
-> Verification) is deliberately the opposite — **tight by default**: a PS accepts
-> an upstream person token only if it issued it, and an upstream auth token only
-> if it names this PS as `ps` and was issued by this PS or an AS this PS
-> federated with. Extending a *four-party* chain — trusting an upstream token an
-> AS issued — requires explicitly configuring `Trust.AccessServers` on the PS
-> (an `Allowed` list naming that AS, a `Predicate`, or a trust policy).
+When a PS receives an `upstream_token` parameter during a call-chaining request,
+it must validate the token per §Upstream Token Verification. `MapAAuthPersonServer`
+does this for SDK-hosted endpoints through `AgentIssuanceContext.VerifyAsync` and
+the PS token inventory (`IJtiStore`). Manual endpoints must use the PS-aware
+primitive, not the steps-1–3 helper alone:
 
 ```csharp
-// Register in DI
-builder.Services.AddSingleton(sp =>
-    new UpstreamTokenValidator(
-        sp.GetRequiredService<MetadataClient>(),
-        sp.GetRequiredService<JwksClient>()));
-
-// In the token endpoint handler
-var validator = app.Services.GetRequiredService<UpstreamTokenValidator>();
-
-var result = await validator.ValidateAsync(
-    upstreamToken,
-    intermediary: intermediaryResourceUrl,   // aud must equal the intermediary's agent-token iss
-    expectedPersonServer: psIssuer,          // a person token's iss / an auth token's ps
-    isTrustedAuthTokenIssuer: (iss, _) => ValueTask.FromResult(iss == psIssuer || trustedAccessServers.Contains(iss)));
+var result = await new UpstreamTokenValidator(metadata, jwks, tokenVerifier)
+    .ValidateAtPersonServerAsync(
+        upstreamToken,
+        intermediary: intermediaryResourceUrl, // aud equals intermediary agent-token iss
+        personServer: psIssuer,                // person iss / auth ps
+        inventory: jtiStore,                   // PS provenance inventory
+        isTrustedAuthTokenIssuer: (iss, ct) =>
+            ValueTask.FromResult(trustedAccessServers.Contains(iss)),
+        CancellationToken.None);
 
 if (!result.IsValid)
-    return AAuth.Server.AAuthProblemDetails.Create("invalid_upstream_token", result.Error);
-
-// The downstream person token is bounded by the upstream token and carries its mission.
-var personToken = await new PersonTokenBuilder
-{
-    Issuer = psIssuer,
-    Audience = downstreamResource,
-    Subject = directedSubject,
-    ConfirmationKey = intermediaryKey,
-    AgentTokenExpiresAt = verifiedAgent.ExpiresAt,
-    AuthorizationExpiresAt = result.ExpiresAt,
-    MissionS256 = result.MissionS256,
-    Tenant = result.Tenant,
-    Key = psKey, KeyId = "ps-1",
-}.BuildAsync();
+    return AAuthProblemDetails.TokenFailure(
+        new TokenVerificationException(result.FailureCode, result.Error ?? "Invalid upstream token.")
+        {
+            Credential = TokenCredential.Upstream,
+        });
 ```
 
-The validator performs §Upstream Token Verification steps 1–3:
+The full PS validator performs §Upstream Token Verification steps 1–5:
 1. Verifies the token as a person token or an auth token (by `typ`) via issuer
    JWKS discovery; `cnf.jwk` is the calling agent's key and is not compared with
    the intermediary's signing key
 2. Checks the issuer: the PS a person token's `iss` or an auth token's `ps`
-   names must equal `expectedPersonServer`, and an auth token's `iss` must pass
-   `isTrustedAuthTokenIssuer`
+   names must equal this PS. For an AS-issued auth token, static
+   `Trust.AccessServers` may further restrict acceptable AS issuers but is never
+   sufficient by itself
 3. Checks that the upstream `aud` equals the intermediary's agent-token `iss`
+4. Looks up the PS provenance record for the upstream token in `IJtiStore`. A
+   missing record (for example after in-memory store loss) fails closed as
+   `invalid_upstream_token`; registering an unseen upstream token never creates
+   provenance
+5. Identifies the original calling agent from that provenance. If the recorded
+   agent token or agent-person binding is revoked, the PS rejects the request as
+   `revoked_upstream_token`
 
-It returns the verified token and its `Subject`, `PersonServer`, `MissionS256`,
-`Tenant`, and `ExpiresAt`. `MapAAuthPersonServer` runs this validation for you.
+Every PS-issued person/auth token and every federated AS auth token is recorded
+atomically with grant registration. Provenance records are pruned at token
+`exp + skew`, and the default inventory enforces per-agent distinct-resource
+quotas: quota breach returns `429 invalid_request` before a token is minted.
 Failures map to `invalid_upstream_token`, `expired_upstream_token`, or
-`revoked_upstream_token` (all `400`).
+`revoked_upstream_token` (all `400`, except quota backpressure).
 
 ## PS-Side — Auth Token Delivery Validation
 

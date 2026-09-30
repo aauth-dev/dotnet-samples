@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Person;
+using AAuth.Server;
 using AAuth.Tokens;
 using Xunit;
 
@@ -112,6 +114,39 @@ public class UpstreamTokenValidationTests
         CreateValidator().ValidateAsync(token, Intermediary, PsIssuer,
             (iss, _) => ValueTask.FromResult((trusted ?? (_ => false))(iss)));
 
+    private static TokenRegistration Registration(string jwt)
+    {
+        var payload = TokenVerifier.DecodeJsonSegment(jwt.Split('.')[1], "payload");
+        return new TokenRegistration(
+            new TokenKey(payload["iss"]!.GetValue<string>(), payload["jti"]!.GetValue<string>()),
+            DateTimeOffset.FromUnixTimeSeconds(payload["exp"]!.GetValue<long>()));
+    }
+
+    private async Task<UpstreamCallerRecord> RecordProvenanceAsync(InMemoryJtiStore store, string authToken)
+    {
+        var auth = Registration(authToken);
+        var expires = DateTimeOffset.UtcNow.AddHours(1);
+        var agent = new TokenKey(Intermediary, "agent-token");
+        var binding = AgentPersonBinding.Key(PsIssuer, Intermediary, "aauth:agent@localhost");
+        var presented = new TokenKey(PsIssuer, "presented-person");
+        await store.RegisterAsync(agent, expires);
+        await store.RegisterAsync(binding, BindingExpiresAt);
+        await store.RegisterAsync(presented, expires);
+        var caller = new UpstreamCallerRecord(Intermediary, "aauth:agent@localhost", agent, binding);
+        var grant = new TokenGrant(auth.Token, Intermediary, auth.ExpiresAt)
+        {
+            Provenance = new AAuthTokenProvenance(
+                AAuthConstants.TokenTypes.AuthToken, Intermediary, "user-123", PsIssuer, caller)
+            {
+                PresentedToken = presented,
+            },
+        };
+        Assert.True(await store.RegisterGrantAsync([agent, binding, presented], grant));
+        return caller;
+    }
+
+    private static readonly DateTimeOffset BindingExpiresAt = new(9000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
     [Fact(DisplayName = "§Upstream Token Verification — valid PS-issued auth token accepted")]
     public async Task ValidToken_Accepted()
     {
@@ -153,6 +188,53 @@ public class UpstreamTokenValidationTests
         Assert.Equal(AsIssuer, result.Issuer);
         Assert.Equal(PsIssuer, result.PersonServer);
         Assert.Equal(S256, result.MissionS256);
+    }
+
+    [Fact(DisplayName = "§Upstream Token Verification — PS rejects AS auth token without provenance")]
+    public async Task PersonServerFullValidation_AsIssuedTokenWithoutProvenance_Rejected()
+    {
+        var store = new InMemoryJtiStore();
+        var result = await CreateValidator().ValidateAtPersonServerAsync(
+            await BuildAsAuthTokenAsync(), Intermediary, PsIssuer, store,
+            static (_, _) => ValueTask.FromResult(true));
+
+        Assert.False(result.IsValid);
+        Assert.Equal(AAuth.Errors.SignatureErrorCode.InvalidJwt, result.FailureCode);
+        Assert.Contains("provenance", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact(DisplayName = "§Upstream Token Verification — PS accepts AS auth token only with matching provenance")]
+    public async Task PersonServerFullValidation_AsIssuedTokenWithProvenance_Accepted()
+    {
+        var token = await BuildAsAuthTokenAsync(S256);
+        var store = new InMemoryJtiStore();
+        await RecordProvenanceAsync(store, token);
+
+        var result = await CreateValidator().ValidateAtPersonServerAsync(
+            token, Intermediary, PsIssuer, store,
+            static (_, _) => ValueTask.FromResult(true));
+
+        Assert.True(result.IsValid, result.Error);
+        Assert.Equal("aauth:agent@localhost", result.Caller?.AgentId);
+        Assert.Equal(AsIssuer, result.Issuer);
+    }
+
+    [Theory(DisplayName = "§Upstream Token Verification — revoked caller record rejects matching provenance")]
+    [InlineData("agent")]
+    [InlineData("binding")]
+    public async Task PersonServerFullValidation_RevokedCallerRecord_Rejected(string revoked)
+    {
+        var token = await BuildAsAuthTokenAsync();
+        var store = new InMemoryJtiStore();
+        var caller = await RecordProvenanceAsync(store, token);
+        await store.RevokeAsync(revoked == "agent" ? caller.AgentToken : caller.AgentPersonBinding, BindingExpiresAt);
+
+        var result = await CreateValidator().ValidateAtPersonServerAsync(
+            token, Intermediary, PsIssuer, store,
+            static (_, _) => ValueTask.FromResult(true));
+
+        Assert.False(result.IsValid);
+        Assert.Equal(AAuth.Errors.SignatureErrorCode.RevokedJwt, result.FailureCode);
     }
 
     [Fact(DisplayName = "§Upstream Token Verification — an out-of-set dwk is rejected")]

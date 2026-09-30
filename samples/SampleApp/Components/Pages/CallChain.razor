@@ -32,8 +32,9 @@
         plain <em>Interaction Required</em> — Agent&nbsp;A relays you to the PS consent page.</li>
     <li><strong>Hop&nbsp;2</strong> (Concierge → Calendar, scope <code>calendar.read</code>):
         the Concierge has no user, so it re-emits its <em>own</em> <code>202</code>
-        (AAuth §Interaction Chaining). Agent&nbsp;A relays you to that consent page too,
-        then receives the final chained result.</li>
+        (AAuth §Interaction Chaining). Agent&nbsp;A relays you to the Concierge
+        interaction URL, which redirects to the Person Server consent page, then
+        receives the final chained result.</li>
 </ul>
 
 <p class="text-muted">
@@ -106,9 +107,11 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
     catch (AAuthInteractionChainedException ex)
     {
         // Downstream needs consent. Park it and
-        // re-emit our OWN 202 to the caller.
-        var e = pending.Add(upstream,
-            ex.Interaction.Url, ex.Interaction.Code);
+        // re-emit our OWN code, URL and poll Location.
+        var chained = AAuthChainedInteractions.Park(
+            conciergeUrl, "/pending", "/chain-interaction", ex,
+            "calendar.events", new JsonObject(), DateTimeOffset.UtcNow.AddMinutes(10));
+        var e = pending.Add(upstream, chained);
         return ReEmitChainedInteraction(ctx, e);
     }
 });</code></pre>
@@ -283,13 +286,9 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
     }
 
     // Hop 1 comes from the PS exchange; hop 2 is the Concierge's chained resource 202,
-    // whose URL points at the PS consent page.
+    // whose URL is owned by the Concierge and redirects to the PS consent page.
     public async Task OnInteractionRequiredAsync(AAuth.Headers.Interaction interaction, CancellationToken cancellationToken)
     {
-        if (interaction.Source == AAuth.Headers.InteractionSource.Resource)
-        {
-            interaction = PersonServerConsent.FromUserUrl(interaction.BuildUserUrl(), interaction.Code);
-        }
         if (_currentHop is not null)
         {
             _approvedHops.Add(_currentHop);
