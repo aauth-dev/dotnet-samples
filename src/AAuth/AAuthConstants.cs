@@ -75,6 +75,15 @@ public static class AAuthConstants
         public const string PerCall = "per-call";
     }
 
+    /// <summary>Metadata member names defined by the AAuth protocol.</summary>
+    public static class MetadataFields
+    {
+        /// <summary>
+        /// Resource metadata field listing extra HTTP signature covered components.
+        /// </summary>
+        public const string AdditionalSignatureComponents = "additional_signature_components";
+    }
+
     /// <summary>
     /// Mission termination reasons (#mission-management). The set is open: a recipient
     /// that does not recognize a reason keeps the <c>terminated</c> state and treats the

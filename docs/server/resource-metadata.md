@@ -52,6 +52,7 @@ builder.Services.AddAAuthResource(options =>
         ["write"] = "Write access to your data"
     };
     options.SignatureWindow = 60;
+    options.AdditionalSignatureComponents = new[] { "content-type", "content-digest" };
     options.AuthorizationEndpoint = "https://resource.example/authorize";
     options.RevocationEndpoint = "https://resource.example/revoke";
     options.DocumentationUri = "https://docs.resource.example";
@@ -73,6 +74,7 @@ app.MapAAuthWellKnown();
 | `DocumentationUri` | No | Developer-documentation URL (`documentation_uri`) |
 | `ScopeDescriptions` | No | Scope → description map (displayed during consent) |
 | `SignatureWindow` | No | Signature validity window in seconds (advertised to agents) |
+| `AdditionalSignatureComponents` | No | Additional HTTP signature components agents must cover, emitted as `additional_signature_components` |
 | `AuthorizationEndpoint` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | No | URL of the revocation endpoint |
 
@@ -91,6 +93,7 @@ The extension maps `GET /.well-known/aauth-resource.json` returning:
     "write": "Write access to your data"
   },
   "signature_window": 60,
+  "additional_signature_components": ["content-type", "content-digest"],
   "authorization_endpoint": "https://resource.example/authorize",
   "revocation_endpoint": "https://resource.example/revoke"
 }

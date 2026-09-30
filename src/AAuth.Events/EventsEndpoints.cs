@@ -28,6 +28,8 @@ public sealed class AAuthSubscriptionEndpointOptions
     public TimeSpan? SubscriptionLifetime { get; set; }
 }
 
+internal sealed record AAuthEventEndpointMetadata(string Path);
+
 public static class EventsEndpoints
 {
     /// <summary>
@@ -35,25 +37,35 @@ public static class EventsEndpoints
     /// <see cref="EventsServiceExtensions.AddAAuthEvents"/>) and <see cref="IAgentProviderEventStore"/> from DI.
     /// </summary>
     public static IEndpointConventionBuilder MapAAuthEventEndpoint(this IEndpointRouteBuilder routes,
-        string path) => routes.MapPost(path, async (HttpContext context, [FromServices] EventsProtocol protocol, [FromServices] IAgentProviderEventStore store) =>
+        string path)
     {
-        var assertion = await protocol.VerifyRequestAsync(context, EventsTokens.EventType).ConfigureAwait(false);
-        if (assertion is null) return Results.Empty;
-        using var body = new MemoryStream();
-        await context.Request.Body.CopyToAsync(body, context.RequestAborted).ConfigureAwait(false);
-        var token = assertion.Token;
-        var envelope = new EventEnvelope(assertion.CompactToken, EventsTokens.RequireText(token.Payload, "eid"),
-            token.Jti, token.Issuer, EventsTokens.RequireText(token.Payload, "aud"), token.ExpiresAt, body.ToArray());
-        EventAcceptance acceptance;
-        try { acceptance = store.Accept(envelope, protocol.TokenVerifier.TimeProvider.GetUtcNow()); }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        { return AAuthProblemDetails.Create("temporarily_unavailable", "Durable event acceptance failed.", statusCode: 503); }
-        if (acceptance.StatusCode != 202)
-            return AAuthProblemDetails.Create("event_rejected", statusCode: acceptance.StatusCode);
-        return acceptance.RemainingUses is { } remaining
-            ? Results.Json(new { remaining_uses = remaining }, statusCode: 202)
-            : Results.StatusCode(202);
-    });
+        var builder = routes.MapPost(path, async (HttpContext context, [FromServices] EventsProtocol protocol, [FromServices] IAgentProviderEventStore store) =>
+        {
+            var assertion = await protocol.VerifyRequestAsync(context, EventsTokens.EventType).ConfigureAwait(false);
+            if (assertion is null) return Results.Empty;
+            using var body = new MemoryStream();
+            await context.Request.Body.CopyToAsync(body, context.RequestAborted).ConfigureAwait(false);
+            var token = assertion.Token;
+            var envelope = new EventEnvelope(assertion.CompactToken, EventsTokens.RequireText(token.Payload, "eid"),
+                token.Jti, token.Issuer, EventsTokens.RequireText(token.Payload, "aud"), token.ExpiresAt, body.ToArray());
+            EventAcceptance acceptance;
+            try { acceptance = store.Accept(envelope, protocol.TokenVerifier.TimeProvider.GetUtcNow()); }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            { return AAuthProblemDetails.Create("temporarily_unavailable", "Durable event acceptance failed.", statusCode: 503); }
+            return acceptance.Outcome switch
+            {
+                EventAcceptanceOutcome.Accepted or EventAcceptanceOutcome.Duplicate => acceptance.RemainingUses is { } remaining
+                    ? Results.Json(new { remaining_uses = remaining }, statusCode: 202)
+                    : Results.StatusCode(202),
+                EventAcceptanceOutcome.Unknown or EventAcceptanceOutcome.Expired or EventAcceptanceOutcome.Exhausted =>
+                    AAuthProblemDetails.Create("event_rejected", statusCode: 404),
+                EventAcceptanceOutcome.Forbidden => AAuthProblemDetails.Create("event_rejected", statusCode: 403),
+                _ => AAuthProblemDetails.Create("event_rejected", statusCode: 400),
+            };
+        });
+        builder.WithMetadata(new AAuthEventEndpointMetadata(path));
+        return builder;
+    }
 
     /// <summary>
     /// Map a resource subscription endpoint. Resolves the <see cref="EventsProtocol"/> and
@@ -70,7 +82,7 @@ public static class EventsEndpoints
             ?? throw new InvalidOperationException("AAuthSubscriptionEndpointOptions.Resource is required without AddAAuthResource.");
         ArgumentException.ThrowIfNullOrEmpty(channel.Operation);
         var validateParameters = channel.ValidateParameters
-            ?? throw new InvalidOperationException("AAuthSubscriptionEndpointOptions.ValidateParameters is required.");
+            ?? (parameters => parameters.Count == 0);
         return routes.MapSubscriptionCore(path, resource, channel.Operation, channel.ProtectedChannel, validateParameters,
             channel.SubscriptionLifetime);
     }
@@ -82,11 +94,17 @@ public static class EventsEndpoints
     {
         var assertion = await protocol.VerifyRequestAsync(context, EventsTokens.SubscribeType, resource).ConfigureAwait(false);
         if (assertion is null) return Results.Empty;
-        JsonObject? parameters;
-        try { parameters = await context.Request.ReadFromJsonAsync<JsonObject>(context.RequestAborted).ConfigureAwait(false); }
+        JsonObject parameters;
+        try
+        {
+            parameters = EventsProtocol.HasHttpBody(context.Request)
+                ? await context.Request.ReadFromJsonAsync<JsonObject>(context.RequestAborted).ConfigureAwait(false)
+                    ?? throw new JsonException("Subscription JSON body was empty.")
+                : new JsonObject();
+        }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         { return AAuthProblemDetails.Create("invalid_request", "Invalid subscription JSON.", statusCode: 400); }
-        if (parameters is null || !validateParameters(parameters))
+        if (!validateParameters(parameters))
             return AAuthProblemDetails.Create("invalid_request", "Subscription parameters do not match the channel schema.", statusCode: 400);
         var ticket = protectedChannel ? context.Request.RouteValues["ticket"] as string : null;
         if (protectedChannel && string.IsNullOrWhiteSpace(ticket)) return Results.NotFound();

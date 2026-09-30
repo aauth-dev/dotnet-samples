@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
@@ -42,6 +43,7 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
 
     private IHost? _metadataHost;
     private IHost? _host;
+    private int _signingSecond = -30;
 
     public async Task InitializeAsync()
     {
@@ -374,9 +376,16 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
     {
         var release = new TaskCompletionSource<RevocationDownstreamError?>(TaskCreationOptions.RunContinuationsAsynchronously);
         await StartDeferringHost(release, TimeSpan.FromMilliseconds(100));
-        using var signed = new AAuthClientBuilder(_apKey).UseJwksUri(ApIssuer, "aauth-agent.json", "ap-key-1")
-            .WithEgressPolicy(TestEgress.Policy)
-            .WithInnerHandler(_host!.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+        using var signed = AAuthHttpTransport.AttachPolicy(new HttpClient(new AAuthSigningHandler(
+            _apKey,
+            new JwksUriSignatureKeyProvider(ApIssuer, "aauth-agent.json", "ap-key-1"),
+            NextSigningClock())
+        {
+            InnerHandler = _host!.GetTestServer().CreateHandler(),
+        })
+        {
+            BaseAddress = new Uri("http://localhost"),
+        }, TestEgress.Policy, AAuthTransportContract.InProcessOnly);
         _ = Task.Delay(TimeSpan.FromMilliseconds(400)).ContinueWith(_ => release.SetResult(RevocationDownstreamError.RevocationUnsupported));
 
         var result = await new RevocationClient(signed).RevokeAsync(new Uri("http://localhost/revoke"), "slow", DateTimeOffset.UtcNow.AddMinutes(5));
@@ -659,12 +668,23 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         ISignatureKeyProvider provider = asAgent
             ? new JwtSignatureKeyProvider(() => agentToken)
             : new JwksUriSignatureKeyProvider(ApIssuer, "aauth-agent.json", "ap-key-1");
-        var signing = new AAuthSigningHandler(asAgent ? _agentKey : _apKey, provider, new FakeTimeProvider(FixedClock));
+        var signing = new AAuthSigningHandler(asAgent ? _agentKey : _apKey, provider, NextSigningClock());
         if (!coverContent)
             return new HttpClient(new AAuth.Testing.UncoveredBodySigner(signing) { InnerHandler = _host!.GetTestServer().CreateHandler() })
                 { BaseAddress = new Uri("http://localhost") };
         signing.InnerHandler = _host!.GetTestServer().CreateHandler();
         return new HttpClient(signing) { BaseAddress = new Uri("http://localhost") };
+    }
+
+    private TimeProvider NextSigningClock()
+        => new AdvancingTimeProvider(FixedClock.AddSeconds(_signingSecond++));
+
+    private sealed class AdvancingTimeProvider(DateTimeOffset start) : TimeProvider
+    {
+        private int _offset = -1;
+
+        public override DateTimeOffset GetUtcNow()
+            => start.AddSeconds(Interlocked.Increment(ref _offset));
     }
 
     private async Task<IHost> StartMetadataServer()

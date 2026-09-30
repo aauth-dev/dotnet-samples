@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
+using AAuth.Errors;
 
 namespace AAuth.HttpSig;
 
@@ -59,24 +60,53 @@ public sealed class AAuthSigningHandler : DelegatingHandler
 
     // §Freshness and Replay: a verifier MAY reject a second signature with the same key, created,
     // @method, @authority and @path, and the profile defines no nonce. Requests that would collide
-    // (a cached token re-sent within the same second, concurrent identical calls) therefore take
-    // the next free second, still inside every verifier's created window. Shared per key, since
-    // several handlers (resource, exchange, typed clients) sign with one key.
+    // (a cached token re-sent within the same second, concurrent identical calls) therefore wait
+    // until the next free wall-clock second. The SDK never future-dates `created`.
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IAAuthSigner, Dictionary<string, long>> LastCreated = new();
 
-    private long NextCreated(string method, string authority, string path)
+    private async Task<long> WaitForCurrentCreatedAsync(
+        string method, string authority, string path, CancellationToken cancellationToken)
     {
-        var now = _time.GetUtcNow().ToUnixTimeSeconds();
         var issued = LastCreated.GetOrCreateValue(_key);
         var target = method + " " + authority + path;
-        lock (issued)
+        var started = _time.GetUtcNow();
+        var waited = false;
+
+        while (true)
         {
-            var created = issued.TryGetValue(target, out var last) && last >= now ? last + 1 : now;
-            issued[target] = created;
-            if (issued.Count > 1024)
-                foreach (var stale in issued.Where(entry => entry.Value < now).Select(entry => entry.Key).ToList())
-                    issued.Remove(stale);
-            return created;
+            var now = _time.GetUtcNow();
+            var nowUnix = now.ToUnixTimeSeconds();
+            long last;
+            lock (issued)
+            {
+                if (!issued.TryGetValue(target, out last) || last < nowUnix)
+                {
+                    issued[target] = nowUnix;
+                    if (issued.Count > 1024)
+                    {
+                        foreach (var stale in issued.Where(entry => entry.Value < nowUnix).Select(entry => entry.Key).ToList())
+                        {
+                            issued.Remove(stale);
+                        }
+                    }
+                    if (waited)
+                    {
+                        AAuthDiagnostics.RecordSigningCreatedWait(now - started, method, authority, path);
+                    }
+                    return nowUnix;
+                }
+            }
+
+            waited = true;
+            var next = DateTimeOffset.FromUnixTimeSeconds(last + 1);
+            var delay = next - now;
+            if (delay <= TimeSpan.Zero)
+            {
+                await Task.Yield();
+                cancellationToken.ThrowIfCancellationRequested();
+                continue;
+            }
+            await Task.Delay(delay, _time, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -160,11 +190,8 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         if (request.Content is null)
             return;
         request.Options.TryGetValue(AdditionalComponentsKey, out var requested);
-        var body = request.Content.Headers.ContentType is null
-            ? new[] { "content-digest" }
-            : new[] { "content-type", "content-digest" };
         request.Options.Set(AdditionalComponentsKey,
-            (requested ?? []).Concat(body).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+            (requested ?? []).Concat(["content-type", "content-digest"]).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
     }
 
     // When a resource requires `content-digest` as an additional covered
@@ -225,8 +252,20 @@ public sealed class AAuthSigningHandler : DelegatingHandler
             throw new InvalidOperationException("Request must have a RequestUri.");
         }
 
+        var label = SignatureKeyHeader.Label(Label);
         var signatureKey = _signatureKeyProvider is JwtSignatureKeyProvider jwtProvider
             ? jwtProvider.GetSignatureKeyHeader(request) : _signatureKeyProvider.GetSignatureKeyHeader();
+        try
+        {
+            SignatureKeyHeader.Parse(signatureKey, Label);
+        }
+        catch (Exception ex) when (ex is AAuthVerificationException or ArgumentException)
+        {
+            throw new InvalidOperationException(
+                $"The Signature-Key provider did not emit a member for the handler label '{Label}'. "
+                + "The provider label and AAuthSigningHandler.Label must match.",
+                ex);
+        }
         request.Options.Set(SigningKeyContext, _key);
 
         var method = request.Method.Method;
@@ -239,7 +278,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         // UriFormat.UriEscaped guarantees the wire form. GetComponents omits
         // the leading '/', so re-add it.
         var path = "/" + request.RequestUri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
-        var created = NextCreated(method, authority, path);
+        var created = await WaitForCurrentCreatedAsync(method, authority, path, cancellationToken).ConfigureAwait(false);
 
         // Additional covered components required by the resource (from its
         // metadata or a prior invalid_input error). Resolve each to its
@@ -289,7 +328,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         request.Headers.Remove(AAuthConstants.Headers.Signature);
 
         request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.SignatureKey, signatureKey);
-        request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.SignatureInput, $"{SignatureKeyHeader.Label(Label)}={paramsLine}");
+        request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.SignatureInput, $"{label}={paramsLine}");
         request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.Signature, $"{Label}=:{Convert.ToBase64String(signature)}:");
 
         // Emit capabilities header if configured
@@ -384,11 +423,11 @@ public sealed class AAuthSigningHandler : DelegatingHandler
                         UriComponents.Scheme | UriComponents.Host | UriComponents.Port,
                         UriFormat.UriEscaped)
                     : "(unknown origin)";
+                var reason = request.Content is not null && name == "content-type"
+                    ? "Body-bearing AAuth requests must set Content-Type so the signer can cover it."
+                    : "Components AAuth can compute automatically (e.g. 'content-digest' on a body-bearing request) are added before signing; any other required component must be set on the request by the caller.";
                 throw new InvalidOperationException(
-                    $"Resource at {origin} requires signature component '{name}', but the request "
-                    + "has no such header to sign over. Components AAuth can compute automatically "
-                    + "(e.g. 'content-digest' on a body-bearing request) are added before signing; "
-                    + "any other required component must be set on the request by the caller.");
+                    $"Resource at {origin} requires signature component '{name}', but the request has no such header to sign over. {reason}");
             }
             resolved.Add((name, value));
         }
@@ -398,6 +437,11 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     private static bool TryResolveFieldValue(
         HttpRequestMessage request, string name, out string value)
     {
+        if (name.StartsWith('@'))
+        {
+            return TryResolveDerivedComponent(request, name, out value);
+        }
+
         // Content headers (content-type, content-digest, content-length, ...)
         // live on request.Content; everything else on request.Headers. RFC
         // 9421 §2.1: multiple field values are combined with ", ".
@@ -413,6 +457,32 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         }
         value = string.Empty;
         return false;
+    }
+
+    private static bool TryResolveDerivedComponent(
+        HttpRequestMessage request, string name, out string value)
+    {
+        if (request.RequestUri is not { } uri)
+        {
+            value = string.Empty;
+            return false;
+        }
+
+        var scheme = uri.Scheme.ToLowerInvariant();
+        var authority = uri.Authority.ToLowerInvariant();
+        var path = "/" + uri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
+        var query = uri.GetComponents(UriComponents.Query, UriFormat.UriEscaped);
+        var requestTarget = string.IsNullOrEmpty(query) ? path : path + "?" + query;
+
+        value = name switch
+        {
+            "@scheme" => scheme,
+            "@query" => string.IsNullOrEmpty(query) ? "?" : "?" + query,
+            "@target-uri" => scheme + "://" + authority + requestTarget,
+            "@request-target" => requestTarget,
+            _ => string.Empty,
+        };
+        return value.Length > 0;
     }
 
     /// <summary>

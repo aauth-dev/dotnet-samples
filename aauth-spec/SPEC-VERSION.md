@@ -42,6 +42,13 @@ tag are included.
 `accept_signature_algs` advertisement are not implemented. No snapshot bytes
 changed during migration.
 
+> **Deliberate development-only deviation (2026-09-30):** the SDK keeps a
+> locked-down loopback identifier exception for samples and in-process tests.
+> `AAuthEgressPolicy.ForDevelopmentLoopback(...)` admits only explicitly listed
+> `localhost`/`127.0.0.1` origins (with or without a port), logs a warning when
+> active, and AAuth DI registrations fail in Production when such a policy is
+> used. `AAuthEgressPolicy.Production` remains strict.
+
 Earlier snapshots are historical, not compatibility fallbacks. X.509/cached
 carriers and third-party login hosting are unsupported; platform/native
 transports and production persistence/policy are deployment responsibilities.

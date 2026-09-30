@@ -1,5 +1,8 @@
 using System.Net;
+using System.Net.Http.Json;
 using AAuth.Events;
+using AAuth.Crypto;
+using AAuth.Server.Metadata;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -51,6 +54,59 @@ public class EventsDependencyInjectionTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact(DisplayName = "agent metadata derives event_endpoint from one mapped Events endpoint")]
+    public async Task AgentMetadata_DerivesEventEndpoint()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        await using var app = builder.Build();
+        app.MapAAuthEventEndpoint("/events");
+        app.MapAAuthAgentWellKnown(options =>
+        {
+            options.Issuer = "https://ap.example";
+            options.SigningKeys = new AAuthSigningKeySet { ["k1"] = AAuthKey.Generate() };
+        });
+        await app.StartAsync();
+
+        var doc = await app.GetTestClient().GetFromJsonAsync<System.Text.Json.Nodes.JsonObject>("/.well-known/aauth-agent.json");
+        Assert.Equal("https://ap.example/events", (string?)doc!["event_endpoint"]);
+        Assert.False(doc.ContainsKey("localhost_callback_allowed"));
+    }
+
+    [Fact(DisplayName = "agent metadata emits localhost_callback_allowed only when true")]
+    public async Task AgentMetadata_EmitsLocalhostCallbackAllowedOnlyWhenTrue()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        await using var app = builder.Build();
+        app.MapAAuthAgentWellKnown(options =>
+        {
+            options.Issuer = "https://ap.example";
+            options.SigningKeys = new AAuthSigningKeySet { ["k1"] = AAuthKey.Generate() };
+            options.LocalhostCallbackAllowed = true;
+        });
+        await app.StartAsync();
+
+        var doc = await app.GetTestClient().GetFromJsonAsync<System.Text.Json.Nodes.JsonObject>("/.well-known/aauth-agent.json");
+        Assert.True((bool?)doc!["localhost_callback_allowed"]);
+    }
+
+    [Fact(DisplayName = "agent metadata requires explicit event_endpoint when multiple Events endpoints are mapped")]
+    public void AgentMetadata_RejectsMultipleMappedEventEndpointsWithoutExplicitEndpoint()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        using var app = builder.Build();
+        app.MapAAuthEventEndpoint("/events/a");
+        app.MapAAuthEventEndpoint("/events/b");
+
+        Assert.Throws<InvalidOperationException>(() => app.MapAAuthAgentWellKnown(options =>
+        {
+            options.Issuer = "https://ap.example";
+            options.SigningKeys = new AAuthSigningKeySet { ["k1"] = AAuthKey.Generate() };
+        }));
+    }
+
     [Fact(DisplayName = "the subscription endpoint defaults its resource to the registered resource issuer")]
     public async Task SubscriptionEndpoint_DefaultsResource()
     {
@@ -64,7 +120,7 @@ public class EventsDependencyInjectionTests
         });
         await using var app = builder.Build();
 
-        Assert.Throws<InvalidOperationException>(() => app.MapAAuthSubscriptionEndpoint("/missing", options => options.Operation = "receive"));
+        app.MapAAuthSubscriptionEndpoint("/missing", options => options.Operation = "receive");
         app.MapAAuthSubscriptionEndpoint("/subscribe", options =>
         {
             options.Operation = "receive";

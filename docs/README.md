@@ -157,7 +157,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 |------|---------|
 | `MetadataClient` | Cached fetcher for `/.well-known/aauth-*.json` |
 | `JwksClient` | Cached fetcher for JWKS endpoints |
-| `ServerMetadata` / `ResourceMetadata` | Parsed metadata models |
+| `ServerMetadata` / `ResourceMetadata` | Parsed metadata models, including typed resource `additional_signature_components` |
 
 ### `AAuth.Headers` — Protocol headers
 
@@ -210,7 +210,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 
 | Type | Purpose |
 |------|---------|
-| `WellKnownEndpoints` | `MapAAuthAgentWellKnown(o => ...)` for agent metadata; resources use `MapAAuthWellKnown()`, PS/AS publish through their role mappers |
+| `WellKnownEndpoints` | `MapAAuthAgentWellKnown(o => ...)` for agent metadata (including typed `event_endpoint` / `localhost_callback_allowed`); resources use `MapAAuthWellKnown()`, PS/AS publish through their role mappers. Core metadata fields are typed; resource `AdditionalMetadata` cannot shadow them. |
 
 ### `AAuth.Server.CallChaining` — Delegation routing
 
@@ -237,7 +237,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 
 | Type | Purpose |
 |------|---------|
-| `AAuthDiagnostics` | Shared `ActivitySource` + tag key constants for OTel tracing |
+| `AAuthDiagnostics` | Shared `ActivitySource`, `Meter` and tag key constants for OTel tracing/metrics |
 
 ### `Microsoft.Extensions.DependencyInjection` / `Microsoft.AspNetCore.Builder` — ASP.NET Core integration
 

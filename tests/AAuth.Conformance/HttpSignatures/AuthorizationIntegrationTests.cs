@@ -51,6 +51,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     private IHost? _host;
     private IHost? _metadataHost;
     private int _jwksRequests;
+    private int _signingSecond = -30;
 
     public async Task InitializeAsync()
     {
@@ -202,7 +203,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     {
         var capture = new CaptureHandler();
         var provider = new JwtSignatureKeyProvider(() => token);
-        var handler = new AAuthSigningHandler(_agentKey, provider, new FakeTimeProvider(FixedClock))
+        var handler = new AAuthSigningHandler(_agentKey, provider, NextSigningClock())
         {
             InnerHandler = capture,
         };
@@ -225,7 +226,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     {
         var capture = new CaptureHandler();
         var provider = new HwkSignatureKeyProvider(_agentKey);
-        var handler = new AAuthSigningHandler(_agentKey, provider, new FakeTimeProvider(FixedClock))
+        var handler = new AAuthSigningHandler(_agentKey, provider, NextSigningClock())
         {
             InnerHandler = capture,
         };
@@ -238,6 +239,9 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         relay.Headers.Host = "localhost:5000";
         return await _host!.GetTestClient().SendAsync(relay);
     }
+
+    private FakeTimeProvider NextSigningClock()
+        => new(FixedClock.AddSeconds(_signingSecond++));
 
     private sealed class CaptureHandler : HttpMessageHandler
     {

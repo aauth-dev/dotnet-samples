@@ -36,6 +36,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
     private readonly AAuthKey _ephemeralKey = AAuthKey.Generate();
 
     private IHost? _host;
+    private int _signingSecond = -30;
 
     public async Task InitializeAsync()
     {
@@ -61,9 +62,9 @@ public class NamingJwtValidationTests : IAsyncLifetime
 
     private HttpClient Client => _host!.GetTestClient();
 
-    private sealed class FixedTimeProvider : TimeProvider
+    private sealed class FixedTimeProvider(DateTimeOffset? now = null) : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => FixedClock;
+        public override DateTimeOffset GetUtcNow() => now ?? FixedClock;
     }
 
     [Fact(DisplayName = "§jkt-jwt — valid naming JWT with future exp succeeds")]
@@ -233,7 +234,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
         var signingHandler = new AAuthSigningHandler(
             _ephemeralKey,
             new JktJwtSignatureKeyProvider(() => namingJwt),
-            new FixedTimeProvider())
+            new FixedTimeProvider(NextSigningTime()))
         {
             InnerHandler = capture,
         };
@@ -241,6 +242,9 @@ public class NamingJwtValidationTests : IAsyncLifetime
         await signingClient.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost/jkt-jwt"));
         return capture.Captured!;
     }
+
+    private DateTimeOffset NextSigningTime()
+        => FixedClock.AddSeconds(_signingSecond++);
 
     private async Task<HttpResponseMessage> RelayAsync(HttpRequestMessage signed)
     {

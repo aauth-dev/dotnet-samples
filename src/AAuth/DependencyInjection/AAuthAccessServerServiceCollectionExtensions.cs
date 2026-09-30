@@ -162,10 +162,13 @@ internal sealed class AccessServerOptionsValidator(IServiceProvider services) : 
         // `?code=…`; each trusted Person Server is a four-party anchor.
         if (!AAuthUrl.IsHttpsOrLoopback(options.Issuer, options.EgressPolicy))
             failures.Add("AAuthAccessServerOptions.Issuer must be an absolute https URL (loopback http allowed for development).");
+        try { AAuthServerRoles.RejectDevelopmentLoopbackInProduction(services, $"Access Server '{name}'", options.EgressPolicy); }
+        catch (InvalidOperationException exception) { failures.Add(exception.Message); }
         if (options.SigningKeys.Count == 0 && string.IsNullOrEmpty(options.KeyHandle))
             failures.Add("AAuthAccessServerOptions needs a signing key: add one to SigningKeys or set KeyHandle.");
-        if (options.InteractionLoginPath.Contains('?') || options.InteractionLoginPath.Contains('#'))
-            failures.Add("AAuthAccessServerOptions.InteractionLoginPath must not contain a query or fragment.");
+        AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.TokenPath, nameof(options.TokenPath), failures);
+        AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.RevocationPath, nameof(options.RevocationPath), failures);
+        AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.InteractionLoginPath, nameof(options.InteractionLoginPath), failures);
         foreach (var trustedPs in options.Trust.PersonServers.Allowed ?? new HashSet<string>())
         {
             if (!AAuthUrl.IsHttpsOrLoopback(trustedPs, options.EgressPolicy))

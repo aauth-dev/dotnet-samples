@@ -33,6 +33,8 @@ public sealed class AAuthEgressPolicy
     private readonly IAAuthDnsResolver _dns;
     public int MaxResponseBytes { get; }
     public TimeSpan RequestTimeout { get; }
+    internal IReadOnlyCollection<string> DevelopmentLoopbackOrigins => _loopbackOrigins;
+    internal bool HasDevelopmentLoopbackOrigins => _loopbackOrigins.Count > 0;
 
     public AAuthEgressPolicy(IEnumerable<string>? developmentLoopbackOrigins = null,
         IEnumerable<(string Source, string Target)>? crossOriginJwks = null,
@@ -50,9 +52,8 @@ public sealed class AAuthEgressPolicy
         foreach (var origin in developmentLoopbackOrigins ?? [])
         {
             var uri = ParseUrl(origin);
-            if (origin != Origin(uri) || (uri.IdnHost != "localhost"
-                && uri.IdnHost != "127.0.0.1" && uri.IdnHost != "::1"))
-                throw new ArgumentException("Development origins must be exact localhost, 127.0.0.1, or [::1] origins.");
+            if (origin != Origin(uri) || (uri.IdnHost != "localhost" && uri.IdnHost != "127.0.0.1"))
+                throw new ArgumentException("Development origins must be exact localhost or 127.0.0.1 origins.");
             _loopbackOrigins.Add(origin);
         }
         _jwksOrigins = new();
@@ -98,7 +99,8 @@ public sealed class AAuthEgressPolicy
         var development = _loopbackOrigins.Contains(Origin(uri));
         if (uri.Scheme != "https" && !development)
             throw new HttpRequestException("AAuth egress requires HTTPS or an explicitly configured loopback origin.");
-        if (endpoint && value.Contains('?')) throw new HttpRequestException("AAuth endpoint URLs must not contain a query.");
+        if (endpoint && uri.Query.Length != 0) throw new HttpRequestException("AAuth endpoint URLs must not contain a query.");
+        if (endpoint && uri.Fragment.Length != 0) throw new HttpRequestException("AAuth endpoint URLs must not contain a fragment.");
         if (IPAddress.TryParse(uri.IdnHost, out var address)) ValidateAddress(address, development);
         else if ((uri.IdnHost == "localhost" || uri.IdnHost.EndsWith(".localhost", StringComparison.Ordinal)) && !development)
             throw new HttpRequestException("Loopback destination is not admitted.");

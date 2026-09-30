@@ -69,6 +69,16 @@ public class AgentIdTests
         Assert.Contains("invalid character", err!);
     }
 
+    [Theory(DisplayName = "§Agent Identifiers — malformed '+' delimiter rejected")]
+    [InlineData("aauth:parent+@ap.example")]
+    [InlineData("aauth:+child@ap.example")]
+    [InlineData("aauth:parent+child+grandchild@ap.example")]
+    public void Rejects_MalformedSubAgentDelimiter(string input)
+    {
+        Assert.False(AgentId.TryParse(input, out _, out var err));
+        Assert.Contains("+", err!);
+    }
+
     [Fact(DisplayName = "§Agent Identifiers — missing @ rejected")]
     public void Rejects_MissingAt()
     {

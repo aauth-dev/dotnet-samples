@@ -292,7 +292,11 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
             Assert.True(response.Headers.Contains(AAuthRequirementHeader.Name));
         }
-        else await Assert.ThrowsAsync<InvalidOperationException>(async () => await SendSigned(resource, await BuildPersonTokenAsync()));
+        else
+        {
+            using var response = await SendSigned(resource, await BuildPersonTokenAsync());
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        }
         await resource.StopAsync();
     }
 

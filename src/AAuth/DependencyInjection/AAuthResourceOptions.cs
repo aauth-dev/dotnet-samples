@@ -98,6 +98,13 @@ public sealed class AAuthResourceOptions
     public int? SignatureWindow { get; set; }
 
     /// <summary>
+    /// Optional resource metadata <c>additional_signature_components</c> values.
+    /// Agents that consume this metadata include these HTTP message components
+    /// on their first signed request to the resource.
+    /// </summary>
+    public IReadOnlyList<string>? AdditionalSignatureComponents { get; set; }
+
+    /// <summary>
     /// Optional advisory <c>access_mode</c> published in resource metadata: one
     /// of <c>agent-token</c>, <c>person-token</c>, <c>session-token</c>, <c>auth-token</c>,
     /// or R3's <c>per-call</c>.

@@ -139,4 +139,21 @@ internal static class AAuthServerRoles
             }
         }
     }
+
+    public static void WarnOnDevelopmentLoopback(IServiceProvider services, ILogger logger, string role, string name,
+        AAuthEgressPolicy policy)
+    {
+        if (!policy.HasDevelopmentLoopbackOrigins) return;
+        logger.LogWarning(
+            "{Role} '{Name}' admits development loopback AAuth identifiers/origins ({Origins}). This is a development-only " +
+            "relaxation of the AAuth server identifier rules and MUST NOT be used in Production.",
+            role, name, string.Join(", ", policy.DevelopmentLoopbackOrigins));
+    }
+
+    public static void RejectDevelopmentLoopbackInProduction(IServiceProvider services, string owner, AAuthEgressPolicy policy)
+    {
+        var environment = services.GetService<IHostEnvironment>();
+        if (environment is not null && environment.IsProduction() && policy.HasDevelopmentLoopbackOrigins)
+            throw new InvalidOperationException($"{owner} uses a development loopback egress policy in Production.");
+    }
 }

@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using AAuth;
+using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Server.Authorization;
@@ -82,6 +84,29 @@ public class OptionsThreadingTests
         var fakeResponse = new HttpResponseMessage();
         options.OnPoll!(fakeResponse);
         Assert.Same(fakeResponse, captured);
+    }
+
+    [Fact(DisplayName = "ChallengeHandlingOptions seeds additional components from ResourceMetadata")]
+    public void ChallengeOptions_AddResourceMetadataSeedsAdditionalComponents()
+    {
+        var options = new ChallengeHandlingOptions
+        {
+            AdditionalSignatureComponents = new Dictionary<string, IReadOnlyList<string>>
+            {
+                ["https://resource.example"] = new[] { "x-existing" },
+            },
+        };
+
+        options.AddResourceMetadata(new ResourceMetadata
+        {
+            Issuer = "https://Resource.Example/path",
+            AdditionalSignatureComponents = new[] { "Content-Type", "x-existing" },
+        });
+
+        Assert.NotNull(options.AdditionalSignatureComponents);
+        Assert.Equal(
+            new[] { "content-type", "x-existing" },
+            options.AdditionalSignatureComponents!["https://resource.example"]);
     }
 
     [Fact(DisplayName = "InteractionHandlingOptions has full polling parity")]

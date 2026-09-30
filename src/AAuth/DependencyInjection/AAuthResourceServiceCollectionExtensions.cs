@@ -56,6 +56,8 @@ public static class AAuthResourceServiceCollectionExtensions
 
         if (string.IsNullOrEmpty(options.Issuer))
             throw new InvalidOperationException("AAuthResourceOptions.Issuer must be set.");
+        if (!AAuthUrl.IsHttpsOrLoopback(options.Issuer, options.EgressPolicy))
+            throw new InvalidOperationException("AAuthResourceOptions.Issuer must be an absolute https URL (loopback http allowed for development).");
         services.TryAddSingleton(Microsoft.Extensions.Options.Options.Create(options));
 
         // Identity once per role: the low-level UseAAuthVerification() pipeline takes its
@@ -123,6 +125,7 @@ public static class AAuthResourceServiceCollectionExtensions
             PolicyUri = options.PolicyUri,
             ScopeDescriptions = options.ScopeDescriptions,
             SignatureWindow = options.SignatureWindow,
+            AdditionalSignatureComponents = options.AdditionalSignatureComponents,
             AccessMode = options.AccessMode,
             AuthorizationEndpoint = options.AuthorizationEndpoint,
             RevocationEndpoint = options.RevocationEndpoint,
@@ -130,7 +133,9 @@ public static class AAuthResourceServiceCollectionExtensions
         };
         services.TryAddSingleton(sp =>
         {
+            AAuthServerRoles.RejectDevelopmentLoopbackInProduction(sp, "Resource", options.EgressPolicy);
             AAuthServerRoles.LoadKeyHandle(options.SigningKeys, options.KeyHandle, options.KeyId, sp, nameof(AAuthResourceOptions));
+            metadataOptions.Validate();
             return metadataOptions;
         });
         services.TryAddSingleton(sp =>

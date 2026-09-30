@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "AgentConsole": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}

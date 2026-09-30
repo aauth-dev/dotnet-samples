@@ -72,11 +72,21 @@ public sealed class AAuthPersonServerMetadataOptions
             throw new InvalidOperationException("Issuer must be set.");
         if (!AAuthUrl.IsHttpsOrLoopback(Issuer, EgressPolicy))
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
-        if (string.IsNullOrWhiteSpace(AuthTokenEndpoint))
-            throw new InvalidOperationException("AuthTokenEndpoint must be set.");
-        if (string.IsNullOrWhiteSpace(PersonTokenEndpoint))
-            throw new InvalidOperationException("PersonTokenEndpoint must be set.");
+        AAuthMetadataUrl.ValidateRequired(EgressPolicy, AuthTokenEndpoint, AAuthUrlKind.Endpoint, Issuer, nameof(AuthTokenEndpoint));
+        AAuthMetadataUrl.ValidateRequired(EgressPolicy, PersonTokenEndpoint, AAuthUrlKind.Endpoint, Issuer, nameof(PersonTokenEndpoint));
+        AAuthMetadataUrl.ValidateRequired(EgressPolicy, $"{Issuer.TrimEnd('/')}/.well-known/jwks.json",
+            AAuthUrlKind.Jwks, Issuer, "JwksUri");
         if (SigningKeys is null || SigningKeys.Count == 0)
             throw new InvalidOperationException("At least one signing key must be supplied.");
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, LogoUri, AAuthUrlKind.Informational, Issuer, nameof(LogoUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, LogoDarkUri, AAuthUrlKind.Informational, Issuer, nameof(LogoDarkUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, DocumentationUri, AAuthUrlKind.Informational, Issuer, nameof(DocumentationUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, TosUri, AAuthUrlKind.Informational, Issuer, nameof(TosUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, PolicyUri, AAuthUrlKind.Informational, Issuer, nameof(PolicyUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, MissionEndpoint, AAuthUrlKind.Endpoint, Issuer, nameof(MissionEndpoint));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, PermissionEndpoint, AAuthUrlKind.Endpoint, Issuer, nameof(PermissionEndpoint));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, AuditEndpoint, AAuthUrlKind.Endpoint, Issuer, nameof(AuditEndpoint));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, InteractionEndpoint, AAuthUrlKind.Endpoint, Issuer, nameof(InteractionEndpoint));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, RevocationEndpoint, AAuthUrlKind.Endpoint, Issuer, nameof(RevocationEndpoint));
     }
 }

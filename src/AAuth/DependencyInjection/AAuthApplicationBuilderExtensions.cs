@@ -217,6 +217,9 @@ public static class AAuthApplicationBuilderExtensions
         var metadataOptions = app.Services.GetRequiredService<AAuthResourceMetadataOptions>();
         var pipelineOptions = new AAuthResourcePipelineOptions();
         configure?.Invoke(pipelineOptions);
+        var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AAuth.Resource");
+        AAuthServerRoles.RejectDevelopmentLoopbackInProduction(app.Services, "Resource", metadataOptions.EgressPolicy);
+        AAuthServerRoles.WarnOnDevelopmentLoopback(app.Services, logger, "Resource", "Default", metadataOptions.EgressPolicy);
 
         // 1. Map well-known endpoints
         WellKnownEndpoints.MapAAuthResourceWellKnown(app, metadataOptions);

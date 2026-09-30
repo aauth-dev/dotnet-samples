@@ -97,7 +97,10 @@ dotnet add package AAuth --prerelease
 An enrolled agent uses an AP-issued agent JWT and proves possession of its
 locally held key. Replace the example HTTPS endpoints with your configured
 provider and resource. For the runnable loopback configuration, use the
-[sample setup](samples/README.md#network-admission).
+[sample setup](samples/README.md#network-admission). Loopback identifiers are a
+development-only exception: configure only exact `localhost`/`127.0.0.1`
+origins with `AAuthEgressPolicy.ForDevelopmentLoopback(...)`; AAuth DI
+registrations reject those policies in Production.
 
 ```csharp
 using AAuth.Crypto;
@@ -242,6 +245,9 @@ app.MapAAuthAgentWellKnown(options =>
 {
     options.Issuer = issuer;
     options.SigningKeys = new AAuthSigningKeySet(Kid, key);
+    // Optional: advertise an AP Events inbox or allow localhost callbacks.
+    // options.EventEndpoint = $"{issuer}/events";
+    // options.LocalhostCallbackAllowed = true;
 });
 
 // Build signed client with automatic token refresh and challenge handling

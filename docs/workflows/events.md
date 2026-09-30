@@ -52,6 +52,8 @@ var protocol = app.Services.GetRequiredService<EventsProtocol>();
 var endpoint = await protocol.ResolveEventEndpointAsync(subscription.Provider);
 using var response = await protocol.SendAsync(HttpMethod.Post, endpoint,
     resourceKey, eventToken, selfIssued: true, body: payloadBytes);
+// Pass null or Array.Empty<byte>() when the event has no payload; the SDK then
+// sends no body and omits body-bound signature components.
 
 var receiver = new EventReceiver(protocol, durableAgentStore, agentIdentifier);
 var firstReceipt = await receiver.ReceiveAsync(eventToken, payloadBytes);
@@ -62,7 +64,11 @@ built from `AAuthEventsOptions` (`EgressPolicy`, `TimeProvider`, and an optional
 `InnerHandler` plus the `TransportContract` it satisfies, for in-process tests).
 `MapAAuthEventEndpoint` needs a registered `IAgentProviderEventStore`;
 `MapAAuthSubscriptionEndpoint` needs an `IResourceEventStore`. Agent-side code that
-only sends and receives may construct its own `EventsProtocol`.
+only sends and receives may construct its own `EventsProtocol`. When an AP maps
+exactly one `MapAAuthEventEndpoint`, `MapAAuthAgentWellKnown` derives
+`event_endpoint` from the AP issuer and that route. If an AP maps more than one
+Events endpoint, set `AAuthAgentMetadataOptions.EventEndpoint` explicitly.
+`LocalhostCallbackAllowed` is emitted in AP metadata only when set to `true`.
 
 Use `SubscribeTokenBuilder` and `EventTokenBuilder` for issuer-generated tokens.
 AP issuance must persist its subscription record before releasing the subscribe
@@ -74,11 +80,12 @@ without another AP call. The subscribing agent and stored account still bind
 the receipt; an explicitly different account is rejected.
 
 The AP returns 400 for malformed requests, 401 for failed verification, 403 for
-resource/agent binding failure, 404 for unknown/expired subscriptions, and 429
-for exhausted quota. Storage failure returns 503, never 202. A bounded accepted
-delivery includes `remaining_uses`; an unlimited accepted delivery has no body.
-An identical accepted-token retry returns its durable result without incrementing
-quota. Reusing the same token with changed payload bytes is rejected.
+resource/agent binding failure, and 404 for unknown, expired or exhausted
+subscriptions. `429 Too Many Requests` is not used by Events. Storage failure
+returns 503, never 202. A bounded accepted delivery includes `remaining_uses`;
+an unlimited accepted delivery has no body. An identical accepted-token retry
+returns its durable result without incrementing quota. Reusing the same token
+with changed payload bytes is rejected.
 
 ## Local Profile and Limits
 
@@ -108,7 +115,8 @@ removes the dedicated database. Protect database/key directories with OS access
 controls. UI circuits do not offer cross-circuit resume; persisted agent receipts
 and context remain available to a provider implementation.
 
-The event payload uses the delivery section's raw body, not a new wrapper.
+The event payload uses the delivery section's raw body, not a new wrapper. A
+no-payload event delivery carries no HTTP body, content type or content digest.
 Metadata, keys and outbound event endpoints use the shared SDK's admission,
 cache and connection-pinning policy. Development permits only explicitly listed
 sample loopback origins. External platform transports, renewal APIs, arbitrary

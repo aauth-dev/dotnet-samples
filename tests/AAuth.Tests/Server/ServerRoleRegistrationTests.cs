@@ -218,7 +218,11 @@ public class PersonServerRegistrationTests
         var logs = new CapturingLoggerProvider();
         var builder = RoleHost.Builder(environment);
         builder.Logging.AddProvider(logs);
-        builder.Services.AddAAuthPersonServer(configure: options => RoleHost.PersonServer(options));
+        builder.Services.AddAAuthPersonServer(configure: options =>
+        {
+            RoleHost.PersonServer(options, issuer: environment == "Production" ? "https://ps.example" : RoleHost.Ps);
+            if (environment == "Production") options.EgressPolicy = AAuth.Discovery.AAuthEgressPolicy.Production;
+        });
         await using var app = builder.Build();
         app.MapAAuthPersonServer();
 

@@ -825,7 +825,7 @@ public class DeferredFederationTests
         var problem = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
         Assert.Equal("invalid_subagent_token", (string?)problem["error"]);
         // The token verified; the parent/issuer binding is what failed.
-        Assert.Contains("share its issuer", (string?)problem["detail"]);
+        Assert.Contains(variant == "issuer" ? "parent_agent" : "share its issuer", (string?)problem["detail"]);
         Assert.Null(fixture.Policy.Last);
     }
 

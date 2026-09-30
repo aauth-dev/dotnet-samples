@@ -477,6 +477,112 @@ RESOLVED.
   - ApiSurface: +912/-409, one new sample member (`AdminAgents`).
   - e2e: typecheck clean; Playwright 78 passed, 1 skipped.
 
+### [2026-09-30] [Phase 2] R13 — HTTP-signature producer
+
+PROCEEDED (Q1/Q26).
+
+- **SDK-16 / A02-HIGH-001.** `AAuthSigningHandler` no longer future-dates
+  `created`. Exact same key/method/authority/path collisions wait for the next
+  current wall-clock second via the handler `TimeProvider`, and cancellation
+  before that second prevents the request from being sent. The SDK verifier
+  replay key is unchanged.
+- **Q1 visibility.** Delayed signing records `aauth.signing.created_wait`
+  on `AAuthDiagnostics.Meter`, tagged with method and authority only. The
+  orchestrator removed the path tag: paths are unbounded and may identify
+  people. It also emits an `AAuth.Signing.CreatedWait` activity and trace line
+  that do include the path.
+- **A02-HIGH-002.** Body-bearing signed requests always require both
+  `content-type` and `content-digest`; missing `Content-Type` fails locally
+  before signature headers are emitted.
+- **A01-M01.** The signing handler validates that the provider's
+  `Signature-Key` dictionary contains the handler label before emitting
+  `Signature-Input`/`Signature`.
+- **A04-04.** `ResourceMetadata`,
+  `AAuthResourceMetadataOptions` and `AAuthResourceOptions` now expose typed
+  `AdditionalSignatureComponents`; well-known resource metadata emits
+  `additional_signature_components`, and
+  `ChallengeHandlingOptions.AddResourceMetadata` seeds first-request signing.
+  Reserved-field validation for `AdditionalMetadata` shadowing remains with
+  R16 per Q26.
+
+### [2026-09-30] [Phase 2] R16 — Metadata and identifier validation
+
+PROCEEDED (Q2/Q26).
+
+- **A04-01.** `AgentId` now permits `+` only as a single sub-agent delimiter
+  with non-empty parent and discriminator. `AgentTokenBuilder` and
+  `TokenVerifier` both reject top-level subjects containing `+`, malformed
+  sub-agent locals such as `aauth:parent+@ap.example`, and `parent_agent`
+  values that do not derive from the subject's parent.
+- **A04-02 / A04-03 / A07-002.** One internal metadata URL rule table now
+  validates producer options and consumer `MetadataClient` documents. Endpoint
+  and interaction URLs reject queries and fragments; common informational URIs
+  must be HTTPS; consumer validation now covers the previously skipped
+  permission/audit/mission-control/common/AP fields before caching.
+- **Q2 loopback ruling.** `AAuthEgressPolicy.ForDevelopmentLoopback` is locked
+  to exact `localhost` / `127.0.0.1` origins from the supplied list. Portless
+  `http://localhost` / `https://localhost` remain admitted to keep
+  `tests/TestEgress.cs` and local samples working, but wildcards, non-loopback
+  hosts and `::1` are rejected at construction. A loopback-admitting policy is
+  rejected in Production role/discovery/agent registrations or first
+  resolution, and active development loopback policies log a warning listing
+  the origins.
+- **A04-06 / Q26.** AP metadata has typed `EventEndpoint` and
+  `LocalhostCallbackAllowed`; `localhost_callback_allowed:false` is omitted.
+  A single mapped `MapAAuthEventEndpoint` derives `event_endpoint`, while
+  multiple mapped Events endpoints require an explicit `EventEndpoint`.
+- **Q26 typed fields.** Resource `AdditionalMetadata` is now a pure extension
+  seam: attempts to shadow typed/core fields, including R13's
+  `additional_signature_components`, fail at startup.
+
+### [2026-09-30] [Phase 2] R17 — Events
+
+PROCEEDED (Q27).
+
+- **A24-01.** Protected subscription registration now accepts the no-body form.
+  `ValidateParameters` is optional; the default accepts an omitted body or an
+  empty JSON object and rejects non-empty parameters.
+- **A24-02.** Events body coverage is tied to actual body presence. Bodyless
+  deliveries verify and send without `content-type`/`content-digest`; body-bearing
+  deliveries still require both. Producer decision: `EventsProtocol.SendAsync`
+  treats `null` and `Array.Empty<byte>()` as no payload and sends no body.
+- **A24-03 / S06-01.** AP stores now return `EventAcceptanceOutcome`. The SDK
+  maps `Unknown`/`Expired`/`Exhausted` to 404, `Forbidden` to 403, and
+  `Accepted`/`Duplicate` to the same 202 shape with the stored
+  `remaining_uses`. The SQLite sample no longer hard-codes 429.
+- **Tests/docs.** Added negative controls for no-body protected subscriptions,
+  body-bearing unsigned body components, no-payload delivery without digest, and
+  exhausted quota returning 404. Updated Events README/workflow docs.
+
+### [2026-09-30] [Phase 2] Gates and wrap-up
+
+RESOLVED. R13, R16 and R17 each landed through a dedicated implementation
+agent; see the entries above.
+
+Orchestrator review:
+
+- The `aauth.signing.created_wait` metric no longer carries a path tag.
+- The loopback Production guard (Q2) made the first e2e run fail: the
+  Documents sample has no launch profile, so it started as Production. Six
+  samples gained `Properties/launchSettings.json` profiles that set
+  Development:
+  - Documents and Catalog (`ASPNETCORE_ENVIRONMENT`);
+  - MissionAgent, AgentConsole, EventAgent and LiveWhoAmITest
+    (`DOTNET_ENVIRONMENT`).
+
+  This is the intended lock-down behaviour: samples run as Development.
+
+Gates:
+
+- The build is clean.
+- Tests: AAuth.Tests 1781, Conformance 1321, R3 330, Events 89.
+- The snippet, link and inventory gates pass.
+- ApiSurface: +933/-410.
+- e2e: typecheck clean; Playwright 78 passed, 1 skipped.
+
+The committed ApiSurface map is still generated in the working tree only. It
+includes the owner's uncommitted sample edits, so it is left unstaged.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 1] SMP-01 matches the exact agent id, not id plus key

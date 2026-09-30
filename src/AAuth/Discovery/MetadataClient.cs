@@ -102,15 +102,9 @@ public sealed class MetadataClient : IDisposable
             // URL it was fetched from (the URL minus the `/.well-known/{dwk}` suffix).
             // Reject on mismatch — only verified documents are ever cached.
             VerifyIssuer(url, expectedIssuer, doc);
-            foreach (var field in new[] { "jwks_uri", "auth_token_endpoint", "person_token_endpoint", "authorization_endpoint", "mission_endpoint", "callback_endpoint", "interaction_endpoint", "revocation_endpoint", "event_endpoint" })
-            {
-                if (!doc.TryGetPropertyValue(field, out var node)) continue;
-                if (node is not JsonValue endpoint || !endpoint.TryGetValue<string>(out var endpointUrl)
-                    || string.IsNullOrWhiteSpace(endpointUrl))
-                    throw new AAuth.HttpSig.AAuthVerificationException(SignatureErrorCode.InvalidKey, $"Metadata {field} must be a nonempty URL string.");
-                if (field == "jwks_uri") Policy.ValidateJwksUrl(endpointUrl, expectedIssuer);
-                else Policy.ValidateUrl(endpointUrl, endpoint: true);
-            }
+            try { AAuthMetadataUrl.ValidateDocument(Policy, doc, expectedIssuer); }
+            catch (HttpRequestException exception)
+            { throw new AAuth.HttpSig.AAuthVerificationException(SignatureErrorCode.InvalidKey, "Metadata has an invalid URL field.", exception); }
             return _cache.Response(doc, response);
         }
         catch (Exception exception) when (exception is System.Text.Json.JsonException or ArgumentException)

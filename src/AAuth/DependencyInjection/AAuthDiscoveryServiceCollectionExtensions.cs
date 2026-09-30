@@ -3,6 +3,7 @@ using System.Net.Http;
 using AAuth;
 using AAuth.Discovery;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -25,12 +26,24 @@ public static class AAuthDiscoveryServiceCollectionExtensions
         configure?.Invoke(options);
 
         services.TryAddSingleton(sp =>
-            new MetadataClient(cacheTtl: options.MetadataCacheTtl, policy: options.EgressPolicy,
-                maxCacheEntries: options.MaxCacheEntries, maxCacheAge: options.MaxCacheAge));
+        {
+            AAuth.Server.AAuthServerRoles.RejectDevelopmentLoopbackInProduction(sp, "AAuth discovery", options.EgressPolicy);
+            if (sp.GetService<ILoggerFactory>() is { } loggerFactory)
+                AAuth.Server.AAuthServerRoles.WarnOnDevelopmentLoopback(
+                    sp, loggerFactory.CreateLogger("AAuth.Discovery"), "Discovery", "Default", options.EgressPolicy);
+            return new MetadataClient(cacheTtl: options.MetadataCacheTtl, policy: options.EgressPolicy,
+                maxCacheEntries: options.MaxCacheEntries, maxCacheAge: options.MaxCacheAge);
+        });
 
         services.TryAddSingleton(sp =>
-            new JwksClient(cacheTtl: options.JwksCacheTtl, minRefreshInterval: options.JwksMinRefreshInterval,
-                policy: options.EgressPolicy, maxCacheEntries: options.MaxCacheEntries, maxCacheAge: options.MaxCacheAge));
+        {
+            AAuth.Server.AAuthServerRoles.RejectDevelopmentLoopbackInProduction(sp, "AAuth discovery", options.EgressPolicy);
+            if (sp.GetService<ILoggerFactory>() is { } loggerFactory)
+                AAuth.Server.AAuthServerRoles.WarnOnDevelopmentLoopback(
+                    sp, loggerFactory.CreateLogger("AAuth.Discovery"), "Discovery", "Default", options.EgressPolicy);
+            return new JwksClient(cacheTtl: options.JwksCacheTtl, minRefreshInterval: options.JwksMinRefreshInterval,
+                policy: options.EgressPolicy, maxCacheEntries: options.MaxCacheEntries, maxCacheAge: options.MaxCacheAge);
+        });
 
         return services;
     }

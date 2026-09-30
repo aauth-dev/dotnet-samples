@@ -151,7 +151,8 @@ A request with a body also covers `content-type` and `content-digest`. The spec
 requires both on every body-bearing request to a PS or AS, and on revocation
 requests. The signing handler can't tell a PS or AS from a resource, so it
 covers them on every request with a body and computes `Content-Digest` itself.
-PS and AS endpoints (`MapAAuthPersonServer`, `MapAAuthAccessServer`,
+The caller must set `Content-Type`; a body without `Content-Type` fails locally
+before any signature is sent. PS and AS endpoints (`MapAAuthPersonServer`, `MapAAuthAccessServer`,
 `MapAAuthGovernance`, `MapR3AccessTokenEndpoint`) answer an uncovered body with
 `401` `invalid_input` before any policy or consent hook runs. Other hosts can opt
 in with `AAuthVerificationOptions.RequireBodyCoverage`.
@@ -165,20 +166,18 @@ The agent discovers these in one of two ways:
    already covers them:
 
    ```csharp
+   using AAuth.Discovery;
+
+   ResourceMetadata resource = await metadata.FetchResourceMetadataAsync("https://resource.example");
+
    using var client = new AAuthClientBuilder(key)
        .WithTokenRefresh(refresher)
-       .WithChallengeHandling(ps, options =>
-       {
-           options.AdditionalSignatureComponents =
-               new Dictionary<string, IReadOnlyList<string>>
-               {
-                   ["https://resource.example"] = new[] { "content-digest" },
-               };
-       })
+       .WithChallengeHandling(ps, options => options.AddResourceMetadata(resource))
        .Build();
    ```
 
-   The dictionary is keyed by origin (`scheme://host:port`).
+   The helper keys the seed by origin (`scheme://host:port`) and uses the typed
+   `ResourceMetadata.AdditionalSignatureComponents` field.
 
 2. **From a `401` response.** When a resource rejects a request with
   `Signature-Error: error=invalid_input, required_input=("content-digest")`, the
@@ -194,6 +193,11 @@ automatically** (`sha-256`) before signing, so callers do not need to set it
 themselves. Any required component AAuth cannot derive on its own must be
 present on the request; if such a component is absent, signing fails fast with
 an `InvalidOperationException` that names the resource origin.
+
+When many identical requests use the same signing key, method, authority and
+path in one second, the signer sends one immediately and waits until the next
+wall-clock second for the next identical tuple. It never future-dates
+`created`; cancellation while waiting prevents the request from being sent.
 
 See [Error Handling](../advanced/error-handling.md) for the
 `Signature-Error` codes and `SignatureError.ParseRequiredInput`.

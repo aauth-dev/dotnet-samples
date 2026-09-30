@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
@@ -51,6 +52,7 @@ public static class WellKnownEndpoints
         ArgumentNullException.ThrowIfNull(configure);
         var options = new AAuthAgentMetadataOptions();
         configure(options);
+        ApplyMappedEventEndpoint(endpoints, options);
         options.Validate();
 
         endpoints.MapGet("/.well-known/aauth-agent.json", () => Results.Json(
@@ -169,6 +171,15 @@ public static class WellKnownEndpoints
         {
             doc["signature_window"] = window;
         }
+        if (options.AdditionalSignatureComponents is { Count: > 0 })
+        {
+            var components = new JsonArray();
+            foreach (var component in options.AdditionalSignatureComponents)
+            {
+                components.Add(component);
+            }
+            doc[AAuthConstants.MetadataFields.AdditionalSignatureComponents] = components;
+        }
         if (!string.IsNullOrEmpty(options.AuthorizationEndpoint))
         {
             doc["authorization_endpoint"] = options.AuthorizationEndpoint;
@@ -179,14 +190,8 @@ public static class WellKnownEndpoints
         }
         if (options.AdditionalMetadata is { Count: > 0 })
         {
-            // Generic extension seam: merge caller-supplied members verbatim. Typed
-            // fields already emitted win on key collision; core attaches no meaning.
             foreach (var (key, value) in options.AdditionalMetadata)
             {
-                if (string.IsNullOrEmpty(key) || doc.ContainsKey(key))
-                {
-                    continue;
-                }
                 doc[key] = value?.DeepClone();
             }
         }
@@ -225,6 +230,10 @@ public static class WellKnownEndpoints
             options.LogoDarkUri, options.DocumentationUri, options.TosUri, options.PolicyUri);
         if (!string.IsNullOrEmpty(options.CallbackEndpoint))
             doc["callback_endpoint"] = options.CallbackEndpoint;
+        if (!string.IsNullOrEmpty(options.EventEndpoint))
+            doc["event_endpoint"] = options.EventEndpoint;
+        if (options.LocalhostCallbackAllowed)
+            doc["localhost_callback_allowed"] = true;
         return doc;
     }
 
@@ -305,6 +314,27 @@ public static class WellKnownEndpoints
         }
     }
 
+    private static void ApplyMappedEventEndpoint(IEndpointRouteBuilder endpoints, AAuthAgentMetadataOptions options)
+    {
+        var paths = endpoints.DataSources
+            .SelectMany(source => source.Endpoints)
+            .Select(EventEndpointPath)
+            .Where(path => !string.IsNullOrEmpty(path))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (paths.Length == 0 || !string.IsNullOrEmpty(options.EventEndpoint)) return;
+        if (paths.Length > 1)
+            throw new InvalidOperationException("More than one AAuth Events endpoint is mapped; set EventEndpoint explicitly.");
+        options.EventEndpoint = AAuthServerRoles.Url(options.Issuer, paths[0]!);
+    }
+
+    private static string? EventEndpointPath(Endpoint endpoint)
+    {
+        var metadata = endpoint.Metadata
+            .FirstOrDefault(value => value.GetType().FullName == "AAuth.Events.AAuthEventEndpointMetadata");
+        return metadata?.GetType().GetProperty("Path")?.GetValue(metadata) as string;
+    }
+
     private sealed class SharedJwksState
     {
         public List<AAuthSigningKeySet> KeySets { get; } = new();
@@ -370,6 +400,13 @@ public sealed class AAuthResourceMetadataOptions
     /// <summary>Optional signature-window override (<c>signature_window</c>, seconds).</summary>
     public int? SignatureWindow { get; set; }
 
+    /// <summary>
+    /// Optional <c>additional_signature_components</c> values published in
+    /// resource metadata. Agents must include these components in addition to
+    /// the base AAuth signature components when signing requests to this resource.
+    /// </summary>
+    public IReadOnlyList<string>? AdditionalSignatureComponents { get; set; }
+
     /// <summary>Optional resource-owned proactive authorization endpoint, not the PS/AS resource-token recipient.</summary>
     public string? AuthorizationEndpoint { get; set; }
 
@@ -405,6 +442,14 @@ public sealed class AAuthResourceMetadataOptions
             // bind plain HTTP) can still configure a sensible issuer.
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         }
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, LogoUri, AAuthUrlKind.Informational, Issuer, nameof(LogoUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, LogoDarkUri, AAuthUrlKind.Informational, Issuer, nameof(LogoDarkUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, DocumentationUri, AAuthUrlKind.Informational, Issuer, nameof(DocumentationUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, TosUri, AAuthUrlKind.Informational, Issuer, nameof(TosUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, PolicyUri, AAuthUrlKind.Informational, Issuer, nameof(PolicyUri));
+        if (HasSigningKeys)
+            AAuthMetadataUrl.ValidateRequired(EgressPolicy, $"{Issuer.TrimEnd('/')}/.well-known/jwks.json",
+                AAuthUrlKind.Jwks, Issuer, "JwksUri");
         // draft-02 relaxes jwks_uri: signing keys are REQUIRED only when the
         // resource issues resource tokens or makes signed calls. An identity-only
         // resource MAY omit them, so no hard "at least one key" requirement here.
@@ -417,6 +462,19 @@ public sealed class AAuthResourceMetadataOptions
         {
             throw new InvalidOperationException(
                 $"access_mode must be one of 'agent-token', 'person-token', 'session-token', 'auth-token', or 'per-call' (was '{AccessMode}').");
+        }
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, AuthorizationEndpoint, AAuthUrlKind.Endpoint, Issuer, nameof(AuthorizationEndpoint));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, RevocationEndpoint, AAuthUrlKind.Endpoint, Issuer, nameof(RevocationEndpoint));
+        if (AdditionalMetadata is { Count: > 0 })
+        {
+            var reserved = new HashSet<string>(AAuthMetadataUrl.ReservedMetadataFields, StringComparer.Ordinal);
+            foreach (var key in AdditionalMetadata.Keys)
+            {
+                if (string.IsNullOrEmpty(key))
+                    throw new InvalidOperationException("AdditionalMetadata keys must be non-empty.");
+                if (reserved.Contains(key))
+                    throw new InvalidOperationException($"AdditionalMetadata must not shadow the typed metadata field '{key}'.");
+            }
         }
     }
 }

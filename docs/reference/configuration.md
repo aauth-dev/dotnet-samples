@@ -61,6 +61,13 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 > JWT issuer verification cannot be disabled. Trust policies narrow the set of
 > verified issuers; they never replace signature verification.
 
+> **Development loopback.** `AAuthEgressPolicy.ForDevelopmentLoopback(...)`
+> admits only exact `localhost` or `127.0.0.1` origins (with or without an
+> explicit port) from the list supplied. The SDK logs a warning when such a
+> policy is active and rejects AAuth role/discovery registrations that use it in
+> a Production host environment. `AAuthEgressPolicy.Production` rejects loopback
+> issuers, identifiers and metadata URLs.
+
 ### AAuthTrustOptions
 
 The single trust declaration for a resource, Person Server or Access Server.
@@ -226,6 +233,10 @@ Methods:
 
 ## Resource Metadata
 
+`ResourceMetadata.FromJson(...)` parses the typed resource fields agents consume,
+including `AdditionalSignatureComponents` from
+`additional_signature_components`.
+
 ### AAuthResourceMetadataOptions
 
 | Property | Type | Required | Description |
@@ -235,6 +246,7 @@ Methods:
 | `Name` | `string?` | No | Human-readable resource name (`name`) |
 | `ScopeDescriptions` | `IReadOnlyDictionary<string, string>?` | No | Scope → description |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
+| `AdditionalSignatureComponents` | `IReadOnlyList<string>?` | No | Emits `additional_signature_components`; agents must cover these components on first request |
 | `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | `string?` | No | Revocation endpoint URL |
 
@@ -298,7 +310,16 @@ an optional `TimeProvider` for deterministic tests.
 Configure `Label` (default `"sig"`) to match the provider's signature label,
 `Capabilities` to declare outbound capabilities, and `OnSignatureBase` to inspect
 the canonical signed input. Per-request `AdditionalComponentsKey` selects extra
-covered components. Prefer `AAuthClientBuilder` for ordinary client composition.
+covered components. The handler validates that the provider's `Signature-Key`
+member uses the same label as `Label`; mismatches fail locally instead of
+emitting invalid wire output. Prefer `AAuthClientBuilder` for ordinary client
+composition.
+
+The signer never future-dates the RFC 9421 `created` parameter. To avoid a
+duplicate replay tuple, a second request with the same signing key, method,
+authority and path waits until the next wall-clock second. Cancellation while
+waiting cancels the request before it is sent. Each delay emits the
+`aauth.signing.created_wait` metric.
 
 ### ISignatureKeyProvider Implementations
 
@@ -401,6 +422,7 @@ Register with `AddAAuthResource(configure: …)` or bind from `AAuth:Resource`.
 | `PolicyUri` | `string?` | No | `policy_uri` |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | No | Scope descriptions for metadata |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
+| `AdditionalSignatureComponents` | `IReadOnlyList<string>?` | No | Emits `additional_signature_components` in resource metadata |
 | `AccessMode` | `string?` | No | Advisory `access_mode`: `agent-token`, `person-token`, `session-token`, `auth-token`, or R3's `per-call` |
 | `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | `string?` | No | Revocation endpoint URL |
@@ -433,6 +455,12 @@ Register with `AddAAuthResource(configure: …)` or bind from `AAuth:Resource`.
 | `Capabilities` | `IList<string>?` | null | Capabilities sent to the PS (null = infer) |
 | `Prompt` | `string?` | null | OIDC `prompt` sent to the PS |
 | `AdditionalSignatureComponents` | `IReadOnlyDictionary<string, IReadOnlyList<string>>?` | null | Per-origin extra covered components to seed |
+
+Call `AddResourceMetadata(ResourceMetadata metadata)` to seed
+`AdditionalSignatureComponents` from parsed resource metadata. The helper uses
+the metadata issuer's origin (`scheme://host[:port]`) and the typed
+`ResourceMetadata.AdditionalSignatureComponents` field so the first request can
+cover resource-required components without an `invalid_input` retry.
 
 ### InteractionHandlingOptions (WithInteractionHandling)
 

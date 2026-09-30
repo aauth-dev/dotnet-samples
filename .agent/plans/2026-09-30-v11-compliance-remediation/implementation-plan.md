@@ -170,24 +170,24 @@ later phases consume.
 
 **Definition of Done**
 
-- [ ] A test shows 62 identical-target requests in one second all carry
+- [x] A test shows 62 identical-target requests in one second all carry
       `created ≤ now`, and a strict tuple-cache verifier accepts every one.
       Cancellation during the wait sends no request.
-- [ ] Metadata with an `http`, query or fragment endpoint, or an `http`
+- [x] Metadata with an `http`, query or fragment endpoint, or an `http`
       `logo_uri`, fails at startup (producer) and at fetch (consumer).
-- [ ] `aauth:parent+@ap.example` and a top-level `a+b` are rejected.
-- [ ] Production egress policy rejects loopback issuers. Development admits only
+- [x] `aauth:parent+@ap.example` and a top-level `a+b` are rejected.
+- [x] Production egress policy rejects loopback issuers. Development admits only
       the listed loopback origins, with a logged warning. A loopback policy in a
       Production host environment fails at startup. A wildcard or non-loopback
       entry is rejected when the policy is built.
-- [ ] A delayed signature emits the `aauth.signing.created_wait` counter and a
+- [x] A delayed signature emits the `aauth.signing.created_wait` counter and a
       debug log. Requests to a different path, host or method are not
       delayed.
-- [ ] A resource publishing `additional_signature_components` gets them on the
+- [x] A resource publishing `additional_signature_components` gets them on the
       agent's first request, with no `invalid_input` round trip.
-- [ ] Events: exhausted → 404, bodyless delivery accepted, empty subscription
+- [x] Events: exhausted → 404, bodyless delivery accepted, empty subscription
       body accepted.
-- [ ] The gates are green.
+- [x] The gates are green.
 
 ## Phase 3 — Verification and challenge core (R14, R02, R03)
 

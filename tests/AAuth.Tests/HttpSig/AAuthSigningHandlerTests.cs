@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics.Metrics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -28,28 +31,152 @@ public class AAuthSigningHandlerTests
         }
     }
 
-    [Fact]
-    public async Task SendAsync_IdenticalRequestsInOneSecond_TakeDistinctCreated()
+    private sealed class RecordingHandler(FakeTimeProvider clock) : HttpMessageHandler
     {
-        // §Freshness and Replay: a verifier may reject a repeated (key, created, method, authority,
-        // path); with a cached token, identical requests in one second must not collide.
+        public ConcurrentQueue<CapturedRequest> Captured { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Captured.Enqueue(new CapturedRequest(
+                request.Method.Method,
+                request.RequestUri!,
+                request.Headers.GetValues("Signature-Input").Single(),
+                clock.GetUtcNow()));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
+    }
+
+    private sealed record CapturedRequest(
+        string Method,
+        Uri Uri,
+        string SignatureInput,
+        DateTimeOffset ObservedAt);
+
+    [Fact]
+    public async Task SendAsync_IdenticalRequestsInOneSecond_WaitsForCurrentCreated()
+    {
         var key = AAuthKey.Generate();
-        var capture = new CaptureHandler();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero));
+        var capture = new RecordingHandler(clock);
         using var first = new InProcessHttpClient(new AAuthSigningHandler(key, () => "abc.def.ghi", clock) { InnerHandler = capture });
         using var second = new InProcessHttpClient(new AAuthSigningHandler(key, () => "abc.def.ghi", clock) { InnerHandler = capture });
 
-        string Created() => Regex.Match(string.Join(",", capture.Captured!.Headers.GetValues("Signature-Input")), @"created=(\d+)").Groups[1].Value;
         await first.GetAsync("https://resource.example/api/data");
-        var a = Created();
-        await second.GetAsync("https://resource.example/api/data");
-        var b = Created();
-        await first.GetAsync("https://resource.example/api/other");
-        var other = Created();
+        var delayed = second.GetAsync("https://resource.example/api/data");
+        await Task.Delay(50);
 
-        Assert.Equal(clock.GetUtcNow().ToUnixTimeSeconds().ToString(), a);
-        Assert.Equal((long.Parse(a) + 1).ToString(), b);
-        Assert.Equal(a, other);
+        Assert.False(delayed.IsCompleted);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await delayed;
+
+        var requests = capture.Captured.ToArray();
+        Assert.Equal(clock.GetUtcNow().AddSeconds(-1).ToUnixTimeSeconds(), Created(requests[0].SignatureInput));
+        Assert.Equal(clock.GetUtcNow().ToUnixTimeSeconds(), Created(requests[1].SignatureInput));
+        Assert.All(requests, request => Assert.True(Created(request.SignatureInput) <= request.ObservedAt.ToUnixTimeSeconds()));
+    }
+
+    [Fact]
+    public async Task SendAsync_BurstOfIdenticalRequests_WaitsWithoutFutureCreatedOrTupleCollision()
+    {
+        var key = AAuthKey.Generate();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero));
+        var capture = new RecordingHandler(clock);
+        using var client = new InProcessHttpClient(new AAuthSigningHandler(key, () => "abc.def.ghi", clock) { InnerHandler = capture });
+
+        var sends = Enumerable.Range(0, 62)
+            .Select(_ => client.GetAsync("https://resource.example/api/data"))
+            .ToArray();
+        await WaitForCountAsync(capture, 1);
+
+        for (var i = 1; i < sends.Length; i++)
+        {
+            Assert.Equal(i, capture.Captured.Count);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await WaitForCountAsync(capture, i + 1);
+        }
+
+        await Task.WhenAll(sends);
+        var tuples = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var request in capture.Captured)
+        {
+            var created = Created(request.SignatureInput);
+            Assert.True(created <= request.ObservedAt.ToUnixTimeSeconds());
+            var authority = request.Uri.Authority.ToLowerInvariant();
+            var path = "/" + request.Uri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
+            Assert.True(tuples.Add($"{created}|{request.Method}|{authority}|{path}"));
+        }
+    }
+
+    [Fact]
+    public async Task SendAsync_CancelledWhileWaiting_SendsNothing()
+    {
+        var key = AAuthKey.Generate();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero));
+        var capture = new RecordingHandler(clock);
+        using var client = new InProcessHttpClient(new AAuthSigningHandler(key, () => "abc.def.ghi", clock) { InnerHandler = capture });
+
+        await client.GetAsync("https://resource.example/api/data");
+        using var cts = new CancellationTokenSource();
+        var delayed = client.GetAsync("https://resource.example/api/data", cts.Token);
+        await Task.Delay(50);
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => delayed);
+        Assert.Single(capture.Captured);
+    }
+
+    [Fact]
+    public async Task SendAsync_DifferentReplayTupleParts_DoNotWait()
+    {
+        var key = AAuthKey.Generate();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero));
+        var capture = new RecordingHandler(clock);
+        using var client = new InProcessHttpClient(new AAuthSigningHandler(key, () => "abc.def.ghi", clock) { InnerHandler = capture });
+
+        var sends = new[]
+        {
+            client.GetAsync("https://resource.example/api/data"),
+            client.GetAsync("https://resource.example/api/other"),
+            client.GetAsync("https://other.example/api/data"),
+            client.PostAsync("https://resource.example/api/data", content: null),
+        };
+
+        await Task.WhenAll(sends);
+        Assert.Equal(4, capture.Captured.Count);
+        Assert.All(capture.Captured, request => Assert.Equal(clock.GetUtcNow().ToUnixTimeSeconds(), Created(request.SignatureInput)));
+    }
+
+    [Fact]
+    public async Task SendAsync_CreatedWait_EmitsMetric()
+    {
+        var measurements = new List<double>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == AAuthDiagnostics.SourceName
+                && instrument.Name == "aauth.signing.created_wait")
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((_, value, _, _) => measurements.Add(value));
+        listener.Start();
+
+        var key = AAuthKey.Generate();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero));
+        using var client = new InProcessHttpClient(new AAuthSigningHandler(key, () => "abc.def.ghi", clock)
+        {
+            InnerHandler = new RecordingHandler(clock),
+        });
+
+        await client.GetAsync("https://resource.example/api/data");
+        var delayed = client.GetAsync("https://resource.example/api/data");
+        await Task.Delay(50);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await delayed;
+
+        Assert.Contains(measurements, value => value >= 1);
     }
 
     [Fact]
@@ -363,6 +490,27 @@ public class AAuthSigningHandlerTests
     }
 
     [Fact]
+    public async Task SendAsync_BodyWithoutContentType_ThrowsBeforeSending()
+    {
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi") { InnerHandler = capture };
+        using var client = new InProcessHttpClient(signing);
+        var request = new HttpRequestMessage(HttpMethod.Post, "https://resource.example/api")
+        {
+            Content = new ByteArrayContent([1, 2, 3]),
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.SendAsync(request));
+
+        Assert.Contains("Content-Type", ex.Message);
+        Assert.Null(capture.Captured);
+        Assert.False(request.Headers.Contains("Signature"));
+        Assert.False(request.Headers.Contains("Signature-Input"));
+        Assert.False(request.Headers.Contains("Signature-Key"));
+    }
+
+    [Fact]
     public async Task SendAsync_RequiredContentDigest_ComputedAndCovered()
     {
         var key = AAuthKey.Generate();
@@ -432,5 +580,47 @@ public class AAuthSigningHandlerTests
         Assert.Equal(
             "sha-256=:caller-supplied:",
             string.Join(", ", capture.Captured!.Content!.Headers.GetValues("Content-Digest")));
+    }
+
+    [Fact]
+    public async Task SendAsync_SignatureKeyLabelMustMatchHandlerLabel()
+    {
+        var key = AAuthKey.Generate();
+        using var mismatch = new InProcessHttpClient(new AAuthSigningHandler(
+            key,
+            new JwtSignatureKeyProvider(() => "abc.def.ghi", label: "alt"))
+        {
+            InnerHandler = new CaptureHandler(),
+        });
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => mismatch.GetAsync("https://resource.example/api"));
+        Assert.Contains("provider label", ex.Message);
+
+        var capture = new CaptureHandler();
+        using var matching = new InProcessHttpClient(new AAuthSigningHandler(
+            key,
+            new JwtSignatureKeyProvider(() => "abc.def.ghi", label: "alt"))
+        {
+            Label = "alt",
+            InnerHandler = capture,
+        });
+        await matching.GetAsync("https://resource.example/api");
+
+        Assert.Equal("alt=jwt;jwt=\"abc.def.ghi\"", capture.Captured!.Headers.GetValues("Signature-Key").Single());
+        Assert.StartsWith("alt=(", capture.Captured.Headers.GetValues("Signature-Input").Single(), StringComparison.Ordinal);
+    }
+
+    private static long Created(string signatureInput)
+        => long.Parse(Regex.Match(signatureInput, @"created=(\d+)").Groups[1].Value);
+
+    private static async Task WaitForCountAsync(RecordingHandler capture, int count)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (capture.Captured.Count < count)
+        {
+            cts.Token.ThrowIfCancellationRequested();
+            await Task.Delay(10, cts.Token);
+        }
     }
 }

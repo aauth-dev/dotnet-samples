@@ -139,4 +139,48 @@ public class AgentTokenVerificationTests
         Assert.Throws<TokenVerificationException>(() =>
             new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifySelfIssuedAgentToken(jwt, key));
     }
+
+    [Fact(DisplayName = "§Sub-Agents — verifier rejects sub-agent subject without parent_agent")]
+    public async Task RejectsSubAgentSubjectWithoutParent()
+    {
+        var key = AAuthKey.Generate();
+        var jwt = await SignedAgentTokenAsync(key, "aauth:alice+worker@ap.example", parent: null);
+
+        var exception = Assert.Throws<TokenVerificationException>(() =>
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifySelfIssuedAgentToken(jwt, key));
+        Assert.Contains("parent_agent", exception.Message);
+    }
+
+    [Fact(DisplayName = "§Sub-Agents — verifier rejects parent_agent that does not derive from subject")]
+    public async Task RejectsMismatchedParentAgent()
+    {
+        var key = AAuthKey.Generate();
+        var jwt = await SignedAgentTokenAsync(key, "aauth:alice+worker@ap.example", "aauth:bob@ap.example");
+
+        var exception = Assert.Throws<TokenVerificationException>(() =>
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifySelfIssuedAgentToken(jwt, key));
+        Assert.Contains("parent_agent", exception.Message);
+    }
+
+    private static async ValueTask<string> SignedAgentTokenAsync(AAuthKey key, string subject, string? parent)
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var payload = new JsonObject
+        {
+            ["iss"] = Iss,
+            ["dwk"] = AgentTokenBuilder.AgentDwk,
+            ["sub"] = subject,
+            ["jti"] = Guid.NewGuid().ToString("N"),
+            ["cnf"] = new JsonObject { ["jwk"] = key.ToPublicJwk() },
+            ["iat"] = now,
+            ["exp"] = now + 3600,
+        };
+        if (parent is not null) payload["parent_agent"] = parent;
+        return await JwtWriter.SignCompactAsync(new JsonObject
+        {
+            ["alg"] = "Ed25519",
+            ["typ"] = AgentTokenBuilder.TokenType,
+            ["kid"] = Kid,
+        }, payload, key);
+    }
 }

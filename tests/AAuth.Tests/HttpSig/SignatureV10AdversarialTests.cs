@@ -248,7 +248,6 @@ public class SignatureV10AdversarialTests
         {
             payload["iss"] = issuer;
             payload["sub"] = "aauth:wire@" + host;
-            payload["parent_agent"] = "aauth:parent@" + host;
             payload["ps"] = issuer;
         });
         Assert.Throws<TokenVerificationException>(() => new TokenVerifier { TimeProvider = Time }

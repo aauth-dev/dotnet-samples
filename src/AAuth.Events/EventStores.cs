@@ -4,7 +4,16 @@ public sealed record ProviderSubscription(string Eid, string Agent, string Resou
     DateTimeOffset ExpiresAt, long? MaxUses);
 public sealed record EventEnvelope(string Token, string Eid, string Jti, string Issuer, string Agent,
     DateTimeOffset ExpiresAt, byte[] Body);
-public sealed record EventAcceptance(int StatusCode, long? RemainingUses = null);
+public enum EventAcceptanceOutcome
+{
+    Accepted,
+    Duplicate,
+    Unknown,
+    Expired,
+    Exhausted,
+    Forbidden,
+}
+public sealed record EventAcceptance(EventAcceptanceOutcome Outcome, long? RemainingUses = null);
 public sealed record PendingEvent(string Receipt, EventEnvelope Event);
 
 public interface IAgentProviderEventStore

@@ -150,6 +150,12 @@ public sealed class ResourceMetadata
     /// <summary>Signature window in seconds.</summary>
     public int? SignatureWindow { get; init; }
 
+    /// <summary>
+    /// Additional HTTP message components that agents must cover when signing
+    /// requests to this resource (<c>additional_signature_components</c>).
+    /// </summary>
+    public IReadOnlyList<string>? AdditionalSignatureComponents { get; init; }
+
     /// <summary>Resource-owned proactive authorization endpoint, not the PS/AS resource-token recipient.</summary>
     public string? AuthorizationEndpoint { get; init; }
 
@@ -174,9 +180,57 @@ public sealed class ResourceMetadata
             PolicyUri = (string?)doc["policy_uri"],
             ScopeDescriptions = doc["scope_descriptions"] as JsonObject,
             SignatureWindow = (int?)doc["signature_window"],
+            AdditionalSignatureComponents = ParseAdditionalSignatureComponents(doc),
             AuthorizationEndpoint = (string?)doc["authorization_endpoint"],
             RevocationEndpoint = (string?)doc["revocation_endpoint"],
         };
+    }
+
+    private static IReadOnlyList<string>? ParseAdditionalSignatureComponents(JsonObject doc)
+    {
+        if (!doc.TryGetPropertyValue(AAuthConstants.MetadataFields.AdditionalSignatureComponents, out var node)
+            || node is null)
+        {
+            return null;
+        }
+        if (node is not JsonArray array)
+        {
+            throw new InvalidOperationException("Metadata 'additional_signature_components' must be an array of strings.");
+        }
+
+        var components = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in array)
+        {
+            if (item is null)
+            {
+                throw new InvalidOperationException("Metadata 'additional_signature_components' must contain only strings.");
+            }
+
+            string? raw;
+            try
+            {
+                raw = item.GetValue<string>();
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException(
+                    "Metadata 'additional_signature_components' must contain only strings.", ex);
+            }
+
+            var component = raw.Trim().ToLowerInvariant();
+            if (component.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    "Metadata 'additional_signature_components' must not contain blank values.");
+            }
+            if (seen.Add(component))
+            {
+                components.Add(component);
+            }
+        }
+
+        return components;
     }
 
     private static bool IsKnownAccessMode(string mode) => mode is AAuthConstants.AccessModes.AgentToken

@@ -659,13 +659,20 @@ public sealed class TokenVerifier
         if (tokenType == AgentTokenBuilder.TokenType)
         {
             var subject = RequireText(payload, "sub");
-            ValidateAgent(subject, "sub", policy);
+            var subjectId = ValidateAgent(subject, "sub", policy);
             var issuer = RequireText(payload, "iss");
             if (!policy.IsDevelopmentIdentifier(issuer) && "https://" + AgentId.Parse(subject, policy).Domain != issuer)
                 throw new TokenVerificationException("JWT 'sub' domain must match its agent provider.");
             if (payload.ContainsKey("ps") && !policy.IsValidIdentifier(RequireText(payload, "ps")))
                 throw new TokenVerificationException("JWT 'ps' must be a valid server identifier.");
-            if (payload.ContainsKey("parent_agent")) ValidateAgent(RequireText(payload, "parent_agent"), "parent_agent", policy);
+            if (payload.ContainsKey("parent_agent"))
+            {
+                var parent = ValidateAgent(RequireText(payload, "parent_agent"), "parent_agent", policy);
+                if (parent.IsSubAgent || !subjectId.IsSubAgent || subjectId.ParentAgent != parent.Value)
+                    throw new TokenVerificationException("JWT 'parent_agent' must name the top-level parent derived from the sub-agent 'sub'.");
+            }
+            else if (subjectId.IsSubAgent)
+                throw new TokenVerificationException("JWT sub-agent 'sub' requires a matching 'parent_agent'.");
         }
         else
         {
@@ -714,10 +721,11 @@ public sealed class TokenVerifier
         return text;
     }
 
-    private static void ValidateAgent(string value, string claim, AAuthEgressPolicy policy)
+    private static AgentId ValidateAgent(string value, string claim, AAuthEgressPolicy policy)
     {
-        if (!AgentId.TryParse(value, out _, out _, policy))
+        if (!AgentId.TryParse(value, out var id, out _, policy))
             throw new TokenVerificationException($"JWT '{claim}' must be a valid agent identifier.");
+        return id;
     }
 
     private static bool TryGetUnixTime(JsonObject payload, string claim, out long value)

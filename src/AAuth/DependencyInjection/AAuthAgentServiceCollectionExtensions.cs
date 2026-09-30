@@ -11,6 +11,7 @@ using AAuth.Server.CallChaining;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -166,7 +167,7 @@ internal sealed record AAuthGovernanceDefaults(GovernanceOptions? Options);
 
 internal sealed record AAuthAgentRegistration(string Name);
 
-internal sealed class AAuthAgentOptionsValidator : AAuthOptionsValidator<AAuthAgentOptions>
+internal sealed class AAuthAgentOptionsValidator(IServiceProvider services) : AAuthOptionsValidator<AAuthAgentOptions>
 {
     protected override void Validate(string? name, AAuthAgentOptions options, List<string> failures)
     {
@@ -211,6 +212,15 @@ internal sealed class AAuthAgentOptionsValidator : AAuthOptionsValidator<AAuthAg
             failures.Add("Set only one of UpstreamTokenProvider and ChainFromHttpContext.");
         if (options.EgressPolicy is not null && options.DevelopmentLoopbackOrigins is { Length: > 0 })
             failures.Add("Set only one of EgressPolicy and DevelopmentLoopbackOrigins.");
+        try
+        {
+            AAuth.Server.AAuthServerRoles.RejectDevelopmentLoopbackInProduction(
+                services, $"Agent '{name}'", AAuthAgentComposer.Egress(options));
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+        {
+            failures.Add(exception.Message);
+        }
     }
 }
 
@@ -229,6 +239,11 @@ internal static class AAuthAgentComposer
     public static AAuthClientBuilder CreateBuilder(AAuthAgentOptions options, IServiceProvider services, string name)
     {
         var egress = Egress(options);
+        if (services.GetService<ILoggerFactory>() is { } loggerFactory)
+        {
+            AAuth.Server.AAuthServerRoles.WarnOnDevelopmentLoopback(
+                services, loggerFactory.CreateLogger("AAuth.Agent"), "Agent", name, egress);
+        }
         // R0: a delegate on the options, then a handler keyed by agent name, then an unkeyed one.
         var interactionHandler = Handler<IAAuthInteractionHandler>(services, name);
         var clarificationHandler = Handler<IAAuthClarificationHandler>(services, name);

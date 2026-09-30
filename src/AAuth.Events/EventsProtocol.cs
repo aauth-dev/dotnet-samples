@@ -64,12 +64,17 @@ public sealed class EventsProtocol
         {
             EgressPolicy = TokenVerifier.EgressPolicy, TimeProvider = TokenVerifier.TimeProvider, ClockSkew = TimeSpan.Zero,
             AcceptedSchemes = [type == EventsTokens.EventType ? "self-jwt" : "jwt"],
-            RequiredComponents = context.Request.ContentType is null ? ["content-digest"] : ["content-digest", "content-type"]
+            RequireBodyCoverage = true
         });
         try { await middleware.InvokeAsync(context).ConfigureAwait(false); }
         catch (IOException) { context.Response.StatusCode = 413; }
         return verified;
     }
+
+    internal static bool HasHttpBody(HttpRequest request) =>
+        request.ContentLength > 0
+        || request.ContentLength is null
+            && (request.ContentType is not null || request.Headers.ContainsKey(Microsoft.Net.Http.Headers.HeaderNames.TransferEncoding));
 
     public async Task<TokenVerifier.VerifiedToken> VerifyEventAsync(string jwt, string agent,
         CancellationToken cancellationToken = default)
@@ -91,9 +96,13 @@ public sealed class EventsProtocol
     public async Task<HttpResponseMessage> SendAsync(HttpMethod method, Uri url, IAAuthSigner key,
         string jwt, bool selfIssued, byte[]? body = null, CancellationToken cancellationToken = default)
     {
-        using var request = new HttpRequestMessage(method, url) { Content = new ByteArrayContent(body ?? []) };
-        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-        request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
+        using var request = new HttpRequestMessage(method, url);
+        if (body is { Length: > 0 })
+        {
+            request.Content = new ByteArrayContent(body);
+            request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
+        }
         using var signer = new AAuthSigningHandler(key, selfIssued
             ? new SelfJwtSignatureKeyProvider(() => jwt) : new JwtSignatureKeyProvider(() => jwt), TokenVerifier.TimeProvider);
         await signer.SignAsync(request, cancellationToken).ConfigureAwait(false);

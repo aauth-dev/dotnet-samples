@@ -213,7 +213,7 @@ public class EventHttpTests
         var another = await new EventTokenBuilder { Issuer = host.Issuer, Audience = EventHost.Agent, Eid = "eid", Key = host.ResourceKey,
             KeyId = "key", Verifier = host.Protocol.TokenVerifier, Lifetime = TimeSpan.FromMinutes(6) }.BuildAsync();
         using var exceeded = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/events"), host.ResourceKey, another, true);
-        Assert.Equal(HttpStatusCode.TooManyRequests, exceeded.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, exceeded.StatusCode);
     }
 
     [Fact]
@@ -252,6 +252,45 @@ public class EventHttpTests
         using var valid = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/subscribe/ticket"), host.AgentKey,
             await SubscribeAsync(host.Issuer), false, "{\"event_types\":[\"reservation.available\"]}"u8.ToArray());
         Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
+    }
+
+    [Fact]
+    public async Task ProtectedSubscriptionAcceptsNoBodyAndRejectsUnsignedBodyComponents()
+    {
+        await using var host = await EventHost.StartAsync();
+        host.Store.SetState("receive", "work", "state");
+        host.Store.IssueTicket(new("empty", host.AgentKey.ComputeJwkThumbprint(), "receive", "work", "state", DateTimeOffset.UtcNow.AddMinutes(5)));
+        var token = await new SubscribeTokenBuilder { Issuer = host.Issuer, Subject = EventHost.Agent,
+            Audience = host.Issuer, Eid = "empty-eid", Key = host.ResourceKey, KeyId = "key", ConfirmationKey = host.AgentKey,
+            Verifier = host.Protocol.TokenVerifier }.BuildAsync();
+
+        using var accepted = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/subscribe-empty/empty"),
+            host.AgentKey, token, false);
+
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        Assert.NotNull(host.Store.Find(host.Issuer, "empty-eid", DateTimeOffset.UtcNow));
+
+        host.Store.IssueTicket(new("nonempty", host.AgentKey.ComputeJwkThumbprint(), "receive", "work", "state", DateTimeOffset.UtcNow.AddMinutes(5)));
+        var nonEmptyToken = await new SubscribeTokenBuilder { Issuer = host.Issuer, Subject = EventHost.Agent,
+            Audience = host.Issuer, Eid = "nonempty-eid", Key = host.ResourceKey, KeyId = "key", ConfirmationKey = host.AgentKey,
+            Verifier = host.Protocol.TokenVerifier }.BuildAsync();
+        using var nonEmpty = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/subscribe-empty/nonempty"),
+            host.AgentKey, nonEmptyToken, false, "{\"unexpected\":true}"u8.ToArray());
+        Assert.Equal(HttpStatusCode.BadRequest, nonEmpty.StatusCode);
+
+        host.Store.IssueTicket(new("unsigned", host.AgentKey.ComputeJwkThumbprint(), "receive", "work", "state", DateTimeOffset.UtcNow.AddMinutes(5)));
+        var unsignedToken = await new SubscribeTokenBuilder { Issuer = host.Issuer, Subject = EventHost.Agent,
+            Audience = host.Issuer, Eid = "unsigned-eid", Key = host.ResourceKey, KeyId = "key", ConfirmationKey = host.AgentKey,
+            Verifier = host.Protocol.TokenVerifier }.BuildAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Post, host.Issuer + "/subscribe-empty/unsigned")
+        {
+            Content = new StringContent("{}", Encoding.UTF8, "application/json")
+        };
+        using var signer = new AAuthSigningHandler(host.AgentKey, new JwtSignatureKeyProvider(() => unsignedToken));
+        await signer.SignHeadersAsync(request);
+        using var unsigned = await host.Http.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Unauthorized, unsigned.StatusCode);
+        Assert.Null(host.Store.Find(host.Issuer, "unsigned-eid", DateTimeOffset.UtcNow));
     }
 
     [Theory]
@@ -319,6 +358,49 @@ public class EventHttpTests
     }
 
     [Fact]
+    public async Task NoPayloadEventDeliveryOmitsDigestAndPersistsEmptyBody()
+    {
+        await using var host = await EventHost.StartAsync();
+        host.Store.Create(new("eid", EventHost.Agent, host.Issuer, DateTimeOffset.UtcNow.AddHours(1), 1));
+        using var delivered = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + "/events"), host.ResourceKey,
+            await host.EventTokenAsync("eid"), true, body: []);
+
+        Assert.Equal(HttpStatusCode.Accepted, delivered.StatusCode);
+        Assert.DoesNotContain("\"content-digest\"", host.LastSignatureInput);
+        Assert.False(delivered.RequestMessage!.Headers.Contains("Content-Digest"));
+        Assert.Null(delivered.RequestMessage.Content);
+        Assert.Empty(Assert.Single(host.Store.Pending(EventHost.Agent)).Event.Body);
+
+        host.Store.Create(new("zero", EventHost.Agent, host.Issuer, DateTimeOffset.UtcNow.AddHours(1), 1));
+        var zeroToken = await host.EventTokenAsync("zero");
+        using var zeroLength = new HttpRequestMessage(HttpMethod.Post, host.Issuer + "/events") { Content = new ByteArrayContent([]) };
+        using var signer = new AAuthSigningHandler(host.ResourceKey, new SelfJwtSignatureKeyProvider(() => zeroToken));
+        await signer.SignHeadersAsync(zeroLength);
+        using var acceptedZeroLength = await host.Http.SendAsync(zeroLength);
+        Assert.Equal(HttpStatusCode.Accepted, acceptedZeroLength.StatusCode);
+        Assert.DoesNotContain("\"content-digest\"", zeroLength.Headers.GetValues("Signature-Input").Single());
+        Assert.Equal(2, host.Store.Pending(EventHost.Agent).Count);
+    }
+
+    [Fact]
+    public async Task BodyBearingDeliveryWithoutDigestCoverageFailsBeforeStore()
+    {
+        await using var host = await EventHost.StartAsync();
+        host.Store.Create(new("eid", EventHost.Agent, host.Issuer, DateTimeOffset.UtcNow.AddHours(1), 1));
+        using var request = new HttpRequestMessage(HttpMethod.Post, host.Issuer + "/events")
+        {
+            Content = new StringContent("{\"event_type\":\"reservation.available\"}", Encoding.UTF8, "application/json")
+        };
+        using var signer = new AAuthSigningHandler(host.ResourceKey, new SelfJwtSignatureKeyProvider(() => host.EventTokenAsync("eid").AsTask().GetAwaiter().GetResult()));
+        await signer.SignHeadersAsync(request);
+
+        using var response = await host.Http.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Empty(host.Store.Pending(EventHost.Agent));
+    }
+
+    [Fact]
     public async Task CompanionRegistrationIsRequiredAndUnknownTypesFailClosed()
     {
         await using var host = await EventHost.StartAsync();
@@ -347,7 +429,7 @@ public class EventHttpTests
         using var another = await Deliver("eid");
         Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
         Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
-        Assert.Equal((HttpStatusCode)429, another.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, another.StatusCode);
         host.Store.Create(new("unlimited", EventHost.Agent, host.Issuer, DateTimeOffset.UtcNow.AddHours(1), null));
         using var unlimited = await Deliver("unlimited");
         Assert.Equal(HttpStatusCode.Accepted, unlimited.StatusCode);
@@ -436,6 +518,12 @@ public class EventHttpTests
                 channel.Operation = "receive";
                 channel.ProtectedChannel = true;
                 channel.ValidateParameters = Validate;
+            });
+            host._app.MapAAuthSubscriptionEndpoint("/subscribe-empty/{ticket}", channel =>
+            {
+                channel.Resource = host.Issuer;
+                channel.Operation = "receive";
+                channel.ProtectedChannel = true;
             });
             new BookingsEvents(host.Issuer, host.ResourceKey, "key", host.Protocol, host.Store).Map(host._app);
             host._app.MapSampleAgentEnrollment(host.Issuer, host.ResourceKey, "key", host.Protocol.TokenVerifier.EgressPolicy,

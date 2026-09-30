@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
@@ -96,5 +97,30 @@ public class CoveredComponentsTests
                 req.Headers.GetValues("Signature-Input").Single(),
                 req.Headers.GetValues("Signature").Single(),
                 AAuthKey.FromJwk(key.ToPublicJwk())));
+    }
+
+    [Fact(DisplayName = "§Covered Components — body without Content-Type fails closed before signing")]
+    public async Task Signer_BodyWithoutContentType_FailsClosed()
+    {
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var pipeline = new AAuthSigningHandler(
+                key,
+                () => "a.b.c",
+                new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero)))
+        {
+                InnerHandler = capture,
+        };
+        using var client = new InProcessHttpClient(pipeline);
+        var request = new HttpRequestMessage(HttpMethod.Post, "https://ps.example/token")
+        {
+                Content = new ByteArrayContent(Encoding.UTF8.GetBytes("{}")),
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.SendAsync(request));
+
+        Assert.Contains("Content-Type", ex.Message);
+        Assert.Null(capture.Captured);
+        Assert.False(request.Headers.Contains("Signature-Input"));
     }
 }

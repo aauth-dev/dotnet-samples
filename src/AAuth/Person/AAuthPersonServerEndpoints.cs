@@ -224,6 +224,8 @@ public static class AAuthPersonServerEndpoints
         var pending = observers.Length == 0 ? store : new ObservedPersonPendingStore(store, observers);
         var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AAuth.PersonServer");
         PersonResourceInteraction.Map(routes, pending, options);
+        AAuthServerRoles.RejectDevelopmentLoopbackInProduction(app.Services, $"Person Server '{name}'", options.EgressPolicy);
+        AAuthServerRoles.WarnOnDevelopmentLoopback(app.Services, logger, "Person Server", name, options.EgressPolicy);
         AAuthServerRoles.WarnOnInMemoryDefaults(app.Services, logger, "Person Server", name, store, inventory,
             app.Services.GetService<IMissionStore>(), app.Services.GetService<IMissionLog>());
 

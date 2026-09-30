@@ -1,6 +1,7 @@
 # Observability
 
-The AAuth SDK provides built-in OpenTelemetry-compatible tracing via `System.Diagnostics` — no external OTel package dependency required.
+The AAuth SDK provides built-in OpenTelemetry-compatible tracing and metrics via
+`System.Diagnostics` — no external OTel package dependency required.
 
 ## Activity Source
 
@@ -22,6 +23,18 @@ builder.Services.AddOpenTelemetry()
         .AddSource(AAuthDiagnostics.SourceName) // "AAuth"
         .AddAspNetCoreInstrumentation());
 ```
+
+## Meter
+
+Metrics use the same source name:
+
+```csharp
+var meter = AAuthDiagnostics.Meter;
+```
+
+| Instrument | Unit | Description |
+|------------|------|-------------|
+| `aauth.signing.created_wait` | seconds | Sum of time spent waiting for the next free current-time `created` value when identical same-key/method/authority/path requests would otherwise collide |
 
 ## Server-Side Tags
 
@@ -68,8 +81,10 @@ string[] tags =
 
 ## No External Dependency
 
-The SDK uses only `System.Diagnostics.ActivitySource` and `System.Diagnostics.Activity` from the .NET BCL. No `OpenTelemetry.*` NuGet packages are required. This means:
+The SDK uses only `System.Diagnostics.ActivitySource`,
+`System.Diagnostics.Activity` and `System.Diagnostics.Metrics` from the .NET BCL.
+No `OpenTelemetry.*` NuGet packages are required. This means:
 
 - Zero overhead when no listener is subscribed (Activities are not created)
-- Compatible with any OTel exporter that subscribes to the `"AAuth"` source
+- Compatible with any OTel exporter that subscribes to the `"AAuth"` source or meter
 - Works with Azure Monitor, Jaeger, Zipkin, OTLP, or custom exporters

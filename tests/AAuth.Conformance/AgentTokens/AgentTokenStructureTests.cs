@@ -199,6 +199,19 @@ public class AgentTokenStructureTests
         Assert.Null(payload["ps"]);
     }
 
+    [Fact(DisplayName = "§Sub-Agents — producer rejects top-level '+' subject without parent_agent")]
+    public async Task RejectsTopLevelSubjectWithPlusDelimiter()
+    {
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await new AgentTokenBuilder
+        {
+            Issuer = Iss,
+            Subject = "aauth:alice+worker@ap.example",
+            KeyId = Kid,
+            Key = NewKey(),
+        }.BuildAsync());
+        Assert.Contains("parent_agent", exception.Message);
+    }
+
     // -- Signature integrity (issuer-side guarantee) --
 
     /// <summary>

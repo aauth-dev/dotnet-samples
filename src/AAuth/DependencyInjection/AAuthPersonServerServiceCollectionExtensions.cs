@@ -204,7 +204,7 @@ public static class AAuthPersonServerServiceCollectionExtensions
     }
 }
 
-internal sealed class PersonServerOptionsValidator : AAuthOptionsValidator<AAuthPersonServerOptions>
+internal sealed class PersonServerOptionsValidator(IServiceProvider services) : AAuthOptionsValidator<AAuthPersonServerOptions>
 {
     protected override void Validate(string? name, AAuthPersonServerOptions options, List<string> failures)
     {
@@ -212,10 +212,22 @@ internal sealed class PersonServerOptionsValidator : AAuthOptionsValidator<AAuth
         // `?code=…`; each trusted Access Server is a four-party anchor.
         if (!AAuthUrl.IsHttpsOrLoopback(options.Issuer, options.EgressPolicy))
             failures.Add("AAuthPersonServerOptions.Issuer must be an absolute https URL (loopback http allowed for development).");
+        try { AAuthServerRoles.RejectDevelopmentLoopbackInProduction(services, $"Person Server '{name}'", options.EgressPolicy); }
+        catch (InvalidOperationException exception) { failures.Add(exception.Message); }
         if (options.SigningKeys.Count == 0 && string.IsNullOrEmpty(options.KeyHandle))
             failures.Add("AAuthPersonServerOptions needs a signing key: add one to SigningKeys or set KeyHandle.");
-        if (options.InteractionPath.Contains('?') || options.InteractionPath.Contains('#'))
-            failures.Add("AAuthPersonServerOptions.InteractionPath must not contain a query or fragment.");
+        AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.TokenPath, nameof(options.TokenPath), failures);
+        AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.PersonTokenPath, nameof(options.PersonTokenPath), failures);
+        AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.RevocationPath, nameof(options.RevocationPath), failures);
+        AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.InteractionPath, nameof(options.InteractionPath), failures);
+        if (options.InteractionEndpointPath is not null)
+            AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.InteractionEndpointPath, nameof(options.InteractionEndpointPath), failures);
+        if (options.MissionPath is not null)
+            AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.MissionPath, nameof(options.MissionPath), failures);
+        if (options.PermissionPath is not null)
+            AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.PermissionPath, nameof(options.PermissionPath), failures);
+        if (options.AuditPath is not null)
+            AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.AuditPath, nameof(options.AuditPath), failures);
         foreach (var trustedAs in options.Trust.AccessServers.Allowed ?? new HashSet<string>())
         {
             if (!AAuthUrl.IsHttpsOrLoopback(trustedAs, options.EgressPolicy))

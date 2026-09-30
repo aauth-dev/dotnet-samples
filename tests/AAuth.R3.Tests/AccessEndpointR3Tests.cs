@@ -846,7 +846,8 @@ public class AccessEndpointR3Tests
         var fixture = await R3AccessFixture.CreateAsync(auditSink: new ThrowingAuditSink());
         await using var app = fixture.App;
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.PostTokenAsync());
+        using var response = await fixture.PostTokenAsync();
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
     }
 
     [Fact]

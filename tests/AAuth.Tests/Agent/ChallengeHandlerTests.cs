@@ -719,12 +719,14 @@ public class ChallengeHandlerTests
     public async Task AdaptiveSigning_MetadataSeed_CoversFirstRequest()
     {
         var resource = new AdaptiveResourceHandler(_ => Ok());
-        var seed = new Dictionary<string, IReadOnlyList<string>>
+        var metadata = ResourceMetadata.FromJson(new JsonObject
         {
-            [ResourceUrl] = new[] { "content-type" },
-        };
+            ["issuer"] = ResourceUrl,
+            ["additional_signature_components"] = new JsonArray { "content-type" },
+        });
+        var options = new ChallengeHandlingOptions().AddResourceMetadata(metadata);
 
-        using var client = BuildAdaptiveClient(resource, out _, seed);
+        using var client = BuildAdaptiveClient(resource, out _, options.AdditionalSignatureComponents);
         await client.GetAsync("/data");
 
         Assert.Equal(1, resource.CallCount);

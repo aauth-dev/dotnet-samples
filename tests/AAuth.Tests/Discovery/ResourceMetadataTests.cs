@@ -65,4 +65,39 @@ public class ResourceMetadataTests
 
         Assert.Equal("**Example Data Service** stores your documents.", meta.Description);
     }
+
+    [Fact(DisplayName = "§Resource Metadata — parses additional_signature_components")]
+    public void FromJson_ParsesAdditionalSignatureComponents()
+    {
+        var doc = new JsonObject
+        {
+            ["issuer"] = "https://resource.example",
+            ["additional_signature_components"] = new JsonArray { " Content-Type ", "@QUERY", "content-type" },
+        };
+
+        var meta = ResourceMetadata.FromJson(doc);
+
+        Assert.Equal(new[] { "content-type", "@query" }, meta.AdditionalSignatureComponents);
+    }
+
+    [Theory(DisplayName = "§Resource Metadata — rejects malformed additional_signature_components")]
+    [InlineData("blank")]
+    [InlineData("non-string")]
+    [InlineData("not-array")]
+    public void FromJson_RejectsMalformedAdditionalSignatureComponents(string variant)
+    {
+        JsonNode malformed = variant switch
+        {
+            "blank" => new JsonArray { "content-type", " " },
+            "non-string" => new JsonArray { "content-type", 42 },
+            _ => "content-type",
+        };
+        var doc = new JsonObject
+        {
+            ["issuer"] = "https://resource.example",
+            ["additional_signature_components"] = malformed,
+        };
+
+        Assert.Throws<InvalidOperationException>(() => ResourceMetadata.FromJson(doc));
+    }
 }

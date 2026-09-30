@@ -177,7 +177,7 @@ public class EgressTransportTests
         }
         else
         {
-            await Assert.ThrowsAsync<HttpRequestException>(() => resolver.ResolveAsync(info));
+            await Assert.ThrowsAsync<AAuth.HttpSig.AAuthVerificationException>(() => resolver.ResolveAsync(info));
             Assert.False(keysServer.Pending);
         }
         await servingMetadata;

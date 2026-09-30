@@ -127,6 +127,8 @@ public static class AAuthAccessServerEndpoints
             ? "/" + seg[0]
             : loginPath;
         var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AAuth.AccessServer");
+        AAuthServerRoles.RejectDevelopmentLoopbackInProduction(app.Services, $"Access Server '{name}'", options.EgressPolicy);
+        AAuthServerRoles.WarnOnDevelopmentLoopback(app.Services, logger, "Access Server", name, options.EgressPolicy);
 
         // Startup footgun guard (diagnostics only): warn when brokering is open by
         // default. Suppressed by any explicit policy (including AAuthTrust.Any).
