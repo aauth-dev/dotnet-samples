@@ -344,20 +344,25 @@ internal static class CodeSnippets
         """;
 
     public const string CallChainConvenience = """
-        // Convenience: WithCallChaining routes the downstream person token and
+        // Convenience: ChainFromHttpContext routes the downstream person token and
         // auth token requests to the PS the upstream token names (its `ps`),
         // passing it as upstream_token; a mission_s256 in the upstream token
         // governs the downstream hop too.
         // The intermediary presents its own agent JWT in Signature-Key;
         // upstream_token is a body parameter, not a signing credential.
         // Cached grants are bound to the exact upstream authorization.
-        // Use this when building an intermediary service:
-        using var downstream = AAuthClientBuilder.SelfIssuing(myKey).WithEgressPolicy(SampleEgress.Policy)
-            .As(myIssuer, myAgentId)
-            .WithPersonServer(psUrl)
-            .WithCallChaining(httpContext) // reads upstream token from request
-            .Build();
+        // Register the intermediary's downstream agent once at startup:
+        builder.Services.AddAAuthAgent("downstream", o =>
+        {
+            o.Signer = myKey;
+            o.SelfIssued.Issuer = myIssuer;
+            o.SelfIssued.Subject = myAgentId;
+            o.PersonServer = psUrl;
+            o.ChainFromHttpContext = true; // reads the verified upstream token from the request
+        });
 
+        // In the intermediary's endpoint:
+        var downstream = clients.CreateClient("downstream");
         var result = await downstream.GetAsync("https://downstream.example/");
         // SDK handles: person token → challenge → exchange with upstream_token → retry
         """;
@@ -371,16 +376,16 @@ internal static class CodeSnippets
             .WithPersonServer("https://ps.example")
             .WithKeyStore(keyStore)
             .EnrolAsync();
-        // Record enrolResult.LocalKeyHandle in app config — that's all you need
+        // Record enrolResult.LocalKeyHandle as AAuth:Agents:myapp:KeyHandle — that's all you need
 
-        // --- Application (every startup — load key by handle) ---
-        var key = keyStore.Load(localKeyHandle);
-        using var client = AAuthClientBuilder.Enrolled(key).WithEgressPolicy(SampleEgress.Policy)
-            .RefreshingFrom(refreshEndpoint, localKeyHandle)
-            .WithKeyStore(keyStore)
-            .WithChallengeHandling("https://ps.example")
-            .Build();
+        // --- Application (every startup) ---
+        // AAuth:Agents:myapp = { "KeyHandle": "…", "PersonServer": "https://ps.example",
+        //   "AgentProvider": { "RefreshEndpoint": "https://ap.example/refresh" } }
+        builder.Services.AddSingleton<IKeyStore>(keyStore);
+        builder.Services.AddAAuthAgent("myapp", builder.Configuration.GetSection("AAuth:Agents:myapp"));
 
+        // In a service or endpoint:
+        var client = clients.CreateClient("myapp");
         var response = await client.GetAsync("https://resource.example/data");
         // 401 person-token → person token → 401 resource token → exchange → poll → retry,
         // all handled transparently

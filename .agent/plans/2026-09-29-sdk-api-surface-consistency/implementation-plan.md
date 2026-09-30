@@ -635,13 +635,13 @@ including a multi-tenant example and a KMS signer example.
 
 ### Definition of Done
 
-- [ ] Case- and separator-insensitive sweep for every deleted or renamed
+- [x] Case- and separator-insensitive sweep for every deleted or renamed
       symbol. The results table is in the log; the grep counts are stable
       (not truncated).
-- [ ] `docs/reference/configuration.md` documents every bound key and matches
+- [x] `docs/reference/configuration.md` documents every bound key and matches
       the options types (a test enumerates option properties against the doc).
-- [ ] Snippet, link, and docs-inventory gates pass.
-- [ ] `ApiSurface --write` diff reviewed against the Phase 0 snapshot. Every
+- [x] Snippet, link, and docs-inventory gates pass.
+- [x] `ApiSurface --write` diff reviewed against the Phase 0 snapshot. Every
       removal is intentional and listed.
 
 ## Phase 12 — Independent internal review

@@ -782,6 +782,93 @@ PROCEEDED.
   idle build servers fixed it.
 - **Full Playwright:** 78 passed, 1 skipped (Phase 10c run).
 
+### [2026-09-30] [Phase 11] Samples, snippets and docs sweep
+
+PROCEEDED.
+- **Deleted/renamed symbol sweep.** The stale names came from diffing public
+  declarations since `9d5a182^` against `src`:
+  `AAuthFederationServiceCollectionExtensions`,
+  `AAuthGovernanceClientServiceCollectionExtensions`, `AAuthSingleUseGrants`,
+  `AddAAuthFederation`, `AddAAuthGovernanceClient`, `BuildResourceToken`,
+  `Entitle`, `IsEntitled`, `IsTrusted`, `IsTrustedAccessServer`,
+  `IsTrustedAgentProviderIssuer`, `IsTrustedPersonServer`, `IssuerTrust`,
+  `MapAAuthIssuerRevocation`, `OnResourceInteraction`, `ResourceKeyId`,
+  `ResourceSigningKey`, `SigningMode`, `TrustedAccessServers`,
+  `TrustedAgentProviderIssuers`, `TrustedAuthTokenIssuers`,
+  `TrustedPersonServers`, `UpdateFromExchange`, `SelfIssuer`, `SelfAgentId`.
+  Each was grepped case-insensitively with separators stripped over `docs/**`,
+  READMEs, samples and tests, and re-run until the counts were stable:
+
+  | Name | Hits | Verdict |
+  |------|-----:|---------|
+  | `TrustedAccessServers` | 6 | prose / sample config keys |
+  | `TrustedPersonServers` | 11 | the samples' `AAuth:TrustedPersonServers` key and locals |
+  | `IssuerTrust` | 7 | prose (`AAuthTrustOptions` wording) |
+  | `ResourceSigningKey` | 8 | the current `ResourceSigningKeys` |
+  | `SigningMode` | 75 | the `docs/signing-modes/` folder and prose |
+  | `BuildResourceToken` | 4 | sample-local helpers |
+  | `Entitle` | 18 | prose (`entitlement`) |
+  | `IsEntitled` | 3 | sample-local method |
+  | `AAuth:PersonServer` | 10 | the SDK section and the Concierge sample key |
+  | every other name | 0 | — |
+
+- **Configuration reference.** `ConfigurationReferenceTests` reflects every
+  public settable (and nested-options) property of `AAuthAgentOptions` and its
+  identity objects, `AAuthResourceOptions`, `AAuthPersonServerOptions`,
+  `AAuthAccessServerOptions`, `AAuthTrustOptions`, `AAuthDiscoveryOptions`,
+  `ChallengeHandlingOptions` and `InteractionHandlingOptions`. It asserts a row
+  in that type's section; the existing `ReferenceTablesMatchSource` checks each
+  row's type. The first run found 44 undocumented members (for example
+  `MaxSignatureAge`, `AccessMode`, `RevocationPath`, `DeriveAgentClaims`,
+  `OnClarificationRequired`, `MaxCacheAge`, and the `SelfIssued:*`,
+  `AgentProvider:*` and `JwksUri:*` keys). All are now documented. The
+  duplicate `AAuthResourceOptions`, `ChallengeHandlingOptions` and
+  `InteractionHandlingOptions` tables were folded into one each.
+- **Extensibility patterns.** A new `configuration.md` section covers the
+  precedence ladder, a seam × form table, all four trust forms, a multi-tenant
+  example (per-host trust plus a caller-owned per-tenant agent) and a KMS
+  signer (`IAAuthSigner` over a KMS client, set through
+  `AddOptions<AAuthAgentOptions>(name).Configure<IKmsClient>`). All three fences
+  compile in `Documentation_CompilationProbe`.
+- **Teaching panes.** GuidedTour `FullAutomatic` and `CallChainConvenience`
+  (the application-level snippets) now show `AddAAuthAgent` plus
+  `IHttpClientFactory` and `ChainFromHttpContext`. The remaining tour and
+  CapabilitySupport panes keep the builder because the builder is the lesson:
+  each teaches one signing mode or one held carrier token
+  (`SignedGet*`, person-token/auth-token presentation, `WithCallChaining` with
+  an explicit upstream token). `CatalogWalkthrough.Example` is resource-side
+  enforcement with no agent composition. The e2e suite asserts displayed code
+  only in `resource-managed.spec.ts` (`AAuthClientBuilder.SelfIssuing`, a
+  signing lesson that is unchanged).
+- **ApiSurface review against Phase 0.** `--baseline 9d5a182^` gives
+  +533/-297. Of the 297 removed lines, 208 are replaced by a declaration with
+  the same name. The other 89 are true removals, and all are intentional:
+
+  | Removed | Phase | Replacement |
+  |---------|-------|-------------|
+  | `Clock` on `AAuthVerifier`, `TokenVerifier`, `AAuthVerificationOptions`, `AAuthResourceOptions`, `R3Challenge` | 2a | `TimeProvider` |
+  | `Trusted*`/`IsTrusted*` on `AAuthServerOptions`, `AAuthVerificationOptions`, `AAuthResourcePipelineOptions`, PS/AS options, `R3AccessTokenEndpointOptions`; `IssuerTrust` | 2b–e | `AAuthTrustOptions` / `IAAuthTrustPolicy` |
+  | `ResourceKeyId`, `ResourceSigningKey` on `AAuthServerOptions` and `ChallengeOptions` | 2b–e / 3 | `ResourceSigningKeys` |
+  | `IAAuthKey.Sign`, `IAAuthKey.ToPrivateJwk` | 3 | `IAAuthSigner.SignAsync`, `IAAuthExportableKey.ToPrivateJwk` |
+  | Sync `Build` on token, naming-JWT and event builders; `AAuthSigningHandler.Sign`; `AuthTokenResponse.Create`; `EventsTokens.Create` | 3 | `BuildAsync` / `CreateAsync` |
+  | `AAuthAgentOptions.Key`, `AAuthClientOptions.Key` | 3 | `Signer` |
+  | PS `MissionEndpoint`/`PermissionEndpoint`/`AuditEndpoint`/`InteractionEndpoint`, `TokenInventory` | 4 | `*Path`; the keyed `IJtiStore` seam |
+  | `AAuthHeldInvocations`, `AAuthSingleUseGrants` | 5 | `IAAuthHeldInvocations`, `IAAuthSingleUseGate`, `IAAuthHeldInvocationStore` |
+  | `R3Challenge.Challenge`/`BuildResourceToken`, `AAuthChallengeMiddleware.BuildResourceToken`, `R3EnforcementDecision.ToResult` | 3 / 5 | `ChallengeAsync`, `BuildResourceTokenAsync`, `ToResultAsync` |
+  | `R3ProposalStore.Entitle`/`IsEntitled` | 5 | `IR3DocumentEntitlements` |
+  | Public `Map{Resource,PersonServer,AccessServer}WellKnown` | 5 | internal; the role mappers publish metadata |
+  | `MapAAuthIssuerRevocation` | 6 | `MapAAuthResourceRevocation` and the role mappers |
+  | `AddAAuthFederation`, `AddAAuthGovernanceClient` (and their classes) | 7 | `AddAAuthAgent` typed clients |
+  | `AAuthClientOptions.SigningMode`; `AAuthAgentOptions.OnInteractionRequired`/`OnApprovalPending`/`OnResourceInteraction`/`PollingTimeout` | 7 | identity-source options; `Interaction.*` / `Challenge.*` |
+  | `BrowserInteraction.Consume` | 10c | internal; `CompleteOutOfBandAsync` |
+  | Sample members: `FederatedWorkerScenario.IssueParent`/`IssueWorker`, `SqliteEventStore.PrepareDelivery`, `ChainCaptureHandler.Exchanges` | 3 / 10b | `*Async` variants; AsyncLocal capture |
+
+  The repo map (`--write`, baseline v0.10.0-alpha.1) is +910/-408 with
+  0 unmapped files.
+- **Gates:** build clean; AAuth.Tests 1766, Conformance 1287, R3 330,
+  Events 83 (snippet, link and docs-inventory tests included); e2e typecheck
+  clean; full Playwright 78 passed, 1 skipped.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 10] Teaching panes and dashboard URLs move to Phase 11

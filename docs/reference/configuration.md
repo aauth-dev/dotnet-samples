@@ -86,19 +86,8 @@ counterparty is trusted (the spec default).
 | `Predicate` | `Func<string, bool>?` | `null` | Synchronous predicate over the identifier. Assign `AAuthTrust.Any` to declare open trust explicitly and suppress the open-trust startup warning. |
 | `PredicateAsync` | `Func<AAuthTrustContext, CancellationToken, ValueTask<bool>>?` | `null` | Asynchronous predicate with the request and services. |
 
-### AAuthResourceOptions (via AddAAuthResource)
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `Issuer` | `string` | — (required) | HTTPS issuer URL for this resource |
-| `SigningKeys` | `AAuthSigningKeySet` | `new()` | Signing keys published at the JWKS; tokens are signed with the active key |
-| `KeyHandle` | `string?` | `null` | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
-| `KeyId` | `string?` | `null` | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |
-| `Name` | `string?` | `null` | Human-readable resource name (`name`) |
-| `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope → description map for metadata |
-| `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
-| `AuthorizationEndpoint` | `string?` | `null` | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
-| `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
+A resource's own identity, keys, verification and metadata are registered with
+`AddAAuthResource`; see [AAuthResourceOptions](#aauthresourceoptions-addaauthresource).
 
 ### AAuthPersonServerOptions (via AddAAuthPersonServer)
 
@@ -113,11 +102,19 @@ key are validated at startup (`OptionsValidationException`).
 | `KeyHandle` | `string?` | `null` | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
 | `KeyId` | `string?` | `null` | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |
 | `MatchIssuerHost` | `bool` | `false` | Serve this instance only for requests whose `Host` is the issuer's authority; set it when several roles or instances share one host |
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | *Code-only.* Egress policy for the PS's outbound fetches (metadata, JWKS, federation) |
+| `TimeProvider` | `TimeProvider` | System | *Code-only.* Clock for issuance, pending expiry and verification |
 | `TokenPath` | `string` | `/token` | Auth token endpoint path (`auth_token_endpoint`) |
 | `PersonTokenPath` | `string` | `/person` | Person token endpoint path (`person_token_endpoint`) |
+| `RevocationPath` | `string` | `/revoke` | Revocation endpoint path (`revocation_endpoint`) |
+| `ConfigureRevocation` | `Action<AAuthRevocationOptions>?` | `null` | *Code-only.* Adjusts the mapped revocation endpoint |
 | `PendingPathPrefix` | `string` | `/pending` | Deferred-consent poll path prefix |
 | `DefaultScope` | `string` | `""` | Scope assumed when the resource token omits one |
+| `ScopesSupported` | `IReadOnlyList<string>?` | `null` | Scopes advertised as `scopes_supported` in PS metadata |
 | `InteractionPath` | `string` | `/interaction` | Path the host maps for the consent page |
+| `ResourceInteractionSessions` | `BrowserConsentSessions?` | `null` (per-PS default) | *Code-only.* Browser sessions for resource-interaction chaining under `{InteractionPath}/resource` |
+| `UnsignedPathPrefixes` | `IReadOnlyCollection<string>?` | `null` | Extra path prefixes the mapper's signature verification skips (the PS's own browser pages) |
+| `TriageClarificationAsync` | `Func<PersonPendingEntry, ClarificationRequirement, CancellationToken, Task<ClarificationResponse?>>?` | `null` | *Code-only.* Answers an Access Server's clarification locally; `null` forwards it to the agent |
 | `InteractionEndpointPath` | `string?` | `null` | §Interaction Endpoint path, advertised as issuer + path |
 | `MissionPath` | `string?` | `null` | Mission endpoint path, advertised as issuer + path |
 | `PermissionPath` | `string?` | `null` | Permission endpoint path, advertised as issuer + path |
@@ -144,7 +141,12 @@ An `IAccessPolicy` is required (`UsePolicy` or a DI registration).
 | `KeyHandle` | `string?` | `null` | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
 | `KeyId` | `string?` | `null` | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |
 | `MatchIssuerHost` | `bool` | `false` | Serve this instance only for requests whose `Host` is the issuer's authority |
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | *Code-only.* Egress policy for the AS's outbound fetches |
+| `TimeProvider` | `TimeProvider` | System | *Code-only.* Clock for issuance, pending expiry and verification |
 | `TokenPath` | `string` | `/token` | Auth token endpoint path (`auth_token_endpoint`) |
+| `RevocationPath` | `string` | `/revoke` | Revocation endpoint path (`revocation_endpoint`) |
+| `ConfigureRevocation` | `Action<AAuthRevocationOptions>?` | `null` | *Code-only.* Adjusts the mapped revocation endpoint |
+| `DeriveAgentClaims` | `Func<string, JsonObject?>?` | `null` | *Code-only.* Baseline policy claims derived from the verified agent id (demo convention; production uses the §Claims Required push) |
 | `PendingPathPrefix` | `string` | `/pending` | Deferred-decision poll path prefix |
 | `DefaultScope` | `string` | `""` | Scope assumed when the resource token omits one |
 | `InteractionLoginPath` | `string` | `/interaction/login` | Browser entry point for interactive policies |
@@ -202,29 +204,9 @@ An `IAccessPolicy` is required (`UsePolicy` or a DI registration).
 | `OnPoll` | `Action<HttpResponseMessage>?` | `null` | Callback after each poll response |
 
 Server `Retry-After` headers override `DefaultPollInterval` (clamped to `MinPollInterval`).
-
-### ChallengeHandlingOptions
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | `null` | Callback for 202+interaction |
-| `PollingTimeout` | `TimeSpan` | 5 minutes | Maximum polling time |
-| `DefaultPollInterval` | `TimeSpan` | 5 seconds | Interval between polls |
-| `PreferWaitSeconds` | `int?` | `null` | `Prefer: wait=N` header value |
-| `MinPollInterval` | `TimeSpan` | 100ms | Minimum poll interval floor |
-| `OnPoll` | `Action<HttpResponseMessage>?` | `null` | Callback after each poll |
-
-### InteractionHandlingOptions
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | `null` | Callback for 202+interaction (`Source = Resource`; show `BuildUserUrl()`) |
-| `OnApprovalPending` | `Func<CancellationToken, Task>?` | `null` | Callback for 202+approval |
-| `PollingTimeout` | `TimeSpan` | 5 minutes | Maximum polling time |
-| `DefaultPollInterval` | `TimeSpan` | 5 seconds | Interval between polls |
-| `PreferWaitSeconds` | `int?` | `null` | `Prefer: wait=N` header value |
-| `MinPollInterval` | `TimeSpan` | 100ms | Minimum poll interval floor |
-| `OnPoll` | `Action<HttpResponseMessage>?` | `null` | Callback after each poll |
+The agent's challenge and interaction handlers take the same polling settings; see
+[ChallengeHandlingOptions](#challengehandlingoptions-withchallengehandling) and
+[InteractionHandlingOptions](#interactionhandlingoptions-withinteractionhandling).
 
 ## Discovery
 
@@ -350,9 +332,9 @@ delegates or instances; every other member binds from configuration, such as
 | `AgentTokenFactory` | `Func<string>?` | One identity source | *Code-only.* Returns the current agent JWT |
 | `TokenRefresher` | `ITokenRefresher?` | One identity source | *Code-only.* Auto-refresh before token expiry; can renew an already-held agent token |
 | `TokenRefreshThreshold` | `TimeSpan?` | No | Refresh window before `exp` (default 5 minutes) |
-| `SelfIssued` | `AAuthSelfIssuedAgentOptions` | One identity source | Self-issued identity: `Issuer`, `Subject`, optional `KeyId` |
-| `AgentProvider` | `AAuthAgentProviderOptions` | One identity source | Enrolled identity: `RefreshEndpoint`; requires `KeyHandle` |
-| `JwksUri` | `AAuthJwksUriIdentityOptions` | One identity source | Server identity: `Id`, `Dwk`, `KeyId` |
+| `SelfIssued` | `AAuthSelfIssuedAgentOptions` | One identity source | Self-issued identity (keys below) |
+| `AgentProvider` | `AAuthAgentProviderOptions` | One identity source | Enrolled identity (keys below); requires `KeyHandle` |
+| `JwksUri` | `AAuthJwksUriIdentityOptions` | One identity source | Server identity (keys below) |
 | `SignatureKeyProvider` | `ISignatureKeyProvider?` | One identity source | *Code-only.* Generic signing only; cannot combine with AAuth authorization flows |
 | `PersonServer` | `string?` | No | Person Server URL; enables `401` challenge handling (default: the token's `ps` claim) |
 | `HandleChallenges` | `bool?` | No | Override the challenge-handling default |
@@ -372,6 +354,18 @@ delegates or instances; every other member binds from configuration, such as
 | `OnSignatureBase` | `Action<HttpRequestMessage, string>?` | No | *Code-only.* Observes each signature base |
 | `TokenCache` | `IAAuthTokenCache?` | No | *Code-only.* Cache of person and auth tokens (default: the agent's keyed in-memory cache) |
 
+The identity-source objects bind as nested sections:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `SelfIssued:Issuer` | `string?` | Agent token issuer: the agent's own server identifier |
+| `SelfIssued:Subject` | `string?` | Agent identifier (`sub`) |
+| `SelfIssued:KeyId` | `string?` | `kid` of the signing key (default: its JWK thumbprint) |
+| `AgentProvider:RefreshEndpoint` | `string?` | Agent Provider refresh endpoint that renews the enrolled agent token |
+| `JwksUri:Id` | `string?` | Server identifier whose metadata names the JWKS |
+| `JwksUri:Dwk` | `string?` | Well-known document name for metadata discovery |
+| `JwksUri:KeyId` | `string?` | `kid` of the signing key in that JWKS |
+
 `AddAAuthAgent` requires exactly one key and exactly one identity source.
 Omitting credentials does not select HWK. `PersonServer`, challenge handling,
 `Mission` and call chaining require an agent-token identity (an agent token,
@@ -384,22 +378,42 @@ remains `~/.aauth/ap-keys`.
 
 ### AAuthResourceOptions (AddAAuthResource)
 
+Register with `AddAAuthResource(configure: …)` or bind from `AAuth:Resource`.
+
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
 | `Issuer` | `string` | Yes | Resource canonical URL |
 | `SigningKeys` | `AAuthSigningKeySet` | Conditional | Signing keys published at the JWKS (tokens are signed with the active key); required when issuing resource tokens or making signed calls, optional for verification-only resources |
 | `KeyHandle` | `string?` | No | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
 | `KeyId` | `string?` | No | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |
+| `EgressPolicy` | `AAuthEgressPolicy` | No | *Code-only.* Egress policy for outbound metadata and JWKS fetches (default `Production`) |
+| `MaxSignatureAge` | `TimeSpan` | No | Signature validity window for inbound `created`, both directions (default 60 seconds) |
+| `TimeProvider` | `TimeProvider` | No | *Code-only.* Clock for signature and token checks (default System) |
+| `EnableReplayDetection` | `bool` | No | Request replay detection keyed by key thumbprint and signature base (default `true`) |
+| `EnableResourceManagedAccess` | `bool` | No | Registers an in-memory `IOpaqueTokenStore` for §Resource-Managed Authorization unless one exists (default `false`) |
+| `KeyResolver` | `ISignatureKeyResolver?` | No | *Code-only.* Custom signature key resolver (default `DefaultSignatureKeyResolver`) |
 | `Name` | `string?` | No | Resource display name (`name`) |
+| `Description` | `string?` | No | Markdown description (`description`) for consent display |
+| `LogoUri` | `string?` | No | `logo_uri` |
+| `LogoDarkUri` | `string?` | No | `logo_dark_uri` |
+| `DocumentationUri` | `string?` | No | `documentation_uri` |
+| `TosUri` | `string?` | No | `tos_uri` |
+| `PolicyUri` | `string?` | No | `policy_uri` |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | No | Scope descriptions for metadata |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
+| `AccessMode` | `string?` | No | Advisory `access_mode`: `agent-token`, `person-token`, `session-token`, `auth-token`, or R3's `per-call` |
 | `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | `string?` | No | Revocation endpoint URL |
+| `ConfigureRevocation` | `Action<AAuthRevocationOptions>?` | No | *Code-only.* Adjusts the endpoint mapped by `MapAAuthResourceRevocation` |
+| `AdditionalMetadata` | `Dictionary<string, JsonNode?>?` | No | *Code-only.* Extension members merged into the resource well-known document |
 
 ### AAuthDiscoveryOptions (AddAAuthDiscovery)
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | Egress policy for the shared `MetadataClient` and `JwksClient` |
+| `MaxCacheEntries` | `int` | 1024 | Entry cap for each discovery cache |
+| `MaxCacheAge` | `TimeSpan` | 24 hours | Upper bound (at most 24 hours) on any cached entry's freshness, whatever the server's cache headers say |
 | `MetadataCacheTtl` | `TimeSpan` | 5 minutes | Metadata document cache lifetime |
 | `JwksCacheTtl` | `TimeSpan` | 1 hour | JWKS cache lifetime |
 | `JwksMinRefreshInterval` | `TimeSpan` | 1 minute | Minimum interval between JWKS fetches (rate limit) |
@@ -409,6 +423,8 @@ remains `~/.aauth/ap-keys`.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | null | Deferred consent callback |
+| `OnClarificationRequired` | `Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>>?` | null | Answers PS clarification questions; declares the `clarification` capability |
+| `MaxClarificationRounds` | `int` | 5 | Clarification rounds before giving up |
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Max deferred polling time |
 | `DefaultPollInterval` | `TimeSpan` | 5 seconds | Poll interval (overridden by Retry-After) |
 | `PreferWaitSeconds` | `int?` | null | Sends `Prefer: wait=N` to long-poll |
@@ -425,6 +441,117 @@ remains `~/.aauth/ap-keys`.
 | `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | null | Resource interaction callback; declares the `interaction` capability |
 | `OnApprovalPending` | `Func<CancellationToken, Task>?` | null | Approval polling callback |
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Max polling time |
+| `DefaultPollInterval` | `TimeSpan` | 5 seconds | Poll interval (overridden by Retry-After) |
+| `PreferWaitSeconds` | `int?` | null | Sends `Prefer: wait=N` to long-poll |
+| `MinPollInterval` | `TimeSpan` | 100 ms | Minimum delay between polls |
+| `OnPoll` | `Action<HttpResponseMessage>?` | null | Per-poll callback |
+
+## Extensibility Patterns
+
+Every decision point accepts the same forms. The SDK resolves them in one order:
+
+1. a per-request override (agent: `HttpRequestMessage.Options`) or a
+   per-endpoint override (server: endpoint metadata);
+2. an instance or delegate on the options or builder;
+3. a DI service keyed by the agent or server instance name, then an unkeyed one;
+4. the SDK default.
+
+Configuration binding sets only data; it ignores the *code-only* delegate and
+instance members.
+
+| Decision | Data (configuration) | Delegate or instance | DI service | Per-request or per-endpoint |
+|----------|----------------------|----------------------|------------|-----------------------------|
+| Issuer trust | `Trust:<Party>:Allowed` | `Trust.<Party>.Predicate` / `PredicateAsync`, `Trust.Policy` | `IAAuthTrustPolicy` | `.RequireAAuth(scope, trust: policy)` |
+| Agent signing key | `KeyHandle` (loaded from `IKeyStore`) | `Signer` | `IKeyStore` | — |
+| User interaction | `HandleInteractions` | `Interaction.OnInteractionRequired`, `Challenge.OnInteractionRequired` | `IAAuthInteractionHandler` | `AAuthRequestOptions.InteractionHandler` |
+| Clarification | `Challenge:MaxClarificationRounds` | `Challenge.OnClarificationRequired` | `IAAuthClarificationHandler` | `AAuthRequestOptions.ClarificationHandler` |
+| Token cache | — | `TokenCache` | `IAAuthTokenCache` (keyed) | — |
+| PS/AS seams | — | builder `Use*` helpers | the seam interface | — |
+
+Issuer trust, in all four forms:
+
+```csharp
+// Data: an allow-list; binds from Trust:AuthTokenIssuers:Allowed:0.
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { "https://ps.example" });
+
+// Delegate: a predicate over the issuer, with the request and services.
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.PredicateAsync = (context, ct) =>
+    ValueTask.FromResult(context.Issuer.StartsWith("https://ps.", StringComparison.Ordinal)));
+
+// DI service: used when the options set no Policy.
+services.AddSingleton<IAAuthTrustPolicy, PartnerTrustPolicy>();
+
+// Per endpoint: replaces the resource-wide trust for this route only.
+app.MapGet("/admin", () => "ok").RequireAAuth("admin", trust: new PartnerTrustPolicy());
+
+public sealed class PartnerTrustPolicy : IAAuthTrustPolicy
+{
+    public ValueTask<bool> IsTrustedAsync(AAuthTrustContext context, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(context.Issuer == "https://ps.partner.example");
+}
+```
+
+### Multi-tenant hosts
+
+A resource serving several tenants resolves each tenant's Person Server from the
+request. An agent host creates one caller-owned agent per tenant and reuses it,
+because the agent holds that tenant's token cache:
+
+```csharp
+var tenantPersonServers = new Dictionary<string, string>
+{
+    ["a.example"] = "https://ps.a.example",
+    ["b.example"] = "https://ps.b.example",
+};
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.PredicateAsync = (context, ct) =>
+    ValueTask.FromResult(context.HttpContext is { } http
+        && tenantPersonServers.TryGetValue(http.Request.Host.Host, out var expected)
+        && context.Issuer == expected));
+
+using var tenantAgent = factory.Create(new AAuthAgentDescriptor("tenant-a")
+{
+    Signer = key,
+    AgentToken = agentToken,
+    PersonServer = tenantPersonServers["a.example"],
+});
+```
+
+### KMS or HSM signer
+
+A signer whose private key never leaves a KMS or HSM implements `IAAuthSigner`
+and awaits the remote call in `SignAsync`. Register it as the agent's `Signer`,
+or return it from a custom `IKeyStore` so `KeyHandle` loads it:
+
+```csharp
+// Your KMS SDK adapter is registered as IKmsClient.
+services.AddAAuthAgent("calendar", o =>
+{
+    o.SelfIssued.Issuer = "https://agent.example";
+    o.SelfIssued.Subject = "aauth:calendar@agent.example";
+});
+services.AddOptions<AAuthAgentOptions>("calendar")
+    .Configure<IKmsClient>((o, kms) => o.Signer = new KmsSigner(kms, "agent-key"));
+
+public interface IKmsClient
+{
+    JsonObject GetPublicJwk(string keyName);
+    Task<byte[]> SignAsync(string keyName, byte[] data, CancellationToken cancellationToken);
+}
+
+public sealed class KmsSigner(IKmsClient kms, string keyName) : IAAuthSigner
+{
+    private readonly IAAuthKey _public = KeyFactory.FromPublicJwk(kms.GetPublicJwk(keyName));
+
+    public string Algorithm => _public.Algorithm;
+    public bool HasPrivateKey => true;
+    public bool Verify(byte[] data, byte[] signature) => _public.Verify(data, signature);
+    public JsonObject ToPublicJwk() => _public.ToPublicJwk();
+    public string ComputeJwkThumbprint() => _public.ComputeJwkThumbprint();
+
+    public async ValueTask<byte[]> SignAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+        => await kms.SignAsync(keyName, data.ToArray(), cancellationToken);
+}
+```
 
 ## JSON Configuration Keys (samples)
 
