@@ -81,22 +81,26 @@ public sealed class PersonConsentDecisions(ConsentStore consent,
     public async Task<ConsentOutcome> DecideAsync(string id, bool approve, ConsentDecider by, CancellationToken cancellationToken)
     {
         if (registry.Find(id) is not { } record) return ConsentOutcome.Unknown;
-        await record.Lifecycle.Gate.WaitAsync(cancellationToken);
-        try
+        ConsentOutcome Undecidable() => record.Status switch
+        {
+            ConsentStatus.Expired => ConsentOutcome.Expired,
+            ConsentStatus.Pending => ConsentOutcome.NotDecidable,
+            _ => ConsentOutcome.AlreadyDecided,
+        };
+        var outcome = Undecidable();
+        // The SDK takes the lifecycle gate and consumes the code once the decision applies.
+        await record.Browser.CompleteOutOfBandAsync(record.Lifecycle, async ct =>
         {
             if (!record.IsDecidable)
-                return record.Status switch
-                {
-                    ConsentStatus.Expired => ConsentOutcome.Expired,
-                    ConsentStatus.Pending => ConsentOutcome.NotDecidable,
-                    _ => ConsentOutcome.AlreadyDecided,
-                };
-            var outcome = record.PersonEntry is { } person
-                ? await ApplyHeldAsync(person, approve, by, cancellationToken)
+            {
+                outcome = Undecidable();
+                return false;
+            }
+            outcome = record.PersonEntry is { } person
+                ? await ApplyHeldAsync(person, approve, by, ct)
                 : ApplyHeld(record.MissionEntry!, approve, by);
-            if (outcome == ConsentOutcome.Applied) record.Browser.Consume();
-            return outcome;
-        }
-        finally { record.Lifecycle.Gate.Release(); }
+            return outcome == ConsentOutcome.Applied;
+        }, cancellationToken);
+        return outcome;
     }
 }

@@ -218,10 +218,13 @@ public static class AAuthPersonServerEndpoints
         var metadataClient = app.Services.GetRequiredService<MetadataClient>();
         var jwksClient = app.Services.GetRequiredService<JwksClient>();
         var asserter = app.Services.GetRequiredKeyedService<IIdentityClaimsAsserter>(name);
-        var pending = app.Services.GetRequiredKeyedService<IPersonPendingStore>(name);
+        var store = app.Services.GetRequiredKeyedService<IPersonPendingStore>(name);
+        var observers = app.Services.GetKeyedServices<IPersonPendingObserver>(name)
+            .Concat(app.Services.GetServices<IPersonPendingObserver>()).Distinct().ToArray();
+        var pending = observers.Length == 0 ? store : new ObservedPersonPendingStore(store, observers);
         var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AAuth.PersonServer");
         PersonResourceInteraction.Map(routes, pending, options);
-        AAuthServerRoles.WarnOnInMemoryDefaults(app.Services, logger, "Person Server", name, pending, inventory,
+        AAuthServerRoles.WarnOnInMemoryDefaults(app.Services, logger, "Person Server", name, store, inventory,
             app.Services.GetService<IMissionStore>(), app.Services.GetService<IMissionLog>());
 
         // Startup footgun guard (diagnostics only): warn when federation is open by
@@ -661,6 +664,11 @@ public static class AAuthPersonServerEndpoints
                         }
                         return ExchangeFailure(entry.Error ?? "denied", null, entry.ErrorStatus ?? StatusCodes.Status403Forbidden);
                     }
+                    // §Deferred Responses: AAuth-Requirement is present only when the person
+                    // must act. Waiting on the AS (e.g. after a clarification answer) asks
+                    // nothing of the person, so the PS does not re-advertise its own code.
+                    if (!entry.AwaitingFederationConsent && entry.InteractionUrl is null)
+                        return PendingWithoutRequirement(ctx, entry, options);
                     return Pending202(ctx, entry, options, interactionUrl);
                 }
 
@@ -1547,6 +1555,14 @@ public static class AAuthPersonServerEndpoints
 
     private static void RequireSameRequest(JsonObject original, JsonObject replacement)
         => TokenVerifier.RequireSameResourceRequest(original, replacement);
+
+    private static IResult PendingWithoutRequirement(HttpContext ctx, PersonPendingEntry entry, AAuthPersonServerOptions options)
+    {
+        ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
+        ctx.Response.Headers["Retry-After"] = "1";
+        ctx.Response.Headers["Cache-Control"] = "no-store";
+        return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+    }
 
     private static IResult Pending202(
         HttpContext ctx, PersonPendingEntry entry, AAuthPersonServerOptions options, string interactionUrl)

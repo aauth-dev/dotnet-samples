@@ -724,7 +724,43 @@ PROCEEDED (Phase 10 part 2 of 4).
   Events 83. ApiSurface +907/-408. Docs inventory refreshed. Full Playwright:
   78 passed, 1 skipped, `--retries=0`.
 
+### [2026-09-30] [Phase 10c] Consent-dashboard seams
+
+PROCEEDED (Phase 10 part 3 of 4; the seams moved here from Phases 4 and 5).
+- **Pending observer:** `IPersonPendingObserver.OnParked(entry)`, resolved keyed
+  by Person Server name plus unkeyed. `MapAAuthPersonServer` wraps the pending
+  store (internal `ObservedPersonPendingStore`) when any are registered.
+  MockPersonServer's `ConsentRegistry` is now an observer; the bridge store no
+  longer registers entries itself.
+- **Out-of-band decision:** `BrowserInteraction.CompleteOutOfBandAsync(lifecycle,
+  apply)` runs the host's decision under the request's gate and consumes the
+  code when it applies (#user-interaction). `Consume()` is internal.
+  `PersonConsentDecisions.DecideAsync` uses it.
+- **Pending202 ruling:** a four-party entry waiting only on the AS (no PS consent
+  pending, no relayed AS interaction) now polls as a bare `202` with no
+  `AAuth-Requirement` (\u00a7Deferred Responses: the header is present only when the
+  person must act). The guided tour's clarification step keeps polling through
+  bare `202`s until the next requirement arrives.
+- **Docs:** `docs/server/token-issuance.md` covers both seams with a compiled
+  snippet.
+- **Tests.** `PendingConsentSeamTests` (observer, applied/unapplied/withdrawn
+  out-of-band decisions) and
+  `DeferredFederationTests.WaitingOnAccessServer_PendingCarriesNoRequirement`
+  (new `hold` policy outcome).
+- **Gates.** Build clean. AAuth.Tests 1755, AAuth.Conformance 1287, R3 330,
+  Events 83. ApiSurface +910/-408. Docs inventory refreshed. Full Playwright:
+  78 passed, 1 skipped, `--retries=0` (an earlier run on a loaded machine timed
+  out in page setup; the rerun and the per-project runs were clean).
+
 ## Deviations from plan
+
+### [2026-09-30] [Phase 10c] Observers are multi-registration, not a builder seam
+
+PROCEEDED. The dashboard seams are additive: every registered
+`IPersonPendingObserver` (keyed by Person Server name, then unkeyed) sees every
+parked request, so there is no `Use...` builder method and no R0 precedence.
+The sample's own `MissionPendingStore` still registers its entries directly,
+because mission governance parking is sample code, not the SDK store.
 
 ### [2026-09-30] [Phase 10b] Signatures take a unique created per target
 

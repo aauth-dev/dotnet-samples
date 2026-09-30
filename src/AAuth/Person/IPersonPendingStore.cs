@@ -49,6 +49,41 @@ public interface IPersonPendingStore
     void MarkDenied(string id, string reason);
 }
 
+/// <summary>
+/// Observes each request the Person Server parks for the person (§Deferred Responses), for
+/// example to list it on a consent dashboard. Register it in DI, keyed by the Person Server name
+/// or unkeyed; every registered observer sees every entry of that server, whichever
+/// <see cref="IPersonPendingStore"/> holds it. The entry is still being filled in when observed:
+/// read its state when it is needed, not at <see cref="OnParked"/>.
+/// </summary>
+public interface IPersonPendingObserver
+{
+    /// <summary>Called once, right after <paramref name="entry"/> is parked.</summary>
+    void OnParked(PersonPendingEntry entry);
+}
+
+internal sealed class ObservedPersonPendingStore(IPersonPendingStore inner, IReadOnlyList<IPersonPendingObserver> observers)
+    : IPersonPendingStore
+{
+    public PersonPendingEntry Add(string resourceUrl, string scope, string agentId, IAAuthKey? agentConfirmationKey,
+        DateTimeOffset agentTokenExpiresAt, string? missionS256 = null, DateTimeOffset? authorizationExpiresAt = null)
+    {
+        var entry = inner.Add(resourceUrl, scope, agentId, agentConfirmationKey, agentTokenExpiresAt, missionS256,
+            authorizationExpiresAt);
+        foreach (var observer in observers) observer.OnParked(entry);
+        return entry;
+    }
+
+    public PersonPendingEntry? Get(string id) => inner.Get(id);
+    public PersonPendingEntry? GetByCode(string code) => inner.GetByCode(code);
+
+    public void MarkAllowed(string id, string subject, string? tenant = null, IReadOnlyList<string>? roles = null,
+        IReadOnlyList<string>? groups = null, IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null)
+        => inner.MarkAllowed(id, subject, tenant, roles, groups, additionalClaims);
+
+    public void MarkDenied(string id, string reason) => inner.MarkDenied(id, reason);
+}
+
 /// <summary>The lifecycle state of a <see cref="PersonPendingEntry"/>.</summary>
 public enum PersonPendingStatus
 {

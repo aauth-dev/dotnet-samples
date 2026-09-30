@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 205 changed public-source files, 907 added/replacement declarations, 408 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 205 changed public-source files, 910 added/replacement declarations, 408 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -774,6 +774,7 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [ConsentRegistry.cs
 + MockPersonServer.ConsentRegistry: public const int Capacity = 500 ;
 + MockPersonServer.ConsentRegistry: public void Clear ( )
 + MockPersonServer.ConsentRegistry: public void MarkDecided ( string id , ConsentDecider by )
++ MockPersonServer.ConsentRegistry: public void OnParked ( PersonPendingEntry entry )
 + MockPersonServer.ConsentRegistry: public void Register ( MissionPendingEntry entry )
 + MockPersonServer.ConsentRegistry: public void Register ( PersonPendingEntry entry )
 + MockPersonServer.ConsentStatus: Approved
@@ -786,7 +787,7 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [ConsentRegistry.cs
 + MockPersonServer: public enum ConsentKind
 + MockPersonServer: public enum ConsentStatus
 + MockPersonServer: public sealed class ConsentRecord
-+ MockPersonServer: public sealed class ConsentRegistry ( MissionPolicyStore policy )
++ MockPersonServer: public sealed class ConsentRegistry ( MissionPolicyStore policy ) : IPersonPendingObserver
 ```
 
 Public owners: `MockPersonServer.ConsentDecider`, `MockPersonServer.ConsentKind`, `MockPersonServer.ConsentRecord`, `MockPersonServer.ConsentRegistry`, `MockPersonServer.ConsentStatus`, `MockPersonServer`.
@@ -2485,6 +2486,7 @@ Concept/decision: [consent](#consent). Source: [IPersonPendingStore.cs](../../..
 - AAuth.Person.InMemoryPersonPendingStore: public PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , JsonObject ? upstreamAct = null , MissionClaim ? mission = null , DateTimeOffset ? authorizationExpiresAt = null )
 - AAuth.Person.PersonPendingEntry: public JsonObject ? UpstreamAct { get ; init ; }
 - AAuth.Person.PersonPendingEntry: public MissionClaim ? Mission { get ; set ; }
++ AAuth.Person.IPersonPendingObserver: void OnParked ( PersonPendingEntry entry )
 + AAuth.Person.IPersonPendingStore: PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , string ? missionS256 = null , DateTimeOffset ? authorizationExpiresAt = null )
 + AAuth.Person.InMemoryPersonPendingStore: public PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , string ? missionS256 = null , DateTimeOffset ? authorizationExpiresAt = null )
 + AAuth.Person.PersonPendingEntry: public AgentAssertedContent ? AgentAsserted { get ; set ; }
@@ -2493,9 +2495,10 @@ Concept/decision: [consent](#consent). Source: [IPersonPendingStore.cs](../../..
 + AAuth.Person.PersonPendingEntry: public string ? PersonSubject { get ; set ; }
 + AAuth.Person.PersonPendingEntry: public string ? PersonTenant { get ; set ; }
 + AAuth.Person.PersonPendingEntry: public string ? PresentedToken { get ; set ; }
++ AAuth.Person: public interface IPersonPendingObserver
 ```
 
-Public owners: `AAuth.Person.IPersonPendingStore`, `AAuth.Person.InMemoryPersonPendingStore`, `AAuth.Person.PersonPendingEntry`, `AAuth.Person.PersonPendingStatus`, `AAuth.Person`.
+Public owners: `AAuth.Person.IPersonPendingObserver`, `AAuth.Person.IPersonPendingStore`, `AAuth.Person.InMemoryPersonPendingStore`, `AAuth.Person.PersonPendingEntry`, `AAuth.Person.PersonPendingStatus`, `AAuth.Person`.
 
 ### src/AAuth/SelfIssuingBuilder.cs
 
@@ -2635,7 +2638,7 @@ Public owners: `AAuth.Server.AuthTokenResponse`, `AAuth.Server`.
 Concept/decision: [consent](#consent). Source: [BrowserConsentSessions.cs](../../../src/AAuth/Server/BrowserConsentSessions.cs).
 
 ```diff
-+ AAuth.Server.BrowserInteraction: public void Consume ( )
++ AAuth.Server.BrowserInteraction: public async Task < bool > CompleteOutOfBandAsync ( DeferredState lifecycle , Func < CancellationToken , Task < bool > > apply , CancellationToken cancellationToken = default )
 ```
 
 Public owners: `AAuth.Server.BrowserConsentDecision`, `AAuth.Server.BrowserConsentSessions`, `AAuth.Server.BrowserInteraction`, `AAuth.Server`.

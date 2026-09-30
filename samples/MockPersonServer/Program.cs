@@ -120,8 +120,10 @@ builder.Services.AddAAuthPersonServer(configure: options =>
     .WithFederation()
     .WithGovernance();
 // Every PS-parked consent request and its outcome, and the one decision path the
-// per-request link and the dashboard share.
+// per-request link and the dashboard share. The registry observes every request
+// the PS parks (IPersonPendingObserver), so the dashboard lists it.
 builder.Services.AddSingleton<ConsentRegistry>();
+builder.Services.AddSingleton<IPersonPendingObserver>(sp => sp.GetRequiredService<ConsentRegistry>());
 builder.Services.AddSingleton<PersonConsentDecisions>();
 builder.Services.AddSingleton<ConsentDashboardSessions>();
 

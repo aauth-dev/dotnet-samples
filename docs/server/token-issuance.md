@@ -450,6 +450,40 @@ collects the user's decision and resolves the parked entry via
 polling agent receives the minted token (or `403`). The consent UI stays a host
 concern — the SDK only owns the protocol mechanics.
 
+A consent dashboard, or any other channel the PS already controls, needs two
+more seams:
+
+- **See every parked request.** Register an `IPersonPendingObserver` (keyed by
+  the Person Server name, or unkeyed). The PS calls `OnParked(entry)` once for
+  each request it parks, whichever `IPersonPendingStore` holds it.
+- **Decide without the link.** The spec lets the host of the interaction URL
+  complete it over its own channel; the code is consumed then (#user-interaction).
+  `entry.Browser.CompleteOutOfBandAsync(entry.Lifecycle, apply)` runs `apply`
+  under the request's gate, so it never interleaves with a decision on the
+  consent page, and consumes the code when `apply` reports the decision applied.
+  `apply` checks that the request is still undecided and records the verdict
+  (for example with `MarkAllowed`).
+
+```csharp
+builder.Services.AddSingleton<IPersonPendingObserver, DashboardFeed>();
+
+// On the dashboard's approve button:
+var decided = await entry.Browser.CompleteOutOfBandAsync(entry.Lifecycle, ct =>
+{
+    if (entry.Status != PersonPendingStatus.Pending) return Task.FromResult(false);
+    pending.MarkAllowed(entry.Id, subject: directedSubject);
+    return Task.FromResult(true);
+}, cancellationToken);
+
+sealed class DashboardFeed : IPersonPendingObserver
+{
+    public void OnParked(PersonPendingEntry entry) { /* list it on the dashboard */ }
+}
+```
+
+MockPersonServer's `ConsentRegistry` and `PersonConsentDecisions` are a complete
+example.
+
 A consent surface carries content from two sources, and the spec requires the
 PS to keep them visually apart and to attribute the agent's words to the agent.
 The request and the parked entry hand you both:

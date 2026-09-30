@@ -107,12 +107,12 @@ defer the walkthrough implementation until documentation time.
 
 ## Complete Inventory
 
-175 files; 683 blocks. Counts by validation class:
+175 files; 684 blocks. Counts by validation class:
 
 - 32: API excerpt: source member/type/sealed checks; not executable
 - 1: C# comment-only narrative: reviewed against the associated scenario; no executable statements
 - 36: Dynamic Razor binding: build plus mapped scenario browser/captured-wire tests
-- 293: Exact C# compiled with typed prior-step/host inputs
+- 294: Exact C# compiled with typed prior-step/host inputs
 - 1: External template: Azure.Security.KeyVault.Secrets/Azure.Core required; exportable Ed25519 secrets, not HSM signing; syntax checked only.
 - 1: External template: OpenTelemetry.Extensions.Hosting and Instrumentation.AspNetCore required; syntax checked, exporter not executed.
 - 3: Illustrative platform adapter: IWebAuthnService/DeviceCheck are host placeholders; IPlatformAttestor signature checked separately; no hardware or AP challenge/retry claim.
@@ -147,7 +147,7 @@ defer the walkthrough implementation until documentation time.
 | [docs/server/multi-scheme-verification.md](../../../docs/server/multi-scheme-verification.md) | `b1d74d9b1a8cdef5f04208e550ec5e570566aa9964393c72040d045f95f07ade` | 6 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
 | [docs/server/replay-detection.md](../../../docs/server/replay-detection.md) | `53621766f79ba930f6751fc140c14e3d5f0de96a2f578462a4c3d914c37c8df8` | 9 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
 | [docs/server/resource-metadata.md](../../../docs/server/resource-metadata.md) | `f8bb64b50ba71143db58679ba181d3e8529c073c3b333d82d094b9a76ae59dc2` | 4 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
-| [docs/server/token-issuance.md](../../../docs/server/token-issuance.md) | `87e1515f3f3d0723e97d0e4efb09d846fc94777d3785ab198f7c1f17e3c02fc8` | 12 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
+| [docs/server/token-issuance.md](../../../docs/server/token-issuance.md) | `f932882413606d62e60dcd6e5e727b7c8686a12a18c2a22ee06204ff991e215d` | 13 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
 | [docs/server/verification-middleware.md](../../../docs/server/verification-middleware.md) | `3f4818a8339abb49ea787ae41e732ad37ad5b175e0c3fb8a8dbcd09337866ee0` | 6 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
 | [docs/signing-modes/agent-identity-jwks-uri.md](../../../docs/signing-modes/agent-identity-jwks-uri.md) | `3a091f0ee23e44c9f20e70033ef06a4a178931cd2193f967673bdd050dfe4f48` | 4 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
 | [docs/signing-modes/agent-token-jwt.md](../../../docs/signing-modes/agent-token-jwt.md) | `6c4b444e54446bd4f0170250dee177c89a0afbb8b8356bfc736cb67be1345a49` | 4 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
@@ -485,6 +485,7 @@ defer the walkthrough implementation until documentation time.
 | [docs/server/token-issuance.md:fence-10](../../../docs/server/token-issuance.md#L316) | csharp | `2b5dc280772dc606bfaed7fb5558a436205f2528d9049ef5c7fed7a47127de05` | API excerpt: source member/type/sealed checks; not executable | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
 | [docs/server/token-issuance.md:fence-11](../../../docs/server/token-issuance.md#L366) | csharp | `13053e414786295023479e82e54acc36e6b14743b30150ad5e9b8cfb11b124ab` | Exact C# compiled with typed prior-step/host inputs | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
 | [docs/server/token-issuance.md:fence-12](../../../docs/server/token-issuance.md#L430) | csharp | `f9993e59c9e46eadb1304b38b7510e9399e60c2676f435769496be0c2fe3262a` | API excerpt: source member/type/sealed checks; not executable | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
+| [docs/server/token-issuance.md:fence-13](../../../docs/server/token-issuance.md#L467) | csharp | `e7af70cffc10eb0f82ea05d2864e28a662cc77b1540b9dcc96c5f9260af536a7` | Exact C# compiled with typed prior-step/host inputs | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
 | [docs/server/verification-middleware.md:fence-1](../../../docs/server/verification-middleware.md#L17) | csharp | `7806e30ef8190b7885ba442a00d00804bb3e42a9dcdaea76468c48365d7812a5` | Exact C# compiled with typed prior-step/host inputs | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
 | [docs/server/verification-middleware.md:fence-2](../../../docs/server/verification-middleware.md#L50) | csharp | `446e593a67fd4baad2601ccc712e9a2f25b47409459a69c471397dccfcc181ff` | API excerpt: source member/type/sealed checks; not executable | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
 | [docs/server/verification-middleware.md:fence-3](../../../docs/server/verification-middleware.md#L97) | csharp | `d4a92db85ce602e5d19314595589029f91109ac81f61e980238fbec4eeb1cdb5` | Exact C# compiled with typed prior-step/host inputs | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |

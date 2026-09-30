@@ -161,7 +161,7 @@ public sealed class ConsentRecord
 /// In-memory, capped history of every PS-parked consent request (Q8). Cleared by
 /// <c>/admin/reset</c>.
 /// </summary>
-public sealed class ConsentRegistry(MissionPolicyStore policy)
+public sealed class ConsentRegistry(MissionPolicyStore policy) : IPersonPendingObserver
 {
     public const int Capacity = 500;
     private readonly LinkedList<ConsentRecord> _records = new();
@@ -169,6 +169,9 @@ public sealed class ConsentRegistry(MissionPolicyStore policy)
     private readonly Lock _lock = new();
 
     public void Register(PersonPendingEntry entry) => Add(new ConsentRecord(entry, policy));
+
+    /// <summary>The Person Server parked a request: list it on the dashboard.</summary>
+    public void OnParked(PersonPendingEntry entry) => Register(entry);
 
     public void Register(MissionPendingEntry entry) => Add(new ConsentRecord(entry, policy));
 

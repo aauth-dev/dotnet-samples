@@ -804,10 +804,20 @@ public sealed partial class TourSession
         if (outcome == CapOutcome.Done) token = CapApplySuccess(exchange);
         else if (outcome is CapOutcome.Pending or CapOutcome.Other && Status(exchange) is >= 200 and < 300)
         {
-            var (next, nextExchange, _) = await CapSendAsync(HttpMethod.Get, pending, () => _agentToken!, ct);
-            outcome = await CapOutcomeAsync(next, nextExchange, pending, poll: false, ct);
-            next.Dispose();
-            followUp = $"\nThen GET {new Uri(pending).AbsolutePath} → {nextExchange.StatusLine}";
+            // A bare 202 means the authority is still deciding; poll until it names the next requirement.
+            var polls = 0;
+            CapturedExchange nextExchange;
+            do
+            {
+                if (polls++ > 0) await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
+                var (next, polled, _) = await CapSendAsync(HttpMethod.Get, pending, () => _agentToken!, ct);
+                nextExchange = polled;
+                outcome = await CapOutcomeAsync(next, nextExchange, pending, poll: false, ct);
+                next.Dispose();
+            }
+            while (outcome == CapOutcome.Pending && polls < 60);
+            followUp = $"\nThen GET {new Uri(pending).AbsolutePath} → {nextExchange.StatusLine}"
+                + (polls > 1 ? $" (after {polls} polls)" : "");
             if (outcome == CapOutcome.Done) token = CapApplySuccess(nextExchange);
         }
         var question = _clarificationQuestion;

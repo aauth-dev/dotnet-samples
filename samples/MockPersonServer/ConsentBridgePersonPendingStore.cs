@@ -36,12 +36,8 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
         DateTimeOffset agentTokenExpiresAt,
         string? missionS256 = null,
         DateTimeOffset? authorizationExpiresAt = null)
-    {
-        var entry = _inner.Add(resourceUrl, scope, agentId, agentConfirmationKey, agentTokenExpiresAt,
+        => _inner.Add(resourceUrl, scope, agentId, agentConfirmationKey, agentTokenExpiresAt,
             missionS256, authorizationExpiresAt);
-        _registry.Register(entry);
-        return entry;
-    }
 
     public PersonPendingEntry? Get(string id)
     {

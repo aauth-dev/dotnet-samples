@@ -969,6 +969,37 @@ public class DeferredFederationTests
         }
     }
 
+    [Fact(DisplayName = "§Deferred Responses — while the PS waits only on the AS, its 202 carries no AAuth-Requirement")]
+    public async Task WaitingOnAccessServer_PendingCarriesNoRequirement()
+    {
+        await using var fixture = await Fixture.CreateAsync("hold");
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync());
+        Assert.Equal("requirement=clarification", initial.Headers.GetValues("AAuth-Requirement").Single());
+        using var answer = await fixture.Agent.PostAsJsonAsync(initial.Headers.Location,
+            new JsonObject { ["action"] = "clarification_response", ["clarification_response"] = "requested by the user" });
+        Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);
+
+        // The answer resumes federation in the background; wait for the clarification to clear.
+        HttpResponseMessage waiting = null!;
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            waiting?.Dispose();
+            waiting = await fixture.Agent.GetAsync(initial.Headers.Location);
+            if (!waiting.Headers.TryGetValues("AAuth-Requirement", out var values) || values.Single() != "requirement=clarification") break;
+            await Task.Delay(10);
+        }
+        using (waiting)
+        {
+            Assert.Equal(HttpStatusCode.Accepted, waiting.StatusCode);
+            Assert.False(waiting.Headers.Contains("AAuth-Requirement"));
+            Assert.Equal(initial.Headers.Location, waiting.Headers.Location);
+        }
+
+        fixture.Policy.Held.SetResult(AccessDecision.Allow());
+        using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
+        Assert.Equal(HttpStatusCode.OK, result.StatusCode);
+    }
+
     [Theory]
     [InlineData("answer")]
     [InlineData("update")]
@@ -1158,9 +1189,11 @@ public class DeferredFederationTests
     private sealed class Policy(string outcome, IReadOnlyList<string>? requiredClaims) : IAccessPolicy
     {
         public AccessPolicyRequest? Last { get; private set; }
+        public TaskCompletionSource<AccessDecision> Held { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken cancellationToken = default)
         {
             Last = request;
+            if (outcome == "hold" && request.ClarificationHistory.Count > 0) return Held.Task.WaitAsync(cancellationToken);
             if (outcome == "reconsent") return Task.FromResult(request.InteractionId is not null && request.ClarificationHistory.Count == 0
                 ? AccessDecision.NeedsClarification("Review the request", 30) : AccessDecision.NeedsInteraction());
             if (outcome == "interaction") return Task.FromResult(AccessDecision.NeedsInteraction());

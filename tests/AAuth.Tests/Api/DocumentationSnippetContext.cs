@@ -78,6 +78,9 @@ internal static class DocumentationSnippetContext
         private R3Enforcement enforcement = null!;
         private string auditPath = "/configured-private-data/r3-audit.sqlite";
         private ILogger logger = null!;
+        private PersonPendingEntry entry = null!;
+        private IPersonPendingStore pending = null!;
+        private CancellationToken cancellationToken;
         private IAgentProviderEventStore durableProviderStore = null!, providerStore = null!;
         private IResourceEventStore durableResourceStore = null!;
         private IAgentEventStore durableAgentStore = null!, agentStore = null!;
