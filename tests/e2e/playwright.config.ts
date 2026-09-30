@@ -142,7 +142,7 @@ export default defineConfig({
       url: 'http://localhost:5005/.well-known/aauth-resource.json',
     },
     {
-      // Dedicated R3 Access Server guarding Bookings (four-party R3 flow).
+      // Dedicated R3 Access Server guarding Bookings and the Travel Catalog.
       ...dotnetRun('samples/MockAccessServers/R3/R3.csproj'),
       url: 'http://localhost:5501/.well-known/aauth-access.json',
     },

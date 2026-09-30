@@ -83,6 +83,10 @@ builder.Services.AddAAuthResource(o =>
     };
 });
 builder.Services.AddSingleton<R3ProposalStore>();
+builder.Services.AddSingleton<IR3AuthoritativeDefinitionProvider>(new StaticR3AuthoritativeDefinitionProvider(authoritativeOperations));
+builder.Services.AddSingleton<IR3OperationValidator>(sp => new R3OperationValidator(
+    sp.GetRequiredService<R3ProposalStore>(),
+    sp.GetRequiredService<IR3AuthoritativeDefinitionProvider>()));
 // Every R3Challenge mint entitles the token's aud (AS) and ps (PS) to read its document.
 builder.Services.AddAAuthR3Documents(_ => readerPolicy);
 // R3 per-call single use: a proposal-approved auth token executes once, and a repeat
@@ -204,7 +208,7 @@ app.MapMethods("/search_availability", ["GET", "POST"], async (HttpContext ctx) 
     var decision = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, SearchAvailability);
     if (enforcement.Result is not null) return enforcement.Result;
-    return await CompleteAsync(auth.Verified!, enforcement.IsProposal, () => new
+    return await CompleteAsync(enforcement.SingleUse, () => new
     {
         accessMode = "four-party-r3",
         operationId = HttpMethods.IsGet(ctx.Request.Method) ? SearchAvailability : SearchAvailability + "Post",
@@ -231,7 +235,7 @@ app.MapMethods("/hold_reservation", ["GET", "POST"], async (HttpContext ctx) =>
     var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, HoldReservation);
     if (enforcement.Result is not null) return enforcement.Result;
-    return await CompleteAsync(auth.Verified!, enforcement.IsProposal, () => new
+    return await CompleteAsync(enforcement.SingleUse, () => new
     {
         accessMode = "four-party-r3",
         operationId = HttpMethods.IsGet(ctx.Request.Method) ? HoldReservation : HoldReservation + "Post",
@@ -254,7 +258,7 @@ app.MapPost("/confirm_reservation", async (HttpContext ctx) =>
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, ConfirmReservation);
     if (enforcement.Result is not null) return enforcement.Result;
     var parameters = enforcement.Parameters!;
-    return await CompleteAsync(auth.Verified!, enforcement.IsProposal, () => new
+    return await CompleteAsync(enforcement.SingleUse, () => new
         {
             accessMode = "four-party-r3",
             operationId = ConfirmReservation,
@@ -274,10 +278,9 @@ app.MapPost("/confirm_reservation", async (HttpContext ctx) =>
 
 app.Run();
 
-async Task<IResult> CompleteAsync(TokenVerifier.VerifiedToken token, bool perCall, Func<object> execute) => !perCall
+async Task<IResult> CompleteAsync(R3SingleUse? singleUse, Func<object> execute) => singleUse is null
     ? Results.Ok(execute())
-    : (await perCallGrants.ExecuteOnceAsync((string)token.Payload["jti"]!, token.ExpiresAt,
-        _ => Task.FromResult(HeldInvocationResult.Json(execute())))).ToResult();
+    : (await singleUse.ExecuteOnceAsync(_ => Task.FromResult(HeldInvocationResult.Json(execute())))).ToResult();
 
 StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requestedOperations, string? account)
 {
@@ -313,6 +316,7 @@ R3Challenge Challenger() => new()
     Key = resourceKey,
     KeyId = ResourceKid,
     Entitlements = documentEntitlements,
+    OperationValidator = app.Services.GetRequiredService<IR3OperationValidator>(),
 };
 
 // The resource token names the presented person token (draft-11 §Resource Token Structure).
@@ -545,32 +549,33 @@ async Task<OperationOutcome> EnforceOperationAsync(HttpContext context, TokenVer
     {
         var parameters = await ReadReservationParametersAsync(context, operation);
         if (!proposals.TryGet(claims.S256, out var stored))
-            return new(null, false, AAuthProblemDetails.Create("unknown_r3_document", statusCode: 403));
+            return new(null, false, AAuthProblemDetails.Create("unknown_r3_document", statusCode: 403), null);
         R3Hash.Verify(stored, claims.S256);
         if (!AccountBinding.Matches(AccountBinding.Read(JsonNode.Parse(stored)!.AsObject()), claims.Account))
-            return new(null, false, AAuthProblemDetails.Create("r3_account_mismatch", statusCode: 403));
+            return new(null, false, AAuthProblemDetails.Create("r3_account_mismatch", statusCode: 403), null);
         var isProposal = JsonNode.Parse(stored)!.AsObject().ContainsKey("parameters");
         var expectedUri = $"{resourceUrl}/r3/{(isProposal ? "proposals/" : string.Empty)}{claims.S256}";
-        if (claims.Uri != expectedUri) return new(null, false, AAuthProblemDetails.Create("r3_uri_mismatch", statusCode: 403));
-        var enforcement = new R3Enforcement(proposals, new Uri(resourceUrl));
+        if (claims.Uri != expectedUri) return new(null, false, AAuthProblemDetails.Create("r3_uri_mismatch", statusCode: 403), null);
+        var enforcement = new R3Enforcement(proposals, new Uri(resourceUrl), singleUseGate: perCallGrants);
         var operationId = operation != ConfirmReservation && HttpMethods.IsPost(context.Request.Method) ? operation + "Post" : operation;
         var decision = enforcement.Evaluate(claims, R3OperationIdentity.OpenApi(operationId), parameters,
             (_, values) => operation == ConfirmReservation ? ReservationDisplay(values, token.Account) :
                 new R3Display { Summary = $"{AccountName(token.Account)}: approve {operation}", Detail = JsonSerializer.Serialize(values, R3Json.Options) },
             approvedProposalS256: isProposal ? claims.S256 : null, expectedAccount: token.Account);
-        if (decision.Kind == R3EnforcementDecisionKind.Granted) return new(parameters, isProposal, null);
+        if (decision.Kind == R3EnforcementDecisionKind.Granted) return new(parameters, isProposal, null, null);
+        if (decision.Kind == R3EnforcementDecisionKind.SingleUse) return new(parameters, true, null, decision.SingleUseGrant);
         if (decision.Kind == R3EnforcementDecisionKind.PerCall)
         {
             var resourceToken = await BuildProposalResourceTokenAsync(token, decision.ProposalUri!, decision.ProposalS256!, context.RequestAborted);
             context.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
             return new(parameters, false, AAuthProblemDetails.Create("r3_approval_required", statusCode: 401,
-                extensions: new Dictionary<string, object?> { ["operationId"] = operation, ["r3_uri"] = decision.ProposalUri, ["r3_s256"] = decision.ProposalS256 }));
+                extensions: new Dictionary<string, object?> { ["operationId"] = operation, ["r3_uri"] = decision.ProposalUri, ["r3_s256"] = decision.ProposalS256 }), null);
         }
-        return new(parameters, isProposal, decision.ToResult());
+        return new(parameters, isProposal, decision.ToResult(), null);
     }
     catch (Exception exception) when (exception is JsonException or InvalidOperationException or R3HashMismatchException)
     {
-        return new(null, false, AAuthProblemDetails.Create("invalid_r3_request", exception.Message, statusCode: 400));
+        return new(null, false, AAuthProblemDetails.Create("invalid_r3_request", exception.Message, statusCode: 400), null);
     }
 }
 
@@ -597,7 +602,7 @@ static decimal ParameterNumber(IReadOnlyDictionary<string, R3Parameter> paramete
 
 sealed record SignedPresenter(TokenVerifier.VerifiedToken? Person, IAAuthKey ConfirmationKey);
 sealed record AuthOutcome(TokenVerifier.VerifiedToken? Verified, IResult? Result);
-sealed record OperationOutcome(IReadOnlyDictionary<string, R3Parameter>? Parameters, bool IsProposal, IResult? Result);
+sealed record OperationOutcome(IReadOnlyDictionary<string, R3Parameter>? Parameters, bool IsProposal, IResult? Result, R3SingleUse? SingleUse);
 
 namespace Bookings
 {

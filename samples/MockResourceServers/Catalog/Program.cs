@@ -32,6 +32,9 @@ var descriptions = catalog.Keys.ToDictionary(service => service, service => docu
     Operations = [R3Operation.OpenApi(OperationId(service))],
     Display = new R3Display { Summary = $"Read the {service} travel catalog" },
 }.ToUtf8Bytes(), new Uri(issuer), "/r3"));
+var authoritativeDefinitions = new StaticR3AuthoritativeDefinitionProvider(
+    catalog.Keys.Select(name => new R3OperationIdentity(Vocabulary.OpenApi, R3Operation.OpenApi(OperationId(name)))));
+var operationValidator = new R3OperationValidator(documents, authoritativeDefinitions);
 builder.Services.AddAAuthResource(options =>
 {
     options.EgressPolicy = SampleEgress.Policy; options.Issuer = issuer;
@@ -75,7 +78,8 @@ app.MapGet("/catalog/{service}", async (string service, HttpContext context) =>
         R3Metadata.ValidateOperations(request, metadata, definitions);
         var document = descriptions[service];
         // Agent token -> person-token requirement; person token -> R3 resource token naming it.
-        return await new R3Challenge { EgressPolicy = SampleEgress.Policy, ResourceIssuer = issuer, Audience = access, Key = key, KeyId = kid }
+        return await new R3Challenge { EgressPolicy = SampleEgress.Policy, ResourceIssuer = issuer, Audience = access,
+                Key = key, KeyId = kid, OperationValidator = operationValidator }
             .ChallengeAsync(context, document.Uri, document.S256);
     }
     var payload = context.GetAAuthParsedKey()!.Payload!;

@@ -128,7 +128,7 @@ blast radius is small.
       identifier.
 - [x] A sample test shows `aauth:demo@attacker.example` gets no admin claims.
 - [x] The README and `SPEC-VERSION.md` claims match the audit status.
-- [x] The gates are green.
+- [ ] The gates are green.
 
 ## Phase 2 — Signing producer, metadata and identifiers (R13, R16, R17)
 
@@ -347,16 +347,16 @@ This phase has the highest blast radius. It defines the single inventory model
 
 **Definition of Done**
 
-- [ ] Replaying a per-call auth token with identical parameters returns the
+- [x] Replaying a per-call auth token with identical parameters returns the
       retained result without re-executing. The 202 and 401 paths share the
       key.
-- [ ] A missing gate, `jti` or `exp` yields `single_use_required`.
-- [ ] The audit record contains `ps`, `sub` and `agent_jkt`.
-- [ ] A configured AS cannot fetch an R3 document not named by a resource
+- [x] A missing gate, `jti` or `exp` yields `single_use_required`.
+- [x] The audit record contains `ps`, `sub` and `agent_jkt`.
+- [x] A configured AS cannot fetch an R3 document not named by a resource
       token it received.
-- [ ] Minting fails for an operation absent from the authoritative definition,
+- [x] Minting fails for an operation absent from the authoritative definition,
       and for ambiguous bare ids across merged definitions.
-- [ ] The gates are green.
+- [x] The gates are green.
 
 ## Phase 7 — PS identity, missions and clarification (R10, R09, R08)
 

@@ -21,12 +21,28 @@ var trustedPersonServers = builder.Configuration
 // AS policy: which operations require per-call approval (r3_per_call) vs are
 // granted outright (r3_granted). Per r3 §Auth Token Extensions the AS — not the
 // resource — decides this, from the document's operations and its own policy. This
-// dedicated Bookings AS treats confirmReservation (charges a deposit) as per-call;
+// sample AS treats Bookings' confirmReservation (charges a deposit) as per-call;
 // override via R3AccessServer:PerCallOperations. Values are OpenAPI operationIds.
 var perCallOperations = (builder.Configuration
     .GetSection("R3AccessServer:PerCallOperations")
     .Get<string[]>() ?? ["confirmReservation"])
     .ToHashSet(StringComparer.Ordinal);
+// Operation validation is fail-closed: every R3 document fetched by the AS must name
+// operations from the authoritative OpenAPI definitions for the resources this AS guards.
+// The demo R3 AS backs both Bookings and the merged-definition Travel Catalog.
+var authoritativeOperations = (builder.Configuration
+    .GetSection("R3AccessServer:AuthoritativeOperations")
+    .Get<string[]>() ?? [
+        "searchAvailability",
+        "searchAvailabilityPost",
+        "holdReservation",
+        "holdReservationPost",
+        "confirmReservation",
+        "listDestinations",
+        "listExperiences",
+    ])
+    .Select(R3OperationIdentity.OpenApi)
+    .ToArray();
 
 builder.Services.AddSingleton(asKey);
 // Shared discovery clients (MetadataClient + JwksClient) with an SDK-owned pooled
@@ -41,7 +57,7 @@ builder.Services.AddSingleton<AAuth.Server.IJtiStore, AAuth.Server.InMemoryJtiSt
 // Dedicated R3 Access Server (four-party). It fetches the resource's R3 document
 // (AS-signed), hash-verifies it, splits granted vs per-call per its OWN policy
 // (r3 §Auth Token Extensions — the AS decides, not the resource), mints the R3 auth
-// token, and audits issuance. It guards the Bookings resource. The sibling `Federated`
+// token, and audits issuance. It guards the R3 sample resources. The sibling `Federated`
 // AS stays the scope-based AS for Wallet: one server per concept, mirroring MockResourceServers.
 builder.Services.AddR3AccessTokenEndpoint(options =>
 {
@@ -60,6 +76,7 @@ builder.Services.AddR3AccessTokenEndpoint(options =>
         builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-r3-demo" : null);
     options.AuditSink = new SqliteR3AuditSink(builder.Configuration["R3AccessServer:AuditPath"] ??
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "aauth-samples", "r3-audit.sqlite"));
+    options.AuthoritativeDefinitions = new StaticR3AuthoritativeDefinitionProvider(authoritativeOperations);
 });
 
 var app = builder.Build();

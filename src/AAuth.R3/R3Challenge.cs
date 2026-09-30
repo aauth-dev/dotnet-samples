@@ -28,6 +28,12 @@ public sealed class R3Challenge
     public IR3DocumentEntitlements? Entitlements { get; init; }
 
     /// <summary>
+    /// Validates the referenced R3 document or proposal against the resource's authoritative definition
+    /// before any resource token is returned. <see cref="ChallengeAsync"/> falls back to DI.
+    /// </summary>
+    public IR3OperationValidator? OperationValidator { get; init; }
+
+    /// <summary>
     /// Build an R3 resource token naming <paramref name="presented"/> — the verified
     /// person or auth token the request carried — bound to <paramref name="agentJkt"/>,
     /// the thumbprint of the key that signed the request (§Resource Token Structure).
@@ -40,7 +46,7 @@ public sealed class R3Challenge
         string? scope = null,
         string? account = null,
         CancellationToken cancellationToken = default)
-        => BuildCoreAsync(presented, agentJkt, r3Uri, r3S256, scope, account, Entitlements, cancellationToken);
+        => BuildCoreAsync(presented, agentJkt, r3Uri, r3S256, scope, account, Entitlements, OperationValidator, cancellationToken);
 
     private async ValueTask<string> BuildCoreAsync(
         TokenVerifier.VerifiedToken presented,
@@ -50,6 +56,7 @@ public sealed class R3Challenge
         string? scope,
         string? account,
         IR3DocumentEntitlements? entitlements,
+        IR3OperationValidator? operationValidator,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(presented);
@@ -58,6 +65,11 @@ public sealed class R3Challenge
         EgressPolicy.ValidateIdentifier(ResourceIssuer);
         EgressPolicy.ValidateIdentifier(Audience);
         R3AuthClaims.ResourceDocument(r3Uri, r3S256);
+        if (operationValidator is null)
+        {
+            throw new InvalidOperationException("R3 operation validation requires an IR3OperationValidator.");
+        }
+        await operationValidator.ValidateReferenceAsync(r3Uri, r3S256, cancellationToken).ConfigureAwait(false);
         var personServer = presented.TokenType switch
         {
             PersonTokenBuilder.TokenType => presented.Issuer,
@@ -113,8 +125,10 @@ public sealed class R3Challenge
         var token = await SignCompactAsync(header, payload, Key, cancellationToken).ConfigureAwait(false);
         if (entitlements is not null)
         {
-            await entitlements.EntitleAsync(r3S256, Audience, cancellationToken).ConfigureAwait(false);
-            await entitlements.EntitleAsync(r3S256, personServer, cancellationToken).ConfigureAwait(false);
+            var tokenId = (string)payload["jti"]!;
+            var expiresAt = DateTimeOffset.FromUnixTimeSeconds((long)payload["exp"]!);
+            await entitlements.EntitleAsync(r3Uri, r3S256, Audience, tokenId, expiresAt, cancellationToken).ConfigureAwait(false);
+            await entitlements.EntitleAsync(r3Uri, r3S256, personServer, tokenId, expiresAt, cancellationToken).ConfigureAwait(false);
         }
         return token;
     }
@@ -136,7 +150,7 @@ public sealed class R3Challenge
             ?? throw new InvalidOperationException("auth token missing cnf.jwk");
         var agentJkt = KeyFactory.FromJwk(cnf).ComputeJwkThumbprint();
         return BuildCoreAsync(verifiedAuthToken, agentJkt, r3Uri, r3S256, scope, verifiedAuthToken.Account,
-            entitlements, cancellationToken);
+            entitlements, OperationValidator, cancellationToken);
     }
 
     internal IR3DocumentEntitlements? EntitlementsFor(HttpContext context)
@@ -158,7 +172,9 @@ public sealed class R3Challenge
             return AAuth.Server.AAuthProblemDetails.Create("person_token_required", statusCode: StatusCodes.Status401Unauthorized);
         }
         var token = await BuildCoreAsync(presented.Token, presented.HttpSigningKey.ComputeJwkThumbprint(), r3Uri, r3S256, scope, account,
-            EntitlementsFor(context), context.RequestAborted).ConfigureAwait(false);
+            EntitlementsFor(context),
+            OperationValidator ?? context.RequestServices?.GetService(typeof(IR3OperationValidator)) as IR3OperationValidator,
+            context.RequestAborted).ConfigureAwait(false);
         context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatAuthToken(token);
         return AAuth.Server.AAuthProblemDetails.Create("auth_token_required", statusCode: StatusCodes.Status401Unauthorized);
     }

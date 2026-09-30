@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AAuth.R3.Model;
+using AAuth.Server;
 
 namespace AAuth.R3.Tests;
 
@@ -25,13 +26,13 @@ public class R3VocabularyTests
         Assert.Equal("null", JsonSerializer.Serialize(parameter));
         Assert.NotNull(R3ProposalDocument.FromUtf8Bytes(document.ToUtf8Bytes()).Parameters["description"]);
         var store = new R3ProposalStore();
-        var enforcement = new R3Enforcement(store, new Uri("https://resource.test"));
+        var enforcement = new R3Enforcement(store, new Uri("https://resource.test"), singleUseGate: new InMemorySingleUseGate());
         var identity = R3OperationIdentity.Mcp("update");
         var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash", R3Grant.Mcp(), R3Grant.Mcp("update"));
         var perCall = enforcement.Evaluate(claims, identity, document.Parameters);
         Assert.Equal(R3EnforcementDecisionKind.PerCall, perCall.Kind);
-        var approved = new R3ClaimReader.AuthTokenClaims(perCall.ProposalUri!, perCall.ProposalS256!, claims.PerCall!, null);
-        Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, identity, document.Parameters, approvedProposalS256: approved.S256).Kind);
+        var approved = Approved(perCall.ProposalUri!, perCall.ProposalS256!, claims.PerCall!);
+        Assert.Equal(R3EnforcementDecisionKind.SingleUse, enforcement.Evaluate(approved, identity, document.Parameters, approvedProposalS256: approved.S256).Kind);
         Assert.Equal("proposal_digest_mismatch", enforcement.Evaluate(approved, identity,
             new Dictionary<string, R3Parameter>(), approvedProposalS256: approved.S256).Error);
         Assert.Equal("proposal_digest_mismatch", enforcement.Evaluate(approved, identity,
@@ -60,7 +61,7 @@ public class R3VocabularyTests
         var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash",
             perCall ? grant with { Operations = [] } : grant, perCall ? grant : null);
         var store = new R3ProposalStore();
-        var enforcement = new R3Enforcement(store, new Uri("https://resource.test"));
+        var enforcement = new R3Enforcement(store, new Uri("https://resource.test"), singleUseGate: new InMemorySingleUseGate());
         var parameters = new Dictionary<string, R3Parameter> { ["id"] = R3Parameter.Inline(JsonValue.Create(1)!) };
         var get = new R3OperationIdentity(Vocabulary.OData, R3Operation.OData("Events", "GET"));
         var decision = enforcement.Evaluate(claims, get, parameters);
@@ -73,9 +74,8 @@ public class R3VocabularyTests
         Assert.True(store.TryGet(decision.ProposalS256!, out var bytes));
         var proposal = R3ProposalDocument.FromUtf8Bytes(bytes);
         Assert.True(get.Matches(proposal.Vocabulary, Assert.Single(proposal.Operations)));
-        var approved = new R3ClaimReader.AuthTokenClaims(decision.ProposalUri!, decision.ProposalS256!,
-            grant with { Operations = proposal.Operations }, null);
-        Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, get, parameters, approvedProposalS256: approved.S256).Kind);
+        var approved = Approved(decision.ProposalUri!, decision.ProposalS256!, grant with { Operations = proposal.Operations });
+        Assert.Equal(R3EnforcementDecisionKind.SingleUse, enforcement.Evaluate(approved, get, parameters, approvedProposalS256: approved.S256).Kind);
         var post = new R3OperationIdentity(Vocabulary.OData, R3Operation.OData("Events", "POST"));
         Assert.Equal("operation_not_granted", enforcement.Evaluate(approved, post, parameters, approvedProposalS256: approved.S256).Error);
         Assert.Equal("proposal_tool_mismatch", enforcement.Evaluate(approved with { Granted = grant }, post, parameters, approvedProposalS256: approved.S256).Error);
@@ -87,15 +87,15 @@ public class R3VocabularyTests
         var identity = R3OperationIdentity.Mcp("ping");
         var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash", R3Grant.Mcp(), R3Grant.Mcp("ping"));
         var store = new R3ProposalStore();
-        var enforcement = new R3Enforcement(store, new Uri("https://resource.test"));
+        var enforcement = new R3Enforcement(store, new Uri("https://resource.test"), singleUseGate: new InMemorySingleUseGate());
         var empty = new Dictionary<string, R3Parameter>();
         Assert.Equal("parameters_required", enforcement.Evaluate(claims, identity).Error);
         var decision = enforcement.Evaluate(claims, identity, empty);
         Assert.Equal(R3EnforcementDecisionKind.PerCall, decision.Kind);
         Assert.True(store.TryGet(decision.ProposalS256!, out var bytes));
         Assert.Empty(R3ProposalDocument.FromUtf8Bytes(bytes).Parameters);
-        var approved = new R3ClaimReader.AuthTokenClaims(decision.ProposalUri!, decision.ProposalS256!, claims.PerCall!, null);
-        Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, identity, empty, approvedProposalS256: approved.S256).Kind);
+        var approved = Approved(decision.ProposalUri!, decision.ProposalS256!, claims.PerCall!);
+        Assert.Equal(R3EnforcementDecisionKind.SingleUse, enforcement.Evaluate(approved, identity, empty, approvedProposalS256: approved.S256).Kind);
         Assert.Equal("unknown_proposal", enforcement.Evaluate(approved, identity, approvedProposalS256: approved.S256).Error);
         Assert.Equal("proposal_digest_mismatch", enforcement.Evaluate(approved, identity,
             new Dictionary<string, R3Parameter> { ["extra"] = R3Parameter.Inline(JsonValue.Create(1)!) }, approvedProposalS256: approved.S256).Error);
@@ -156,7 +156,7 @@ public class R3VocabularyTests
         var grant = new R3Grant { Vocabulary = vocabulary, Operations = [operation] };
         var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash", grant, null);
         var store = new R3ProposalStore();
-        var enforcement = new R3Enforcement(store, new Uri("https://resource.test"));
+        var enforcement = new R3Enforcement(store, new Uri("https://resource.test"), singleUseGate: new InMemorySingleUseGate());
         var parameters = new Dictionary<string, R3Parameter>();
         Assert.True(grant.Contains(identity));
         Assert.False(grant.Contains(new(vocabulary, parsed with { Id = "Other" })));
@@ -164,8 +164,54 @@ public class R3VocabularyTests
         Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(claims, identity).Kind);
         var challenge = enforcement.Evaluate(claims with { Granted = grant with { Operations = [] }, PerCall = grant }, identity, parameters);
         Assert.Equal(R3EnforcementDecisionKind.PerCall, challenge.Kind);
-        var approved = claims with { Uri = challenge.ProposalUri!, S256 = challenge.ProposalS256! };
-        Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, identity, parameters, approvedProposalS256: approved.S256).Kind);
+        var approved = Approved(challenge.ProposalUri!, challenge.ProposalS256!, grant);
+        Assert.Equal(R3EnforcementDecisionKind.SingleUse, enforcement.Evaluate(approved, identity, parameters, approvedProposalS256: approved.S256).Kind);
+    }
+
+    [Fact]
+    public void ValidateOperations_RejectsDuplicateBareIdentifiers()
+    {
+        var metadata = R3Metadata.AddVocabularies(new JsonObject(), new Dictionary<string, string>
+        {
+            [Vocabulary.OpenApi] = "https://resource.test/openapi.json",
+        });
+        var request = R3Operations.OpenApi("list");
+        var authoritative = new[]
+        {
+            new R3OperationIdentity(Vocabulary.OpenApi, R3Operation.OpenApi("list")),
+            new R3OperationIdentity(Vocabulary.OpenApi, R3Operation.OpenApi("list") with { Service = "other" }),
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            R3Metadata.ValidateOperations(request, metadata, authoritative));
+
+        Assert.Contains("ambiguous", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task R3Challenge_RejectsDocumentOperationMissingFromAuthoritativeDefinition()
+    {
+        var store = new R3ProposalStore();
+        var document = store.AddBytes(R3Document.OpenApi([R3Operation.OpenApi("missing")]).ToUtf8Bytes(),
+            new Uri(R3TestData.ResourceIssuer), "/r3");
+        var challenge = new R3Challenge
+        {
+            ResourceIssuer = R3TestData.ResourceIssuer,
+            Audience = R3TestData.AsIssuer,
+            Key = AAuth.Crypto.AAuthKey.Generate(),
+            KeyId = R3TestData.ResourceKid,
+            OperationValidator = new R3OperationValidator(store,
+                new StaticR3AuthoritativeDefinitionProvider([R3OperationIdentity.OpenApi("known")])),
+        };
+        var presented = new AAuth.Tokens.TokenVerifier.VerifiedToken(new JsonObject(), new JsonObject
+        {
+            ["sub"] = "person-1",
+            ["jti"] = "person-token-1",
+            ["exp"] = DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds(),
+        }, R3TestData.PsIssuer, AAuth.Tokens.PersonTokenBuilder.TokenType);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => challenge.BuildResourceTokenAsync(
+            presented, agentJkt: "agent-jkt", r3Uri: document.Uri, r3S256: document.S256).AsTask());
     }
 
     [Theory]
@@ -203,15 +249,16 @@ public class R3VocabularyTests
             Assert.NotNull(R3Request.CreateBody(request, schemas: schemas));
             var payload = new JsonObject { ["r3_uri"] = "https://resource.test/r3/doc", ["r3_s256"] = R3Hash.ComputeS256(bytes), ["r3_granted"] = root.DeepClone() };
             var claims = R3ClaimReader.ReadAuthToken(payload, schemas);
-            var enforcement = new R3Enforcement(new R3ProposalStore(), new Uri("https://resource.test"), schemas: schemas);
+            var enforcement = new R3Enforcement(new R3ProposalStore(), new Uri("https://resource.test"), schemas: schemas,
+                singleUseGate: new InMemorySingleUseGate());
             var identity = new R3OperationIdentity(vocabulary, parsed);
             Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(claims, identity).Kind);
             var changed = parsed with { Extensions = new Dictionary<string, JsonElement>(parsed.Extensions!) { ["region"] = JsonSerializer.SerializeToElement("east") } };
             Assert.False(claims.Granted.Contains(new(vocabulary, changed)));
             var perCall = claims with { PerCall = claims.Granted, Granted = claims.Granted with { Operations = [] } };
             var challenge = enforcement.Evaluate(perCall, identity, new Dictionary<string, R3Parameter>());
-            var approved = claims with { Uri = challenge.ProposalUri!, S256 = challenge.ProposalS256! };
-            Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, identity, new Dictionary<string, R3Parameter>(), approvedProposalS256: approved.S256).Kind);
+            var approved = Approved(challenge.ProposalUri!, challenge.ProposalS256!, claims.Granted);
+            Assert.Equal(R3EnforcementDecisionKind.SingleUse, enforcement.Evaluate(approved, identity, new Dictionary<string, R3Parameter>(), approvedProposalS256: approved.S256).Kind);
         }
     }
 
@@ -327,14 +374,14 @@ public class R3VocabularyTests
             new R3Grant { Vocabulary = identity.Vocabulary, Operations = [] },
             new R3Grant { Vocabulary = identity.Vocabulary, Operations = [operation] });
         var store = new R3ProposalStore();
-        var enforcement = new R3Enforcement(store, new Uri("https://resource.test"));
+        var enforcement = new R3Enforcement(store, new Uri("https://resource.test"), singleUseGate: new InMemorySingleUseGate());
         var parameters = new Dictionary<string, R3Parameter> { ["value"] = R3Parameter.Inline(JsonValue.Create(1)!) };
         var billing = new R3OperationIdentity(identity.Vocabulary, R3Operation.Wsdl("create", "billing"));
         Assert.Equal(R3EnforcementDecisionKind.Rejected, enforcement.Evaluate(initial, billing, parameters).Kind);
         Assert.Equal(R3EnforcementDecisionKind.Rejected, enforcement.Evaluate(initial, R3OperationIdentity.OpenApi("create"), parameters).Kind);
         var challenge = enforcement.Evaluate(initial, identity, parameters);
-        var approved = new R3ClaimReader.AuthTokenClaims(challenge.ProposalUri!, challenge.ProposalS256!, initial.PerCall!, null);
-        Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, identity, parameters, approvedProposalS256: approved.S256).Kind);
+        var approved = Approved(challenge.ProposalUri!, challenge.ProposalS256!, initial.PerCall!);
+        Assert.Equal(R3EnforcementDecisionKind.SingleUse, enforcement.Evaluate(approved, identity, parameters, approvedProposalS256: approved.S256).Kind);
         var forgedGrant = approved with { Granted = new R3Grant { Vocabulary = billing.Vocabulary, Operations = [billing.Operation] } };
         Assert.Equal("proposal_tool_mismatch", enforcement.Evaluate(forgedGrant, billing, parameters, approvedProposalS256: approved.S256).Error);
     }
@@ -353,4 +400,12 @@ public class R3VocabularyTests
         Assert.True(store.TryGet(stored.S256, out var next));
         R3Hash.Verify(next, stored.S256);
     }
+
+    private static R3ClaimReader.AuthTokenClaims Approved(string uri, string s256, R3Grant grant) =>
+        new(uri, s256, grant, null)
+        {
+            Issuer = R3TestData.AsIssuer,
+            Jti = Guid.NewGuid().ToString("N"),
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+        };
 }

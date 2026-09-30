@@ -19,6 +19,9 @@ public static class R3ClaimReader
         R3Grant? PerCall)
     {
         public string? Account { get; init; }
+        public string? Issuer { get; init; }
+        public string? Jti { get; init; }
+        public DateTimeOffset? ExpiresAt { get; init; }
     }
 
     public static ResourceDocumentClaims? ReadResourceDocument(JsonObject payload)
@@ -46,7 +49,16 @@ public static class R3ClaimReader
         var perCall = ReadGrant(payload[R3AuthClaims.PerCallClaim], schemas);
         if (perCall is not null && perCall.Vocabulary != granted.Vocabulary)
             throw new InvalidOperationException("R3 granted and per-call vocabularies must match.");
-        return new AuthTokenClaims(doc.Uri, doc.S256, granted, perCall) { Account = doc.Account };
+        DateTimeOffset? expiresAt = null;
+        if (payload["exp"] is JsonValue expValue && expValue.TryGetValue<long>(out var exp))
+            expiresAt = DateTimeOffset.FromUnixTimeSeconds(exp);
+        return new AuthTokenClaims(doc.Uri, doc.S256, granted, perCall)
+        {
+            Account = doc.Account,
+            Issuer = (string?)payload["iss"],
+            Jti = (string?)payload["jti"],
+            ExpiresAt = expiresAt,
+        };
     }
 
     public static R3Grant? ReadGrant(JsonNode? node, R3VocabularySchemas? schemas = null)

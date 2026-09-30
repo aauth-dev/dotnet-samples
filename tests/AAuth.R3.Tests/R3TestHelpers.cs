@@ -73,6 +73,7 @@ internal static class R3TestData
         Audience = AsIssuer,
         Key = resourceKey,
         KeyId = ResourceKid,
+        OperationValidator = NoopOperationValidator.Instance,
     };
 
     public static ValueTask<string> ResourceTokenAsync(AAuthKey resourceKey, TokenVerifier.VerifiedToken presented, AAuthKey agentKey,
@@ -94,6 +95,14 @@ internal static class R3TestData
             Irreversible = "Booking a trip may charge the payment method on file.",
         },
     };
+}
+
+internal sealed class NoopOperationValidator : IR3OperationValidator
+{
+    public static readonly NoopOperationValidator Instance = new();
+    public ValueTask ValidateReferenceAsync(string r3Uri, string r3S256, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+    public ValueTask ValidateDocumentAsync(R3Document document, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+    public ValueTask ValidateProposalAsync(R3ProposalDocument proposal, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 }
 
 internal sealed class StaticJsonHandler : HttpMessageHandler

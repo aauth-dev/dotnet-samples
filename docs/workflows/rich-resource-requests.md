@@ -101,9 +101,9 @@ the R3 document itself carries only the spec fields (`operations` + `display`):
 `AddAAuthR3Documents` registers the `R3DocumentReaderPolicy` and an in-memory
 `IR3DocumentEntitlements`; `MapR3Document(pattern, getBytes)` resolves both from DI.
 Every resource token minted through `R3Challenge` entitles its `aud` (the AS) and
-`ps` (the PS) to read the document it names, keyed by the document's `r3_s256`. A
-PS evaluator reads only documents it is entitled to (or that the policy's
-`IsEntitledPersonServer` predicate admits); other documents look absent (`404`).
+`ps` (the PS) to read the exact `r3_uri`/`r3_s256` pair until that resource token
+expires. A configured AS or PS without an exact unexpired entitlement sees the
+document as absent (`404`).
 
 ```csharp
 builder.Services.AddAAuthR3Documents(_ =>
@@ -117,16 +117,20 @@ app.MapR3Document("/r3/{hash}", ctx =>
 // ChallengeAsync(context, ...) and per-call ToResultAsync(context, challenge, ...) use
 // the DI entitlements; set Entitlements when minting with BuildResourceTokenAsync.
 var entitlements = app.Services.GetRequiredService<IR3DocumentEntitlements>();
+var operationValidator = app.Services.GetRequiredService<IR3OperationValidator>();
 var challenge = new R3Challenge
 {
     ResourceIssuer = resourceUrl, Audience = asIssuer,
     Key = resourceKey, KeyId = ResourceKid, Entitlements = entitlements,
+    OperationValidator = operationValidator,
 };
 
 // A resource token minted without R3Challenge must entitle its readers itself.
 var stored = documents.AddBytes("{}"u8.ToArray(), new Uri(resourceUrl), "/r3");
-await entitlements.EntitleAsync(stored.S256, asIssuer);
-await entitlements.EntitleAsync(stored.S256, psIssuer);
+await entitlements.EntitleAsync(stored.Uri, stored.S256, asIssuer,
+    resourceTokenId: "resource-token-jti", expiresAt: DateTimeOffset.UtcNow.AddMinutes(5));
+await entitlements.EntitleAsync(stored.Uri, stored.S256, psIssuer,
+    resourceTokenId: "resource-token-jti", expiresAt: DateTimeOffset.UtcNow.AddMinutes(5));
 ```
 
 The in-memory entitlements are per process. Behind a load balancer, register a
@@ -143,12 +147,10 @@ ID, venue, date, party size, deposit, and cancellation policy.
 
 ## Vocabulary and API contracts
 
-> **Known non-conformance (remediation Phase 6).** On its own,
-> `R3Enforcement.Evaluate` returns `Granted` every time the same per-call auth
-> token is presented. R3 requires a per-call grant to be used once. Until
-> Phase 6 lands, run the execution through `IAAuthSingleUseGate.ExecuteOnceAsync`
-> keyed by the auth token's `jti`, as the Bookings sample does. See the
-> [remediation plan](../../.agent/plans/2026-09-30-v11-compliance-remediation/implementation-plan.md).
+R3 documents and proposals include a required `vocabulary` member. Before a
+resource token is minted, `R3Challenge` validates the referenced document or
+proposal through `IR3OperationValidator`, which checks every operation against the
+resource's authoritative definition and rejects ambiguous bare identifiers.
 
 All seven standard vocabularies have validated operation shapes. OpenAPI
 operation identity is the vocabulary plus `operationId`; WSDL may add an optional
@@ -163,13 +165,19 @@ IReadOnlyDictionary<string, R3Parameter> presentedParameters =
   new Dictionary<string, R3Parameter>();
 var result = enforcement.Evaluate(grantedClaims, identity, presentedParameters,
     approvedProposalS256: proposalHash, expectedAccount: account);
+object ExecuteOperation() => new { ok = true };
+if (result.Kind == R3EnforcementDecisionKind.SingleUse)
+{
+    return (await result.SingleUseGrant!.ExecuteOnceAsync(_ =>
+        Task.FromResult(HeldInvocationResult.Json(ExecuteOperation())))).ToResult();
+}
 ```
 
 An approved proposal retry must supply its proposal hash and matching parameters.
 For digest parameters, use `R3PresentedParameters` with the actual value bytes.
-The resource recovers the exact proposal bytes and rechecks their hash. Callers
-must distinguish class grants from proposal grants before serving a request, as
-the Bookings sample does using its stored document.
+The resource recovers the exact proposal bytes, rechecks their hash, and returns
+a `SingleUse` execute-once handle. Missing `jti`, `exp`, or a configured
+`IAAuthSingleUseGate` yields `single_use_required` instead of executing.
 
 The sample's `R3AccessServer:AuditPath` selects the SQLite file. Its default is
 `aauth-samples/r3-audit.sqlite` beneath local application data. Audit survives

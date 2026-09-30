@@ -19,6 +19,7 @@ public class R3ChallengeTimeTests
             Key = AAuthKey.Generate(),
             KeyId = R3TestData.ResourceKid,
             TimeProvider = new FakeTimeProvider(now),
+            OperationValidator = NoopOperationValidator.Instance,
         };
         var presented = new TokenVerifier.VerifiedToken(new JsonObject(), new JsonObject
         {

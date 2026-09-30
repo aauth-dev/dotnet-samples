@@ -214,7 +214,7 @@ public sealed class HeldInvocationTests
     }
 
     [Fact(DisplayName = "R3 per-call single use — concurrent presentations of one grant execute once and share the retained result")]
-    public async Task SingleUseGrant_ExecutesOncePerJti()
+    public async Task SingleUseGrant_ExecutesOncePerAuthTokenKey()
     {
         IAAuthSingleUseGate grants = new InMemorySingleUseGate();
         var executions = 0;
@@ -222,8 +222,9 @@ public sealed class HeldInvocationTests
             => Task.FromResult(HeldInvocationResult.Json(new { run = System.Threading.Interlocked.Increment(ref executions) }));
         var expiry = DateTimeOffset.UtcNow.AddMinutes(5);
 
-        var results = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => grants.ExecuteOnceAsync("grant-1", expiry, Execute)));
-        var other = await grants.ExecuteOnceAsync("grant-2", expiry, Execute);
+        var key = AAuthSingleUseKeys.ForAuthToken("https://as.test", "grant-1");
+        var results = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => grants.ExecuteOnceAsync(key, expiry, Execute)));
+        var other = await grants.ExecuteOnceAsync(AAuthSingleUseKeys.ForAuthToken("https://other-as.test", "grant-1"), expiry, Execute);
 
         Assert.All(results, result => Assert.Same(results[0], result));
         Assert.NotSame(results[0], other);

@@ -30,9 +30,8 @@ public static class R3DocumentEndpoint
     }
 
     /// <summary>
-    /// Map an R3 document using the DI-registered <see cref="R3DocumentReaderPolicy"/>. A Person
-    /// Server reads only documents it is entitled to (<see cref="IR3DocumentEntitlements"/>, or the
-    /// policy's <see cref="R3DocumentReaderPolicy.IsEntitledPersonServer"/>); others look absent.
+    /// Map an R3 document using the DI-registered <see cref="R3DocumentReaderPolicy"/>. Any configured
+    /// AS or PS must also hold an unexpired entitlement for the exact URI/hash; others look absent.
     /// </summary>
     public static IEndpointRouteBuilder MapR3Document(this IEndpointRouteBuilder endpoints,
         string pattern, Func<HttpContext, byte[]?> getBytes)
@@ -45,13 +44,11 @@ public static class R3DocumentEndpoint
         return endpoints.MapR3DocumentCore(pattern, async context =>
         {
             var bytes = getBytes(context);
-            if (bytes is null
-                || context.GetAAuthParsedKey() is not { Dwk: AAuthConstants.DwkFiles.Person, Identifier: { } personServer })
+            if (bytes is null || context.GetAAuthParsedKey() is not { Identifier: { } reader })
                 return bytes;
-            if (entitlements is null && readerPolicy.IsEntitledPersonServer is null) return bytes;
-            var entitled = readerPolicy.IsEntitledPersonServer?.Invoke(context, personServer) == true
-                || entitlements is not null && await entitlements.IsEntitledAsync(R3Hash.ComputeS256(bytes), personServer,
-                    context.RequestAborted).ConfigureAwait(false);
+            if (entitlements is null) return null;
+            var entitled = await entitlements.IsEntitledAsync(AbsoluteUri(context), R3Hash.ComputeS256(bytes), reader,
+                context.RequestAborted).ConfigureAwait(false);
             return entitled ? bytes : null;
         }, readerPolicy.Allows);
     }
@@ -112,6 +109,9 @@ public static class R3DocumentEndpoint
         });
         return endpoints;
     }
+
+    private static string AbsoluteUri(HttpContext context)
+        => $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{context.Request.Path}";
 
     public static async Task<R3VerifiedFetcher> VerifyFetcherAsync(
         HttpContext context,

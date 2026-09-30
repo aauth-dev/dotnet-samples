@@ -1109,6 +1109,22 @@ public class AccessEndpointR3Tests
     }
 
     [Fact]
+    public async Task TokenEndpoint_RejectsDocumentOperationMissingFromAuthoritativeDefinitionWithoutAudit()
+    {
+        var audit = new InMemoryR3AuditSink();
+        var invalid = R3Document.OpenApi([R3Operation.OpenApi("typo_trip")]).ToUtf8Bytes();
+        var fixture = await R3AccessFixture.CreateAsync(auditSink: audit, documentBytesOverride: invalid,
+            authoritativeOperations: [R3OperationIdentity.OpenApi("book_trip")]);
+        await using var app = fixture.App;
+
+        var response = await fixture.PostTokenAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("r3_evaluation_failed", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Empty(audit.Records);
+    }
+
+    [Fact]
     public async Task TokenEndpoint_MetadataAdvertisesDedicatedTokenEndpointAndJwks()
     {
         var fixture = await R3AccessFixture.CreateAsync();
@@ -1144,6 +1160,9 @@ public class AccessEndpointR3Tests
         Assert.Equal(R3TestData.AgentId, record.AgentId);
         Assert.Equal(R3TestData.ResourceIssuer, record.ResourceIssuer);
         Assert.Equal(R3TestData.AsIssuer, record.AccessServerIssuer);
+        Assert.Equal(R3TestData.PsIssuer, record.PersonServer);
+        Assert.Equal(R3TestData.PersonSubject, record.Subject);
+        Assert.False(string.IsNullOrWhiteSpace(record.AgentJkt));
         Assert.Equal(expectedKind, record.IssuanceKind);
         Assert.InRange(record.IssuedAt.ToUnixTimeSeconds(), earliest.ToUnixTimeSeconds(), latest.ToUnixTimeSeconds());
         Assert.False(string.IsNullOrWhiteSpace(record.TokenId));
@@ -1205,6 +1224,7 @@ public class AccessEndpointR3Tests
             byte[]? documentBytesOverride = null,
             byte[]? proposalBytesOverride = null,
             R3VocabularySchemas? vocabularySchemas = null,
+            IReadOnlyList<R3OperationIdentity>? authoritativeOperations = null,
             Action? onFetch = null,
             Action? onPolicy = null,
             Func<R3ProposalDocument, bool>? isProposalAllowed = null)
@@ -1232,6 +1252,8 @@ public class AccessEndpointR3Tests
             var proposalBytes = proposalBytesOverride ?? proposal.ToUtf8Bytes();
             var proposalS256 = R3Hash.ComputeS256(proposalBytes);
             var proposalUri = $"{R3TestData.ResourceIssuer}/r3/proposals/{proposalS256}";
+            var schemas = vocabularySchemas ?? R3VocabularySchemas.Standard;
+            var authoritative = authoritativeOperations ?? ExtractAuthoritative(docBytes, proposalBytes, schemas);
 
             var discovery = new StaticJsonHandler()
                 .AddJson($"{R3TestData.PsIssuer}/.well-known/aauth-person.json", R3TestData.Metadata(R3TestData.PsIssuer, AuthTokenBuilder.PersonDwk))
@@ -1280,7 +1302,8 @@ public class AccessEndpointR3Tests
                 options.RequireProposalConsent = requireProposalConsent;
                 options.BrowserConsent = new AAuth.Server.BrowserConsentSessions("Test.R3.Consent", "isolated-test-user", isolatedDemoAccess: _ => true);
                 options.AuditSink = auditSink ?? new InMemoryR3AuditSink();
-                options.VocabularySchemas = vocabularySchemas ?? R3VocabularySchemas.Standard;
+                options.VocabularySchemas = schemas;
+                options.AuthoritativeDefinitions = new StaticR3AuthoritativeDefinitionProvider(authoritative);
                 options.IsScopeAllowed = isScopeAllowed;
                 options.IsOperationAllowed = _ => { onPolicy?.Invoke(); return true; };
                 options.IsProposalAllowed = isProposalAllowed;
@@ -1313,6 +1336,27 @@ public class AccessEndpointR3Tests
                 ProposalS256 = proposalS256,
                 ProposalResourceToken = await R3TestData.ResourceTokenAsync(resourceKey, presented, agentKey, proposalUri, proposalS256),
             };
+        }
+
+        private static IReadOnlyList<R3OperationIdentity> ExtractAuthoritative(byte[] docBytes, byte[] proposalBytes, R3VocabularySchemas schemas)
+        {
+            var operations = new List<R3OperationIdentity>();
+            try
+            {
+                var document = R3Document.FromUtf8Bytes(docBytes, schemas: schemas);
+                operations.AddRange(document.Operations.Select(operation => new R3OperationIdentity(document.Vocabulary, operation)));
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or JsonException) { }
+            try
+            {
+                var proposal = R3ProposalDocument.FromUtf8Bytes(proposalBytes, schemas: schemas);
+                operations.AddRange(proposal.Operations.Select(operation => new R3OperationIdentity(proposal.Vocabulary, operation)));
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or JsonException) { }
+            operations = operations.Distinct().ToList();
+            return operations.Count == 0
+                ? [R3OperationIdentity.OpenApi("search_trip_options"), R3OperationIdentity.OpenApi("hold_itinerary"), R3OperationIdentity.OpenApi("book_trip")]
+                : operations;
         }
 
         // A person token for this resource plus a resource token naming it, bound to agentKey.

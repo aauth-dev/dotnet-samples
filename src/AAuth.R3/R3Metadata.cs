@@ -38,12 +38,7 @@ public static class R3Metadata
         if (metadata[VocabulariesProperty] is not JsonObject vocabularies || !vocabularies.ContainsKey(request.Vocabulary))
             throw new InvalidOperationException("Requested vocabulary is not advertised by this resource.");
         AddVocabularies(new JsonObject(), vocabularies.ToDictionary(entry => entry.Key, entry => entry.Value), schemas);
-        var authoritative = authoritativeOperations.ToArray();
-        foreach (var operation in request.Operations)
-        {
-            if (!authoritative.Any(identity => identity.Matches(request.Vocabulary, operation)))
-                throw new InvalidOperationException("Requested operation is not in the authoritative definition.");
-        }
+        R3OperationValidation.ValidateGrant(request.ToGrant(), authoritativeOperations, schemas);
     }
 
     private static void ValidateEndpoint(JsonNode? node)

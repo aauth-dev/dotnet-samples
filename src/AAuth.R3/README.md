@@ -84,13 +84,21 @@ PS entitlement. Agent requests are rejected.
 
 Register the policy with `services.AddAAuthR3Documents(sp => policy)`, which also
 adds the in-memory `IR3DocumentEntitlements` default, and map documents with
-`MapR3Document(pattern, getBytes)`. Each `R3Challenge` mint entitles the token's
-`aud` and `ps` to read its `r3_s256`: `ChallengeAsync(context, …)` and
+`MapR3Document(pattern, getBytes)`. Each `R3Challenge` mint validates the
+referenced document/proposal through `IR3OperationValidator`, then entitles the
+token's `aud` and `ps` to read the exact `r3_uri`/`r3_s256` until the resource
+token expires. `ChallengeAsync(context, …)` and
 `R3EnforcementDecision.ToResultAsync(context, challenge, …)` use
-`R3Challenge.Entitlements` or the DI-registered store. A PS evaluator reads a
-document only when entitled (or admitted by `IsEntitledPersonServer`). Call
-`IR3DocumentEntitlements.EntitleAsync` yourself for resource tokens minted another
-way. Register a shared implementation first to scale out.
+`R3Challenge.Entitlements` or the DI-registered store. Call
+`IR3DocumentEntitlements.EntitleAsync(uri, s256, reader, tokenId, expiresAt)`
+yourself for resource tokens minted another way. Register shared validator and
+entitlement implementations first to scale out.
+
+Approved per-call retries return `R3EnforcementDecisionKind.SingleUse` with a
+`SingleUseGrant` handle. Execute the operation through
+`SingleUseGrant.ExecuteOnceAsync`; replays of the same auth-token `(iss, jti)`
+receive the retained result. Missing gate, `jti`, or `exp` returns
+`single_use_required`.
 
 The R3 Access Server registers its options with
 `services.AddR3AccessTokenEndpoint(o => { … })` and maps them with

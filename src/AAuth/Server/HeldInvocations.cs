@@ -99,6 +99,18 @@ public static class AAuthSingleUseGateExtensions
     }
 }
 
+/// <summary>Builds retained-result keys for auth-token single-use enforcement.</summary>
+public static class AAuthSingleUseKeys
+{
+    /// <summary>Returns the canonical retained-result key for an auth token issuer and token id.</summary>
+    public static string ForAuthToken(string issuer, string jti)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(issuer);
+        ArgumentException.ThrowIfNullOrEmpty(jti);
+        return issuer + "\n" + jti;
+    }
+}
+
 /// <summary>In-memory <see cref="IAAuthSingleUseGate"/>; state is lost on restart and not shared across instances.</summary>
 public sealed class InMemorySingleUseGate(TimeProvider? timeProvider = null) : IAAuthSingleUseGate
 {
@@ -174,7 +186,7 @@ public sealed class InMemorySingleUseGate(TimeProvider? timeProvider = null) : I
 public sealed record HeldInvocation(string Id, string Operation, string ResourceToken, string AgentJkt,
     IReadOnlyList<string> RequiredScopes, DateTimeOffset PendingExpiresAt, JsonObject? State = null)
 {
-    /// <summary>The auth token <c>jti</c> that consumed it, once executed.</summary>
+    /// <summary>The auth token retained-result key that consumed it, once executed.</summary>
     public string? ConsumedBy { get; init; }
 
     /// <summary>Whether the first timeout observation has already been reported.</summary>
@@ -191,10 +203,10 @@ public interface IAAuthHeldInvocationStore
     ValueTask<HeldInvocation?> GetAsync(string id, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Atomically mark the invocation consumed by <paramref name="jti"/>, retained until
+    /// Atomically mark the invocation consumed by <paramref name="singleUseKey"/>, retained until
     /// <paramref name="retainUntil"/>. True only for the call that consumes it.
     /// </summary>
-    ValueTask<bool> TryConsumeAsync(string id, string jti, DateTimeOffset retainUntil, CancellationToken cancellationToken = default);
+    ValueTask<bool> TryConsumeAsync(string id, string singleUseKey, DateTimeOffset retainUntil, CancellationToken cancellationToken = default);
 
     /// <summary>Atomically mark a known unconsumed invocation expired. True only for the first observer.</summary>
     ValueTask<bool> TryExpireAsync(string id, CancellationToken cancellationToken = default);
@@ -220,12 +232,12 @@ public sealed class InMemoryHeldInvocationStore(TimeProvider? timeProvider = nul
         => ValueTask.FromResult(_entries.TryGetValue(id, out var entry) ? entry.Invocation : null);
 
     /// <inheritdoc/>
-    public ValueTask<bool> TryConsumeAsync(string id, string jti, DateTimeOffset retainUntil, CancellationToken cancellationToken = default)
+    public ValueTask<bool> TryConsumeAsync(string id, string singleUseKey, DateTimeOffset retainUntil, CancellationToken cancellationToken = default)
     {
         while (_entries.TryGetValue(id, out var entry))
         {
             if (entry.Invocation.ConsumedBy is not null || entry.Invocation.ExpiredObserved) return ValueTask.FromResult(false);
-            var consumed = (entry.Invocation with { ConsumedBy = jti }, (DateTimeOffset?)retainUntil);
+            var consumed = (entry.Invocation with { ConsumedBy = singleUseKey }, (DateTimeOffset?)retainUntil);
             if (_entries.TryUpdate(id, consumed, entry)) return ValueTask.FromResult(true);
         }
         return ValueTask.FromResult(false);
@@ -351,10 +363,10 @@ internal sealed class AAuthHeldInvocations(IOptions<AAuthHeldInvocationOptions> 
                 : new PendingResult(PathPrefix + "/" + id, entry.ResourceToken);
         }
 
-        var key = id + ":" + jti;
+        var key = AAuthSingleUseKeys.ForAuthToken(assertion.Token.Issuer, jti);
         if (await gate.GetResultAsync(key, context.RequestAborted).ConfigureAwait(false) is { } retained)
             return new RetainedResult(retained);
-        if (entry.ConsumedBy is { } consumer && consumer != jti)
+        if (entry.ConsumedBy is { } consumer && consumer != key)
             return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
         if (entry.ExpiredObserved)
             return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
@@ -377,7 +389,7 @@ internal sealed class AAuthHeldInvocations(IOptions<AAuthHeldInvocationOptions> 
         try
         {
             // Consumed already means an earlier execution whose retained result has lapsed: never run twice.
-            if (!await store.TryConsumeAsync(id, jti, assertion.Token.ExpiresAt, context.RequestAborted).ConfigureAwait(false))
+            if (!await store.TryConsumeAsync(id, key, assertion.Token.ExpiresAt, context.RequestAborted).ConfigureAwait(false))
             {
                 await gate.ReleaseAsync(key, CancellationToken.None).ConfigureAwait(false);
                 return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);

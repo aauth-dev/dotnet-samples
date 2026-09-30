@@ -217,7 +217,7 @@ the original request body. The shipped samples keep answering with `401`.
 seams with `TryAdd`, so an implementation registered first wins:
 
 - `IAAuthHeldInvocationStore` — parked invocations (`InMemoryHeldInvocationStore`);
-- `IAAuthSingleUseGate` — one execution per auth-token `jti` and the retained
+- `IAAuthSingleUseGate` — one execution per auth-token `(iss, jti)` and the retained
   result (`InMemorySingleUseGate`);
 - `IAAuthHeldInvocations` — the hold and poll logic over the two stores.
 
@@ -232,7 +232,8 @@ runs once per grant and answers later presentations from the retained result.
 
 ```csharp
 var gate = app.Services.GetRequiredService<IAAuthSingleUseGate>();
-var retained = await gate.ExecuteOnceAsync("auth-token-jti", DateTimeOffset.UtcNow.AddMinutes(5),
+var key = AAuthSingleUseKeys.ForAuthToken("https://as.example", "auth-token-jti");
+var retained = await gate.ExecuteOnceAsync(key, DateTimeOffset.UtcNow.AddMinutes(5),
     ct => Task.FromResult(HeldInvocationResult.Json(new { confirmed = true })));
 IResult reply = retained.ToResult();
 ```

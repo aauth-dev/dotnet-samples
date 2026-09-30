@@ -90,6 +90,9 @@ public static class R3AccessTokenEndpoint
             var payload = JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(token.Split('.')[1]))!;
             await options.AuditSink.RecordTokenIssuanceAsync(new R3TokenIssuanceAuditRecord(
                 parts.Uri, parts.S256, issuance.AgentId, resourceIssuer, issuer,
+                parts.PersonServer ?? throw new InvalidOperationException("R3 audit requires ps."),
+                parts.Subject ?? throw new InvalidOperationException("R3 audit requires sub."),
+                issuance.ConfirmationKey.ComputeJwkThumbprint(),
                 DateTimeOffset.FromUnixTimeSeconds((long)payload["iat"]!), parts.IssuanceKind)
             {
                 Account = parts.Account,
@@ -432,6 +435,7 @@ public static class R3AccessTokenEndpoint
         if (IsProposal(bytes))
         {
             var proposal = R3ProposalDocument.FromUtf8Bytes(bytes, schemas: options.VocabularySchemas);
+            await ValidateOperationsAsync(options, proposal, cancellationToken).ConfigureAwait(false);
             if (!AccountBinding.Matches(r3.Account, proposal.Account))
                 throw new TokenVerificationException("R3 proposal account differs from resource token.");
             if (options.IsOperationAllowed?.Invoke(new(proposal.Vocabulary, proposal.Operations[0])) == false ||
@@ -449,6 +453,7 @@ public static class R3AccessTokenEndpoint
         }
 
         var document = R3Document.FromUtf8Bytes(bytes, schemas: options.VocabularySchemas);
+        await ValidateOperationsAsync(options, document, cancellationToken).ConfigureAwait(false);
         if (!AccountBinding.Matches(r3.Account, document.Account))
             throw new TokenVerificationException("R3 document account differs from resource token.");
         // Spec (r3 §Auth Token Extensions): the AS — not the resource — decides which
@@ -464,12 +469,45 @@ public static class R3AccessTokenEndpoint
             if (options.IsOperationAllowed?.Invoke(identity) == false) continue;
             (isPerCall(identity) ? perCall : granted).Add(operation);
         }
+
         return new AuthMintParts(
             r3.Uri,
             r3.S256,
             new R3Grant { Vocabulary = document.Vocabulary, Operations = granted },
             perCall.Count == 0 ? null : new R3Grant { Vocabulary = document.Vocabulary, Operations = perCall },
             R3TokenIssuanceKind.Class, Account: document.Account);
+    }
+
+    private static async ValueTask ValidateOperationsAsync(R3AccessTokenEndpointOptions options, R3Document document,
+        CancellationToken cancellationToken)
+    {
+        if (options.OperationValidator is not null)
+        {
+            await options.OperationValidator.ValidateDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (options.AuthoritativeDefinitions is not null)
+        {
+            var authoritative = await options.AuthoritativeDefinitions.GetOperationsAsync(document.Vocabulary, cancellationToken).ConfigureAwait(false);
+            R3OperationValidation.ValidateGrant(new R3Grant { Vocabulary = document.Vocabulary, Operations = document.Operations },
+                authoritative, options.VocabularySchemas);
+        }
+    }
+
+    private static async ValueTask ValidateOperationsAsync(R3AccessTokenEndpointOptions options, R3ProposalDocument proposal,
+        CancellationToken cancellationToken)
+    {
+        if (options.OperationValidator is not null)
+        {
+            await options.OperationValidator.ValidateProposalAsync(proposal, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (options.AuthoritativeDefinitions is not null)
+        {
+            var authoritative = await options.AuthoritativeDefinitions.GetOperationsAsync(proposal.Vocabulary, cancellationToken).ConfigureAwait(false);
+            R3OperationValidation.ValidateGrant(new R3Grant { Vocabulary = proposal.Vocabulary, Operations = proposal.Operations },
+                authoritative, options.VocabularySchemas);
+        }
     }
 
     private static async Task<byte[]> FetchAsync(
@@ -712,6 +750,8 @@ public sealed class R3AccessTokenEndpointOptions
     public IR3AuditSink AuditSink { get; set; } = null!;
     public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
     public R3VocabularySchemas VocabularySchemas { get; set; } = R3VocabularySchemas.Standard;
+    public IR3OperationValidator? OperationValidator { get; set; }
+    public IR3AuthoritativeDefinitionProvider? AuthoritativeDefinitions { get; set; }
     public Func<R3OperationIdentity, bool>? IsOperationAllowed { get; set; }
     public Func<R3ProposalDocument, bool>? IsProposalAllowed { get; set; }
     public Func<string, string, bool>? IsScopeAllowed { get; set; }

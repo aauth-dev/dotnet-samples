@@ -883,6 +883,49 @@ HTTP call is in flight, and asserts the AS request is cancelled, no AS pending
 entry is created, and the agent sees `403 revoked` with `detail` naming the
 presented token.
 
+### [2026-09-30] [Phase 6] R04 — R3 single use, audit and entitlement
+
+RESOLVED.
+
+- `R3Enforcement` now returns an execute-once `SingleUse` handle for approved
+  per-call proposal retries. The handle uses the canonical `(auth token iss,
+  jti)` retained-result key through `IAAuthSingleUseGate`; missing gate, `jti`
+  or `exp` rejects with `single_use_required`. The 202 held-invocation path uses
+  the same key builder.
+- R3 token issuance audit records now include `ps`, `sub` and `agent_jkt`; the
+  SQLite sample sink stores those as first-class non-null audit columns.
+- R3 document entitlements are exact `r3_uri`/`r3_s256`/reader/resource-token
+  grants with expiry, and `R3Challenge` entitles both the `aud` AS and `ps` PS
+  only after validating the referenced document/proposal.
+- Added `IR3AuthoritativeDefinitionProvider` / `IR3OperationValidator` and
+  fail-closed `R3Challenge` reference validation; duplicate bare identifiers and
+  absent operations are rejected.
+- Updated Bookings/Catalog samples and R3 docs/README for the `SingleUse`
+  pattern, required `vocabulary`, URI-bound entitlements and authoritative
+  validation.
+
+Negative controls:
+`ResourceR3Tests::ApprovedProposalRetry_UsesSingleUseGateAndReturnsRetainedResult`,
+`ResourceR3Tests::ApprovedProposalRetry_MissingSingleUsePrerequisiteRejects`,
+`R3AutoEntitlementTests::ThirdSigner_Rejected_UntilHostEntitles`,
+`R3VocabularyTests::ValidateOperations_RejectsDuplicateBareIdentifiers`,
+`R3VocabularyTests::R3Challenge_RejectsDocumentOperationMissingFromAuthoritativeDefinition`,
+and
+`AccessEndpointR3Tests::TokenEndpoint_RejectsDocumentOperationMissingFromAuthoritativeDefinitionWithoutAudit`.
+
+### [2026-09-30] [Phase 6] e2e regressions
+
+RESOLVED.
+
+The R3 Access Server's authoritative operation list covered only Bookings after
+Phase 6 added fail-closed validation, but the e2e topology also routes the merged
+Travel Catalog through that AS. Catalog resource-token exchange therefore failed
+at the AS with `r3_evaluation_failed` before the sibling-operation recovery flow
+could complete. The sample AS default authoritative OpenAPI operations now include
+the Catalog's renamed merged-definition operation ids (`listDestinations`,
+`listExperiences`) while preserving `confirmReservation` as the only per-call
+default.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 1] SMP-01 matches the exact agent id, not id plus key
