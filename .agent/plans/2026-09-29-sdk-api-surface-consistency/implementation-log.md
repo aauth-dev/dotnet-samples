@@ -752,7 +752,47 @@ PROCEEDED (Phase 10 part 3 of 4; the seams moved here from Phases 4 and 5).
   78 passed, 1 skipped, `--retries=0` (an earlier run on a loaded machine timed
   out in page setup; the rerun and the per-project runs were clean).
 
+### [2026-09-30] [Phase 10] Wrap-up and Definition of Done
+
+PROCEEDED.
+- **`AAuthClientBuilder` left in SampleApp pages** (each commented in place):
+  - signing-mode lessons: `Hwk.razor`, `Jwt.razor`, `JwksUri.razor`,
+    `JktJwt.razor` (panes and handlers);
+  - held-token lessons: `Bookings.razor` `CheckPreviousGrant` (presents the
+    previous account's grant) and the `Mission.razor` gate 2/3 panes (walk
+    challenge, exchange and retry with a held person token and auth token);
+  - `CallChain.razor` pane showing the Concierge's own code (another app).
+- **`.Build()` outside startup:** no request or page handler builds an agent
+  client. What remains builds a client around one specific held token for a
+  hand-walked protocol step: `DocumentDemoSession`, `WalletDemoSession`,
+  `CatalogDemoSession`, `FederatedWorkerScenario`, `TourSession` (sub-agent
+  step), the lesson pages above, and `LiveWhoAmITest` (a console smoke test).
+  The GuidedTour `CodeSnippets.cs` and walkthrough strings are display text,
+  swept in Phase 11.
+- **Configuration reads:** SampleApp reads no `AAuth:PersonServer`,
+  `AAuth:SelfIssuer` or `AAuth:SelfAgentId`; Aria's registration is the only
+  source. The walkthrough components keep `Configuration["AAuth:PersonServer"]`
+  only as a fallback when their host passes no `PersonServer`. The Concierge
+  binds no agent section, so its `AAuth:*` keys are not duplicates.
+- **`make demo`:** every service answered, and the `sample-app` Playwright
+  project ran against the live stack (reusing its servers): 35 passed,
+  1 skipped.
+- **Keycloak profile:** `federated-deferred` passed (1 passed). The first
+  attempt timed out opening a browser page while swap was full; shutting down
+  idle build servers fixed it.
+- **Full Playwright:** 78 passed, 1 skipped (Phase 10c run).
+
 ## Deviations from plan
+
+### [2026-09-30] [Phase 10] Teaching panes and dashboard URLs move to Phase 11
+
+PROCEEDED. "GuidedTour and CapabilitySupport code panes show the DI path by
+default" is the same work as Phase 11's `CodeSnippets.cs` and walkthrough-pane
+sweep, so it moves there. The dashboard URL call sites were left as they are:
+MissionAgent and AgentConsole build `{ps}/dashboard` from the same variable
+they register the agent with, `PersonServerConsent.DashboardUrl` takes the PS
+from its host page (SampleApp passes Aria's), and `TourSession.PersonServer`
+is the tour's configured PS, not an agent registration.
 
 ### [2026-09-30] [Phase 10c] Observers are multi-registration, not a builder seam
 

@@ -606,13 +606,13 @@ This is the highest-blast-radius client change.
 
 ### Definition of Done
 
-- [ ] Grep evidence:
+- [x] Grep evidence:
   - no `AAuthClientBuilder` in SampleApp pages except signing-mode lessons
     (each listed in the log);
   - no `.Build()` inside request handlers;
   - no `Configuration["AAuth:...` reads that duplicate a bound section.
-- [ ] `make demo` works end-to-end (closes the convenience-apis Phase 7 box).
-- [ ] Full Playwright suite green with `--retries=0`; Keycloak profile green.
+- [x] `make demo` works end-to-end (closes the convenience-apis Phase 7 box).
+- [x] Full Playwright suite green with `--retries=0`; Keycloak profile green.
 
 ## Phase 11 — Samples, snippets and docs sweep
 
