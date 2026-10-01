@@ -228,12 +228,13 @@ public sealed class SnippetCompilationTests
             appendix.AppendLine($"| [{snippet.Key}](../../../{snippet.File}#L{snippet.Line}) | {snippet.Language} | `{snippet.Hash}` | {status} | {EvidenceFor(snippet.File)} |");
         var report = appendix.ToString();
         File.WriteAllText(Path.Combine(Path.GetTempPath(), "aauth-phase13-docs-surface.md"), report);
-        var mapPath = Path.Combine(RepositoryRoot(), ".agent/plans/2026-09-11-aauth-v11-spec-migration/docs-surface-map.md");
-        var existing = File.ReadAllText(mapPath);
+        const string snapshotFile = "tests/AAuth.Tests/Api/DocumentationInventory.snapshot.md";
+        var snapshotPath = Path.Combine(RepositoryRoot(), snapshotFile);
+        var existing = File.ReadAllText(snapshotPath);
         const string marker = "<!-- generated-docs-surface -->";
         var expected = existing[..(existing.IndexOf(marker, StringComparison.Ordinal) + marker.Length)] + report;
-        if (Environment.GetEnvironmentVariable("AAUTH_UPDATE_DOCS_INVENTORY") == "1") File.WriteAllText(mapPath, expected);
-        else Assert.True(existing == expected, "Documentation inventory is stale; regenerate only after reviewing changed surfaces.");
+        if (Environment.GetEnvironmentVariable("AAUTH_UPDATE_DOCS_INVENTORY") == "1") File.WriteAllText(snapshotPath, expected);
+        else Assert.True(existing == expected, $"Documentation inventory snapshot {snapshotFile} is stale. Review the changed documentation, then regenerate with AAUTH_UPDATE_DOCS_INVENTORY=1 and commit the snapshot.");
     }
 
     private static string CheckSnippet(DocumentationSnippet snippet)
