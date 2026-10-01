@@ -251,9 +251,10 @@ public sealed class AccessServerClient
                     if (response.StatusCode == HttpStatusCode.Forbidden
                         && await IsDeniedAsync(response, cancellationToken).ConfigureAwait(false))
                     {
+                        var detail = await AAuth.Agent.InteractionDenial.ReadDetailAsync(response, cancellationToken).ConfigureAwait(false);
                         response.Dispose();
-                        throw new AAuthInteractionDeniedException(
-                            "The Access Server denied the request after the claims push.");
+                        throw new AAuthInteractionDeniedException(string.IsNullOrWhiteSpace(detail)
+                            ? "The Access Server denied the request after the claims push." : detail);
                     }
                 }
                 else
@@ -277,9 +278,11 @@ public sealed class AccessServerClient
                     if (response.StatusCode == HttpStatusCode.Forbidden
                         && await IsDeniedAsync(response, cancellationToken).ConfigureAwait(false))
                     {
+                        var detail = await AAuth.Agent.InteractionDenial.ReadDetailAsync(response, cancellationToken).ConfigureAwait(false);
                         response.Dispose();
+                        // The PS relays this message to the agent as the `denied` detail.
                         throw new AAuthInteractionDeniedException(
-                            "The user denied the AAuth interaction request.");
+                            string.IsNullOrWhiteSpace(detail) ? AAuth.Agent.InteractionDenial.DefaultMessage : detail);
                     }
                 }
             }

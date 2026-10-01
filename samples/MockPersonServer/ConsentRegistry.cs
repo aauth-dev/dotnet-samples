@@ -65,7 +65,8 @@ public sealed class ConsentRecord
     public BrowserInteraction Browser => PersonEntry?.Browser ?? MissionEntry!.Browser;
     public string AgentId => PersonEntry?.ConsentAgentId ?? MissionEntry!.AgentId;
     public string? Resource => PersonEntry?.ResourceUrl ?? MissionEntry!.Resource;
-    public string? Scope => PersonEntry is { } entry ? (entry.PersonToken ? null : entry.Scope) : MissionEntry!.Scope;
+    public string? Scope => PersonEntry is { } entry ? (entry.PersonToken ? null : ConsentDisplay.Scope(entry)) : MissionEntry!.Scope;
+    public string? R3Uri => PersonEntry is { } entry ? ConsentDisplay.R3Uri(entry) : null;
     public string? Account => PersonEntry?.Account;
     public string? Action => MissionEntry?.Action;
 

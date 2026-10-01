@@ -25,9 +25,10 @@ evaluates policy and mints the auth token.
      `aud` = this AS — the discriminator that distinguishes four-party from
      three-party.
   5. Evaluates access policy through a pluggable `IAccessPolicy`:
-     - `stub` (default) — a hard-coded allow policy that denies elevated
-       (`:`-qualified) scopes to non-admin agents, can require identity
-       claims (§Claims Required) via `AccessServer:RequireClaims`, and can
+     - `stub` (default) — a hard-coded allow policy that grants the elevated
+       `wallet.charge` scope only when the person holds the `wallet.payer`
+       role, which it asks the PS for (§Claims Required), can require further
+       identity claims via `AccessServer:RequireClaims`, and can
        render its own interactive Approve/Deny consent screen via
        `AccessServer:RequireConsent` (returns `202`
        `requirement=interaction` until the user decides) — no Docker needed.

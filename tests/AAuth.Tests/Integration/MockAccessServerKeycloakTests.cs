@@ -30,7 +30,8 @@ namespace AAuth.Tests.Integration;
 ///   3. The PS polls <c>/pending/{id}</c> → <c>200 auth_token</c> (allow) or
 ///      <c>403 denied</c> (deny), mirroring the PS deferred shape.
 /// The stub Keycloak grants <c>wallet.read</c> to anyone and <c>wallet.charge</c>
-/// only when the claim_token carries the <c>wallet.payer</c> role.
+/// only to the logged-in <c>demo</c> user, who holds the <c>wallet.payer</c> realm
+/// role (the real realm's role policy reads the user, never the agent).
 /// </summary>
 public class MockAccessServerKeycloakTests
 {
@@ -38,8 +39,7 @@ public class MockAccessServerKeycloakTests
     private const string PsIssuer = "https://ps.test";
     private const string ApIssuer = "https://ap.example";
     private const string ResourceUrl = "https://wallet.test";
-    private const string AdminAgentId = "aauth:demo@ap.example";  // admin by demo convention.
-    private const string GuestAgentId = "aauth:guest@ap.example"; // non-admin.
+    private const string AgentId = "aauth:demo@ap.example";
 
     private const string PsKid = "ps-1";
     private const string ApKid = "ap-1";
@@ -55,7 +55,7 @@ public class MockAccessServerKeycloakTests
         using var factory = BuildFactory();
 
         // 1. PS POSTs /token → expect 202 requirement=interaction.
-        var pendingPath = await StartInteractionAsync(factory, GuestAgentId, "wallet.read");
+        var pendingPath = await StartInteractionAsync(factory, AgentId, "wallet.read");
 
         // 2. The user completes the Keycloak login/consent round-trip.
         await CompleteCallbackAsync(factory, pendingPath);
@@ -75,12 +75,12 @@ public class MockAccessServerKeycloakTests
     }
 
     [Fact]
-    public async Task InteractiveFlow_GrantsAdminScope_ForAdminAgent()
+    public async Task InteractiveFlow_GrantsAdminScope_ForPayerUser()
     {
         using var factory = BuildFactory();
 
-        var pendingPath = await StartInteractionAsync(factory, AdminAgentId, "wallet.charge");
-        await CompleteCallbackAsync(factory, pendingPath);
+        var pendingPath = await StartInteractionAsync(factory, AgentId, "wallet.charge");
+        await CompleteCallbackAsync(factory, pendingPath, user: "demo");
 
         using var signed = BuildPsSignedClient(factory);
         var poll = await signed.GetAsync(pendingPath);
@@ -93,14 +93,14 @@ public class MockAccessServerKeycloakTests
     }
 
     [Fact]
-    public async Task InteractiveFlow_DeniesAdminScope_ForNonAdminAgent()
+    public async Task InteractiveFlow_DeniesAdminScope_ForGuestUser()
     {
         using var factory = BuildFactory();
 
-        // Guest agent requesting the elevated scope: Keycloak denies because
-        // the claim_token carries no wallet.payer role.
-        var pendingPath = await StartInteractionAsync(factory, GuestAgentId, "wallet.charge");
-        await CompleteCallbackAsync(factory, pendingPath);
+        // The same agent, but the user who logs in at Keycloak is `guest`, who
+        // lacks the wallet.payer realm role, so Keycloak denies the elevated scope.
+        var pendingPath = await StartInteractionAsync(factory, AgentId, "wallet.charge");
+        await CompleteCallbackAsync(factory, pendingPath, user: "guest");
 
         using var signed = BuildPsSignedClient(factory);
         var poll = await signed.GetAsync(pendingPath);
@@ -119,8 +119,8 @@ public class MockAccessServerKeycloakTests
         using var signed = BuildPsSignedClient(factory);
         var response = await signed.PostAsJsonAsync("/token", new JsonObject
         {
-            ["agent_token"] = await BuildAgentTokenAsync(agentKey, GuestAgentId),
-            ["resource_token"] = await BuildResourceTokenAsync(agentKey, AsIssuer, GuestAgentId, "wallet.read"),
+            ["agent_token"] = await BuildAgentTokenAsync(agentKey, AgentId),
+            ["resource_token"] = await BuildResourceTokenAsync(agentKey, AsIssuer, AgentId, "wallet.read"),
             ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
 
@@ -136,7 +136,7 @@ public class MockAccessServerKeycloakTests
     public async Task KeycloakCannotBeBypassedByStubDecision(string action)
     {
         using var factory = BuildFactory();
-        var pendingPath = await StartInteractionAsync(factory, GuestAgentId, "wallet.charge");
+        var pendingPath = await StartInteractionAsync(factory, AgentId, "wallet.charge");
         using var browser = factory.CreateClient();
         using var bypass = await browser.PostAsync("/interaction/" + action, new FormUrlEncodedContent(
             new Dictionary<string, string> { ["code"] = pendingPath.Split('/')[^1] }));
@@ -150,7 +150,7 @@ public class MockAccessServerKeycloakTests
     public async Task KeycloakCallbackRejectsCodeWithoutInitiatingBrowser()
     {
         using var factory = BuildFactory();
-        var pendingPath = await StartInteractionAsync(factory, GuestAgentId, "wallet.charge");
+        var pendingPath = await StartInteractionAsync(factory, AgentId, "wallet.charge");
         using var browser = factory.CreateClient();
         using var bypass = await browser.GetAsync("/interaction/callback?code=fake-auth-code&state=" + pendingPath.Split('/')[^1]);
         Assert.Equal(HttpStatusCode.Unauthorized, bypass.StatusCode);
@@ -179,7 +179,7 @@ public class MockAccessServerKeycloakTests
     }
 
     private static async Task CompleteCallbackAsync(
-        WebApplicationFactory<Federated.Entry> factory, string pendingPath)
+        WebApplicationFactory<Federated.Entry> factory, string pendingPath, string user = "guest")
     {
         var id = pendingPath["/pending/".Length..];
         using var browser = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -194,7 +194,7 @@ public class MockAccessServerKeycloakTests
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
         var state = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(login.Headers.Location!.Query)["state"].ToString();
         Assert.NotEqual(id, state);
-        var callback = await browser.GetAsync($"/interaction/callback?code=fake-auth-code&state={state}");
+        var callback = await browser.GetAsync($"/interaction/callback?code={user}-auth-code&state={state}");
         Assert.True(callback.IsSuccessStatusCode,
             $"callback Status={(int)callback.StatusCode} {await callback.Content.ReadAsStringAsync()}");
         Assert.Matches("<h1>(Access granted|Access denied)</h1>", await callback.Content.ReadAsStringAsync());
@@ -334,9 +334,9 @@ public class MockAccessServerKeycloakTests
 
     /// <summary>
     /// Stand-in for Keycloak's token endpoint. Handles the authorization-code
-    /// exchange (returns a fake access token) and the <c>uma-ticket</c>
+    /// exchange (the code names the user who logged in) and the <c>uma-ticket</c>
     /// decision request (grants <c>wallet.read</c>; grants <c>wallet.charge</c> only
-    /// when the pushed claim_token carries the <c>wallet.payer</c> role).
+    /// to the <c>demo</c> user, who holds the <c>wallet.payer</c> realm role).
     /// </summary>
     private sealed class StubKeycloakHandler : HttpMessageHandler
     {
@@ -348,52 +348,21 @@ public class MockAccessServerKeycloakTests
 
             if (grantType == "authorization_code")
             {
-                return Json(HttpStatusCode.OK, new JsonObject { ["access_token"] = "fake-user-token" });
+                var user = form.GetValueOrDefault("code") == "demo-auth-code" ? "demo" : "guest";
+                return Json(HttpStatusCode.OK, new JsonObject { ["access_token"] = "user-token:" + user });
             }
 
             if (grantType == "urn:ietf:params:oauth:grant-type:uma-ticket")
             {
                 var permission = form.GetValueOrDefault("permission") ?? "";
                 var elevated = permission.Contains("wallet.charge", StringComparison.Ordinal);
-                var hasAdminRole = HasAdminRole(form.GetValueOrDefault("claim_token"));
-                return (!elevated || hasAdminRole)
+                var isPayer = request.Headers.Authorization?.Parameter == "user-token:demo";
+                return (!elevated || isPayer)
                     ? Json(HttpStatusCode.OK, new JsonObject { ["result"] = true })
                     : Json(HttpStatusCode.Forbidden, new JsonObject { ["error"] = "denied" });
             }
 
             return new HttpResponseMessage(HttpStatusCode.BadRequest);
-        }
-
-        private static bool HasAdminRole(string? claimTokenB64)
-        {
-            if (string.IsNullOrEmpty(claimTokenB64))
-            {
-                return false;
-            }
-
-            try
-            {
-                var json = Encoding.UTF8.GetString(Convert.FromBase64String(claimTokenB64));
-                var roles = JsonNode.Parse(json)?["roles"] as JsonArray;
-                if (roles is null)
-                {
-                    return false;
-                }
-
-                foreach (var role in roles)
-                {
-                    if ((string?)role == "wallet.payer")
-                    {
-                        return true;
-                    }
-                }
-            }
-            catch (FormatException)
-            {
-                return false;
-            }
-
-            return false;
         }
 
         private static async Task<Dictionary<string, string>> ParseFormAsync(

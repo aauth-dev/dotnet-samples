@@ -321,55 +321,66 @@ public class MockAccessServerTests : IDisposable
     }
 
     [Fact]
-    public async Task Token_GrantsElevatedScope_ForAdminAgent()
+    public async Task Token_GrantsElevatedScope_WhenPersonIsPayer()
     {
-        // The default stub policy grants wallet.charge to an admin agent
-        // (the demo convention: the exact agent id "aauth:demo@ap.example").
-        var agentKey = AAuthKey.Generate();
-        var agentToken = await BuildAgentTokenAsync(agentKey, AgentId);
-        var resourceToken = await BuildResourceTokenAsync(agentKey, audience: AsIssuer, agent: AgentId, scope: "wallet.charge");
-
-        using var http = BuildPsSignedClient();
-        var response = await http.PostAsJsonAsync("/token", new JsonObject
+        // Roles describe the person, so the stub AS asks the PS for them
+        // (§Claims Required) and grants wallet.charge once the PS pushes the
+        // wallet.payer role, whichever agent is asking.
+        var (http, pendingPath) = await StartChargeAsync();
+        using (http)
         {
-            ["agent_token"] = agentToken,
-            ["resource_token"] = resourceToken,
-            ["presented_token"] = await BuildPersonTokenAsync(agentKey),
-        });
+            var push = await http.PostAsJsonAsync(pendingPath, new JsonObject
+            {
+                ["roles"] = new JsonArray("calendar.owner", "wallet.payer"),
+            });
 
-        Assert.True(response.IsSuccessStatusCode,
-            $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
-        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        var payload = (JsonObject)JsonNode.Parse(
-            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(
-                ((string?)body!["auth_token"])!.Split('.')[1]))!;
-        Assert.Equal("wallet.charge", (string?)payload["scope"]);
+            Assert.True(push.IsSuccessStatusCode,
+                $"Status={(int)push.StatusCode} {await push.Content.ReadAsStringAsync()}");
+            var body = await push.Content.ReadFromJsonAsync<JsonObject>();
+            var payload = (JsonObject)JsonNode.Parse(
+                Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(
+                    ((string?)body!["auth_token"])!.Split('.')[1]))!;
+            Assert.Equal("wallet.charge", (string?)payload["scope"]);
+        }
     }
 
-    [Fact]
-    public async Task Token_DeniesElevatedScope_ForNonAdminAgent()
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"roles\":[\"calendar.owner\"]}")]
+    public async Task Token_DeniesElevatedScope_WhenPersonIsNotPayer(string pushed)
     {
-        // A non-admin agent requesting wallet.charge is denied by the stub
-        // policy (no wallet.payer role) → 403 denied.
-        const string GuestId = "aauth:guest@ap.example";
-        var agentKey = AAuthKey.Generate();
-        var agentToken = await BuildAgentTokenAsync(agentKey, GuestId);
-        var resourceToken = await BuildResourceTokenAsync(agentKey, audience: AsIssuer, agent: GuestId, scope: "wallet.charge");
-
-        using var http = BuildPsSignedClient();
-        var response = await http.PostAsJsonAsync("/token", new JsonObject
+        // A person without wallet.payer (a guest pushes no roles at all) is
+        // denied by the stub policy instead of being asked again → 403 denied.
+        var (http, pendingPath) = await StartChargeAsync();
+        using (http)
         {
-            ["agent_token"] = agentToken,
-            ["resource_token"] = resourceToken,
+            var response = await http.PostAsJsonAsync(pendingPath, JsonNode.Parse(pushed));
+
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+            Assert.Equal("denied", (string?)body!["error"]);
+            Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+            Assert.False(string.IsNullOrWhiteSpace((string?)body["detail"]));
+            Assert.False(response.Headers.Contains("Signature-Error"));
+        }
+    }
+
+    private async Task<(HttpClient Http, string PendingPath)> StartChargeAsync()
+    {
+        var agentKey = AAuthKey.Generate();
+        var http = BuildPsSignedClient();
+        var token = await http.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["agent_token"] = await BuildAgentTokenAsync(agentKey, AgentId),
+            ["resource_token"] = await BuildResourceTokenAsync(agentKey, audience: AsIssuer, agent: AgentId, scope: "wallet.charge"),
             ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("denied", (string?)body!["error"]);
-        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-        Assert.False(string.IsNullOrWhiteSpace((string?)body["detail"]));
-        Assert.False(response.Headers.Contains("Signature-Error"));
+        Assert.Equal(HttpStatusCode.Accepted, token.StatusCode);
+        Assert.Contains("requirement=claims", token.Headers.GetValues("AAuth-Requirement").Single());
+        var requirement = await token.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal(["roles"], requirement!["required_claims"]!.AsArray().Select(name => (string?)name));
+        return (http, token.Headers.Location!.OriginalString);
     }
 
     [Fact]

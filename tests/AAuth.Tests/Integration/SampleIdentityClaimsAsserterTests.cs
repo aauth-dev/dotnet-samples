@@ -7,51 +7,46 @@ using Xunit;
 namespace AAuth.Tests.Integration;
 
 /// <summary>
-/// SMP-01 negative control: the demo "admin" roles are granted on an exact agent
-/// identifier, never on a prefix an arbitrary agent provider could mint.
+/// Roles and groups are identity claims about the person (RFC 9068 / SCIM): the demo
+/// PS asserts the demo person's roles whichever agent asks, and none for a guest person.
 /// </summary>
 public class SampleIdentityClaimsAsserterTests
 {
     [Theory]
-    [InlineData("aauth:demo@ap.example", true)]
-    [InlineData("aauth:demo@attacker.example", false)]
-    [InlineData("aauth:demo@ap.example.attacker.example", false)]
-    [InlineData("aauth:demo-evil@ap.example", false)]
-    public async Task AdminRoles_RequireExactAgentIdentifier(string agentId, bool admin)
+    [InlineData("aauth:demo@ap.example", "https://ap.example")]
+    [InlineData("aauth:agent-0123@localhost", "http://localhost:5301")]
+    [InlineData("aauth:guest@attacker.example", "https://attacker.example")]
+    public async Task Roles_BelongToThePerson_NotTheAgent(string agentId, string agentIssuer)
     {
         var asserter = new SampleIdentityClaimsAsserter(new ConsentStore(), requireConsent: false,
-            demoRoles: ["calendar.owner"], demoGroups: ["demo-users"],
+            demoRoles: ["calendar.owner", "wallet.payer"], demoGroups: ["demo-users"],
             demoUserClaims: new Dictionary<string, string>());
 
-        var assertion = await asserter.AssertAsync(new IdentityAssertionRequest
-        {
-            ResourceUrl = "https://calendar.example",
-            Scope = "calendar.read",
-            AgentId = agentId,
-            AgentIssuer = "https://ap.example",
-        });
+        var assertion = await asserter.AssertAsync(Request(agentId, agentIssuer));
 
         Assert.Equal(IdentityAssertionKind.Assert, assertion.Kind);
-        Assert.Equal(admin, assertion.Roles is not null);
-        Assert.Equal(admin, assertion.Groups is not null);
+        Assert.Equal(["calendar.owner", "wallet.payer"], assertion.Roles);
+        Assert.Equal(["demo-users"], assertion.Groups);
     }
 
     [Fact]
-    public async Task AdminRoles_RequireExactAgentIssuer()
+    public async Task GuestPerson_HasNoRolesOrGroups()
     {
         var asserter = new SampleIdentityClaimsAsserter(new ConsentStore(), requireConsent: false,
-            demoRoles: ["calendar.owner"], demoGroups: ["demo-users"],
-            demoUserClaims: new Dictionary<string, string>());
+            demoRoles: null, demoGroups: null, demoUserClaims: new Dictionary<string, string>());
 
-        var assertion = await asserter.AssertAsync(new IdentityAssertionRequest
-        {
-            ResourceUrl = "https://calendar.example",
-            Scope = "calendar.read",
-            AgentId = "aauth:demo@ap.example",
-            AgentIssuer = "https://attacker.example",
-        });
+        var assertion = await asserter.AssertAsync(Request("aauth:demo@ap.example", "https://ap.example"));
 
+        Assert.Equal(IdentityAssertionKind.Assert, assertion.Kind);
         Assert.Null(assertion.Roles);
         Assert.Null(assertion.Groups);
     }
+
+    private static IdentityAssertionRequest Request(string agentId, string agentIssuer) => new()
+    {
+        ResourceUrl = "https://calendar.example",
+        Scope = "calendar.read",
+        AgentId = agentId,
+        AgentIssuer = agentIssuer,
+    };
 }

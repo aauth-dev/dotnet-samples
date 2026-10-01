@@ -84,12 +84,12 @@ dotnet run --project samples/AgentConsole -- \
   http://localhost:5001/events/write --ap http://localhost:5301 \
   --ps http://localhost:5100 --signing-mode jwt
 
-# Three-party, RBAC — PS asserts roles ["calendar.owner"], groups ["demo-users"]
+# Three-party, RBAC — PS asserts its demo person's roles ["calendar.owner", "wallet.payer"], groups ["demo-users"]
 dotnet run --project samples/AgentConsole -- \
   http://localhost:5001/events/admin --ap http://localhost:5301 \
   --ps http://localhost:5100 --signing-mode jwt
 
-# Four-party payment — scope "wallet.charge" (Access Server requires the wallet.payer role)
+# Four-party payment — scope "wallet.charge" (the Access Server asks the PS for the person's roles and requires wallet.payer)
 dotnet run --project samples/AgentConsole -- \
   http://localhost:5003/wallet/charge --ap http://localhost:5301 \
   --ps http://localhost:5100 --signing-mode jwt

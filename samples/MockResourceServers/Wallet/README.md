@@ -21,9 +21,12 @@ Port: `http://localhost:5003`. Trusts the Access Server at
 
 `/wallet/charge` is where the four-party model earns its keep: a real-world
 "only an authorized payer can spend money" gate, decided by the bank's own
-Access Server rather than the resource. With the Keycloak policy engine, the
-`demo`/`demo` user has the `wallet.payer` role (can charge) and `guest`/`guest`
-does not (denied **403** on `/wallet/charge`).
+Access Server rather than the resource. With the stub AS (`make demo`), the AS
+asks the PS for the person's `roles` (§Claims Required); the mock PS's demo
+person holds `wallet.payer`, and a guest person
+(`MockPersonServer:GuestPerson=true`) is denied **403**. With the Keycloak
+policy engine, the `demo`/`demo` user has the `wallet.payer` role (can charge)
+and `guest`/`guest` does not (denied **403** on `/wallet/charge`).
 
 ## Running
 

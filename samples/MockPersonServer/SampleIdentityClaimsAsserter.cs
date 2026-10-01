@@ -25,15 +25,17 @@ public sealed class SampleIdentityClaimsAsserter : IIdentityClaimsAsserter
 
     private readonly ConsentStore _consent;
     private readonly bool _requireConsent;
-    private readonly IReadOnlyList<string> _demoRoles;
-    private readonly IReadOnlyList<string> _demoGroups;
+    private readonly IReadOnlyList<string>? _demoRoles;
+    private readonly IReadOnlyList<string>? _demoGroups;
     private readonly IReadOnlyDictionary<string, string> _demoUserClaims;
 
+    /// <param name="demoRoles">The demo person's roles; <see langword="null"/> for a guest person.</param>
+    /// <param name="demoGroups">The demo person's groups; <see langword="null"/> for a guest person.</param>
     public SampleIdentityClaimsAsserter(
         ConsentStore consent,
         bool requireConsent,
-        IReadOnlyList<string> demoRoles,
-        IReadOnlyList<string> demoGroups,
+        IReadOnlyList<string>? demoRoles,
+        IReadOnlyList<string>? demoGroups,
         IReadOnlyDictionary<string, string> demoUserClaims)
     {
         _consent = consent;
@@ -43,23 +45,12 @@ public sealed class SampleIdentityClaimsAsserter : IIdentityClaimsAsserter
         _demoUserClaims = demoUserClaims;
     }
 
-    /// <summary>
-    /// The exact agent identifiers the demo treats as "admin" (AgentConsole). Matching is
-    /// exact and ordinal: a prefix test would let <c>aauth:demo@attacker.example</c> claim
-    /// the demo roles. A production PS resolves the bound principal's directory membership.
-    /// </summary>
-    public static IReadOnlySet<(string Issuer, string AgentId)> AdminAgents { get; } =
-        new HashSet<(string, string)> { ("https://ap.example", "aauth:demo@ap.example") };
-
-    /// <summary>Demo "admin" agents receive the demo roles/groups.</summary>
-    public static bool IsAdminAgent(string agentIssuer, string agentId) => AdminAgents.Contains((agentIssuer, agentId));
-
     public Task<IdentityAssertion> AssertAsync(
         IdentityAssertionRequest request, CancellationToken cancellationToken = default)
     {
-        var isAdmin = IsAdminAgent(request.AgentIssuer, request.AgentId);
-        var roles = isAdmin ? _demoRoles : null;
-        var groups = isAdmin ? _demoGroups : null;
+        // Roles and groups describe the person, so they do not depend on which agent asks.
+        var roles = _demoRoles;
+        var groups = _demoGroups;
         var subject = DirectedSubject(request.ResourceUrl);
         // Person token request: the demo PS acts for one person, so it names them
         // at once. The resource decides what identity alone is worth.

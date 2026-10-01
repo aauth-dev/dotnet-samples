@@ -75,12 +75,6 @@ var accessServer = builder.Services.AddAAuthAccessServer(configure: options =>
         options.SigningKeys = new AAuthSigningKeySet(AsKid, AAuthKey.Generate());
         options.DefaultScope = AsScope;
         options.InteractionLoginPath = "/interaction/login";
-        // Demo convention: the exact agent id `aauth:demo@ap.example` is treated
-        // as holding the admin role. A production AS would receive the principal's
-        // directory membership via the PS's §Claims Required push.
-        options.DeriveAgentClaims = agentId => IsAdminAgent(agentId)
-            ? new JsonObject { ["roles"] = new JsonArray(StubAccessPolicy.AdminRole) }
-            : null;
     })
     .WithTrust(trust => trust.PersonServers.Allowed = new HashSet<string>(trustedPersonServers));
 
@@ -340,13 +334,6 @@ app.Run();
 // Minimal completion page shown to the user after the Keycloak round-trip.
 static string InteractionHtml(string title, string body) =>
     ConsentHtml.Page(title, $"<h1>{System.Net.WebUtility.HtmlEncode(title)}</h1><p>{System.Net.WebUtility.HtmlEncode(body)}</p>");
-
-// Demo convention shared with MockPersonServer: the exact agent identifier
-// `aauth:demo@ap.example` is treated as holding the admin role. The match is exact,
-// never a prefix, so `aauth:demo@attacker.example` gets nothing. A production AS
-// would receive the principal's directory membership via the PS's claim push.
-static bool IsAdminAgent(string agentId) =>
-    string.Equals(agentId, "aauth:demo@ap.example", StringComparison.Ordinal);
 
 // -----------------------------------------------------------------------
 // Access Server consent-screen HTML. Mirrors the MockPersonServer consent

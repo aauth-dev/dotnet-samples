@@ -63,9 +63,17 @@ public class CalendarFlowTests : IAsyncLifetime
 
     public Task InitializeAsync()
     {
+        StartPair(guestPerson: false);
+        return Task.CompletedTask;
+    }
+
+    // `guestPerson` makes the PS act for a person with no roles or groups.
+    private void StartPair(bool guestPerson)
+    {
         _ps = new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", PsIssuer);
+            if (guestPerson) b.UseSetting("MockPersonServer:GuestPerson", "true");
             b.ConfigureServices(services =>
             {
                 // The PS verifies the resource token per §"Resource Token
@@ -110,7 +118,6 @@ public class CalendarFlowTests : IAsyncLifetime
             });
         });
         _calendar.CreateClient();
-        return Task.CompletedTask;
     }
 
     public Task DisposeAsync()
@@ -358,12 +365,14 @@ public class CalendarFlowTests : IAsyncLifetime
     [Fact]
     public async Task RoleFlow_ReturnsAssertedRoles()
     {
+        // The roles are the person's, so any agent acting for them sees them,
+        // including one with a provider-assigned identifier.
         var agentKey = AAuthKey.Generate();
         var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.example",
+            Subject = "aauth:agent-7f3a@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
@@ -382,19 +391,22 @@ public class CalendarFlowTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RoleFlow_Returns403_WhenAgentLacksRole()
+    public async Task RoleFlow_Returns403_WhenPersonLacksRole()
     {
-        // A non-admin demo agent (the mock PS only asserts the calendar.owner
-        // role for the exact agent `aauth:demo@ap.example`) completes the three-party flow
-        // and receives a valid auth token WITHOUT the role. The role policy
-        // on /events/admin must therefore reject it with 403 — exercising
-        // role-based DENIAL, not just the success path.
+        // Roles describe the person, not the agent. A PS acting for a guest
+        // person completes the three-party flow and issues a valid auth token
+        // WITHOUT the role, so the role policy on /events/admin must reject it
+        // with 403 — exercising role-based DENIAL, not just the success path.
+        _ps!.Dispose();
+        _calendar!.Dispose();
+        StartPair(guestPerson: true);
+
         var agentKey = AAuthKey.Generate();
         var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:guest@ap.example",
+            Subject = "aauth:demo@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,

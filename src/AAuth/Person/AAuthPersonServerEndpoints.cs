@@ -2313,10 +2313,12 @@ public static class AAuthPersonServerEndpoints
                     entry.ErrorStatus = StatusCodes.Status408RequestTimeout;
                     entry.Status = PersonPendingStatus.Denied;
                 }
-                catch (AAuthInteractionDeniedException)
+                catch (AAuthInteractionDeniedException ex)
                 {
                     entry.Error = "denied";
                     entry.ErrorStatus = StatusCodes.Status403Forbidden;
+                    // Relay why (for example the AS policy reason) to the polling agent.
+                    entry.ErrorDetail = ex.Message == AAuth.Agent.InteractionDenial.DefaultMessage ? null : ex.Message;
                     entry.Status = PersonPendingStatus.Denied;
                 }
                 catch (AAuthTokenExchangeException ex)

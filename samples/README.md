@@ -291,14 +291,14 @@ dotnet run --project samples/AgentConsole -- http://localhost:5001/events/write 
   --ap http://localhost:5301 --ps http://localhost:5100 --signing-mode jwt
 ```
 
-**Three-party with RBAC (`/events/admin`)** — the PS asserts roles `calendar.owner` and groups `demo-users`:
+**Three-party with RBAC (`/events/admin`)** — the PS asserts its demo person's roles `calendar.owner` and `wallet.payer` and group `demo-users`:
 
 ```bash
 dotnet run --project samples/AgentConsole -- http://localhost:5001/events/admin \
   --ap http://localhost:5301 --ps http://localhost:5100 --signing-mode jwt
 ```
 
-**Four-party with payment (`/wallet/charge`)** — the Access Server requires the `wallet.payer` role (log in as `demo`):
+**Four-party with payment (`/wallet/charge`)** — the Access Server requires the person's `wallet.payer` role (stub AS: asked from the PS; Keycloak: log in as `demo`):
 
 ```bash
 dotnet run --project samples/AgentConsole -- http://localhost:5003/wallet/charge \

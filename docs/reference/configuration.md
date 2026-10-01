@@ -175,7 +175,7 @@ An `IAccessPolicy` is required (`UsePolicy` or a DI registration).
 | `TokenPath` | `string` | `/token` | Auth token endpoint path (`auth_token_endpoint`) |
 | `RevocationPath` | `string` | `/revoke` | Revocation endpoint path (`revocation_endpoint`) |
 | `ConfigureRevocation` | `Action<AAuthRevocationOptions>?` | `null` | *Code-only.* Adjusts the mapped revocation endpoint |
-| `DeriveAgentClaims` | `Func<string, JsonObject?>?` | `null` | *Code-only.* Baseline policy claims derived from the verified agent id (demo convention; production uses the §Claims Required push) |
+| `DeriveAgentClaims` | `Func<string, JsonObject?>?` | `null` | *Code-only.* Baseline policy claims derived from the verified agent id. Use it only for facts about the agent; identity claims about the person (`roles`, `groups`, `tenant`) come from the PS through the §Claims Required push |
 | `PendingPathPrefix` | `string` | `/pending` | Deferred-decision poll path prefix |
 | `DefaultScope` | `string` | `""` | Scope assumed when the resource token omits one |
 | `InteractionLoginPath` | `string` | `/interaction/login` | Browser entry point for interactive policies |
