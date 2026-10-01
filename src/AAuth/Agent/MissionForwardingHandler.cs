@@ -26,7 +26,8 @@ public sealed class MissionForwardingHandler : DelegatingHandler
     /// <inheritdoc/>
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        request.Options.Set(UpstreamAuthorization, _upstreamTokenProvider());
+        request.Options.Set(UpstreamAuthorization,
+            request.Options.TryGetValue(AAuthRequestOptions.UpstreamToken, out var explicitToken) ? explicitToken : _upstreamTokenProvider());
         return base.SendAsync(request, cancellationToken);
     }
 }

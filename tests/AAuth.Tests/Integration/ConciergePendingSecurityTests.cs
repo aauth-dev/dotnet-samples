@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Headers;
@@ -38,6 +39,47 @@ public class ConciergePendingSecurityTests
         Assert.Equal(StatusCodes.Status202Accepted, context.Response.StatusCode);
         Assert.Equal("pending", (string?)body?["status"]);
         Assert.Equal("/pending/pending-test", context.Response.Headers.Location.ToString());
+    }
+
+    [Fact]
+    public async Task ChainedEntry_RekeysOnNewDownstreamInteraction_AndKeepsEarlierCodesValid()
+    {
+        var first = new Interaction("https://ps.example/interaction", "PSCODE");
+        var second = new Interaction("https://as.example/interaction/login", "ASCODE");
+        var release = new TaskCompletionSource<IResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IAAuthInteractionHandler? interactions = null;
+        var operation = await AAuthChainedOperation<IResult>.StartAsync(async (handler, ct) =>
+        {
+            interactions = handler;
+            await handler.OnInteractionRequiredAsync(first, ct);
+            return await release.Task.WaitAsync(ct);
+        }, DateTimeOffset.UtcNow.AddMinutes(10));
+        var parked = AAuthChainedInteractions.Park("https://concierge.example", "/pending", "/chain-interaction",
+            operation.Interaction!.Downstream, "test", new JsonObject(), DateTimeOffset.UtcNow.AddMinutes(10));
+        var issuerKey = AAuthKey.Generate();
+        var upstream = await new AuthTokenBuilder
+        {
+            Issuer = "https://ps.example", Audience = "https://concierge.example", PersonServer = "https://ps.example",
+            Subject = "aauth:owner@ap.example", AgentConfirmationKey = AAuthKey.Generate(),
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10), Key = issuerKey, KeyId = "ps-key", Scope = "concierge",
+        }.BuildAsync();
+        var entry = new Concierge.PendingStore().Add(upstream, parked, "/pending", operation, operation.Interaction!.Version);
+
+        Assert.Equal(parked, entry.Interaction);
+        await interactions!.OnInteractionRequiredAsync(second, default);
+
+        var rekeyed = entry.Interaction;
+        Assert.NotEqual(parked.Code, rekeyed.Code);
+        Assert.Equal(parked.Id, rekeyed.Id);
+        Assert.Equal(parked.PendingUrl, rekeyed.PendingUrl);
+        Assert.Equal(second, rekeyed.DownstreamInteraction);
+        Assert.Same(rekeyed, entry.Interaction);
+        Assert.True(entry.MatchesCode(parked.Code));
+        Assert.True(entry.MatchesCode(rekeyed.Code));
+        Assert.False(entry.MatchesCode("WRONGCODE"));
+
+        release.SetResult(Results.Ok());
+        await operation.Completion;
     }
 
     [Theory]
