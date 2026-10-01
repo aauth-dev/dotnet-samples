@@ -426,15 +426,15 @@ one critical-section design (RT-3 conflict 3).
 
 **Definition of Done**
 
-- [ ] PS metadata `interaction_endpoint` equals the mapped governance relay
+- [x] PS metadata `interaction_endpoint` equals the mapped governance relay
       route, and is omitted when governance is off.
-- [ ] The default relay answers 424 `interaction_unavailable` for
+- [x] The default relay answers 424 `interaction_unavailable` for
       `interaction`, `payment` and `question`. A relay returning `Pending`
       answers 202 with `Location`, `Retry-After` and `no-store`.
-- [ ] Non-object `parameters`/`result` (including `null`) get 400. Audit
+- [x] Non-object `parameters`/`result` (including `null`) get 400. Audit
       entries keep both objects.
-- [ ] A conflicting manual `MapAAuthGovernance` path fails at startup.
-- [ ] The gates are green.
+- [x] A conflicting manual `MapAAuthGovernance` path fails at startup.
+- [x] The gates are green.
 
 ## Phase 9 — Federation: collapse and payment (R07)
 

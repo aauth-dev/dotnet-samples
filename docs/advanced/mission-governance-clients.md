@@ -165,9 +165,13 @@ bool done = await session.ProposeCompletionAsync(
     "Booked the Friday-evening flight and a hotel for four, and added them to the calendar.");
 ```
 
-`question` results fill `InteractionResult.Answer`; `interaction`/`payment`
-resolve once the user completes. `ProposeCompletionAsync` returns `false` when
-the person answered with follow-up questions and the mission stays active.
+`question` results fill `InteractionResult.Answer`. For PS-hosted
+`interaction`/`payment` flows, the PS relay poll can be authoritative. For
+resource-hosted interactions, the resource's original pending URL is
+authoritative: the PS relay only reports that the PS reached the user (or that it
+cannot), and the agent keeps polling the resource `Location` until the resource
+completes. `ProposeCompletionAsync` returns `false` when the person answered
+with follow-up questions and the mission stays active.
 
 ## A full lifecycle
 

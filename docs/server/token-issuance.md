@@ -416,7 +416,7 @@ instances with `MatchIssuerHost`, see
 | `ActivePairwiseSubjectKeyId` | `string?` | No | `null` | Key id used for new derived subjects; existing enrollments keep their stored subject/key version |
 | `InteractionPath` | `string` | No | `/interaction` | Path the host maps for the consent page |
 | `Trust` | `AAuthTrustOptions` | No | `new()` | `Trust.AccessServers` governs the Access Server URLs the PS will federate to. Unconfigured ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); `Allowed` empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. `Predicate` AND-composes; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
-| `InteractionEndpointPath` | `string?` | No | `null` | §Interaction Endpoint path; advertised in metadata as issuer + path (falls back to `InteractionPath`) |
+| `InteractionEndpointPath` | `string?` | No | `null` | Signed §Interaction Endpoint path; advertised in metadata as issuer + path when set or when `.WithGovernance()` supplies `/mission-interaction`. It never falls back to `InteractionPath`. |
 | `MissionPath` | `string?` | No | `null` | Mission endpoint path; advertised in `aauth-person.json` as issuer + path (the PS maps the endpoint) |
 | `PermissionPath` | `string?` | No | `null` | Permission endpoint path; advertised in `aauth-person.json` as issuer + path (the PS maps the endpoint) |
 | `AuditPath` | `string?` | No | `null` | Audit endpoint path; advertised in `aauth-person.json` as issuer + path (the PS maps the endpoint) |

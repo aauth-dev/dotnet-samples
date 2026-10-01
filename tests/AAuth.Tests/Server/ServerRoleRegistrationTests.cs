@@ -240,14 +240,8 @@ public class PersonServerRegistrationTests
     public async Task Metadata_DerivesEndpointUrls()
     {
         var builder = RoleHost.Builder();
-        builder.Services.AddAAuthPersonServer(configure: options =>
-        {
-            RoleHost.PersonServer(options);
-            options.MissionPath = "/mission";
-            options.PermissionPath = "/permission";
-            options.AuditPath = "/audit";
-            options.InteractionEndpointPath = "/mission-interaction";
-        }).WithGovernance();
+        builder.Services.AddAAuthPersonServer(configure: options => RoleHost.PersonServer(options))
+            .WithGovernance();
         await using var app = builder.Build();
         app.MapAAuthPersonServer();
         await app.StartAsync();
@@ -257,6 +251,22 @@ public class PersonServerRegistrationTests
         Assert.Equal($"{RoleHost.Ps}/permission", (string?)metadata["permission_endpoint"]);
         Assert.Equal($"{RoleHost.Ps}/audit", (string?)metadata["audit_endpoint"]);
         Assert.Equal($"{RoleHost.Ps}/mission-interaction", (string?)metadata["interaction_endpoint"]);
+    }
+
+    [Fact(DisplayName = "metadata omits governance endpoints when governance is off")]
+    public async Task Metadata_OmitsGovernanceEndpoints_WhenGovernanceOff()
+    {
+        var builder = RoleHost.Builder();
+        builder.Services.AddAAuthPersonServer(configure: options => RoleHost.PersonServer(options));
+        await using var app = builder.Build();
+        app.MapAAuthPersonServer();
+        await app.StartAsync();
+
+        var metadata = await RoleHost.Client(app, RoleHost.Ps).GetFromJsonAsync<JsonObject>("/.well-known/aauth-person.json");
+        Assert.False(metadata!.ContainsKey("mission_endpoint"));
+        Assert.False(metadata.ContainsKey("permission_endpoint"));
+        Assert.False(metadata.ContainsKey("audit_endpoint"));
+        Assert.False(metadata.ContainsKey("interaction_endpoint"));
     }
 
     [Fact(DisplayName = "mapping an unregistered Person Server fails clearly")]

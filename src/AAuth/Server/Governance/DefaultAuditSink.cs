@@ -28,6 +28,8 @@ public sealed class DefaultAuditSink : IAuditSink
             {
                 Action = record.Action.Name,
                 Detail = record.Description,
+                Parameters = record.Parameters?.DeepClone().AsObject(),
+                Result = record.Result?.DeepClone().AsObject(),
             },
             ct);
     }

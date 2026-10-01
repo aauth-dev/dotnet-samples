@@ -125,10 +125,10 @@ key are validated at startup (`OptionsValidationException`).
 | `ResourceInteractionSessions` | `BrowserConsentSessions?` | `null` (per-PS default) | *Code-only.* Browser sessions for resource-interaction chaining under `{InteractionPath}/resource` |
 | `UnsignedPathPrefixes` | `IReadOnlyCollection<string>?` | `null` | Extra path prefixes the mapper's signature verification skips (the PS's own browser pages) |
 | `TriageClarificationAsync` | `Func<PersonPendingEntry, ClarificationRequirement, CancellationToken, Task<ClarificationResponse?>>?` | `null` | *Code-only.* Answers an Access Server's clarification locally; `null` forwards it to the agent |
-| `InteractionEndpointPath` | `string?` | `null` | §Interaction Endpoint path, advertised as issuer + path |
-| `MissionPath` | `string?` | `null` | Mission endpoint path, advertised as issuer + path |
-| `PermissionPath` | `string?` | `null` | Permission endpoint path, advertised as issuer + path |
-| `AuditPath` | `string?` | `null` | Audit endpoint path, advertised as issuer + path |
+| `InteractionEndpointPath` | `string?` | `null` (`/mission-interaction` with `.WithGovernance()`) | Signed §Interaction Endpoint path, advertised as issuer + path when set. It never falls back to `InteractionPath` |
+| `MissionPath` | `string?` | `null` (`/mission` with `.WithGovernance()`) | Mission endpoint path, advertised as issuer + path |
+| `PermissionPath` | `string?` | `null` (`/permission` with `.WithGovernance()`) | Permission endpoint path, advertised as issuer + path |
+| `AuditPath` | `string?` | `null` (`/audit` with `.WithGovernance()`) | Audit endpoint path, advertised as issuer + path |
 | `Trust` | `AAuthTrustOptions` | `new()` (open) | `Trust.AccessServers` governs the AS URLs the PS will federate to. Unconfigured ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); `Allowed` empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. Upstream auth tokens from an AS are accepted only when `Trust.AccessServers` is configured and accepts the issuer. |
 
 The seams (`IIdentityClaimsAsserter`, `IPersonPendingStore`, `TokenVerifier`, and

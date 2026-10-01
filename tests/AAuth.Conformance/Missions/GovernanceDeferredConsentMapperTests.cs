@@ -476,6 +476,8 @@ public class GovernanceDeferredConsentMapperTests
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var location = response.Headers.Location!.ToString();
         Assert.Contains("/governance-pending/", location);
+        Assert.Equal(TimeSpan.FromSeconds(1), response.Headers.RetryAfter?.Delta);
+        Assert.True(response.Headers.CacheControl?.NoStore);
 
         // The user has not completed the interaction yet — the poll holds at 202.
         using var pendingPoll = await client.GetAsync("https://localhost" + location);
@@ -569,8 +571,8 @@ public class GovernanceDeferredConsentMapperTests
         await host.StopAsync();
     }
 
-    [Fact(DisplayName = "§Interaction Response — a non-pending interaction relay resolves synchronously (200, no poll)")]
-    public async Task Interaction_NotPending_Returns200()
+    [Fact(DisplayName = "§Interaction Endpoint Errors — a relay returning no state fails closed")]
+    public async Task Interaction_NoRelayState_Fails()
     {
         using var host = await BuildHostAsync(s =>
         {
@@ -587,16 +589,13 @@ public class GovernanceDeferredConsentMapperTests
         };
         var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Null(response.Headers.Location);
-        var json = await ReadJson(response);
-        Assert.Equal("ok", (string?)json?["status"]);
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
 
         await host.StopAsync();
     }
 
-    [Fact(DisplayName = "§Interaction Response — without the deferred store a pending relay falls back to a synchronous 200")]
-    public async Task Interaction_PendingRelay_NoStore_Returns200()
+    [Fact(DisplayName = "§Interaction Endpoint Errors — without the deferred store a pending relay fails closed")]
+    public async Task Interaction_PendingRelay_NoStore_Returns424()
     {
         using var host = await BuildHostAsync(s =>
             s.AddSingleton<IInteractionRelay>(new StubRelay(new InteractionRelayResult { Pending = true })));
@@ -610,10 +609,10 @@ public class GovernanceDeferredConsentMapperTests
         };
         var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.FailedDependency, response.StatusCode);
         Assert.Null(response.Headers.Location);
         var json = await ReadJson(response);
-        Assert.Equal("ok", (string?)json?["status"]);
+        Assert.Equal("interaction_unavailable", (string?)json?["error"]);
 
         await host.StopAsync();
     }

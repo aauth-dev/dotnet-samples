@@ -22,7 +22,7 @@ public sealed record InteractionRelayResult
 
     /// <summary>
     /// Whether the relay is still pending — the PS should return a deferred
-    /// response and let the agent poll (for <c>interaction</c> / <c>payment</c>).
+    /// response and let the agent poll.
     /// </summary>
     public bool Pending { get; init; }
 
@@ -44,6 +44,12 @@ public sealed record InteractionRelayResult
 /// </summary>
 public interface IInteractionRelay
 {
-    /// <summary>Relay <paramref name="request"/> to the user and return the outcome.</summary>
+    /// <summary>
+    /// Relay <paramref name="request"/> to the user and return exactly one
+    /// outcome state: <see cref="InteractionRelayResult.Answer"/>,
+    /// <see cref="InteractionRelayResult.Pending"/>, or
+    /// <see cref="InteractionRelayResult.Unavailable"/>. Completion requests use
+    /// <see cref="InteractionRelayResult.Accepted"/> through the mission endpoint.
+    /// </summary>
     Task<InteractionRelayResult> RelayAsync(InteractionRequest request, CancellationToken ct = default);
 }

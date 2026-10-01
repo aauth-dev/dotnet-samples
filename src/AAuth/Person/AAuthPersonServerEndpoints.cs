@@ -124,7 +124,8 @@ public sealed class AAuthPersonServerOptions
     /// (<c>interaction_endpoint</c>), where agents POST mission interaction /
     /// payment / question / completion requests. Distinct from
     /// <see cref="InteractionPath"/> (the consent URL on <c>requirement=interaction</c>).
-    /// When null the metadata falls back to <see cref="InteractionPath"/>.
+    /// When null, metadata omits <c>interaction_endpoint</c> unless
+    /// <c>WithGovernance()</c> supplies the default signed relay path.
     /// </summary>
     public string? InteractionEndpointPath { get; set; }
 
@@ -136,6 +137,8 @@ public sealed class AAuthPersonServerOptions
 
     /// <summary>The audit endpoint path advertised in the PS metadata (<c>audit_endpoint</c>), if any.</summary>
     public string? AuditPath { get; set; }
+
+    internal bool GovernanceEnabled { get; set; }
 
     /// <summary>
     /// Additional path prefixes the mapper's request-signature verification skips,
@@ -227,7 +230,7 @@ public static class AAuthPersonServerEndpoints
             AuthTokenEndpoint = $"{issuer}{options.TokenPath}",
             PersonTokenEndpoint = $"{issuer}{options.PersonTokenPath}",
             SigningKeys = options.SigningKeys,
-            InteractionEndpoint = AAuthServerRoles.OptionalUrl(issuer, options.InteractionEndpointPath) ?? interactionUrl,
+            InteractionEndpoint = AAuthServerRoles.OptionalUrl(issuer, options.InteractionEndpointPath),
             MissionEndpoint = AAuthServerRoles.OptionalUrl(issuer, options.MissionPath),
             PermissionEndpoint = AAuthServerRoles.OptionalUrl(issuer, options.PermissionPath),
             AuditEndpoint = AAuthServerRoles.OptionalUrl(issuer, options.AuditPath),
@@ -267,6 +270,25 @@ public static class AAuthPersonServerEndpoints
         AAuthServerRoles.WarnOnInMemoryDefaults(app.Services, logger, "Person Server", name, store, inventory,
             bindingStore, enrollmentStore, app.Services.GetService<IMissionStore>(), app.Services.GetService<IMissionLog>());
         WarnOnEphemeralPairwiseSecret(app.Services, logger, name, options);
+
+        if (options.GovernanceEnabled)
+        {
+            routes.MapAAuthGovernance(governance =>
+            {
+                governance.EgressPolicy = options.EgressPolicy;
+                governance.TimeProvider = options.TimeProvider;
+                governance.PersonServer = issuer;
+                governance.MissionPath = options.MissionPath
+                    ?? throw new InvalidOperationException("AAuthPersonServerOptions.MissionPath is required when governance is enabled.");
+                governance.PermissionPath = options.PermissionPath
+                    ?? throw new InvalidOperationException("AAuthPersonServerOptions.PermissionPath is required when governance is enabled.");
+                governance.AuditPath = options.AuditPath
+                    ?? throw new InvalidOperationException("AAuthPersonServerOptions.AuditPath is required when governance is enabled.");
+                governance.InteractionEndpointPath = options.InteractionEndpointPath
+                    ?? throw new InvalidOperationException("AAuthPersonServerOptions.InteractionEndpointPath is required when governance is enabled.");
+                governance.InteractionUrl = interactionUrl;
+            });
+        }
 
         // Startup footgun guard (diagnostics only): warn when federation is open by
         // default. Suppressed by any explicit policy (including AAuthTrust.Any).

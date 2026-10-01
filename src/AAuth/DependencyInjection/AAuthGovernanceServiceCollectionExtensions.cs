@@ -13,14 +13,14 @@ namespace Microsoft.Extensions.DependencyInjection;
 /// policy/user-channel seams (<see cref="AAuth.Server.Governance.IPermissionDecider"/>,
 /// <see cref="AAuth.Server.Governance.IAuditSink"/>,
 /// <see cref="AAuth.Server.Governance.IInteractionRelay"/>) default to conservative
-/// no-op implementations, all via <c>TryAdd</c> so a PS overrides only what it needs.
+/// fail-closed implementations, all via <c>TryAdd</c> so a PS overrides only what it needs.
 /// </summary>
 public static class AAuthGovernanceServiceCollectionExtensions
 {
     /// <summary>
     /// Register the default mission storage seams —
     /// <see cref="AAuth.Server.Governance.InMemoryMissionStore"/> and
-    /// <see cref="AAuth.Server.Governance.InMemoryMissionLog"/> — plus default no-op
+    /// <see cref="AAuth.Server.Governance.InMemoryMissionLog"/> — plus default fail-closed
     /// policy/user-channel seams (<see cref="AAuth.Server.Governance.DefaultPermissionDecider"/>,
     /// <see cref="AAuth.Server.Governance.DefaultAuditSink"/>,
     /// <see cref="AAuth.Server.Governance.DefaultInteractionRelay"/>) as singletons.
@@ -41,6 +41,7 @@ public static class AAuthGovernanceServiceCollectionExtensions
         services.TryAddSingleton<IInteractionRelay, DefaultInteractionRelay>();
         services.TryAddSingleton<IMissionTokenConsent, DefaultMissionTokenConsent>();
         services.TryAddSingleton<IMissionPersonTokenIssuer, AttachableMissionPersonTokenIssuer>();
+        services.TryAddSingleton<Microsoft.AspNetCore.Builder.AAuthGovernanceRouteRegistry>();
         return services;
     }
 
@@ -48,7 +49,7 @@ public static class AAuthGovernanceServiceCollectionExtensions
     /// Register an <see cref="AAuth.Server.Governance.IInteractionRelay"/> backed by a
     /// delegate, so a PS can supply its user channel with a lambda instead of a full
     /// class (§Interaction Endpoint). Replaces any relay registered earlier (including
-    /// the no-op <see cref="AAuth.Server.Governance.DefaultInteractionRelay"/>).
+    /// the fail-closed <see cref="AAuth.Server.Governance.DefaultInteractionRelay"/>).
     /// </summary>
     public static IServiceCollection AddAAuthInteractionRelay(
         this IServiceCollection services,

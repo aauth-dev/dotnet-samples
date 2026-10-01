@@ -140,21 +140,111 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Interaction Endpoint — a question returns an answer field")]
-    public async Task Interaction_Question_ReturnsAnswer()
+    [Theory(DisplayName = "§Interaction Endpoint Errors — the default relay returns 424 interaction_unavailable")]
+    [InlineData("interaction")]
+    [InlineData("payment")]
+    [InlineData("question")]
+    public async Task Interaction_DefaultRelay_ReturnsUnavailable(string type)
     {
         using var client = Client();
         var body = new JsonObject
         {
-            ["type"] = "question",
-            ["question"] = "Refundable?",
+            ["type"] = type,
             ["mission_s256"] = _missionS256,
         };
+        if (type == "question")
+        {
+            body["question"] = "Refundable?";
+        }
+        else
+        {
+            body["url"] = "https://booking.example/confirm";
+            body["code"] = "X7K2-M9P4";
+        }
 
         var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.FailedDependency, response.StatusCode);
         var json = await ReadJson(response);
-        Assert.NotNull(json?["answer"]);
+        Assert.Equal("interaction_unavailable", (string?)json?["error"]);
+    }
+
+    [Theory(DisplayName = "§Permission/Audit Endpoint — present non-object parameters/result are invalid_request")]
+    [InlineData("permission", "parameters", "null")]
+    [InlineData("permission", "parameters", "\"send all files\"")]
+    [InlineData("audit", "parameters", "[]")]
+    [InlineData("audit", "result", "null")]
+    public async Task GovernanceObjects_PresentNonObject_ReturnsInvalidRequest(string endpoint, string property, string jsonValue)
+    {
+        using var client = Client();
+        var json = endpoint == "permission"
+            ? $$"""{"action":"WebSearch","mission_s256":"{{_missionS256}}","{{property}}":{{jsonValue}}}"""
+            : $$"""{"action":"WebSearch","mission_s256":"{{_missionS256}}","{{property}}":{{jsonValue}}}""";
+
+        using var response = await client.PostAsync("https://localhost/" + endpoint,
+            new StringContent(json, Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_request", (string?)(await ReadJson(response))?["error"]);
+    }
+
+    [Fact(DisplayName = "§Audit Endpoint — object parameters and result are preserved in the mission log")]
+    public async Task Audit_ObjectParametersAndResult_AreLogged()
+    {
+        using var client = Client();
+        var body = new JsonObject
+        {
+            ["mission_s256"] = _missionS256,
+            ["action"] = "WebSearch",
+            ["parameters"] = new JsonObject { ["query"] = "flights" },
+            ["result"] = new JsonObject { ["status"] = "completed" },
+        };
+
+        using var response = await client.PostAsync("https://localhost/audit", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var entries = await _host!.Services.GetRequiredService<IMissionLog>().ReadAsync(_missionS256);
+        var audit = Assert.Single(entries, entry => entry.Kind == MissionLogEntryKind.Audit);
+        Assert.Equal("flights", (string?)audit.Parameters?["query"]);
+        Assert.Equal("completed", (string?)audit.Result?["status"]);
+    }
+
+    [Fact(DisplayName = "§Permission Endpoint — object parameters are preserved in mission log decisions")]
+    public async Task Permission_ObjectParameters_AreLogged()
+    {
+        using var client = Client();
+        var body = new JsonObject
+        {
+            ["action"] = "WebSearch",
+            ["mission_s256"] = _missionS256,
+            ["parameters"] = new JsonObject { ["query"] = "flights" },
+        };
+
+        using var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var entries = await _host!.Services.GetRequiredService<IMissionLog>().ReadAsync(_missionS256);
+        var permission = Assert.Single(entries, entry => entry.Kind == MissionLogEntryKind.Permission);
+        Assert.Equal("flights", (string?)permission.Parameters?["query"]);
+    }
+
+    [Fact(DisplayName = "§Person Server Governance — conflicting manual governance mapping fails fast")]
+    public void MapGovernance_ConflictingPath_Throws()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddAAuthGovernance();
+        builder.Services.AddRouting();
+        var app = builder.Build();
+
+        app.MapAAuthGovernance(options => options.PersonServer = Ps);
+
+        var failure = Assert.Throws<InvalidOperationException>(() =>
+            app.MapAAuthGovernance(options =>
+            {
+                options.PersonServer = Ps;
+                options.InteractionEndpointPath = "/other-interaction";
+            }));
+        Assert.Contains("conflicting declaration", failure.Message, StringComparison.Ordinal);
     }
 
     [Fact(DisplayName = "§Mission Status Errors — permission on a terminated mission is 403 mission_terminated")]

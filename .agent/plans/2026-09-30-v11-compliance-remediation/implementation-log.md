@@ -1028,6 +1028,59 @@ Gates:
   on a rerun: 78 passed, 1 skipped. Recorded as a flaky, slow run.
 - Keycloak profile: `federated-deferred` 1 passed; container removed.
 
+### [2026-09-30] [Phase 8] R12 — Governance endpoints
+
+RESOLVED.
+
+`.WithGovernance()` now declares the PS governance paths once
+(`MissionPath`, `PermissionPath`, `AuditPath`, `InteractionEndpointPath`) and
+`MapAAuthPersonServer()` auto-maps the same declaration. `MapAAuthGovernance()`
+is idempotent for the same declaration and fails fast for conflicting paths. To
+keep the owner-edited MockPersonServer starting until Phase 11 replaces its
+hand-written routes, SDK governance endpoints are mapped with lower route
+priority so a host route at the same path wins instead of causing an ambiguous
+match.
+
+Metadata no longer falls back from `interaction_endpoint` to the browser
+`InteractionPath`; it is omitted when governance is off unless
+`InteractionEndpointPath` is explicitly configured. The governance pipeline
+option was renamed from `InteractionPath` to `InteractionEndpointPath`.
+
+Relay results are enforced as exactly one of `Answered`, `Pending` or
+`Unavailable` for interaction endpoint requests. The default relay returns
+`Unavailable` for `interaction`, `payment` and `question`; `Pending` produces
+`202` with `Location`, `Retry-After: 1` and `Cache-Control: no-store`, and
+without a deferred store fails closed as `424 interaction_unavailable`.
+
+Permission/audit parsers reject present non-object `parameters`/`result`
+(including JSON `null`) as `400 invalid_request`. `MissionLogEntry` now carries
+deep-cloned `Parameters` and `Result`, and the default audit sink preserves both.
+Client/docs clarify that for resource-hosted interactions the resource pending
+URL is authoritative and the PS relay only reports relay progress.
+
+### [2026-09-30] [Phase 8] Gates and wrap-up
+
+RESOLVED.
+
+- **Flaky test fix.** The R13 metric test
+  `AAuthSigningHandlerTests.SendAsync_CreatedWait_EmitsMetric` collected into
+  a `List<double>`. The meter is process-wide, so parallel tests could record
+  while it asserted (a collection-modified failure). It now uses a
+  `ConcurrentQueue`.
+- **Deferred to Phase 11 (owner-edited files):** SMP-02.
+  `samples/MockPersonServer/Program.cs` keeps its hand-written
+  `/mission-interaction` handler. The owner should remove it and rely on
+  `.WithGovernance()` plus `MapAAuthPersonServer()`.
+  `MissionGovernance.cs`'s relay should return `Pending` only with a pollable
+  store, otherwise `Unavailable`.
+
+Gates:
+
+- The build is clean.
+- Tests: AAuth.Tests 1827, Conformance 1398, R3 339, Events 89.
+- The docs gates pass.
+- e2e: full Playwright 78 passed, 1 skipped.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 7] R09 owner-edited sample compatibility

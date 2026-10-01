@@ -150,7 +150,8 @@ public class AAuthSigningHandlerTests
     [Fact]
     public async Task SendAsync_CreatedWait_EmitsMetric()
     {
-        var measurements = new List<double>();
+        // The meter is process-wide: parallel tests may record while this test asserts.
+        var measurements = new System.Collections.Concurrent.ConcurrentQueue<double>();
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
         {
@@ -160,7 +161,7 @@ public class AAuthSigningHandlerTests
                 meterListener.EnableMeasurementEvents(instrument);
             }
         };
-        listener.SetMeasurementEventCallback<double>((_, value, _, _) => measurements.Add(value));
+        listener.SetMeasurementEventCallback<double>((_, value, _, _) => measurements.Enqueue(value));
         listener.Start();
 
         var key = AAuthKey.Generate();

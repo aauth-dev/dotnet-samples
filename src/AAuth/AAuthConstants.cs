@@ -107,6 +107,40 @@ public static class AAuthConstants
         public const string Payment = "payment";
     }
 
+    /// <summary>Governance endpoint wire values defined by the AAuth protocol.</summary>
+    public static class Governance
+    {
+        /// <summary>Interaction endpoint request <c>type</c> values.</summary>
+        public static class InteractionTypes
+        {
+            /// <summary>Relay a resource-hosted interaction to the user.</summary>
+            public const string Interaction = "interaction";
+
+            /// <summary>Relay a payment approval to the user.</summary>
+            public const string Payment = "payment";
+
+            /// <summary>Ask the user a question.</summary>
+            public const string Question = "question";
+        }
+
+        /// <summary>Governance endpoint error codes.</summary>
+        public static class ErrorCodes
+        {
+            /// <summary>The PS has no channel available to relay the interaction.</summary>
+            public const string InteractionUnavailable = "interaction_unavailable";
+        }
+
+        /// <summary>Deferred governance response status values.</summary>
+        public static class Status
+        {
+            /// <summary>The deferred governance result is still pending.</summary>
+            public const string Pending = "pending";
+
+            /// <summary>The relayed interaction completed successfully.</summary>
+            public const string Ok = "ok";
+        }
+    }
+
     /// <summary>Metadata member names defined by the AAuth protocol.</summary>
     public static class MetadataFields
     {

@@ -27,8 +27,12 @@ public sealed class AAuthGovernancePipelineOptions
     /// <summary>The audit endpoint path (§Audit Endpoint). Default <c>/audit</c>.</summary>
     public string AuditPath { get; set; } = "/audit";
 
-    /// <summary>The interaction endpoint path (§Interaction Endpoint). Default <c>/mission-interaction</c>.</summary>
-    public string InteractionPath { get; set; } = "/mission-interaction";
+    /// <summary>
+    /// The signed interaction endpoint path (§Interaction Endpoint). Default
+    /// <c>/mission-interaction</c>. Distinct from the browser-facing Person
+    /// Server <c>InteractionPath</c>.
+    /// </summary>
+    public string InteractionEndpointPath { get; set; } = "/mission-interaction";
 
     /// <summary>The mission-creation endpoint path (§Mission Creation). Default <c>/mission</c>.</summary>
     public string MissionPath { get; set; } = "/mission";

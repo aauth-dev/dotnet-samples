@@ -54,24 +54,29 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         var options = new AAuthGovernancePipelineOptions();
         configure?.Invoke(options);
 
+        if (!endpoints.ServiceProvider.GetRequiredService<AAuthGovernanceRouteRegistry>().Register(options))
+        {
+            return endpoints;
+        }
+
         endpoints.MapPost(options.Resolve(options.MissionPath),
             (HttpContext ctx, IMissionStore missions, IMissionApprover approver) =>
-                HandleMissionAsync(ctx, options, missions, approver));
+                HandleMissionAsync(ctx, options, missions, approver)).PreferHostRoutes();
         endpoints.MapPost(options.Resolve(options.MissionPath).TrimEnd('/') + "/{missionS256}",
             (HttpContext ctx, string missionS256, IMissionStore missions, IMissionLog log, IInteractionRelay relay) =>
-                HandleMissionActionAsync(ctx, missionS256, options, missions, log, relay));
+                HandleMissionActionAsync(ctx, missionS256, options, missions, log, relay)).PreferHostRoutes();
         endpoints.MapPost(options.Resolve(options.PermissionPath),
             (HttpContext ctx, IMissionStore missions, IMissionLog log, IPermissionDecider decider) =>
-                HandlePermissionAsync(ctx, options, missions, log, decider));
+                HandlePermissionAsync(ctx, options, missions, log, decider)).PreferHostRoutes();
         endpoints.MapPost(options.Resolve(options.AuditPath),
             (HttpContext ctx, IMissionStore missions, IAuditSink sink) =>
-                HandleAuditAsync(ctx, options, missions, sink));
-        endpoints.MapPost(options.Resolve(options.InteractionPath),
+                HandleAuditAsync(ctx, options, missions, sink)).PreferHostRoutes();
+        endpoints.MapPost(options.Resolve(options.InteractionEndpointPath),
             (HttpContext ctx, IMissionStore missions, IMissionLog log, IInteractionRelay relay) =>
-                HandleInteractionAsync(ctx, options, missions, log, relay));
+                HandleInteractionAsync(ctx, options, missions, log, relay)).PreferHostRoutes();
         endpoints.MapMethods(options.Resolve(options.PendingPath).TrimEnd('/') + "/{id}", ["GET", "DELETE"],
             (HttpContext ctx, string id, IMissionStore missions, IMissionLog log) =>
-                HandlePendingAsync(ctx, id, options, missions, log));
+                HandlePendingAsync(ctx, id, options, missions, log)).PreferHostRoutes();
 
         return endpoints;
     }
@@ -216,6 +221,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                 Action = request.Action.Name,
                 Granted = granted,
                 Detail = decision.Reason.ToString(),
+                Parameters = CloneObject(request.Parameters),
             }).ConfigureAwait(false);
         }
 
@@ -286,13 +292,11 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         if (interactionFailure is not null) return interactionFailure;
 
         var result = await relay.RelayAsync(request, ctx.RequestAborted).ConfigureAwait(false);
+        ValidateRelayResult(request, result);
 
-        // §Interaction Endpoint Errors: the PS has no channel to relay this specific
-        // interaction/payment. Non-terminal — the agent falls back to directing the
-        // user itself. Distinct from the terminal user_unreachable.
         if (result.Unavailable)
         {
-            return AAuth.Server.AAuthProblemDetails.Create("interaction_unavailable", statusCode: StatusCodes.Status424FailedDependency);
+            return InteractionUnavailable();
         }
 
         if (request.MissionS256 is not null)
@@ -304,36 +308,29 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             }).ConfigureAwait(false);
         }
 
-        switch (request.Type)
+        if (result.Pending)
         {
-            case InteractionType.Question:
-                return Results.Json(new { answer = result.Answer ?? string.Empty });
-
-            default:
-                // interaction / payment: when the relay is still pending the PS
-                // MUST return a deferred response and let the agent poll until the
-                // user completes (§Interaction Response). Park it on the deferred
-                // store and answer 202; without a store there is no user channel,
-                // so treat the relay as having resolved synchronously (200).
-                if (result.Pending)
+            var store = ctx.RequestServices.GetService<IDeferredConsentStore>();
+            if (store is not null)
+            {
+                var parked = await store.ParkAsync(new DeferredConsent
                 {
-                    var store = ctx.RequestServices.GetService<IDeferredConsentStore>();
-                    if (store is not null)
-                    {
-                        var parked = await store.ParkAsync(new DeferredConsent
-                        {
-                            Kind = DeferredConsentKind.Interaction,
-                            Agent = ctx.GetAAuthVerification()!.Agent!,
-                            OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
-                            OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
-                            PersonServer = ResolvePersonServer(ctx, options),
-                            Interaction = request,
-                        }, ctx.RequestAborted).ConfigureAwait(false);
-                        return DeferredAccepted(ctx, options, parked);
-                    }
-                }
-                return Results.Json(new { status = "ok" });
+                    Kind = DeferredConsentKind.Interaction,
+                    Agent = ctx.GetAAuthVerification()!.Agent!,
+                    OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
+                    OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
+                    PersonServer = ResolvePersonServer(ctx, options),
+                    Interaction = request,
+                }, ctx.RequestAborted).ConfigureAwait(false);
+                return DeferredAccepted(ctx, options, parked);
+            }
+
+            return InteractionUnavailable();
         }
+
+        return request.Type == InteractionType.Question
+            ? Results.Json(new { answer = result.Answer })
+            : InteractionUnavailable();
     }
 
     // Resolve a parked deferred consent once the user has decided (§Deferred
@@ -418,7 +415,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             // terminates with the relay's final response (§Interaction Response).
             // The interaction was already recorded in the mission log when it was
             // relayed, so no further bookkeeping is needed here.
-            return Results.Json(new { status = "ok" });
+            return Results.Json(new { status = AAuthConstants.Governance.Status.Ok });
         }
 
         if (entry.Kind == DeferredConsentKind.Completion)
@@ -448,6 +445,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                 Action = request.Action.Name,
                 Granted = granted,
                 Detail = PermissionDecisionReason.OutOfScope.ToString(),
+                Parameters = CloneObject(request.Parameters),
             }).ConfigureAwait(false);
         }
         return Results.Json(new
@@ -561,7 +559,45 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             ctx.Response.Headers[AAuthRequirementHeader.Name] =
                 Interaction.Format(options.InteractionUrl, pending.Code, options.EgressPolicy);
         }
-        return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+        return Results.Json(new { status = AAuthConstants.Governance.Status.Pending }, statusCode: StatusCodes.Status202Accepted);
+    }
+
+    private static JsonObject? CloneObject(JsonObject? source)
+        => source?.DeepClone().AsObject();
+
+    private static RouteHandlerBuilder PreferHostRoutes(this RouteHandlerBuilder builder)
+    {
+        builder.Add(endpointBuilder =>
+        {
+            if (endpointBuilder is RouteEndpointBuilder routeEndpoint)
+            {
+                routeEndpoint.Order = 1000;
+            }
+        });
+        return builder;
+    }
+
+    private static IResult InteractionUnavailable()
+        => AAuth.Server.AAuthProblemDetails.Create(
+            AAuthConstants.Governance.ErrorCodes.InteractionUnavailable,
+            statusCode: StatusCodes.Status424FailedDependency);
+
+    private static void ValidateRelayResult(InteractionRequest request, InteractionRelayResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+
+        var answered = result.Answer is not null;
+        var selected = (answered ? 1 : 0) + (result.Pending ? 1 : 0) + (result.Unavailable ? 1 : 0);
+        if (selected != 1)
+        {
+            throw new InvalidOperationException(
+                "Interaction relay results must select exactly one state: Answered, Pending, or Unavailable.");
+        }
+
+        if (request.Type is InteractionType.Interaction or InteractionType.Payment && answered)
+        {
+            throw new InvalidOperationException("Interaction and payment relays must return Pending or Unavailable.");
+        }
     }
 
     // The PS identifier: the configured PersonServer, else the request origin.
@@ -580,5 +616,59 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         {
             return null;
         }
+    }
+}
+
+internal sealed class AAuthGovernanceRouteRegistry
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<string, GovernanceRouteDeclaration> _declarations = new(StringComparer.Ordinal);
+
+    public bool Register(AAuthGovernancePipelineOptions options)
+    {
+        var declaration = GovernanceRouteDeclaration.Create(options);
+        var key = declaration.PersonServer ?? string.Empty;
+        lock (_gate)
+        {
+            if (!_declarations.TryGetValue(key, out var existing))
+            {
+                _declarations.Add(key, declaration);
+                return true;
+            }
+
+            if (existing.Equals(declaration))
+            {
+                return false;
+            }
+
+            throw new InvalidOperationException(
+                $"AAuth governance endpoints for Person Server '{declaration.PersonServer ?? "<request-origin>"}' " +
+                $"were already mapped as {existing.Describe()}; conflicting declaration is {declaration.Describe()}.");
+        }
+    }
+
+    private sealed record GovernanceRouteDeclaration(
+        string? PersonServer,
+        string MissionPath,
+        string PermissionPath,
+        string AuditPath,
+        string InteractionEndpointPath,
+        string PendingPath)
+    {
+        public static GovernanceRouteDeclaration Create(AAuthGovernancePipelineOptions options)
+            => new(
+                string.IsNullOrWhiteSpace(options.PersonServer) ? null : options.PersonServer,
+                Normalize(options.Resolve(options.MissionPath)),
+                Normalize(options.Resolve(options.PermissionPath)),
+                Normalize(options.Resolve(options.AuditPath)),
+                Normalize(options.Resolve(options.InteractionEndpointPath)),
+                Normalize(options.Resolve(options.PendingPath)));
+
+        public string Describe()
+            => $"mission='{MissionPath}', permission='{PermissionPath}', audit='{AuditPath}', " +
+                $"interaction_endpoint='{InteractionEndpointPath}', pending='{PendingPath}'";
+
+        private static string Normalize(string path)
+            => "/" + path.Trim('/');
     }
 }

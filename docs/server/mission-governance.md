@@ -20,18 +20,20 @@ calls the PS answers.
 
 ## Registering the seams
 
-`AddAAuthGovernance` registers the storage defaults **and** conservative no-op
+`AddAAuthGovernance` registers the storage defaults **and** conservative fail-closed
 policy/user-channel defaults. Every seam is registered with `TryAdd`, so a PS can
 register its own implementations (before or after the call) and keep the rest.
 A Person Server registered with `AddAAuthPersonServer` can call `.WithGovernance()`
-on its builder, which calls `AddAAuthGovernance` for you. Advertise the endpoints
-with the options' `MissionPath`, `PermissionPath`, `AuditPath` and
-`InteractionEndpointPath`.
+on its builder, which calls `AddAAuthGovernance` for you, declares the default
+`MissionPath`, `PermissionPath`, `AuditPath` and `InteractionEndpointPath`, and
+has `MapAAuthPersonServer()` map those paths. Hosts can override the same Person
+Server options before mapping; metadata and routes are derived from that single
+declaration.
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 
-builder.Services.AddAAuthGovernance(); // stores + no-op approver/decider/sink/relay
+builder.Services.AddAAuthGovernance(); // stores + conservative policy/sink/relay defaults
 
 // Override the policy and user-channel seams with the PS's own:
 builder.Services.AddSingleton<IMissionApprover>(missionApprover);
@@ -43,15 +45,16 @@ builder.Services.AddSingleton<IInteractionRelay>(interactionRelay);
 For a lightweight user channel you can supply the relay as a lambda instead of a
 full `IInteractionRelay` class, via `AddAAuthInteractionRelay(...)` (backed by
 `DelegateInteractionRelay`). It replaces any relay registered earlier, including
-the no-op default:
+the fail-closed default:
 
 ```csharp
 builder.Services.AddAAuthInteractionRelay(async (request, ct) =>
 {
     // request.Type is question | interaction | payment; the mapper also relays
     // a mission completion proposal here with Type = Completion.
-    var accepted = await askThroughUserChannel(request, ct);
-    return new InteractionRelayResult { Accepted = accepted };
+    return request.Type == InteractionType.Question
+        ? new InteractionRelayResult { Answer = "Approved." }
+        : new InteractionRelayResult { Pending = true };
 });
 ```
 
@@ -60,7 +63,7 @@ builder.Services.AddAAuthInteractionRelay(async (request, ct) =>
 | `IMissionStore` | `InMemoryMissionStore` | SDK default; swap for durable storage |
 | `IMissionLog` | `InMemoryMissionLog` | SDK default; swap for durable storage |
 | `IMissionApprover` | `DefaultMissionApprover` | SDK default; PS supplies approval policy |
-| `IPermissionDecider` | `DefaultPermissionDecider` (no-op) | PS supplies policy |
+| `IPermissionDecider` | `DefaultPermissionDecider` (prompts for out-of-scope actions) | PS supplies policy |
 | `IAuditSink` | `DefaultAuditSink` (logs to the mission log) | PS supplies storage/alerting |
 | `IInteractionRelay` | `DefaultInteractionRelay` (no user channel) | PS supplies the user channel |
 | `IMissionTokenConsent` | `DefaultMissionTokenConsent` (hold for a user verdict) | PS supplies the out-of-scope mission **token** decision (`MapAAuthPersonServer`) |
@@ -78,25 +81,43 @@ builder.Services.AddAAuthGovernance();
 builder.Services.AddAAuthDeferredConsent(); // Prompt → 202 + poll route
 ```
 
-## Mapping the endpoints: `MapAAuthGovernance()`
+## Mapping the endpoints
 
-`MapAAuthGovernance()` maps the mission, permission, audit, and interaction
-endpoints (plus the deferred-consent poll route) onto the registered seams in one
-call, mirroring `MapAAuthResource`. It also maps `POST {mission_endpoint}/{s256}`,
-where the owning agent records an `update` or proposes `completion` (§Mission
-Update, §Mission Completion). It parses each request with `GovernanceEndpoints`,
-enforces the mission status rules, and delegates the decision to the seams:
+For normal Person Server hosting, call `.WithGovernance()` on the PS builder and
+then `app.MapAAuthPersonServer()`. That single mapper publishes metadata and maps
+the signed governance endpoints from the same paths:
+
+```csharp
+builder.Services.AddAAuthPersonServer(configure: options =>
+    {
+        options.Issuer = "https://ps.example";
+        options.SigningKeys = signingKeys;
+    })
+    .WithGovernance();
+
+var app = builder.Build();
+app.MapAAuthPersonServer(); // also maps /mission, /permission, /audit, /mission-interaction
+```
+
+`MapAAuthGovernance()` remains the primitive/advanced API for hosts that map the
+governance endpoints without a PS role. It derives routes from the same
+governance path declaration and is idempotent for the same Person Server/paths;
+a conflicting manual declaration fails during startup. It maps the mission,
+permission, audit, and interaction endpoints (plus the deferred-consent poll
+route) onto the registered seams in one call, mirroring `MapAAuthResource`. It
+also maps `POST {mission_endpoint}/{s256}`, where the owning agent records an
+`update` or proposes `completion` (§Mission Update, §Mission Completion). It
+parses each request with `GovernanceEndpoints`, enforces the mission status
+rules, and delegates the decision to the seams:
 
 ```csharp
 var app = builder.Build();
 
-app.MapAAuthGovernance(); // /mission, /mission/{s256}, /permission, /audit, /mission-interaction + poll route
-
-// Optional: override the default paths.
 app.MapAAuthGovernance(o =>
 {
     o.MissionPath = "/aauth/mission";
     o.PermissionPath = "/aauth/permission";
+    o.InteractionEndpointPath = "/aauth/interaction";
 });
 ```
 
@@ -119,6 +140,15 @@ mission_not_found` — the cases are indistinguishable — and a terminated or
 expired mission is `403 mission_terminated` (§Mission Endpoint Errors). Expiry
 auto-terminates the stored mission with reason `expired`. Reach for the manual
 mapping below only when an endpoint needs behavior the seams do not express.
+
+The default interaction relay has no user channel and returns
+`424 interaction_unavailable` for `interaction`, `payment`, and `question`.
+Relays that can reach the user must return exactly one state: `Answer` for an
+answered question, `Pending = true` to produce a `202` poll response, or
+`Unavailable = true` to let the agent fall back. If `Pending` is returned but no
+`IDeferredConsentStore` is registered, the mapper fails closed with
+`424 interaction_unavailable`. Audit records and permission log entries preserve
+JSON object `parameters`; audit entries also preserve JSON object `result`.
 
 > **Carrier-type guard.** The governed endpoints require the request to carry the
 > expected token type. When the wrong carrier is presented (e.g. an auth token

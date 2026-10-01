@@ -734,8 +734,8 @@ Constructor/`Create` callers retain ownership of injected clients. See
 `AddAAuthGovernance()` registers the in-memory mission storage seams as
 singletons. It uses `TryAdd`, so register durable implementations first to
 override them. The policy and user-channel seams (`IPermissionDecider`,
-`IAuditSink`, `IInteractionRelay`) default to conservative no-op implementations;
-a real PS overrides them.
+`IAuditSink`, `IInteractionRelay`) default to conservative fail-closed
+implementations; a real PS overrides them.
 
 ```csharp
 builder.Services.AddAAuthGovernance(); // InMemoryMissionStore + InMemoryMissionLog
@@ -747,20 +747,24 @@ builder.Services.AddSingleton<IInteractionRelay>(interactionRelay);
 
 The user channel can also be supplied as a lambda instead of a full class, via
 `AddAAuthInteractionRelay(...)` (backed by `DelegateInteractionRelay`). It removes
-any previously registered relay (including the no-op default) and registers the
+any previously registered relay (including the fail-closed default) and registers the
 delegate-backed one:
 
 ```csharp
 builder.Services.AddAAuthInteractionRelay((request, ct) =>
-    Task.FromResult(new InteractionRelayResult { Accepted = true }));
+    Task.FromResult(request.Type == InteractionType.Question
+        ? new InteractionRelayResult { Answer = "Approved." }
+        : new InteractionRelayResult { Pending = true }));
 ```
 
 See [Mission Governance (Server)](../server/mission-governance.md) for the seams
 and the decision model.
 
 A Person Server registered with `AddAAuthPersonServer` can call `.WithGovernance()`
-on its builder instead; it calls `AddAAuthGovernance()` for you. See
-[Person Server and Access Server Registration](#person-server-and-access-server-registration).
+on its builder instead; it calls `AddAAuthGovernance()` for you, declares the
+governance paths on the Person Server registration, and lets
+`MapAAuthPersonServer()` map them. See [Person Server and Access Server
+Registration](#person-server-and-access-server-registration).
 
 ## Person Server and Access Server Registration
 
@@ -776,13 +780,12 @@ builder.Services.AddAAuthPersonServer(configure: options =>
         options.Issuer       = psIssuer;
         options.SigningKeys  = new AAuthSigningKeySet(PsKid, psKey);
         options.DefaultScope = "calendar.read";
-        options.MissionPath  = "/mission"; // advertised as {Issuer}/mission
     })
     // Unset ⇒ federate to verified aud; empty ⇒ three-party only.
     .WithTrust(trust => trust.AccessServers.Allowed = trustedAccessServers)
     .UseClaimsAsserter(new DefaultIdentityClaimsAsserter("user-42")) // swap in a real asserter
     .WithFederation()  // PS→AS four-party client, signed as this PS
-    .WithGovernance(); // mission store/log and governance seams (AddAAuthGovernance)
+    .WithGovernance(); // declares + maps mission/permission/audit/interaction endpoints
 
 var app = builder.Build();
 app.MapAAuthPersonServer();

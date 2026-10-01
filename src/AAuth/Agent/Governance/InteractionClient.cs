@@ -12,8 +12,11 @@ namespace AAuth.Agent.Governance;
 /// <summary>
 /// Reaches the user through the PS's <c>interaction_endpoint</c> (§Interaction
 /// Endpoint): relay resource interactions, forward payments, or ask questions.
-/// Mission completion is proposed at the mission endpoint (<see cref="MissionClient.CompleteAsync"/>).
-/// May be used with or without a mission.
+/// Mission completion is proposed at the mission endpoint
+/// (<see cref="MissionClient.CompleteAsync"/>). For resource-hosted
+/// interactions, the resource's original pending URL remains authoritative; the
+/// PS relay result only reports relay progress or unavailability. May be used
+/// with or without a mission.
 /// </summary>
 /// <remarks>
 /// The supplied <see cref="HttpClient"/> MUST be wired with an
@@ -117,7 +120,7 @@ public sealed class InteractionClient
         try
         {
             return JsonNode.Parse(raw) is JsonObject obj
-                && (string?)obj["error"] == "interaction_unavailable";
+                && (string?)obj["error"] == AAuthConstants.Governance.ErrorCodes.InteractionUnavailable;
         }
         catch (JsonException)
         {

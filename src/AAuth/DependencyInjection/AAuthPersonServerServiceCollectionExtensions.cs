@@ -143,6 +143,14 @@ public sealed class AAuthPersonServerBuilder
     public AAuthPersonServerBuilder WithGovernance()
     {
         Services.AddAAuthGovernance();
+        Configure(options =>
+        {
+            options.GovernanceEnabled = true;
+            options.MissionPath ??= "/mission";
+            options.PermissionPath ??= "/permission";
+            options.AuditPath ??= "/audit";
+            options.InteractionEndpointPath ??= "/mission-interaction";
+        });
         return this;
     }
 
@@ -269,6 +277,17 @@ internal sealed class PersonServerOptionsValidator(IServiceProvider services) : 
             AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.PermissionPath, nameof(options.PermissionPath), failures);
         if (options.AuditPath is not null)
             AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.AuditPath, nameof(options.AuditPath), failures);
+        if (options.GovernanceEnabled)
+        {
+            if (options.MissionPath is null)
+                failures.Add("AAuthPersonServerOptions.MissionPath is required when governance is enabled.");
+            if (options.PermissionPath is null)
+                failures.Add("AAuthPersonServerOptions.PermissionPath is required when governance is enabled.");
+            if (options.AuditPath is null)
+                failures.Add("AAuthPersonServerOptions.AuditPath is required when governance is enabled.");
+            if (options.InteractionEndpointPath is null)
+                failures.Add("AAuthPersonServerOptions.InteractionEndpointPath is required when governance is enabled.");
+        }
         foreach (var trustedAs in options.Trust.AccessServers.Allowed ?? new HashSet<string>())
         {
             if (!AAuthUrl.IsHttpsOrLoopback(trustedAs, options.EgressPolicy))

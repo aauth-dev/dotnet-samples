@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -53,6 +54,12 @@ public sealed record MissionLogEntry(string S256, MissionLogEntryKind Kind, Date
 
     /// <summary>Free-form detail (e.g. a token-request justification or clarification text).</summary>
     public string? Detail { get; init; }
+
+    /// <summary>The parameters evaluated or recorded for permission / audit entries.</summary>
+    public JsonObject? Parameters { get; init; }
+
+    /// <summary>The result recorded for audit entries.</summary>
+    public JsonObject? Result { get; init; }
 }
 
 /// <summary>

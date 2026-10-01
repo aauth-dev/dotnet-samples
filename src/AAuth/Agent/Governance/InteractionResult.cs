@@ -8,7 +8,9 @@ namespace AAuth.Agent.Governance;
 /// <list type="bullet">
 /// <item><c>question</c> populates <see cref="Answer"/>.</item>
 /// <item><c>completion</c> populates <see cref="Terminated"/>.</item>
-/// <item><c>interaction</c>/<c>payment</c> resolve once the user completes.</item>
+/// <item><c>interaction</c>/<c>payment</c> expose the PS relay status. For
+/// resource-hosted interactions, the resource's pending URL remains
+/// authoritative and the agent keeps polling it after the PS relay resolves.</item>
 /// </list>
 /// </summary>
 /// <param name="Type">The interaction type this result is for.</param>

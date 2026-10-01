@@ -115,7 +115,7 @@ public static class GovernanceEndpoints
         return new PermissionRequest(new MissionAction(action))
         {
             Description = (string?)body["description"],
-            Parameters = body["parameters"] as JsonObject,
+            Parameters = ReadOptionalObject(body, "parameters"),
             MissionS256 = ReadMission(body),
         };
     }
@@ -134,8 +134,8 @@ public static class GovernanceEndpoints
         return new AuditRecord(mission, new MissionAction(action))
         {
             Description = (string?)body["description"],
-            Parameters = body["parameters"] as JsonObject,
-            Result = body["result"] as JsonObject,
+            Parameters = ReadOptionalObject(body, "parameters"),
+            Result = ReadOptionalObject(body, "result"),
         };
     }
 
@@ -151,9 +151,9 @@ public static class GovernanceEndpoints
             ?? throw new FormatException("Interaction request is missing the required 'type'.");
         var type = typeValue switch
         {
-            "interaction" => InteractionType.Interaction,
-            "payment" => InteractionType.Payment,
-            "question" => InteractionType.Question,
+            AAuthConstants.Governance.InteractionTypes.Interaction => InteractionType.Interaction,
+            AAuthConstants.Governance.InteractionTypes.Payment => InteractionType.Payment,
+            AAuthConstants.Governance.InteractionTypes.Question => InteractionType.Question,
             // §Interaction Endpoint: completion belongs at the mission endpoint.
             _ => throw new FormatException($"Interaction request has an unknown 'type': {typeValue}"),
         };
@@ -255,5 +255,15 @@ public static class GovernanceEndpoints
             result.Add(new MissionTool(name, (string?)tool["description"]));
         }
         return result;
+    }
+
+    private static JsonObject? ReadOptionalObject(JsonObject body, string propertyName)
+    {
+        if (!body.TryGetPropertyValue(propertyName, out var node))
+        {
+            return null;
+        }
+        return node as JsonObject
+            ?? throw new FormatException($"'{propertyName}' must be a JSON object when present.");
     }
 }
