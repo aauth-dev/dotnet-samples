@@ -192,7 +192,7 @@ public sealed partial class TourSession : IAsyncDisposable
 
     /// <summary>
     /// The effective resource endpoint URL for the current flow. The identity
-    /// lesson targets Profile; PS-asserted flows target Calendar's <c>/events</c>.
+    /// lesson targets Profile; PS authorization flows target Calendar's <c>/events</c>.
     /// </summary>
     private string EffectiveResourceUrl => Mode is TourMode.Identity
         ? EffectiveSigningMode switch

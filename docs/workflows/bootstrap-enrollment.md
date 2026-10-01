@@ -204,7 +204,7 @@ using var client = AAuthClientBuilder.Enrolled(key)
 The AP refresh ceremony can use `jkt-jwt`: a durable key delegates to a new
 ephemeral key. Subsequent AAuth resource requests still use `jwt`, with the
 returned agent token and its matching ephemeral key. The naming JWT is
-self-anchored under Signature Keys draft 08 section 3.5; the AP also binds the
+self-anchored under Signature Keys draft-09 section 3.5; the AP also binds the
 durable key to its enrollment record.
 
 ```mermaid
@@ -298,12 +298,15 @@ flowchart LR
 
 ## Which Flows Need Bootstrap
 
-| Flow | Needs Bootstrap? | Why |
-|------|:----------------:|-----|
-| Pseudonymous (hwk) | No | Just needs a bare keypair |
-| Agent Identity (jwks_uri) | Yes | AP publishes the agent's key at a per-agent JWKS endpoint |
-| Key Rotation (jkt-jwt) | Yes | Durable key must be enrolled; AP issues tokens bound to ephemeral keys |
-| Three-party (jwt) | Yes | Agent token required for PS interactions |
+| Flow | Needs AP bootstrap? | Why |
+|------|:------------------:|-----|
+| Generic `hwk` Signature-Key | No | Just needs a bare keypair; this is not an AAuth resource access mode |
+| Agent identity (`agent-token`) | Usually | CLI, desktop and mobile agents obtain an `aa-agent+jwt` from an AP; hosted services with a stable URL may self-issue instead |
+| Resource-managed (`session` / `AAuth-Access`) | Usually | The resource authorizes and issues the opaque access credential, but the first request is still authenticated with an agent token |
+| Person identity (`person-token`) | Usually | The PS issues a person token only to an authenticated agent |
+| PS authorization (three-party) | Usually | The agent-token → person-token → auth-token exchange is signed as the agent at the PS |
+| Federated authorization (four-party) | Usually | The PS federates with the AS after receiving the agent, resource and presented-token inputs |
+| AP key rotation (`jkt-jwt`) | Yes | The durable key must already be enrolled; the AP refresh ceremony returns an agent token bound to the ephemeral key |
 
 ## Key Persistence
 

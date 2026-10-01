@@ -25,7 +25,7 @@ Tests are grouped by spec section. Each test:
 ## Scope today
 
 Coverage includes issuer and receiver behavior for agent, person, resource and
-auth tokens; resource-managed/session-token access; four-party trust; deferred
+auth tokens; resource-managed `AAuth-Access`; four-party trust; deferred
 polling; revocation cascades; missions; sub-agents; call chaining; HTTP
 Signature-Key/JWT verification; and discovery endpoints. R3 and Events companion
 coverage lives in their own unit projects.
@@ -34,9 +34,9 @@ coverage lives in their own unit projects.
 
 | Spec section | Test file | Status |
 |---|---|---|
-| protocol §Agent Token Structure | [AgentTokens/AgentTokenStructureTests.cs](AgentTokens/AgentTokenStructureTests.cs) | Phase 1 |
-| protocol §Agent Token Verification | [AgentTokens/AgentTokenVerificationTests.cs](AgentTokens/AgentTokenVerificationTests.cs) | Phase 2 |
-| signature-key §Header Format | [HttpSignatures/SignatureKeyHeaderTests.cs](HttpSignatures/SignatureKeyHeaderTests.cs) | Phase 2 |
-| protocol §HTTP Signature Profile | [HttpSignatures/CoveredComponentsTests.cs](HttpSignatures/CoveredComponentsTests.cs) | Phase 2 |
-| protocol §Resource Token Structure | [ResourceTokens/ResourceTokenStructureTests.cs](ResourceTokens/ResourceTokenStructureTests.cs) | Phase 2 |
-| protocol §Discovery | [Discovery/WellKnownMetadataTests.cs](Discovery/WellKnownMetadataTests.cs) | Phase 2 |
+| protocol §Agent Token Structure | [AgentTokens/AgentTokenStructureTests.cs](AgentTokens/AgentTokenStructureTests.cs) | Covered |
+| protocol §Agent Token Verification | [AgentTokens/AgentTokenVerificationTests.cs](AgentTokens/AgentTokenVerificationTests.cs) | Covered |
+| signature-key §Header Format | [HttpSignatures/SignatureKeyHeaderTests.cs](HttpSignatures/SignatureKeyHeaderTests.cs) | Covered |
+| protocol §HTTP Signature Profile | [HttpSignatures/CoveredComponentsTests.cs](HttpSignatures/CoveredComponentsTests.cs) | Covered |
+| protocol §Resource Token Structure | [ResourceTokens/ResourceTokenStructureTests.cs](ResourceTokens/ResourceTokenStructureTests.cs) | Covered |
+| protocol §Discovery | [Discovery/WellKnownMetadataTests.cs](Discovery/WellKnownMetadataTests.cs) | Covered |

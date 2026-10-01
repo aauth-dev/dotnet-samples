@@ -4,9 +4,9 @@
 
 The signer presents `id`, `dwk` and `kid`. The verifier fetches
 `{id}/.well-known/{dwk}`, verifies its `issuer` equals `id`, then follows the
-metadata's `jwks_uri` and selects only the matching key. PS/AS server signers
-use this scheme; AAuth agents MUST use `jwt` for resource, PS and AS requests
-(`#keying-material`, L2179-L2196). Use this page for generic Signature-Key or
+metadata's `jwks_uri` and selects only the matching key. PS/AS/AP/resource
+server signers use this scheme; AAuth agents MUST use `jwt` for resource, PS
+and AS requests (#keying-material). Use this page for generic Signature-Key or
 server-to-server signing only.
 
 ## When to Use
@@ -92,7 +92,8 @@ builder.Services.AddAAuthResource(o =>
 
 The resolver fetches keys only after URL/metadata admission. Production requires
 HTTPS public destinations. Development loopback origins must be individually
-configured; they are not automatically allowed. A resource accepting this generic scheme must explicitly configure its accepted
+configured and are rejected by AAuth DI registrations in Production; they are
+not automatically allowed. A resource accepting this generic scheme must explicitly configure its accepted
 schemes and generic Signature Keys profile, for example with
 `RequireGenericSignature()`. `AddAAuthResource` alone retains the AAuth JWT
 default.

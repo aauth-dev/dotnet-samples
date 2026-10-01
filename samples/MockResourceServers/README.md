@@ -17,14 +17,14 @@ traveler's behalf — each protocol concept gets a real-feeling home:
 
 | Server | Port | Access mode | What it protects | Endpoints → scope/role |
 |--------|------|-------------|------------------|------------------------|
-| [**Profile**](Profile/) | 5000 | Identity-Based | who the caller is (no Person Server) | `/pseudonymous` (`hwk`), `/identified` (`jwks_uri`), `/anchored` (`jkt-jwt`) — no scope |
-| [**Calendar**](Calendar/) | 5001 | PS-Asserted (three-party) | the traveler's events | `/events` → `calendar.read`, `/events/write` → `calendar.write` (step-up), `/events/admin` → role `calendar.owner` (RBAC) |
-| [**Trips**](Trips/) | 5002 | three-party + mission-aware | trip planning under a mission | `/trips` → `trips.read` (in-mission, silent), `/trips/book` → `trips.book` (out-of-mission, prompts) |
-| [**Wallet**](Wallet/) | 5003 | Federated (four-party) | the bank, with its own Access Server | `/wallet` → `wallet.read`, `/wallet/charge` → `wallet.charge` (AS role `wallet.payer`) |
-| [**Inbox**](Inbox/) | 5004 | Resource-Managed (two-party) | the traveler's inbox / trip confirmations | `/messages` → reactive (`202` + own consent → poll `/pending/{code}` → `AAuth-Access`) |
+| [**Profile**](Profile/) | 5000 | Agent identity + generic Signature Keys | who the caller is (no Person Server) | `/pseudonymous` (`hwk`), `/identified` (`jwt` or generic `jwks`), `/anchored` (`jkt-jwt`) — no scope |
+| [**Calendar**](Calendar/) | 5001 | PS authorization (three-party) | the traveler's events | `/events` → `calendar.read`, `/events/write` → `calendar.write` (step-up), `/events/admin` → role `calendar.owner` (RBAC) |
+| [**Trips**](Trips/) | 5002 | PS authorization + mission-aware | trip planning under a mission | `/trips` → `trips.read` (in-mission, silent), `/trips/book` → `trips.book` (out-of-mission, prompts) |
+| [**Wallet**](Wallet/) | 5003 | Federated authorization (four-party) | the bank, with its own Access Server | `/wallet` → `wallet.read`, `/wallet/charge` → `wallet.charge` (AS role `wallet.payer`), `/wallet/review` → `wallet.review` (AS clarification) |
+| [**Inbox**](Inbox/) | 5004 | Resource-managed (two-party session token) | the traveler's inbox / trip confirmations | `/messages` → reactive (`202` + own consent → poll `/pending/{code}` → `AAuth-Access`) |
 | [**Bookings**](Bookings/) | 5005 | Federated + R3 (four-party) | dining & experiences reservations, via a dedicated R3 Access Server (:5501) | `/search_availability`, `/hold_reservation` → `r3_granted`; `/confirm_reservation` → `r3_per_call` (per-call proposal; charges a deposit) |
 | [Catalog](Catalog/README.md) | 5006 | Federated + R3 (merged OpenAPI) | Destination and experience catalogs | `listDestinations` / `listExperiences`; sibling-operation grant rejected |
-| [Documents](Documents/README.md) | 5007 | PS-asserted with resource permission | Work travel document | `/document` requires `documents.read`, account `work` and completed release permission |
+| [Documents](Documents/README.md) | 5007 | Person identity then PS authorization with resource permission | Work travel document | `/document` requires `documents.read`, account `work` and completed release permission |
 
 The narrative reads as a journey: *Aria identifies itself (Profile), imports your
 trip confirmations from your **Inbox** (which manages its own consent — no Person

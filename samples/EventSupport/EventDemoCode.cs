@@ -13,7 +13,7 @@ public static class EventDemoCode
             var documentUrl = resourceMetadata["r3_vocabularies"]!["urn:aauth:vocabulary:asyncapi"]!.GetValue<string>();
             var channels = await http.GetFromJsonAsync<JsonObject>(
                 new Uri(new Uri(resource), documentUrl), cancellationToken);
-            var eventEndpoint = await protocol.ResolveEventEndpointAsync(provider, cancellationToken);
+            _ = await protocol.ResolveEventEndpointAsync(provider, cancellationToken);
             return channels!;
         }
         """;

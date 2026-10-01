@@ -12,7 +12,7 @@ import { Urls } from '../../../tests/e2e/helpers/agents';
 import { directedSubject } from '../../../tests/e2e/helpers/consent';
 
 /**
- * PS-Asserted (Direct Grant) — autonomous three-party flow, 8 steps, no human.
+ * PS Authorization (Direct Grant) — autonomous three-party flow, 8 steps, no human.
  * The agent token meets requirement=person-token; the agent gets a person token
  * from POST /person and presents it for a resource token. It has standing
  * consent at the Person Server (the page pre-seeds it via

@@ -37,6 +37,7 @@ app.MapAAuthWellKnown(); // serves /.well-known/aauth-resource.json
 > map the endpoint itself with `MapAAuthResourceRevocation`.
 
 ```csharp
+using AAuth;
 using AAuth.Crypto;
 
 var signingKey = AAuthKey.Generate();
@@ -61,7 +62,10 @@ builder.Services.AddAAuthResource(options =>
     options.LogoUri = "https://resource.example/logo.svg";
     options.TosUri = "https://resource.example/terms";
     options.PolicyUri = "https://resource.example/privacy";
-    options.AdditionalMetadata["support_uri"] = "https://resource.example/support";
+    options.AdditionalMetadata = new()
+    {
+        ["support_uri"] = "https://resource.example/support"
+    };
 });
 
 var app = builder.Build();
@@ -86,7 +90,7 @@ app.MapAAuthWellKnown();
 | `ScopeDescriptions` | No | Scope → description map (displayed during consent) |
 | `SignatureWindow` | No | Signature validity window in seconds (advertised to agents) |
 | `AdditionalSignatureComponents` | No | Additional HTTP signature components agents must cover, emitted as `additional_signature_components` |
-| `AccessMode` | No | Advisory `access_mode`: `agent-token`, `person-token`, `session-token`, `auth-token`, or R3 `per-call` |
+| `AccessMode` | No | Advisory `access_mode`: `agent-token`, `person-token`, `session-token` (resource-managed / `AAuth-Access`), `auth-token`, or R3 `per-call` |
 | `AuthorizationEndpoint` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | No | URL of the revocation endpoint |
 | `AdditionalMetadata` | No | Extension members merged into the well-known document. It cannot shadow typed fields. |

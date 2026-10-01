@@ -36,6 +36,24 @@ var meter = AAuthDiagnostics.Meter;
 |------------|------|-------------|
 | `aauth.signing.created_wait` | seconds | Sum of time spent waiting for the next free current-time `created` value when identical same-key/method/authority/path requests would otherwise collide |
 
+The signing wait metric is tagged with bounded-cardinality request fields:
+
+| Tag | Description | Example |
+|-----|-------------|---------|
+| `http.request.method` | HTTP method of the delayed request | `GET` |
+| `aauth.authority` | Signed request authority | `resource.example` |
+
+The matching `AAuth.Signing.CreatedWait` activity also includes
+`aauth.path` and `aauth.signing.created_wait.duration_ms` for trace-level
+debugging; the path is intentionally not attached to the metric.
+
+| Trace Tag | Description | Example |
+|-----------|-------------|---------|
+| `http.request.method` | HTTP method of the delayed request | `POST` |
+| `aauth.authority` | Signed request authority | `resource.example` |
+| `aauth.path` | Signed request path | `/data` |
+| `aauth.signing.created_wait.duration_ms` | Wait duration in milliseconds | `1000` |
+
 ## Server-Side Tags
 
 After successful verification, `AAuthVerificationMiddleware` enriches `Activity.Current` with these tags:
@@ -59,8 +77,11 @@ The SDK creates child Activity spans for key operations:
 | Span Name | Source | Description |
 |-----------|--------|-------------|
 | `AAuth.TokenExchange` | `TokenExchangeClient` | Token exchange request to Person Server |
+| `AAuth.PersonTokenRequest` | `TokenExchangeClient` | Person-token request to Person Server |
 | `AAuth.ChallengeExchange` | `ChallengeHandler` | Full challenge-exchange-retry cycle |
 | `AAuth.DeferredPoll` | `DeferredExchange` / `AccessServerClient` | Deferred polling loop |
+| `AAuth.AccessServerFederation` | `AccessServerClient` | PS-to-AS federation token request |
+| `AAuth.Signing.CreatedWait` | `AAuthSigningHandler` | Delay before signing to avoid duplicate replay tuples |
 
 ## Tag Constants
 
@@ -76,6 +97,9 @@ string[] tags =
     AAuthDiagnostics.TagIssuer,
     AAuthDiagnostics.TagTokenType,
     AAuthDiagnostics.TagIssuerVerified,
+    AAuthDiagnostics.TagHttpMethod,
+    AAuthDiagnostics.TagAuthority,
+    AAuthDiagnostics.TagPath,
 ];
 ```
 

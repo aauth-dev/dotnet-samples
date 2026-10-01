@@ -20,8 +20,9 @@
 <p>
     Key rotation without re-enrolment. The enrolled <strong>durable key</strong> signs a
     naming JWT that binds a fresh <strong>ephemeral key</strong>. The ephemeral key signs
-    HTTP requests. When the ephemeral key needs rotating, the agent builds a new
-    naming JWT — the AP never needs to re-enrol the agent.
+    the AP refresh request and any generic Signature-Key calls that opt into
+    <code>jkt-jwt</code>. When the ephemeral key needs rotating, the agent asks the AP
+    for a fresh two-key result and rebuilds the client with the returned key and token.
 </p>
 
 <div class="row">
@@ -53,11 +54,11 @@ using var client = new AAuthClientBuilder(result.EphemeralKey).WithEgressPolicy(
     <li>AP verifies naming JWT signature against enrolled durable key,
         verifies HTTP sig against ephemeral key</li>
 </ol>
-<p class="fw-bold small text-secondary mb-1">Resource access (2-party, no AP)</p>
+<p class="fw-bold small text-secondary mb-1">Generic Signature-Key access (no AAuth resource mode)</p>
 <ol start="5">
     <li>Agent signs resource requests with ephemeral key + naming JWT
-        (<code>sig=jkt-jwt</code>). Resource verifies the HTTP signature
-        against <code>cnf.jwk</code> and identifies the agent by
+        (<code>sig=jkt-jwt</code>). A generic verifier checks the HTTP signature
+        against <code>cnf.jwk</code> and identifies the signer by
         the durable key's <code>jkt</code> thumbprint.</li>
 </ol>
 </div>

@@ -87,23 +87,31 @@ accepts an optional `interaction` and `loginHint`.
 ```csharp
 public sealed class ChallengeOptions
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
+
     // How to handle access decisions
-    public AAuthAccessMode AccessMode { get; init; } = AAuthAccessMode.RequireAuthToken;
+    public AAuthAccessMode AccessMode { get; set; } = AAuthAccessMode.RequireAuthToken;
 
     // Resource signing keys for minting resource tokens; the JWKS publishes
     // every key and resource tokens are signed with the active one (its kid
     // goes in the resource token header)
-    public AAuthSigningKeySet? ResourceSigningKeys { get; init; }
+    public AAuthSigningKeySet? ResourceSigningKeys { get; set; }
 
     // Resource identifier (used as iss in the resource token)
-    public string? ResourceIdentifier { get; init; }
+    public string? ResourceIdentifier { get; set; }
+
+    // Optional account/login hint to copy into the resource token.
+    public Func<Microsoft.AspNetCore.Http.HttpContext, string?>? RequestedAccount { get; set; }
 
     // The resource's own Access Server (four-party): the resource-token aud.
     // When null, aud is the PS that issued the presented token (three-party).
-    public string? AccessServer { get; init; }
+    public string? AccessServer { get; set; }
 
     // Default scopes to request in the resource token (space-separated)
-    public string? DefaultScopes { get; init; }
+    public string? DefaultScopes { get; set; }
+
+    // Optional scope descriptions used by custom challenge UX.
+    public IReadOnlyDictionary<string, string>? ScopeDescriptions { get; set; }
 
     // Accepted Signature-Key schemes are configured on AAuthVerificationOptions.
 }

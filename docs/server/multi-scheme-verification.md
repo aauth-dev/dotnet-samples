@@ -25,6 +25,11 @@ public sealed class SignatureKeyResolution
 {
     public required IAAuthKey PublicKey { get; init; }
     public required SignatureKeyParser.ParsedSignatureKeyInfo Info { get; init; }
+    public AAuth.Tokens.TokenVerifier.VerifiedToken? VerifiedToken { get; init; }
+    public IAAuthKey? IssuerKey { get; init; }
+    public string? VerifiedIdentifier { get; init; }
+    public string? KeyId { get; init; }
+    public string? DurableThumbprint { get; init; }
 }
 ```
 
@@ -67,7 +72,7 @@ app.UseAAuthVerification(options =>
 | Scheme | How Key Is Resolved |
 |--------|-------------------|
 | `hwk` | Validates structured public JWK members and computes the thumbprint locally |
-| `jwks_uri` | Discovers exact id/dwk metadata, validates issuer, follows jwks_uri and selects kid |
+| `jwks_uri` | Discovers exact `id`/`dwk` metadata, validates issuer, follows its `jwks_uri`, and selects `kid` |
 | `jwks` | Fetches the exact direct url and selects kid |
 | `self-jwt` | Validates the registered assertion type; issuer key verifies JWT and HTTP, with no cnf |
 | `jwt` | Extracts `cnf.jwk` from agent token, fetches AP's JWKS to verify token signature |
@@ -86,12 +91,15 @@ After resolution, the parsed info is available via `HttpContext.Items[AAuthVerif
 ```csharp
 public sealed class ParsedSignatureKeyInfo
 {
-    public required string Scheme { get; init; }     // "hwk", "jwks_uri", "jwt", "jkt-jwt"
+    public required string Scheme { get; init; }     // "hwk", "jwks_uri", "jwks", "jwt", "self-jwt", "jkt-jwt"
+    public string Label { get; init; } = "sig";
     public IAAuthKey? ConfirmationKey { get; init; } // resolved public key
     public string? Jkt { get; init; }                // key thumbprint
-    public string? JwksUri { get; init; }            // declared JWKS URI (jwks_uri scheme)
-    public string? Kid { get; init; }                // key ID (jwks_uri scheme)
-    public string? Jwt { get; init; }                // raw agent token (jwt/jkt-jwt schemes)
+    public string? Identifier { get; init; }         // id (jwks_uri) or direct url (jwks)
+    public string? Dwk { get; init; }                // metadata document name (jwks_uri)
+    public string? JwksUri { get; init; }            // direct JWKS URL (jwks scheme)
+    public string? Kid { get; init; }                // key ID (jwks_uri/jwks schemes)
+    public string? Jwt { get; init; }                // raw assertion (jwt/self-jwt/jkt-jwt schemes)
     public JsonObject? Header { get; init; }         // parsed JWT header
     public JsonObject? Payload { get; init; }        // parsed JWT payload (claims)
 }

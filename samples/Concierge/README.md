@@ -107,4 +107,4 @@ dotnet run --project samples/AgentConsole -- http://localhost:5200 \
 
 1. **Self-issued identity**: The Concierge acts as its own AP per spec §Self-Hosted Agents — it publishes agent metadata at `/.well-known/aauth-agent.json` and self-signs agent tokens with its published key.
 2. **Per-request consent grant**: Grants consent for itself at the PS before each downstream call (demo simplification).
-3. **Fallback path**: If the caller used HWK/JWKS-URI (no upstream auth token), falls back to standard challenge handling without chaining.
+3. **Fallback path**: If the caller used a generic Signature-Key demonstration (no upstream auth token), falls back to standard challenge handling without chaining.

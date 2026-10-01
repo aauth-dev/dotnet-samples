@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 244 changed public-source files, 1192 added/replacement declarations, 459 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 244 changed public-source files, 1195 added/replacement declarations, 461 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -208,12 +208,13 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [WalletScenarioCode
         """ ;
 + AAuth.Samples.Capabilities.WalletScenarioCode: public const string Revocation = """
         public static Task<RevocationCascadeResult> RevokePersonTokenAsync(IServiceProvider services,
-            string personTokenId, CancellationToken cancellationToken)
+            string personTokenJti, CancellationToken cancellationToken)
         {
-            // The PS revokes its person token at its resource and at every AS it presented it to;
-            // each AS cascades to the auth tokens it issued against it.
+            // The PS revokes its person token by its jti; the stored {jti, exp}
+            // record lets it notify the resource and every AS it presented it to.
+            // Each AS cascades to the auth tokens it issued against that person token.
             var revocation = services.GetRequiredKeyedService<IAAuthRevocationService>(AAuthPersonServerBuilder.DefaultName);
-            return revocation.RevokeTokenAsync(personTokenId, cancellationToken);
+            return revocation.RevokeTokenAsync(personTokenJti, cancellationToken);
         }
 
         public static Task<string> RecoverAsync(AAuthAgent agent,
@@ -311,6 +312,20 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [EventDemoCode.cs](
             using var response = await protocol.SendAsync(HttpMethod.Post, endpoint,
                 resourceKey, token, selfIssued: true, body: payload, cancellationToken: cancellationToken);
             response.EnsureSuccessStatusCode();
+        }
+        """ ;
+- AAuth.Samples.Events.EventDemoCode: public const string Discover = """
+        public static async Task<JsonObject> DiscoverChannelsAsync(HttpClient http,
+            EventsProtocol protocol, string resource, string provider, CancellationToken cancellationToken)
+        {
+            using var metadata = new MetadataClient(http);
+            var resourceMetadata = await metadata.FetchAsync(
+                new Uri(resource + "/.well-known/aauth-resource.json"), cancellationToken);
+            var documentUrl = resourceMetadata["r3_vocabularies"]!["urn:aauth:vocabulary:asyncapi"]!.GetValue<string>();
+            var channels = await http.GetFromJsonAsync<JsonObject>(
+                new Uri(new Uri(resource), documentUrl), cancellationToken);
+            var eventEndpoint = await protocol.ResolveEventEndpointAsync(provider, cancellationToken);
+            return channels!;
         }
         """ ;
 - AAuth.Samples.Events.EventDemoCode: public const string Example = """
@@ -438,6 +453,20 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [EventDemoCode.cs](
             using var response = await protocol.SendAsync(HttpMethod.Post, endpoint,
                 resourceKey, token, selfIssued: true, body: payload, cancellationToken: cancellationToken);
             response.EnsureSuccessStatusCode();
+        }
+        """ ;
++ AAuth.Samples.Events.EventDemoCode: public const string Discover = """
+        public static async Task<JsonObject> DiscoverChannelsAsync(HttpClient http,
+            EventsProtocol protocol, string resource, string provider, CancellationToken cancellationToken)
+        {
+            using var metadata = new MetadataClient(http);
+            var resourceMetadata = await metadata.FetchAsync(
+                new Uri(resource + "/.well-known/aauth-resource.json"), cancellationToken);
+            var documentUrl = resourceMetadata["r3_vocabularies"]!["urn:aauth:vocabulary:asyncapi"]!.GetValue<string>();
+            var channels = await http.GetFromJsonAsync<JsonObject>(
+                new Uri(new Uri(resource), documentUrl), cancellationToken);
+            _ = await protocol.ResolveEventEndpointAsync(provider, cancellationToken);
+            return channels!;
         }
         """ ;
 + AAuth.Samples.Events.EventDemoCode: public const string Example = """
@@ -680,11 +709,14 @@ Public owners: `GuidedTour.TourSession`, `GuidedTour`.
 Concept/decision: [sample-runtime](#sample-runtime). Source: [TourSession.cs](../../../samples/GuidedTour/TourSession.cs).
 
 ```diff
+- GuidedTour.TourSession: public Task RecordUserApprovalOpenedAsync ( CancellationToken ct = default )
 - GuidedTour.TourSession: public bool CanSwitchMode
 - GuidedTour.TourSession: public string ? WorkerConsentUrl { get ; private set ; }
 - GuidedTour: public sealed class TourSession : IAsyncDisposable
++ GuidedTour.TourSession: public Interaction ? ConsentInteraction
 + GuidedTour.TourSession: public Interaction ? CurrentInteraction
 + GuidedTour.TourSession: public Interaction ? WorkerConsent { get ; private set ; }
++ GuidedTour.TourSession: public bool ConsentDecidedAtPersonServer
 + GuidedTour.TourSession: public bool IsPersonServerConsent
 + GuidedTour.TourSession: public string ? PersonServer
 + GuidedTour.TourSession: public string ? WorkerConsentUrl

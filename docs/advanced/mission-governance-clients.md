@@ -170,8 +170,9 @@ bool done = await session.ProposeCompletionAsync(
 resource-hosted interactions, the resource's original pending URL is
 authoritative: the PS relay only reports that the PS reached the user (or that it
 cannot), and the agent keeps polling the resource `Location` until the resource
-completes. `ProposeCompletionAsync` returns `false` when the person answered
-with follow-up questions and the mission stays active.
+completes. `ProposeCompletionAsync` returns `false` when the person does not
+accept the summary (for example, asks follow-up questions) and the mission stays
+active.
 
 ## A full lifecycle
 

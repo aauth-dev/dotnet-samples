@@ -51,7 +51,7 @@ var header = SignatureError.Format(SignatureErrorCode.InvalidSignature);
 var detailedHeader = SignatureError.Format(
     SignatureErrorCode.InvalidInput,
     requiredInput: new[] { "@method", "@authority", "@path" });
-// → "error=invalid_input;required_input=\"@method\" \"@authority\" \"@path\""
+// → "error=invalid_input, required_input=(\"@method\" \"@authority\" \"@path\")"
 
 // Parsing (agent-side)
 var receivedHeader = response.Headers.TryGetValues("Signature-Error", out var values)
@@ -108,6 +108,8 @@ namespace AAuth.Errors;
 public enum TokenErrorCode
 {
     InvalidRequest,         // Malformed request body
+    InvalidAgentToken,      // agent_token parameter fails validation at an AS/R3 endpoint
+    ExpiredAgentToken,      // agent_token parameter exp has passed
     InvalidResourceToken,   // Resource token fails validation
     ExpiredResourceToken,   // Resource token exp has passed
     RevokedResourceToken,   // The issuing resource withdrew it; do not resubmit
@@ -251,7 +253,7 @@ public enum PollingErrorCode
 {
     Denied,        // User explicitly denied the request (403)
     Abandoned,     // User navigated away / session expired (403)
-    Expired,       // Timed out server-side (408), e.g. a chained request's upstream token expired
+    Expired,       // Timed out server-side (408 before final consumption; then invalid_code 410)
     Revoked,       // A token the pending request depends on was revoked (403)
     InvalidCode,   // Code doesn't match any pending interaction
     SlowDown,      // Polling too fast — back off
@@ -266,6 +268,7 @@ public sealed class PollingErrorException : Exception
 {
     public PollingErrorCode ErrorCode { get; }
     public int StatusCode { get; }
+    public string? Detail { get; }
 
     // Wire format helpers
     public static string ToWireCode(PollingErrorCode code);       // e.g., "denied"

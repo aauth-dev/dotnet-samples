@@ -237,7 +237,7 @@ var authToken = await exchange.ExchangeAsync(
             _authClaims = Pretty(authPayload);
             _cnfBound = JsonNode.DeepEquals(authPayload["cnf"]?["jwk"],
                 FederatedWorkerScenario.Payload(flow.WorkerToken!)["cnf"]?["jwk"]);
-            _steps.Add(new("PS returns the AS auth token to the parent", "PS consent and AS policy passed.", "cnf = worker key; ps + sub name the person; no act chain."));
+            _steps.Add(new("PS returns the AS auth token to the parent", "PS consent and AS policy passed.", "cnf = worker key; ps + sub name the person; no agent or act claim."));
             _steps.Add(new("Parent hands the token to the worker", "Only the worker can present this grant.", "No private key is forwarded to the PS or AS."));
             await flow.CallWalletAsync();
             _resourceResponse = flow.ResourceResponse;

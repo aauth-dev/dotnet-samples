@@ -14,7 +14,7 @@ import { Urls } from '../../../tests/e2e/helpers/agents';
 import { directedSubject } from '../../../tests/e2e/helpers/consent';
 
 /**
- * PS-Asserted (Deferred) — three-party flow requiring human approval, 11 steps.
+ * PS Authorization (Deferred) — three-party flow requiring human approval, 11 steps.
  * After the person-token leg (steps 2–6) the agent has no standing consent, so
  * POST /token returns 202 with an interaction URL. The agent starts polling as
  * soon as it surfaces the request (step 9 is recorded on arrival), and "Run all"

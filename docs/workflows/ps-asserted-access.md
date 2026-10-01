@@ -1,14 +1,15 @@
-# PS Authorization Access (Three-Party)
+# PS Authorization (Three-Party)
 
 > [Live demo](https://explorer.aauth.dev/access/ps-asserted) | [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
 
 ## Overview
 
 The resource doesn't handle authorization itself — it delegates to the agent's
-Person Server. The agent first presents a person token from its PS; the resource
-issues a resource token naming that person token; the agent exchanges both at
-the PS for an auth token; then presents the auth token back. Requires `sig=jwt`
-signing mode.
+Person Server. This is the three-party PS authorization mode (the
+historical `ps-asserted` file name remains only for link compatibility). The
+agent first presents a person token from its PS; the resource issues a resource
+token naming that person token; the agent exchanges both at the PS for an auth
+token; then presents the auth token back. Requires `sig=jwt` signing mode.
 
 ## Sequence Diagram
 
@@ -22,7 +23,7 @@ sequenceDiagram
     Agent->>PS: POST /person (signed, resource in body)
     PS-->>Agent: 200 + person token (aa-person+jwt)
     Agent->>Resource: GET /data (signed, sig=jwt with person token)
-    Resource-->>Agent: 401 requirement=auth-token + resource token (aud=PS)
+    Resource-->>Agent: 401 requirement=auth-token + resource token (aud=PS; presented_jti)
     Agent->>PS: POST /token (signed, resource_token + presented_token)
     PS-->>Agent: 200 + auth token (aa-auth+jwt)
     Agent->>Resource: GET /data (signed, sig=jwt with auth token)
@@ -171,7 +172,7 @@ See [Dependency Injection](../reference/dependency-injection.md) for full option
 ## Autonomous vs Deferred
 
 - **Autonomous**: PS has standing consent → returns auth token immediately (step 3→4)
-- **Deferred**: PS requires user approval → returns 202 + pending URL → agent polls (see [Deferred Consent](deferred-consent.md))
+- **Deferred**: PS requires user approval → returns 202 + pending URL → agent starts polling immediately and surfaces the interaction (see [Deferred Consent](deferred-consent.md))
 
 Start polling as soon as the `202` arrives, before or while the person is
 shown the link. The host of the interaction URL MAY complete the interaction
@@ -198,8 +199,8 @@ parks a `202` deferred consent). See
 
 | Status | Header/Token | Cause |
 |--------|-------------|-------|
-| 401 | `Signature-Error: invalid_signature` | Signature doesn't verify at resource |
-| 401 | `Signature-Error: error=invalid_signature` or `application/problem+json` | Resource rejects malformed credentials or local policy before issuing a token |
+| 401 | `Signature-Error: error=invalid_signature` | Signature doesn't verify at resource |
+| 401 | `Signature-Error: error=invalid_request` | Resource rejects malformed credentials or audience binding before issuing a token |
 | 403 | Auth token denied | PS issued auth token but resource policy still denies |
 | 202 | Pending URL from PS | Deferred consent — user approval required |
 
@@ -207,5 +208,5 @@ parks a `202` deferred consent). See
 
 - [Agent Token mode](../signing-modes/agent-token-jwt.md)
 - [Deferred Consent](deferred-consent.md)
-- [Federated Access](federated-access.md)
+- [Federated authorization](federated-access.md)
 - [Token Issuance (server)](../server/token-issuance.md)

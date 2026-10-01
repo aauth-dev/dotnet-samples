@@ -35,7 +35,9 @@ public interface IJtiStore
     Task<bool> RegisterAsync(TokenKey token, DateTimeOffset expiration, CancellationToken ct = default);
     Task RevokeAsync(TokenKey token, DateTimeOffset expiresAt, CancellationToken ct = default);
     Task<bool> IsRevokedAsync(TokenKey token, CancellationToken ct = default);
+    Task<bool> ContainsTokenAsync(TokenKey token, CancellationToken ct = default);
     Task<bool> RegisterGrantAsync(IReadOnlyCollection<TokenKey> sources, TokenGrant grant, CancellationToken ct = default);
+    Task<bool> CheckProvenanceQuotaAsync(UpstreamCallerRecord caller, string resource, CancellationToken ct = default);
     Task<IReadOnlyList<TokenGrant>> GetGrantsAsync(TokenKey source, CancellationToken ct = default);
     Task<TokenGrant?> GetGrantAsync(TokenKey token, CancellationToken ct = default);
     Task RecordSubjectAsync(TokenKey token, string subject, CancellationToken ct = default);
@@ -52,9 +54,12 @@ nothing. `RegisterGrantAsync` atomically checks
 all source tokens and records the issued or provided token's exact issuer, ID,
 resource recipient, and expiration. `GetGrantAsync` returns that record for a
 token the server issued, so it can revoke the token by `jti` alone.
-`RecordSubjectAsync` keeps the `sub` a registered agent token carried, so its
-revocation cascades by agent identity. Do not populate this inventory from unverified
-JWT claims.
+`ContainsTokenAsync` checks whether a token is still in the local inventory.
+`CheckProvenanceQuotaAsync` lets callers fail closed before minting when an
+upstream caller/resource provenance record would exceed store backpressure
+limits. `RecordSubjectAsync` keeps the `sub` a registered agent token carried,
+so its revocation cascades by agent identity. Do not populate this inventory from
+unverified JWT claims.
 
 ## Built-in: InMemoryJtiStore
 
@@ -239,7 +244,7 @@ The PS also records, for each agent token it accepts, the `sub` it carried, and
 indexes every token it issues by that agent identity and by its mission. An agent
 provider's revocation of one agent token therefore cascades to everything the PS
 issued to that agent, whichever agent token it presented; the agent-person
-binding is not altered.
+binding is revoked so a new binding can be established only after the cascade.
 
 Local revocation is not rolled back when delivery fails. Repeating a revocation
 records nothing new and re-attempts every downstream revocation. A resource
@@ -248,7 +253,7 @@ when it is presented later.
 
 Unreached recipients learn nothing from local JWKS verification and remain
 bounded by token lifetime, at most one hour for auth tokens. See the
-[revocation exposure limits](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2767).
+[revocation cascade limits](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#revocation-cascade).
 Deployments needing shorter exposure should issue shorter-lived tokens and use a
 durable retry mechanism. The SDK's in-memory sample does not provide restart-safe
 delivery or a background retry service.

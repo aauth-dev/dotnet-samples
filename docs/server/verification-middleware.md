@@ -54,25 +54,41 @@ always checked against this resource.
 ```csharp
 public sealed class AAuthVerificationOptions
 {
-    // The resource's own identifier; auth-token and person-token `aud` must equal it.
-    // AddAAuthResource derives it from its Issuer. When no identifier is known,
-    // auth and person tokens are rejected (Signature-Error: invalid_request).
-    public string? ResourceIdentifier { get; init; }
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
+    public IReadOnlyList<string> AcceptedSchemes { get; set; } = ["jwt"];
+    public string SignatureLabel { get; set; } = "sig";
+    public IReadOnlyCollection<string> RequiredComponents { get; set; } = [];
 
-    public IReadOnlyList<string> AcceptedSchemes { get; init; } = ["jwt"];
-    public string SignatureLabel { get; init; } = "sig";
-    public IReadOnlyCollection<string> RequiredComponents { get; init; } = [];
+    // Require content-type and content-digest on requests with bodies.
+    public bool RequireBodyCoverage { get; set; }
+
+    // Return generic Signature-Key failures as 400 instead of 401 challenges.
+    public bool GenericSignatureKeys { get; set; }
 
     // Agent Provider, auth-token issuer and person-token issuer trust. Unset rules
     // accept any *verifiable* issuer (the spec default — the JWT signature still
     // verifies against the issuer's JWKS); an empty Allowed set denies all.
-    public AAuthTrustOptions Trust { get; init; } = new();
+    public AAuthTrustOptions Trust { get; set; } = new();
+
+    // Expected auth-token dwk: aauth-person.json by default, or aauth-access.json
+    // when AddAAuthResource is configured with AccessServer.
+    public string? ExpectedAuthTokenDwk { get; set; } = AAuthConstants.DwkFiles.Person;
+
+    // The resource's own identifier; auth-token and person-token `aud` must equal it.
+    // AddAAuthResource derives it from its Issuer. When no identifier is known,
+    // auth and person tokens are rejected (Signature-Error: invalid_request).
+    public string? ResourceIdentifier { get; set; }
+
+    // Optional account binding expected by the resource.
+    public Func<Microsoft.AspNetCore.Http.HttpContext, string?>? ExpectedAccount { get; set; }
 
     // Tolerance for optional future iat validation; exp has zero tolerance (default: 30s)
-    public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan ClockSkew { get; set; } = TimeSpan.FromSeconds(30);
 
     // Clock source for all time checks (default: TimeProvider.System; inject for testing)
-    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
+    public static AAuthVerificationOptions Generic(TimeProvider? timeProvider = null);
 }
 ```
 
@@ -91,7 +107,7 @@ public sealed class AAuthVerificationOptions
 >
 > - `Trust.AuthTokenIssuers` unset ⇒ accept any *verifiable* Person
 >   Server, namespaced by `iss` (the AAuth spec default).
-> - empty `Allowed` set ⇒ deny all PS-asserted tokens (a deliberate kill-switch).
+> - empty `Allowed` set ⇒ deny all auth-token issuers (a deliberate kill-switch).
 > - non-empty `Allowed` set ⇒ restrict to the listed issuers.
 > - `Predicate` / `PredicateAsync` ⇒ predicates AND-composed
 >   with the set (each only narrows). Assign `AAuthTrust.Any` to trust any
@@ -127,7 +143,7 @@ public sealed class AAuthVerificationOptions
 
 The canonical user identity is the **`(iss, sub)` pair**: the same `sub` value
 asserted by two different Person Servers denotes two different users. Every
-PS-asserted identity claim the handler emits (`NameIdentifier`, `Role`,
+Person- or auth-token identity claim the handler emits (`NameIdentifier`, `Role`,
 `aauth:group`) carries `Claim.Issuer == iss` for provenance, and a composite
 `aauth:sub_iss` (`{iss}|{sub}`) claim is surfaced so resources can match a local
 user record on the full key rather than on `sub` alone.
@@ -176,7 +192,7 @@ app.MapGet("/protected", (HttpContext ctx) =>
 {
     var result = ctx.GetAAuthVerification()!;
     // result.Level: Pseudonymous | Identified | Authorized
-    // result.Scheme: "jwt" | "hwk" | "jkt-jwt" | "jwks_uri"
+    // result.Scheme: "jwt" | "hwk" | "jkt-jwt" | "jwks_uri" | "jwks" | "self-jwt"
     // result.Agent: agent identifier (agent tokens only; person and auth tokens name no agent)
     // result.Scopes: granted scopes (auth tokens only)
     // result.Roles: enterprise roles from the auth token (IReadOnlySet<string>)

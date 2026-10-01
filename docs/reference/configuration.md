@@ -36,13 +36,16 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for metadata and JWKS fetches. |
 | `ResourceIdentifier` | `string?` | `AddAAuthResource` `Issuer` | Resource's own identifier; auth-token and person-token `aud` must equal it. With no identifier, auth and person tokens are rejected (`invalid_request`). |
 | `AcceptedSchemes` | `IReadOnlyList<string>` | `["jwt"]` | Schemes accepted by this verification role; generic signing is an explicit opt-in. |
 | `SignatureLabel` | `string` | `"sig"` | Matching dictionary member selected from all three signature fields. |
 | `RequiredComponents` | `IReadOnlyCollection<string>` | `[]` | Additional required covered components. |
+| `RequireBodyCoverage` | `bool` | `false` | Require body-bearing requests to cover `content-type` and `content-digest`; missing coverage fails with `invalid_input` and `required_input`. |
 | `GenericSignatureKeys` | `bool` | `false` | Use generic Signature Keys failure status policy instead of AAuth's 401 profile. |
 | `Trust` | `AAuthTrustOptions` | `new()` (open) | Agent Provider, auth-token issuer and person-token issuer trust; see [AAuthTrustOptions](#aauthtrustoptions). |
 | `ExpectedAuthTokenDwk` | `string?` | `aauth-person.json` | Auth-token `dwk` pin. `AddAAuthResource` with `AccessServer` derives `aauth-access.json`; set `null` only for explicit mixed PS/AS deployments with a `TokenDwk`-aware trust policy. |
+| `ExpectedAccount` | `Func<HttpContext,string?>?` | `null` | Optional account selector; when it returns a value, verified auth/person tokens must be bound to that account. |
 | `ClockSkew` | `TimeSpan` | 30 seconds | Tolerance for optional future `iat` checks. `exp` has zero tolerance and is rejected when it is not in the future. |
 | `TimeProvider` | `TimeProvider` | System | Clock source for all time-dependent checks. Inject for deterministic testing. |
 
@@ -125,6 +128,7 @@ key are validated at startup (`OptionsValidationException`).
 | `ResourceInteractionSessions` | `BrowserConsentSessions?` | `null` (per-PS default) | *Code-only.* Browser sessions for resource-interaction chaining under `{InteractionPath}/resource` |
 | `UnsignedPathPrefixes` | `IReadOnlyCollection<string>?` | `null` | Extra path prefixes the mapper's signature verification skips (the PS's own browser pages) |
 | `TriageClarificationAsync` | `Func<PersonPendingEntry, ClarificationRequirement, CancellationToken, Task<ClarificationResponse?>>?` | `null` | *Code-only.* Answers an Access Server's clarification locally; `null` forwards it to the agent |
+| `CollapsedFederation` | `IList<AAuthCollapsedFederationDeclaration>` | empty | Explicit PS-AS collapse declarations: a verified resource issuer may use a linked local AS role whose issuer must match `ExpectedAccessServerIssuer`. Use the builder's `UseCollocatedAccessServer(...)` helpers or mutate the list in code. |
 | `InteractionEndpointPath` | `string?` | `null` (`/mission-interaction` with `.WithGovernance()`) | Signed §Interaction Endpoint path, advertised as issuer + path when set. It never falls back to `InteractionPath` |
 | `MissionPath` | `string?` | `null` (`/mission` with `.WithGovernance()`) | Mission endpoint path, advertised as issuer + path |
 | `PermissionPath` | `string?` | `null` (`/permission` with `.WithGovernance()`) | Permission endpoint path, advertised as issuer + path |
@@ -138,6 +142,21 @@ resolves the `IMissionStore` / `IMissionLog` mission primitives when a request
 carries `mission_s256`. See
 [Person Server and Access Server Registration](dependency-injection.md#person-server-and-access-server-registration)
 and [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+
+Payment settlement is a seam, not a settable options property: register an
+`IAAuthPaymentSettler` with `UsePaymentSettler(...)` to handle AS `402`
+federation challenges, and optionally replace the default
+`InMemoryAAuthBillingRelationshipCache` with `UseBillingRelationshipCache(...)`.
+
+### AAuthCollapsedFederationDeclaration
+
+`CollapsedFederation` entries use this shape:
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ResourceIssuer` | `string` | required | Verified resource issuer that chose the collocated AS. |
+| `AccessServerName` | `string` | default AS role name | Linked local Access Server role instance. |
+| `ExpectedAccessServerIssuer` | `string` | required (`UseCollocatedAccessServer` defaults to the PS issuer) | Issuer the linked AS role must use; mismatches fail closed. |
 
 ### AAuthAccessServerOptions (via AddAAuthAccessServer)
 
@@ -168,29 +187,90 @@ An `IAccessPolicy` is required (`UsePolicy` or a DI registration).
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Lifetime` | `TimeSpan` | 5 minutes | Token validity duration |
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for issuer, audience and PS URLs. |
+| `Issuer` | `string` | required | Resource issuer (`iss`) |
+| `Audience` | `string` | required | PS issuer for three-party or AS issuer for four-party (`aud`) |
+| `PersonServer` | `string` | required | Person Server copied from the presented token (`ps`) |
+| `Subject` | `string` | required | Directed subject copied from the presented token (`sub`) |
+| `PresentedJti` | `string` | required | `jti` of the presented person/auth token (`presented_jti`) |
+| `AgentJkt` | `string` | required | JWK thumbprint of the agent signing key (`agent_jkt`) |
+| `Key` | `IAAuthSigner` | required | Resource signing key |
+| `KeyId` | `string` | required | JWT header `kid` |
+| `Scope` | `string?` | `null` | Requested scopes, space-separated |
+| `Account` | `string?` | `null` | Optional account binding |
+| `ScopeDescriptions` | `IReadOnlyDictionary<string,string>?` | `null` | Descriptions used to validate and advertise requested scopes |
+| `PersonServerScopesSupported` | `IReadOnlyCollection<string>?` | `null` | PS-advertised scopes used to validate requested scopes |
+| `MissionS256` | `string?` | `null` | Mission reference copied from the presented token |
+| `Tenant` | `string?` | `null` | Tenant copied from the presented token |
+| `LoginHint` | `string?` | `null` | Optional authorization hint |
+| `Interaction` | `Interaction?` | `null` | Optional interaction requirement embedded in the resource token |
+| `Lifetime` | `TimeSpan` | 5 minutes | Token validity duration; SDK producers reject values over 5 minutes |
 | `IssuedAt` | `DateTimeOffset?` | Now | Override issuance timestamp |
-| `TokenId` | `string?` | Auto (UUID) | Custom jti value |
+| `TokenId` | `string?` | Auto (GUID) | Custom `jti` value |
 
 ### AuthTokenBuilder
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `AgentTokenExpiresAt` | `DateTimeOffset` | Required | Expiry from the verified source agent token |
-| `AuthorizationExpiresAt` | `DateTimeOffset?` | None | Additional verified presented/parent/upstream/mission ceiling |
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for issuer, audience and PS URLs. |
+| `Issuer` | `string` | required | PS or AS issuer (`iss`) |
+| `Audience` | `string` | required | Resource identifier (`aud`) |
+| `PersonServer` | `string` | required | Person Server identifier (`ps`) |
+| `Subject` | `string` | required | Directed subject (`sub`) |
+| `AgentConfirmationKey` | `IAAuthKey` | required | Agent/sub-agent confirmation key (`cnf.jwk`) |
+| `AgentTokenExpiresAt` | `DateTimeOffset` | required | Expiry from the verified source agent token |
+| `AuthorizationExpiresAt` | `DateTimeOffset?` | `null` | Additional verified presented/parent/upstream/mission ceiling |
 | `TimeProvider` | `TimeProvider` | System | Issuance and expiration clock |
+| `Key` | `IAAuthSigner` | required | PS/AS signing key |
+| `KeyId` | `string` | required | JWT header `kid` |
+| `Dwk` | `string` | `"aauth-person.json"` | Discovery well-known path; use `"aauth-access.json"` for AS-issued four-party auth tokens |
+| `Scope` | `string?` | `null` | Granted scopes, space-separated |
+| `Account` | `string?` | `null` | Optional account binding |
+| `Roles` | `IReadOnlyList<string>?` | `null` | Optional enterprise roles claim |
+| `Groups` | `IReadOnlyList<string>?` | `null` | Optional enterprise groups claim |
+| `MissionS256` | `string?` | `null` | Mission reference copied from the resource token |
+| `Tenant` | `string?` | `null` | Optional tenant claim |
 | `Lifetime` | `TimeSpan` | 1 hour | Positive requested lifetime, at most one hour, capped by verified ceilings |
-| `Dwk` | `string` | `"aauth-person.json"` | Discovery well-known path |
 | `IssuedAt` | `DateTimeOffset?` | Now | Override issuance timestamp |
-| `TokenId` | `string?` | Auto (UUID) | Custom jti value |
+| `TokenId` | `string?` | Auto (GUID) | Custom `jti` value |
+| `AdditionalClaims` | `IReadOnlyDictionary<string,JsonNode?>?` | `null` | Extra identity claims; reserved claim names are rejected |
 
 ### AgentTokenBuilder
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Lifetime` | `TimeSpan` | 1 hour | Token validity duration |
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for issuer and PS URLs. |
+| `Issuer` | `string` | required | Agent Provider issuer (`iss`) |
+| `Subject` | `string` | required | Agent identifier (`sub`) |
+| `KeyId` | `string` | required | JWT header `kid` |
+| `Key` | `IAAuthSigner` | required | JWT signing key |
+| `ConfirmationKey` | `IAAuthKey?` | `null` | Optional separate confirmation key; when `null`, `Key` is also the confirmation key |
+| `PersonServer` | `string?` | `null` | Optional Person Server URL (`ps`) |
+| `ParentAgent` | `string?` | `null` | Optional parent agent identifier for a sub-agent token |
+| `Lifetime` | `TimeSpan` | 1 hour | Token validity duration; SDK producers reject values over 24 hours |
 | `IssuedAt` | `DateTimeOffset?` | Now | Override issuance timestamp |
-| `TokenId` | `string?` | Auto (UUID) | Custom jti value |
+| `TokenId` | `string?` | Auto (GUID) | Custom `jti` value |
+| `AdditionalClaims` | `IReadOnlyDictionary<string,JsonNode?>?` | `null` | Extra claims; required-claim collisions are rejected |
+
+### PersonTokenBuilder
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for issuer and audience URLs. |
+| `Issuer` | `string` | required | Person Server issuer (`iss`) |
+| `Audience` | `string` | required | Resource identifier (`aud`) |
+| `Subject` | `string` | required | Directed person subject (`sub`) |
+| `ConfirmationKey` | `IAAuthKey` | required | Agent/sub-agent confirmation key (`cnf.jwk`) |
+| `AgentTokenExpiresAt` | `DateTimeOffset` | required | Expiry from the verified source agent token |
+| `AuthorizationExpiresAt` | `DateTimeOffset?` | `null` | Additional upstream/mission ceiling |
+| `Key` | `IAAuthSigner` | required | PS signing key |
+| `KeyId` | `string` | required | JWT header `kid` |
+| `MissionS256` | `string?` | `null` | Optional mission reference |
+| `Tenant` | `string?` | `null` | Optional tenant claim |
+| `Lifetime` | `TimeSpan` | 1 hour | Positive requested lifetime, at most one hour, capped by verified ceilings |
+| `IssuedAt` | `DateTimeOffset?` | Now | Override issuance timestamp |
+| `TokenId` | `string?` | Auto (GUID) | Custom `jti` value |
+| `TimeProvider` | `TimeProvider` | System | Issuance and expiration clock |
 
 ## Token Verification
 
@@ -198,8 +278,10 @@ An `IAccessPolicy` is required (`UsePolicy` or a DI registration).
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for metadata/JWKS fetches. |
 | `TimeProvider` | `TimeProvider` | System | Clock source |
 | `ClockSkew` | `TimeSpan` | 60 seconds | Tolerance for optional future `iat` checks. `exp` has zero tolerance and is rejected when it is not in the future. |
+| `LocalIssuerKeys` | `Func<string,string,IAAuthKey?>?` | `null` | Optional local key resolver by issuer and `kid`; used by servers to verify their own issued tokens without fetching their own JWKS. |
 
 ## Deferred Consent (Polling)
 
@@ -218,6 +300,22 @@ is immediate unless an app explicitly configures a non-zero `MinPollInterval`.
 The agent's challenge and interaction handlers take the same polling settings; see
 [ChallengeHandlingOptions](#challengehandlingoptions-withchallengehandling) and
 [InteractionHandlingOptions](#interactionhandlingoptions-withinteractionhandling).
+
+### DeferredExchangeOptions (internal)
+
+Internal transport options shared by token exchange and governance clients. They
+are listed for source inventory completeness; configure public clients through
+`TokenExchangeClientOptions`, `ChallengeHandlingOptions`, `InteractionHandlingOptions`
+or `GovernanceOptions`.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `OnInteractionRequired` | `Func<Interaction,CancellationToken,Task>?` | `null` | Relay an interaction URL/code to the user. |
+| `OnClarificationRequired` | `Func<ClarificationRequirement,CancellationToken,Task<ClarificationResponse>>?` | `null` | Answer a clarification question during deferred exchange. |
+| `MaxClarificationRounds` | `int` | 5 | Clarification rounds before aborting. |
+| `PollerOptions` | `DeferredPollerOptions?` | `null` | Optional polling tuning. |
+| `RequireInteractionCallback` | `bool` | `false` | When true, unhandled interaction requirements become token-endpoint errors. |
+| `OnPolledResponse` | `Func<HttpResponseMessage,CancellationToken,Task>?` | `null` | Optional callback after each interaction-branch poll response. |
 
 ## Discovery
 
@@ -243,16 +341,84 @@ including `AdditionalSignatureComponents` from
 
 ### AAuthResourceMetadataOptions
 
-| Property | Type | Required | Description |
-|----------|------|:--------:|-------------|
-| `Issuer` | `string` | Yes | Resource canonical URL |
-| `SigningKeys` | `AAuthSigningKeySet?` | Conditional | Signing keys published at the JWKS (tokens are signed with the active key); required when issuing resource tokens or making signed calls, optional for verification-only resources |
-| `Name` | `string?` | No | Human-readable resource name (`name`) |
-| `ScopeDescriptions` | `IReadOnlyDictionary<string, string>?` | No | Scope → description |
-| `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
-| `AdditionalSignatureComponents` | `IReadOnlyList<string>?` | No | Emits `additional_signature_components`; agents must cover these components on first request |
-| `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
-| `RevocationEndpoint` | `string?` | No | Revocation endpoint URL |
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for metadata URLs. |
+| `Issuer` | `string` | required | Resource canonical URL |
+| `AccessServer` | `string?` | `null` | Runtime four-party Access Server issuer; not emitted as resource metadata. |
+| `SigningKeys` | `AAuthSigningKeySet?` | `null` | Signing keys published at the JWKS; required when issuing resource tokens or making signed calls, optional for verification-only resources. |
+| `AccessMode` | `string?` | `null` | Advisory `access_mode`: `agent-token`, `person-token`, resource-managed `session-token` (`AAuth-Access`), `auth-token`, or `per-call`. Runtime challenges remain authoritative. |
+| `Name` | `string?` | `null` | Human-readable resource name (`name`) |
+| `Description` | `string?` | `null` | Markdown resource description (`description`) |
+| `LogoUri` | `string?` | `null` | `logo_uri` |
+| `LogoDarkUri` | `string?` | `null` | `logo_dark_uri` |
+| `DocumentationUri` | `string?` | `null` | `documentation_uri` |
+| `TosUri` | `string?` | `null` | `tos_uri` |
+| `PolicyUri` | `string?` | `null` | `policy_uri` |
+| `ScopeDescriptions` | `IReadOnlyDictionary<string,string>?` | `null` | Scope → description |
+| `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
+| `AdditionalSignatureComponents` | `IReadOnlyList<string>?` | `null` | Emits `additional_signature_components`; agents must cover these components on first request |
+| `AuthorizationEndpoint` | `string?` | `null` | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
+| `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
+| `AdditionalMetadata` | `IReadOnlyDictionary<string,JsonNode?>?` | `null` | Extension members merged into the resource well-known document; typed fields win on collision. |
+
+### AAuthAgentMetadataOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for metadata URLs. |
+| `Issuer` | `string` | `""` (required) | Agent/Agent Provider issuer (`issuer`) |
+| `SigningKeys` | `AAuthSigningKeySet` | empty (required) | Signing keys published at the JWKS. |
+| `Name` | `string?` | `null` | Human-readable name (`name`) |
+| `Description` | `string?` | `null` | Markdown description (`description`) |
+| `LogoUri` | `string?` | `null` | `logo_uri` |
+| `LogoDarkUri` | `string?` | `null` | `logo_dark_uri` |
+| `DocumentationUri` | `string?` | `null` | `documentation_uri` |
+| `TosUri` | `string?` | `null` | `tos_uri` |
+| `PolicyUri` | `string?` | `null` | `policy_uri` |
+| `CallbackEndpoint` | `string?` | `null` | Optional `callback_endpoint` |
+| `EventEndpoint` | `string?` | `null` | Optional Events inbox endpoint (`event_endpoint`) |
+| `LocalhostCallbackAllowed` | `bool` | `false` | Emits `localhost_callback_allowed` when true. |
+
+### AAuthPersonServerMetadataOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for metadata URLs. |
+| `Issuer` | `string` | required | Person Server issuer (`issuer`) |
+| `AuthTokenEndpoint` | `string` | required | `auth_token_endpoint` |
+| `PersonTokenEndpoint` | `string` | required | `person_token_endpoint` |
+| `SigningKeys` | `AAuthSigningKeySet` | required | Signing keys published at the JWKS. |
+| `Name` | `string?` | `null` | Human-readable name (`name`) |
+| `Description` | `string?` | `null` | Markdown description (`description`) |
+| `LogoUri` | `string?` | `null` | `logo_uri` |
+| `LogoDarkUri` | `string?` | `null` | `logo_dark_uri` |
+| `DocumentationUri` | `string?` | `null` | `documentation_uri` |
+| `TosUri` | `string?` | `null` | `tos_uri` |
+| `PolicyUri` | `string?` | `null` | `policy_uri` |
+| `MissionEndpoint` | `string?` | `null` | Optional `mission_endpoint` |
+| `PermissionEndpoint` | `string?` | `null` | Optional `permission_endpoint` |
+| `AuditEndpoint` | `string?` | `null` | Optional `audit_endpoint` |
+| `InteractionEndpoint` | `string?` | `null` | Optional `interaction_endpoint` |
+| `RevocationEndpoint` | `string?` | `null` | Optional `revocation_endpoint` |
+| `ScopesSupported` | `IReadOnlyList<string>?` | `null` | Optional `scopes_supported` |
+
+### AAuthAccessServerMetadataOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for metadata URLs. |
+| `Issuer` | `string` | required | Access Server issuer (`issuer`) |
+| `AuthTokenEndpoint` | `string` | required | `auth_token_endpoint` |
+| `SigningKeys` | `AAuthSigningKeySet` | required | Signing keys published at the JWKS. |
+| `Name` | `string?` | `null` | Human-readable name (`name`) |
+| `Description` | `string?` | `null` | Markdown description (`description`) |
+| `LogoUri` | `string?` | `null` | `logo_uri` |
+| `LogoDarkUri` | `string?` | `null` | `logo_dark_uri` |
+| `DocumentationUri` | `string?` | `null` | `documentation_uri` |
+| `TosUri` | `string?` | `null` | `tos_uri` |
+| `PolicyUri` | `string?` | `null` | `policy_uri` |
+| `RevocationEndpoint` | `string?` | `null` | Optional `revocation_endpoint` |
 
 ## Signing Keys
 
@@ -342,6 +508,18 @@ naming JWT only. Its `AAuthSigningHandler` must use the ephemeral key named by
 that JWT, while the durable key signs the naming JWT itself. `label` selects
 the matching dictionary member across all three signature fields.
 
+### AAuthClientOptions (AddAAuthClient)
+
+Generic Signature Keys `HttpClient` registration options. Use `AddAAuthAgent`
+for AAuth authorization flows.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `KeyHandle` | `string?` | `null` | Signing key handle in the registered `IKeyStore`; set exactly one of `KeyHandle` or `Signer`. |
+| `Signer` | `IAAuthSigner?` | `null` | *Code-only.* Signing key; set exactly one of `Signer` or `KeyHandle`. |
+| `SignatureKeyProvider` | `ISignatureKeyProvider?` | `null` | *Code-only.* Signature-Key carrier scheme; required. |
+| `Capabilities` | `string[]?` | `null` | Optional `AAuth-Capabilities` values sent on every request. |
+
 ## Dependency Injection Options
 
 ### AAuthAgentOptions (AddAAuthAgent)
@@ -392,6 +570,18 @@ The identity-source objects bind as nested sections:
 | `JwksUri:Dwk` | `string?` | Well-known document name for metadata discovery |
 | `JwksUri:KeyId` | `string?` | `kid` of the signing key in that JWKS |
 
+Nested identity option classes expose these properties:
+
+| Type | Property | Type | Default | Description |
+|------|----------|------|---------|-------------|
+| `AAuthSelfIssuedAgentOptions` | `Issuer` | `string?` | `null` | Agent token issuer: the agent's own server identifier. |
+| `AAuthSelfIssuedAgentOptions` | `Subject` | `string?` | `null` | Agent identifier (`sub`). |
+| `AAuthSelfIssuedAgentOptions` | `KeyId` | `string?` | `null` | `kid` of the signing key (default: its JWK thumbprint). |
+| `AAuthAgentProviderOptions` | `RefreshEndpoint` | `string?` | `null` | Agent Provider refresh endpoint that renews the enrolled agent token. |
+| `AAuthJwksUriIdentityOptions` | `Id` | `string?` | `null` | Server identifier whose metadata names the JWKS. |
+| `AAuthJwksUriIdentityOptions` | `Dwk` | `string?` | `null` | Well-known document name for metadata discovery. |
+| `AAuthJwksUriIdentityOptions` | `KeyId` | `string?` | `null` | `kid` of the signing key in that JWKS. |
+
 `AddAAuthAgent` requires exactly one key and exactly one identity source.
 Omitting credentials does not select HWK. `PersonServer`, challenge handling,
 `Mission` and call chaining require an agent-token identity (an agent token,
@@ -429,7 +619,7 @@ Register with `AddAAuthResource(configure: …)` or bind from `AAuth:Resource`.
 | `ScopeDescriptions` | `Dictionary<string, string>?` | No | Scope descriptions for metadata |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
 | `AdditionalSignatureComponents` | `IReadOnlyList<string>?` | No | Emits `additional_signature_components` in resource metadata |
-| `AccessMode` | `string?` | No | Advisory `access_mode`: `agent-token`, `person-token`, `session-token`, `auth-token`, or R3's `per-call` |
+| `AccessMode` | `string?` | No | Advisory `access_mode`: `agent-token`, `person-token`, resource-managed `session-token` (`AAuth-Access`), `auth-token`, or R3's `per-call` |
 | `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | `string?` | No | Revocation endpoint URL |
 | `ConfigureRevocation` | `Action<AAuthRevocationOptions>?` | No | *Code-only.* Adjusts the endpoint mapped by `MapAAuthResourceRevocation` |
@@ -490,6 +680,23 @@ and DI paths set these from shared services.
 | `VerifyAuthTokenSignature` | `bool` | `true` | Verify returned auth-token issuer signatures through metadata/JWKS before accepting them. Structural/context checks always run. |
 | `JwksClient` | `JwksClient?` | `null` | Cached JWKS client for returned auth-token verification; direct callers can pass a shared instance. |
 
+### ChallengeOptions (UseAAuthChallenge)
+
+Low-level server challenge middleware options. `UseAAuth` and
+`MapAAuthResource` configure these from the resource registration and endpoint
+metadata for ordinary applications.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for derived challenge endpoints. |
+| `AccessMode` | `AAuthAccessMode` | `RequireAuthToken` | Challenge/pass-through behavior: auth-token, person-token, agent-token, resource-managed, or identity. |
+| `ResourceSigningKeys` | `AAuthSigningKeySet?` | `null` | Resource signing keys; required when issuing resource-token challenges. |
+| `ResourceIdentifier` | `string?` | `null` | Resource issuer/identifier used as resource-token `iss`. |
+| `RequestedAccount` | `Func<HttpContext,string?>?` | `null` | Optional account selector for account-bound challenges. |
+| `AccessServer` | `string?` | `null` | Four-party Access Server issuer; when null, the resource-token audience is the presented person token's PS. |
+| `DefaultScopes` | `string?` | `null` | Space-separated default scopes requested in resource tokens. |
+| `ScopeDescriptions` | `IReadOnlyDictionary<string,string>?` | `null` | Scope descriptions copied into resource-token interaction details. |
+
 ### AAuthResourcePipelineOptions (MapAAuthResource)
 
 | Property | Type | Default | Description |
@@ -543,6 +750,24 @@ and DI paths set these from shared services.
 | `OnClarificationRequired` | `Func<ClarificationRequirement,CancellationToken,Task<ClarificationResponse>>?` | `null` | Handles governance clarification rounds. |
 | `MaxClarificationRounds` | `int` | 5 | Clarification rounds before aborting. |
 | `PollerOptions` | `DeferredPollerOptions?` | `null` | Optional deferred-response polling overrides. |
+
+### AAuthGovernancePipelineOptions (MapAAuthGovernance)
+
+Controls PS governance route mapping. The mapper composes `RoutePrefix` with
+each endpoint path and collapses duplicate slashes at the seam.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier admission policy for governance endpoints. |
+| `TimeProvider` | `TimeProvider` | System | Clock for deferred governance expiry and mission `expires_at` checks. |
+| `RoutePrefix` | `string` | `""` | Prefix prepended to every governance path, for example `/governance`. |
+| `PermissionPath` | `string` | `/permission` | Permission endpoint path. |
+| `AuditPath` | `string` | `/audit` | Audit endpoint path. |
+| `InteractionEndpointPath` | `string` | `/mission-interaction` | Signed interaction endpoint path; distinct from browser consent paths. |
+| `MissionPath` | `string` | `/mission` | Mission creation/action endpoint path. |
+| `PendingPath` | `string` | `/governance-pending` | Deferred governance poll path prefix; the mapper appends `/{id}`. |
+| `InteractionUrl` | `string?` | `null` | Optional browser-facing interaction URL included in deferred governance requirements. |
+| `PersonServer` | `string?` | `null` | PS identifier recorded on missions and pending approvals; null derives from the request origin. |
 
 ### AAuthFederationOptions
 

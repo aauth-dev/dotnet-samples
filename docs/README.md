@@ -5,8 +5,8 @@ server-side verification, five draft-11 resource access modes and generic
 Signature-Key schemes for non-AAuth demonstrations. AAuth agent requests use
 `jwt`; `hwk`, `jwks_uri`, `jwks` and `jkt-jwt` are not AAuth agent credentials.
 
-- [Interactive Protocol Explorer](https://explorer.aauth.dev/)
-- [AAuth Protocol Specification](../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md)
+- [Interactive Protocol Explorer](https://explorer.aauth.dev/) — Click-through protocol walkthroughs and comparisons
+- [AAuth Protocol Specification](../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md) — Normative draft-11 protocol text
 
 ## Getting Started
 
@@ -19,24 +19,24 @@ Signature-Key schemes for non-AAuth demonstrations. AAuth agent requests use
 [Compare signing modes →](https://explorer.aauth.dev/signing/compare)
 
 - [Overview](signing-modes/overview.md) — When to use each mode
-- [Pseudonymous (hwk)](signing-modes/pseudonymous-hwk.md)
-- [Agent Identity (jwks_uri)](signing-modes/agent-identity-jwks-uri.md)
-- [Agent Token (jwt)](signing-modes/agent-token-jwt.md)
-- [Key Rotation (jkt-jwt)](signing-modes/key-rotation-jkt-jwt.md)
+- [Pseudonymous (hwk)](signing-modes/pseudonymous-hwk.md) — Generic inline public-key signing, not an AAuth resource-access credential
+- [Agent Identity (jwks_uri)](signing-modes/agent-identity-jwks-uri.md) — Server identity discovery for PS/AS signers; agents use `jwt` for AAuth requests
+- [Agent Token (jwt)](signing-modes/agent-token-jwt.md) — Agent-token, auth-token and Events subscribe-token carriers with confirmation keys
+- [Key Rotation (jkt-jwt)](signing-modes/key-rotation-jkt-jwt.md) — Generic/AP durable-to-ephemeral key-refresh ceremony
 
 ## Workflows
 
 [Compare access workflows →](https://explorer.aauth.dev/access/compare)
 
-- [Identity-Based Access](workflows/identity-based-access.md)
-- [Resource-Managed Access](workflows/resource-managed-access.md)
-- [PS authorization access](workflows/ps-asserted-access.md)
-- [Federated Access](workflows/federated-access.md)
-- [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md)
-- [Deferred Consent](workflows/deferred-consent.md)
-- [Call Chaining](workflows/call-chaining.md)
-- [Mission-Governed Access](workflows/mission-governed-access.md)
-- [Rich Resource Requests (R3)](workflows/rich-resource-requests.md) — preview; ships in the separate [`AAuth.R3`](../src/AAuth.R3/) package
+- [Agent identity access](workflows/identity-based-access.md) — Resource authorizes a verified agent token directly
+- [Resource-Managed Access](workflows/resource-managed-access.md) — Two-party resource consent that returns an opaque `AAuth-Access` token
+- [PS authorization](workflows/ps-asserted-access.md) — Three-party flow: person token, resource token, PS-issued auth token
+- [Federated authorization](workflows/federated-access.md) — Four-party flow where the PS federates to the resource's AS for the auth token
+- [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md) — AP enrollment for CLI/desktop/mobile agents and self-issuing for hosted services
+- [Deferred Consent](workflows/deferred-consent.md) — 202 interaction + polling until the PS grants or denies the auth token
+- [Call Chaining](workflows/call-chaining.md) — A resource acting as an agent downstream with the caller's token as `upstream_token`
+- [Mission-Governed Access](workflows/mission-governed-access.md) — User-approved mission intent governing tokens, local tools, audit and closeout
+- [Rich Resource Requests (R3)](workflows/rich-resource-requests.md) — Resource-declared, vocabulary-based authorization in the separate [`AAuth.R3`](../src/AAuth.R3/) package
 - [Events](workflows/events.md) - subscribe tokens, durable AP inbox delivery and verified agent receipts in `AAuth.Events`
 - [Wallet Protocol](workflows/wallet-protocol.md) - AS clarification, chaining an AS-issued grant and federated revocation
 - [Travel Catalog](workflows/catalog-gateway.md) - merged OpenAPI definition, sibling rejection and recovery
@@ -48,27 +48,27 @@ Signature-Key schemes for non-AAuth demonstrations. AAuth agent requests use
 - [Challenge Middleware](server/challenge-middleware.md) — Auto-challenge for auth token upgrade
 - [Authentication and Authorization](server/authn-authz.md) — authN/authZ pipeline + minimal-API and MVC wiring
 - [Authorization Policies](server/authorization-policies.md) — Scope-based `[Authorize]` integration
-- [Resource Metadata](server/resource-metadata.md)
-- [Token Issuance](server/token-issuance.md)
-- [Replay Detection](server/replay-detection.md)
-- [Multi-Scheme Verification](server/multi-scheme-verification.md)
+- [Resource Metadata](server/resource-metadata.md) — Serve `/.well-known/aauth-resource.json` and resource JWKS metadata
+- [Token Issuance](server/token-issuance.md) — Builders, one-call PS mapping, claims and token verification
+- [Replay Detection](server/replay-detection.md) — Per-request signature replay protection plus token revocation
+- [Multi-Scheme Verification](server/multi-scheme-verification.md) — Opt-in generic Signature-Key verification beyond the default `jwt`
 - [Mission Governance](server/mission-governance.md) — PS-side mission policy seams
 
 ## Advanced Topics
 
-- [Missions](advanced/missions.md)
+- [Missions](advanced/missions.md) — Optional governance layer for user-approved, multi-step agent work
 - [Mission Governance Clients](advanced/mission-governance-clients.md) — propose, permission, audit, interaction
 - [Clarification Chat](advanced/clarification-chat.md) — answering a server's follow-up questions
-- [Interaction Chaining](advanced/interaction-chaining.md)
-- [Platform Attestation](advanced/platform-attestation.md)
-- [Key Management](advanced/key-management.md)
-- [Error Handling](advanced/error-handling.md)
+- [Interaction Chaining](advanced/interaction-chaining.md) — Bubble downstream interaction requirements back to the original agent
+- [Platform Attestation](advanced/platform-attestation.md) — `IPlatformAttestor` hook for device/key evidence when policy requires it
+- [Key Management](advanced/key-management.md) — Persistent signing keys, key-store interfaces and key identity vs signing ability
+- [Error Handling](advanced/error-handling.md) — Structured signature, token-exchange and polling errors
 - [Observability](advanced/observability.md) — OpenTelemetry Activity tracing
 
 ## Reference
 
-- [Configuration](reference/configuration.md)
-- [Dependency Injection](reference/dependency-injection.md)
+- [Configuration](reference/configuration.md) — Options for agents, resources, PS/AS roles, discovery and egress policy
+- [Dependency Injection](reference/dependency-injection.md) — ASP.NET Core registration patterns for agents, resources, PS and AS roles
 
 ## API Map
 

@@ -26,20 +26,20 @@ switchable at runtime from the topbar **Mode** picker:
 
 * **Bootstrap** (2–3 steps) — generate the agent's signing key and build
   (or obtain) an agent token. Default.
-* **Identity-based** (2 steps) — resource trusts the agent token directly;
+* **Agent identity** (2 steps) — resource trusts the agent token directly;
   no PS involvement.
-* **Resource-Managed (Two-Party)** (6 steps) — two-party flow where the
+* **Resource-managed (Two-Party)** (6 steps) — two-party flow where the
   **Inbox** resource manages authorization itself: no Person Server, no
   token exchange. The signed `GET /messages` returns `202` with an
   `AAuth-Requirement` pointing at the Inbox's own consent page; after you
   approve there, the Inbox issues an opaque `AAuth-Access` token bound to
   the agent's signature, which the agent replays to read the inbox.
-* **PS-Asserted (Direct Grant)** (8 steps) — three-party flow: the resource
+* **PS Authorization (Direct Grant)** (8 steps) — three-party flow: the resource
   answers the agent token with `requirement=person-token`, the agent gets an
   `aa-person+jwt` from the PS's `person_token_endpoint` and presents it, and
   the resource returns a resource token naming it (`presented_jti`). The PS
   mints the `auth_token` synchronously; no user interaction.
-* **PS-Asserted (Deferred)** (11 steps) — the same person-token leg, then the
+* **PS Authorization (Deferred)** (11 steps) — the same person-token leg, then the
   PS parks the token request on `202 Accepted` and asks the user to consent
   before the `auth_token` is issued.
 * **Call Chain / Multi-Agent** (9 steps; 15 when both hops need consent) — the
@@ -72,8 +72,8 @@ switchable at runtime from the topbar **Mode** picker:
   whole trail. Requires a Person Server and a Concierge URL.
 
 When `PersonServerUrl` is empty in `appsettings.json`, the three-party
-options are disabled; the two-party flows — **Identity-based** and
-**Resource-Managed (Two-Party)** — still run, since neither needs a Person
+options are disabled; the two-party flows — **Agent identity** and
+**Resource-managed (Two-Party)** — still run, since neither needs a Person
 Server. You can also set the default in `appsettings.json`:
 
 ```json
@@ -115,12 +115,12 @@ Bookings includes personal/work accounts and per-call proposals; Sub-agent
 uses distinct parent/worker keys and a four-party AS grant.
 
 Each Aria resource server serves its flow from isolated, per-mode endpoints.
-**Profile** (:5000) handles Identity-based access: `GET /pseudonymous` and
+**Profile** (:5000) handles agent identity access: `GET /pseudonymous` and
 `GET /anchored` (pseudonymous), `GET /identified` (agent identity).
 **Inbox** (:5004) handles two-party resource-managed access (`GET /messages`,
 scope `inbox.read`): it runs its own consent page and issues an opaque
 `AAuth-Access` token bound to the agent's signature — no Person Server or
-Access Server. **Calendar** (:5001) handles three-party PS-asserted access: `GET /events`
+Access Server. **Calendar** (:5001) handles three-party PS authorization: `GET /events`
 (scope `calendar.read`), `GET /events/write` (elevated scope `calendar.write`),
 and `GET /events/admin` (RBAC roles + groups); the tour exercises the base
 `GET /events` path. **Trips** (:5002) handles mission-governed access
@@ -142,14 +142,14 @@ When `AgentProviderUrl` is set, the tour enrols with a real AP:
 3. Enrol with Agent Provider: body-bound `hwk` signed `POST /enrol` with `{jwk}`;
    the AP assigns an identity and issues `aa-agent+jwt`.
 
-### Identity-based (2 steps)
+### Agent identity (2 steps)
 
 Assumes the agent is already bootstrapped (key + token exist).
 
 1. Discover resource metadata — unsigned `GET /.well-known/aauth-resource.json`.
 2. Signed `GET /pseudonymous` or `GET /identified` → 200 + claims (path depends on signing mode picker).
 
-### Resource-Managed (Two-Party) (6 steps)
+### Resource-managed (Two-Party) (6 steps)
 
 Assumes the agent is already bootstrapped. Two-party — no Person Server and
 no token exchange; the **Inbox** manages authorization itself.
@@ -171,7 +171,7 @@ no token exchange; the **Inbox** manages authorization itself.
    messages (scope `inbox.read`). The signature covers the `authorization`
    header, proving the token is bound to the agent's key.
 
-### PS-Asserted / Direct Grant (8 steps)
+### PS Authorization / Direct Grant (8 steps)
 
 Assumes the agent is already bootstrapped.
 
@@ -189,7 +189,7 @@ Assumes the agent is already bootstrapped.
    `auth_token` naming the person (`ps`, `sub`).
 8. Signed `GET /events` carrying the `auth_token` → 200 + claims.
 
-### PS-Asserted / Deferred (11 steps)
+### PS Authorization / Deferred (11 steps)
 
 Steps 1–6 are the same as **Direct Grant**. From step 7 onward:
 
@@ -199,11 +199,14 @@ Steps 1–6 are the same as **Direct Grant**. From step 7 onward:
 8. Agent surfaces the user-facing `{url}?code={code}` link.
 9. **The agent is already polling; the user decides.** The tour records this
    step and starts polling as soon as step 8 surfaces the request, whoever
-   hosts the consent page, so "Run all" keeps running. For Person Server
+   hosts the consent page, so "Run all" keeps running and waits on the poll
+   instead of stopping for a separate poll click. For Person Server
    consent the polling banner offers **Open Person Server dashboard** (every
    request waiting for the user, this one highlighted) and a direct link to
    this one request. Access Server and resource-hosted consent (Federated,
-   R3, Resource-Managed, Documents) show a direct link to that page instead.
+   R3, Resource-managed, Documents) show a direct link to that page instead.
+   Consent links open in a separate browser tab while the same tour page keeps
+   one polling banner/loop active for the current pending URL.
    Either way the user signs in and clicks **Approve** or **Deny**; the agent
    is not on this channel. When a poll answers with another interaction (the
    Documents owner releases, then the PS asks), the tour waits for that
@@ -253,7 +256,7 @@ offers the PS dashboard (the Concierge's code is not the PS's, so the request
 is listed rather than highlighted).
 
 > [!TIP]
-> The PS-Asserted (Deferred) flow only fires when the Person Server is
+> The PS Authorization (Deferred) flow only fires when the Person Server is
 > configured with `MockPersonServer:RequireConsent=true`. `make demo` from
 > the repo root launches the complete sample stack with consent gating enabled.
 
@@ -267,15 +270,17 @@ From the repo root:
 make demo
 ```
 
-Starts the resource servers (Profile, Inbox, Calendar, Trips, Wallet), Concierge,
-MockPersonServer (with `RequireConsent=true`), MockAgentProvider, and the Guided
-Tour together. Open <http://localhost:5400> and flip the topbar mode picker to
-**Call Chain** or **Deferred** to exercise those paths.
+Starts the resource servers (Profile, Inbox, Calendar, Trips, Wallet, Bookings,
+Catalog, Documents), Concierge, MockPersonServer (with `RequireConsent=true`),
+MockAgentProvider, the Federated AS, the R3 AS, GuidedTour and SampleApp
+together. Open <http://localhost:5400> and flip the topbar mode picker to
+**Call Chain**, **Deferred**, **RichRequests** or a capability flow to exercise
+those paths.
 
 ### Option 2: separate terminals
 
 ```bash
-# Terminal 1 — Resource servers (Profile :5000, Inbox :5004, Calendar :5001, Trips :5002, Wallet :5003)
+# Terminal 1 — Resource servers (Profile :5000 through Documents :5007)
 make resources
 
 # Terminal 2 — Concierge (port 5200)
@@ -287,7 +292,14 @@ MockPersonServer__RequireConsent=true dotnet run --project samples/MockPersonSer
 # Terminal 4 — Agent Provider (port 5301)
 dotnet run --project samples/MockAgentProvider
 
-# Terminal 5 — Tour UI (port 5400)
+# Terminal 5 — Federated AS (port 5500)
+AccessServer__PolicyProvider=stub AccessServer__RequireConsent=true \
+  dotnet run --project samples/MockAccessServers/Federated
+
+# Terminal 6 — R3 AS (port 5501)
+dotnet run --project samples/MockAccessServers/R3
+
+# Terminal 7 — Tour UI (port 5400)
 dotnet run --project samples/GuidedTour
 ```
 
@@ -300,13 +312,18 @@ with **Run step**).
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `GuidedTour:ProfileUrl` | `http://localhost:5000` | Profile (Identity-based) resource server base URL. |
+| `GuidedTour:ProfileUrl` | `http://localhost:5000` | Profile (agent identity + generic Signature Keys) resource server base URL. |
 | `GuidedTour:InboxUrl` | `http://localhost:5004` | Inbox (resource-managed, two-party) resource server base URL. |
-| `GuidedTour:CalendarUrl` | `http://localhost:5001` | Calendar (PS-asserted) resource server base URL. |
+| `GuidedTour:CalendarUrl` | `http://localhost:5001` | Calendar (PS authorization) resource server base URL. |
 | `GuidedTour:TripsUrl` | `http://localhost:5002` | Trips (mission-aware) resource server base URL. |
 | `GuidedTour:WalletUrl` | `http://localhost:5003` | Wallet (federated) resource server base URL. |
+| `GuidedTour:BookingsUrl` | `http://localhost:5005` | Bookings (R3 reservations) resource server base URL. |
+| `GuidedTour:CatalogUrl` | `http://localhost:5006` | Travel Catalog (merged R3 OpenAPI definition) resource server base URL. |
+| `GuidedTour:DocumentsUrl` | `http://localhost:5007` | Documents (resource permission before PS consent) resource server base URL. |
 | `GuidedTour:ConciergeUrl` | `http://localhost:5200` | Concierge base URL for the call-chain flow. Set empty to disable that picker option. |
-| `GuidedTour:PersonServerUrl` | `http://localhost:5100` | PS base URL. Set empty to lock the picker to identity-based mode. |
+| `GuidedTour:PersonServerUrl` | `http://localhost:5100` | PS base URL. Set empty to lock the picker to agent identity mode. |
 | `GuidedTour:AgentProviderUrl` | `http://localhost:5301` | AP base URL. When set, bootstrap enrols with the real AP instead of self-signing. |
-| `GuidedTour:AgentId` | `aauth:tour-agent@ap.example` | Value placed in the agent token's `sub`. |
-| `GuidedTour:Mode` | `Bootstrap` | Default flow on startup. `Bootstrap`, `Identity`, `ResourceManaged`, `Autonomous` (Direct Grant), `Deferred`, `CallChain`, `Federated`, or `Mission`. The topbar picker overrides this at runtime. |
+| `GuidedTour:AccessServerUrl` | `http://localhost:5500` | Federated AS base URL. Set empty to disable the federated and wallet-protocol picker options. |
+| `GuidedTour:R3AccessServerUrl` | `http://localhost:5501` | Dedicated R3 AS base URL. Set empty to disable R3 and catalog picker options. |
+| `GuidedTour:AgentId` | `aauth:tour-agent@localhost` | Value placed in the agent token's `sub`. |
+| `GuidedTour:Mode` | `Bootstrap` | Default flow on startup. `Bootstrap`, `Identity`, `ResourceManaged`, `Autonomous` (Direct Grant), `Deferred`, `CallChain`, `Federated`, `RichRequests`, `Mission`, `MissionCallChain`, `SubAgent`, `Events`, `WalletProtocol`, `Documents`, or `Catalog`. The topbar picker overrides this at runtime. |

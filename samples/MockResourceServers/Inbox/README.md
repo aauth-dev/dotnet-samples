@@ -1,4 +1,4 @@
-# Inbox — Resource-Managed (Two-Party) Resource Server
+# Inbox — Resource-managed (Two-Party) Resource Server
 
 Aria's email service, on **`:5004`**. The **Inbox** demonstrates the
 **resource-managed** access mode (`access_mode: "session-token"`): the
@@ -10,7 +10,7 @@ its HTTP-message signature — on subsequent calls.
 > This is the AAuth mode for resources that authorize requests themselves — the
 > role a first-party OAuth deployment plays when a service runs its own
 > authorization server alongside its API
-> ([draft-hardt-oauth-aauth-protocol §Resource-Managed Access](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#resource-managed-authorization)):
+> ([draft-hardt-oauth-aauth-protocol §Resource-managed access](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#resource-managed-auth)):
 > the opaque token models a resource's existing OAuth access token, wrapped so it
 > is useless without a valid AAuth signature.
 
@@ -67,7 +67,7 @@ dotnet run --project samples/MockResourceServers/Inbox    # :5004
 Or as part of the full stack:
 
 ```bash
-make resources   # all seven Aria resource servers
+make resources   # all eight Aria resource servers
 make demo        # full stack + both UIs
 ```
 
@@ -82,4 +82,4 @@ Override the issuer: `--AAuth:Issuer https://my-inbox.example` (or the
 - Resource: `HttpContext.ResolveAAuthAccessAsync` / `IssueAAuthAccessAsync` /
   `InteractionRequiredAAuth`, `MapAAuthInteractionPoll`, and `IOpaqueTokenStore`.
 
-See [Resource-Managed Access](../../../docs/workflows/resource-managed-access.md).
+See [Resource-managed access](../../../docs/workflows/resource-managed-access.md).

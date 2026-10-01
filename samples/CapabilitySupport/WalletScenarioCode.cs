@@ -45,12 +45,13 @@ public static class WalletScenarioCode
 
     public const string Revocation = """
         public static Task<RevocationCascadeResult> RevokePersonTokenAsync(IServiceProvider services,
-            string personTokenId, CancellationToken cancellationToken)
+            string personTokenJti, CancellationToken cancellationToken)
         {
-            // The PS revokes its person token at its resource and at every AS it presented it to;
-            // each AS cascades to the auth tokens it issued against it.
+            // The PS revokes its person token by its jti; the stored {jti, exp}
+            // record lets it notify the resource and every AS it presented it to.
+            // Each AS cascades to the auth tokens it issued against that person token.
             var revocation = services.GetRequiredKeyedService<IAAuthRevocationService>(AAuthPersonServerBuilder.DefaultName);
-            return revocation.RevokeTokenAsync(personTokenId, cancellationToken);
+            return revocation.RevokeTokenAsync(personTokenJti, cancellationToken);
         }
 
         public static Task<string> RecoverAsync(AAuthAgent agent,

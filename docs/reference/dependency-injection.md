@@ -57,7 +57,7 @@ For a plain signing client without the agent pipeline, `AddAAuthClient(name, …
 takes `Signer` or `KeyHandle` plus a `SignatureKeyProvider`; its options are
 validated when the host starts.
 
-### Identity-Based (JWT) — Self-Issued (Hosted Services)
+### Agent identity (JWT) — Self-Issued (Hosted Services)
 
 No AP enrollment needed. The service generates a key and self-issues tokens:
 
@@ -83,7 +83,7 @@ app.MapAAuthAgentWellKnown(options =>
 });
 ```
 
-### Identity-Based (JWT) — AP-Enrolled (CLI/Desktop Agents)
+### Agent identity (JWT) — AP-Enrolled (CLI/Desktop Agents)
 
 Name the enrolled key by its local handle and the agent provider's refresh
 endpoint. The agent token is refreshed at that endpoint, signed with the
@@ -252,7 +252,7 @@ accepts a builder callback.
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://my-resource.example";
-    // Set for four-party resources. Omit for three-party PS-asserted access.
+    // Set for four-party resources. Omit for three-party PS-issued authorization.
     options.AccessServer = "https://as.example";
     options.SigningKeys["key-1"] = resourceKey;
 });
@@ -272,7 +272,7 @@ app.MapGet("/data", (HttpContext ctx) => Results.Ok(ctx.GetAAuthVerification()!.
 ```
 
 > `Trust.AuthTokenIssuers` is optional only for the default three-party
-> PS-asserted mode (`AccessServer` unset). In that mode, leaving it unset (or
+> PS-issued authorization mode (`AccessServer` unset). In that mode, leaving it unset (or
 > assigning `AAuthTrust.Any` to its `Predicate`) accepts any *verifiable* Person
 > Server with claims namespaced by `iss`; leaving it unset logs an open-trust
 > `Warning` at startup. When `AAuthResourceOptions.AccessServer` is set, the SDK
@@ -304,7 +304,7 @@ Advertise the resource's proactive authorization endpoint for agents to start
 authorization without first receiving a resource challenge. This does not select
 an Access Server: configure `AAuthResourceOptions.AccessServer` to set the
 resource token's AS recipient and the matching AS-issued auth-token verification
-default (unset means three-party PS-asserted access).
+default (unset means three-party PS-issued authorization).
 
 ```csharp
 builder.Services.AddAAuthResource(options =>
@@ -314,6 +314,14 @@ builder.Services.AddAAuthResource(options =>
     options.AuthorizationEndpoint = "https://my-resource.example/authorize";
 });
 ```
+
+Map the advertised endpoint with `MapAAuthAuthorizationEndpoint(pattern, handler)`.
+It requires a verified AAuth person token (`.RequireAAuthPersonToken()`), reads
+`scope` and optional `account` from the JSON body, and rejects requests that
+provide neither a scope nor an authorization claim supplied by an
+`IAAuthAuthorizationEndpointExtension`. R3 resources opt that extension in with
+`AddAAuthR3AuthorizationEndpoint()`, which accepts `r3_operations` as the
+authorization claim and exposes them through `request.GetR3Operations()`.
 
 ### Authentication & Authorization Policies
 
@@ -342,7 +350,7 @@ app.MapGet("/me", handler).RequireAAuthSignature(identified: true); // agent ide
 - `.RequireAAuth(scope: "x")` requires an `AAuthLevel.Authorized` auth token carrying
   `x` — an agent-token-only (PoP) request cannot satisfy it. Add `role: "y"` to also
   require a role (mapped from the token's `roles` claim to the standard `ClaimTypes.Role`).
-- `.RequireAAuthSignature()` requires only a verified HTTP signature (identity-based or
+- `.RequireAAuthSignature()` requires only a verified HTTP signature (agent identity or
   resource-managed access); pass `identified: true` to require at least an agent token.
 
 See [Authorization Policies](../server/authorization-policies.md) for details.
@@ -360,6 +368,32 @@ builder.Services.AddAAuthDiscovery(options =>
 ```
 
 `AddAAuthResource`, `AddAAuthPersonServer` and `AddAAuthAccessServer` register discovery clients if `AddAAuthDiscovery` has not been called. Call it explicitly to share instances and control cache behavior. An agent's challenge-handling pipeline owns its discovery clients. The agent's [typed clients](#typed-clients) use the registered `MetadataClient` when there is one, and otherwise their own.
+
+Additional discovery options are `EgressPolicy` (`Production`), `MaxCacheEntries`
+(`1024`), `MaxCacheAge` (`24` hours) and `JwksMinRefreshInterval` (`1` minute).
+Development loopback policies fail in Production.
+
+## Optional Module Registrations
+
+- `AddAAuthResourceManaged(options => …)` registers the resource-managed
+  two-party interaction seams: `IOpaqueTokenStore` (`InMemoryOpaqueTokenStore`)
+  and `IInteractionPendingStore` (`InMemoryInteractionPendingStore`). Map the
+  poll endpoint with `MapAAuthInteractionPoll()` and open an interaction from a
+  verified endpoint with `HttpContext.RequireAAuthInteraction(scope, account)`.
+- `AddAAuthHeldInvocations()` registers `IAAuthHeldInvocations` with in-memory
+  `IAAuthHeldInvocationStore` and `IAAuthSingleUseGate` defaults. Use
+  `.WithHeldInvocation(operation, execute, pendingLifetime)` on an endpoint and
+  map `MapAAuthHeldInvocations()` for the poll URL. The same single-use gate is
+  the durable seam R3 per-call approvals need when `R3Enforcement` returns a
+  `SingleUseGrant`.
+- `AddAAuthEvents()` registers event and subscription token verifiers plus a
+  shared `EventsProtocol`; map `MapAAuthEventEndpoint(path)` and
+  `MapAAuthSubscriptionEndpoint(path, options => …)` after registering the
+  appropriate event store.
+- `AddAAuthR3Documents(readerPolicy)` registers R3 document reader policy and an
+  in-memory `IR3DocumentEntitlements` default, then `MapR3Document(...)` maps the
+  verified document endpoint. `AddR3AccessTokenEndpoint(options => …)` /
+  `MapR3AccessTokenEndpoint()` provide the standalone R3 AS endpoint.
 
 ## Consuming Registered Clients
 
@@ -639,15 +673,31 @@ overload binds from a section such as `AAuth:Resource`.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Issuer` | `string` | required | Resource HTTPS URL (metadata + audience) |
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | Egress and URL-validation policy; development loopback fails in Production |
+| `AccessServer` | `string?` | `null` | Four-party AS issuer; when set, resource-token challenges target this AS and auth-token verification expects `aauth-access.json` |
 | `SigningKeys` | `AAuthSigningKeySet` | empty | Keys published at the JWKS; resource tokens are signed with the active key |
 | `KeyHandle` | `string?` | `null` | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
 | `KeyId` | `string?` | `null` | `kid` for the key loaded from `KeyHandle` (default: its JWK thumbprint) |
+| `MaxSignatureAge` | `TimeSpan` | 60 s | Maximum age for inbound signature `created` |
+| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | Clock for signatures, tokens and revocation |
+| `EnableReplayDetection` | `bool` | `true` | Register `IJtiStore` (`InMemoryJtiStore`) for request replay and token inventory |
+| `KeyResolver` | `ISignatureKeyResolver?` | `null` | Custom resolver; otherwise `DefaultSignatureKeyResolver` uses DI discovery clients and token verifiers |
 | `Name` | `string?` | `null` | Human-readable name in metadata (`name`) |
+| `Description` | `string?` | `null` | Optional resource metadata field (`description`) |
+| `LogoUri` | `string?` | `null` | Optional resource metadata field (`logo_uri`) |
+| `LogoDarkUri` | `string?` | `null` | Optional resource metadata field (`logo_dark_uri`) |
+| `DocumentationUri` | `string?` | `null` | Optional resource metadata field (`documentation_uri`) |
+| `TosUri` | `string?` | `null` | Optional resource metadata field (`tos_uri`) |
+| `PolicyUri` | `string?` | `null` | Optional resource metadata field (`policy_uri`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope descriptions in metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
+| `AdditionalSignatureComponents` | `IReadOnlyList<string>?` | `null` | Metadata components agents include on first signed request |
+| `AccessMode` | `string?` | `null` | Advisory metadata access mode (`agent-token`, `person-token`, `session-token`, `auth-token`, or R3 `per-call`) |
 | `AuthorizationEndpoint` | `string?` | `null` | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
+| `ConfigureRevocation` | `Action<AAuthRevocationOptions>?` | `null` | Narrows the revocation endpoint mapped by `MapAAuthResourceRevocation()` |
 | `EnableResourceManagedAccess` | `bool` | `false` | Register a default `IOpaqueTokenStore` for the resource-managed (two-party) flow |
+| `AdditionalMetadata` | `Dictionary<string, JsonNode?>?` | `null` | Extra top-level metadata entries, such as R3 vocabulary metadata |
 
 ### AAuthDiscoveryOptions
 
@@ -655,6 +705,10 @@ overload binds from a section such as `AAuth:Resource`.
 |----------|------|---------|-------------|
 | `MetadataCacheTtl` | `TimeSpan` | 5 min | How long to cache well-known metadata |
 | `JwksCacheTtl` | `TimeSpan` | 1 hour | How long to cache JWKS documents |
+| `JwksMinRefreshInterval` | `TimeSpan` | 1 min | Minimum time between JWKS refreshes for one issuer |
+| `MaxCacheEntries` | `int` | 1024 | Maximum cached metadata/JWKS entries |
+| `MaxCacheAge` | `TimeSpan` | 24 hours | Absolute maximum cache age |
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | Egress policy for discovery fetches |
 
 ## Call Chaining (AAuthClientBuilder)
 
@@ -735,9 +789,13 @@ Constructor/`Create` callers retain ownership of injected clients. See
 
 `AddAAuthGovernance()` registers the in-memory mission storage seams as
 singletons. It uses `TryAdd`, so register durable implementations first to
-override them. The policy and user-channel seams (`IPermissionDecider`,
-`IAuditSink`, `IInteractionRelay`) default to conservative fail-closed
-implementations; a real PS overrides them.
+override them. The defaults are intentionally simple: `DefaultMissionApprover`
+approves proposed missions, `DefaultPermissionDecider` grants only pre-approved
+tools and otherwise prompts, `DefaultAuditSink` appends to the mission log, and
+`DefaultInteractionRelay` has no user channel so it returns unavailable (or not
+accepted for completion). It also registers the default `IMissionTokenConsent`,
+`IMissionPersonTokenIssuer` and the route registry that `MapAAuthPersonServer()`
+uses to attach the PS minting surface.
 
 ```csharp
 builder.Services.AddAAuthGovernance(); // InMemoryMissionStore + InMemoryMissionLog
@@ -758,6 +816,9 @@ builder.Services.AddAAuthInteractionRelay((request, ct) =>
         ? new InteractionRelayResult { Answer = "Approved." }
         : new InteractionRelayResult { Pending = true }));
 ```
+
+Relay answers map to an answered response, `Pending` maps to a deferred `202`,
+and `Unavailable` maps to `424 interaction_unavailable`.
 
 See [Mission Governance (Server)](../server/mission-governance.md) for the seams
 and the decision model.
@@ -787,7 +848,7 @@ builder.Services.AddAAuthPersonServer(configure: options =>
     .WithTrust(trust => trust.AccessServers.Allowed = trustedAccessServers)
     .UseClaimsAsserter(new DefaultIdentityClaimsAsserter("user-42")) // swap in a real asserter
     .WithFederation()  // PS→AS four-party client, signed as this PS
-    .WithGovernance(); // declares + maps mission/permission/audit/interaction endpoints
+    .WithGovernance(); // declares mission/permission/audit/interaction endpoints
 
 var app = builder.Build();
 app.MapAAuthPersonServer();
@@ -819,6 +880,13 @@ app.MapAAuthAccessServer();
 | `UseTokenVerifier(verifier)` | ✓ | ✓ |
 | `UseTokenInventory<T>()` / `(instance)`: the issuer's `IJtiStore` | ✓ | ✓ |
 | `UseClaimsAsserter<T>()` / `(instance)` / `(sp => …)` | ✓ | — |
+| `UseAgentPersonBindingStore<T>()` / `(instance)` / `(sp => …)` | ✓ | — |
+| `UsePersonResourceEnrollmentStore<T>()` / `(instance)` / `(sp => …)` | ✓ | — |
+| `UsePersonSubjectDeriver<T>()` / `(instance)` / `(sp => …)` | ✓ | — |
+| `UsePaymentSettler<T>()` / `(instance)` / `(sp => …)` | ✓ | — |
+| `UseBillingRelationshipCache<T>()` / `(instance)` / `(sp => …)` | ✓ | — |
+| `UseCollocatedAccessServer(resourceIssuer, accessServerName, expectedIssuer)` | ✓ | — |
+| `UseCollocatedAccessServer(policy)` / `(sp => …)` | ✓ | — |
 | `WithFederation()`: the PS→AS `AccessServerClient` | ✓ | — |
 | `WithGovernance()`: calls `AddAAuthGovernance()` | ✓ | — |
 | `UsePolicy<T>()` / `(instance)` / `(sp => …)`: required | — | ✓ |
@@ -842,6 +910,12 @@ Each seam is a keyed singleton under the instance name. It resolves in this orde
 |------|---------|
 | `IPersonPendingStore` | `InMemoryPersonPendingStore` |
 | `IIdentityClaimsAsserter` | `DefaultIdentityClaimsAsserter` |
+| `IAgentPersonBindingStore` | `InMemoryAgentPersonBindingStore` |
+| `IPersonResourceEnrollmentStore` | `InMemoryPersonResourceEnrollmentStore` |
+| `IPersonSubjectDeriver` | `HmacPersonSubjectDeriver` (requires durable `PairwiseSubjectSecrets` in Production) |
+| `IAAuthCollapsedFederationPolicy` | `ConfiguredCollapsedFederationPolicy` over `AAuthPersonServerOptions.CollapsedFederation` |
+| `IAAuthPaymentSettler` | none: AS `402` payment challenges are declined unless a billing cache entry already exists |
+| `IAAuthBillingRelationshipCache` | `InMemoryAAuthBillingRelationshipCache` |
 | `IAccessPendingStore` | `InMemoryAccessPendingStore` |
 | `IAccessPolicy` | none: startup fails without one |
 | `TokenVerifier` | A verifier with the role's `EgressPolicy` and `TimeProvider` |
@@ -860,9 +934,12 @@ app.MapGet("/admin/pending/{id}", (string id,
 ```
 
 Outside the `Development` environment, mapping a role that still uses an
-in-memory default (a pending store, the token inventory, or the mission store or
-log) logs a warning. That state is lost on restart and isn't shared across
-instances, so register durable implementations in production.
+in-memory default (a pending store, the token inventory, the agent/person binding
+store, the person/resource enrollment store, or the mission store or log) logs a
+warning. A Person Server with no durable pairwise subject secret also logs a
+warning in non-production and fails validation in Production. That state is lost
+on restart and isn't shared across instances, so register durable implementations
+in production.
 
 ### Startup validation
 
@@ -873,8 +950,14 @@ read the options. The exception joins every failure with `"; "`:
 
 - `Issuer` must be an absolute https URL (loopback http is allowed for development).
 - The role needs a signing key: add one to `SigningKeys` or set `KeyHandle`.
-- `InteractionPath` (PS) / `InteractionLoginPath` (AS) must not contain a query or fragment.
+- PS `TokenPath`, `PersonTokenPath`, `RevocationPath`, `InteractionPath`,
+  governance paths and AS `TokenPath`, `RevocationPath`, `InteractionLoginPath`
+  must be derived paths without a query or fragment.
 - Each `Trust.AccessServers` (PS) / `Trust.PersonServers` (AS) `Allowed` entry must be an absolute https URL.
+- Production Person Servers must configure `PairwiseSubjectSecrets`, and
+  `ActivePairwiseSubjectKeyId` must name one of them when set.
+- Collocated federation declarations must name absolute resource and expected AS
+  issuer URLs and a linked Access Server role name.
 - An Access Server must resolve an `IAccessPolicy`.
 
 ### Binding from configuration
@@ -957,4 +1040,4 @@ and its `AAuthTransportContract` together:
 `CreateSignedClient(innerHandler, AAuthTransportContract.InProcessOnly)`.
 
 See [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver)
-and [Federated Access](../workflows/federated-access.md#access-server-side-code).
+and [Federated authorization](../workflows/federated-access.md#access-server-side-code).

@@ -36,11 +36,11 @@ AAuth supports five resource access modes. Each adds parties and capabilities, a
 
 | Mode | Parties | When to Use | Signing | See it in the demos |
 |------|---------|-------------|---------|---------------------|
-| **Identity-Based** | Agent + Resource | Resource authorizes verified agent identity | `jwt` | Profile `/identified` accepts agent JWT; generic signing demonstrations are separate |
+| **Agent Identity** | Agent + Resource | Resource authorizes verified agent identity (`agent-token`) | `jwt` | Profile `/identified` accepts agent JWT; generic signing demonstrations are separate |
 | **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization without an external PS or AS | `jwt` plus opaque AAuth-Access | GuidedTour → [**Resource-Managed (Two-Party)**](http://localhost:5400/tour?flow=ResourceManaged); SampleApp → [`/inbox`](http://localhost:5240/inbox) |
 | **Person Identity** | Agent + Resource + PS | Resource requires a PS-issued person token before issuing an auth-token challenge | `jwt` with a person token | Intermediate step in PS authorization; see [Getting Started](docs/getting-started.md#three-party-flow-deep-dive) |
 | **PS Authorization** (three-party) | Agent + Resource + PS | Resource accepts consent and identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from a trusted Person Server | `jwt` | GuidedTour → [**PS Authorization (Direct Grant)**](http://localhost:5400/tour?flow=Autonomous) and [**PS Authorization (Deferred)**](http://localhost:5400/tour?flow=Deferred); SampleApp → [`/calendar`](http://localhost:5240/calendar) and [`/calendar-deferred`](http://localhost:5240/calendar-deferred) |
-| **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` | GuidedTour → [**Federated (Four-Party)**](http://localhost:5400/tour?flow=Federated); SampleApp → [`/wallet`](http://localhost:5240/wallet). Live Keycloak consent: `make demo-keycloak` |
+| **Federated authorization** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` | GuidedTour → [**Federated authorization (Four-Party)**](http://localhost:5400/tour?flow=Federated); SampleApp → [`/wallet`](http://localhost:5240/wallet). Live Keycloak consent: `make demo-keycloak` |
 
 GuidedTour runs on [http://localhost:5400](http://localhost:5400) and SampleApp on [http://localhost:5240](http://localhost:5240). The GuidedTour home page lists every flow; pick one to walk it step by step. See [Getting Started](docs/getting-started.md#supported-flows) for the full breakdown of each mode.
 
@@ -167,21 +167,24 @@ using var client = AAuthClientBuilder.SelfIssuing(key)
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
-// 1. Agent signs GET with agent token → Resource verifies, returns 401 + resource_token
-// 2. ChallengeHandler POSTs resource_token to PS token endpoint
-// 3. PS validates agent, prompts user for consent, issues auth_token
-// 4. Agent retries GET signed with auth_token → Resource verifies → 200 OK
+// 1. Agent signs GET with agent token → Resource returns requirement=person-token
+// 2. ChallengeHandler requests a person token and retries the resource
+// 3. Resource returns requirement=auth-token + resource_token bound by presented_jti
+// 4. ChallengeHandler POSTs resource_token + presented_token to the PS
+// 5. PS validates the pair, prompts user for consent, issues auth_token
+// 6. Agent retries GET signed with auth_token → Resource verifies → 200 OK
 ```
 
 **What happens step by step:**
 
 1. Agent signs the request with its agent token (`Signature-Key: sig=jwt;jwt="..."`)
-2. Resource verifies the signature, reads the `ps` claim, returns `401` with a `resource_token` (audience = PS URL)
-3. Agent POSTs the `resource_token` to the PS's token endpoint (signed request)
-4. PS validates the agent token, prompts the user for consent on the requested scope
-5. User grants consent; PS issues an `auth_token` (`aa-auth+jwt`) containing identity claims (`sub`, `email`, etc.)
-6. Agent retries the original request signed with the `auth_token`
-7. Resource verifies the auth token signature and claims → `200 OK`
+2. Resource verifies the signature and returns `401` with `requirement=person-token`
+3. Agent POSTs to the PS `/person` endpoint and receives a PS-issued `person_token`
+4. Agent retries the resource with the `person_token`; the resource returns `401` with `requirement=auth-token` and a `resource_token` bound to the presented token's `jti`
+5. Agent POSTs both `resource_token` and `presented_token` to the PS token endpoint
+6. PS validates the pair, prompts the user for consent on the requested scope, and issues an `auth_token` (`aa-auth+jwt`) containing identity claims (`sub`, `email`, etc.)
+7. Agent retries the original request signed with the `auth_token`
+8. Resource verifies the auth token signature and claims → `200 OK`
 
 See [Getting Started](docs/getting-started.md#three-party-flow-deep-dive) for a detailed walk-through, including deferred consent.
 
@@ -229,7 +232,7 @@ app.MapGet("/data", (HttpContext ctx) => Results.Ok(new { ok = true }))
     .RequireAAuth(scope: "read");
 ```
 
-The single `UseAAuth` middleware (placed after `UseRouting()`) reads each endpoint's `.RequireAAuth(...)` requirement: it verifies the HTTP signature and, when an auth token is required, automatically returns `401` with an `AAuth-Requirement` header carrying a resource token. With no Access Server configured, this is the three-party PS-asserted mode: leave `Trust.AuthTokenIssuers` unset (or assign `AAuthTrust.Any` to its `Predicate`) to accept any *verifiable* Person Server, with claims namespaced by issuer.
+The single `UseAAuth` middleware (placed after `UseRouting()`) reads each endpoint's `.RequireAAuth(...)` requirement: it verifies the HTTP signature and, when an auth token is required, automatically returns `401` with an `AAuth-Requirement` header carrying a resource token. With no Access Server configured, this is the three-party PS Authorization mode: leave `Trust.AuthTokenIssuers` unset (or assign `AAuthTrust.Any` to its `Predicate`) to accept any *verifiable* Person Server, with claims namespaced by issuer.
 
 For four-party resources, declare the AS once on the resource registration:
 
@@ -288,8 +291,8 @@ Full SDK documentation lives in [`docs/`](docs/):
 - [Getting Started](docs/getting-started.md) — install, generate a key, three-party flow deep dive, enrollment models
 - [Concepts](docs/concepts.md) — the four participants and how the SDK maps to them
 - [Glossary & Acronyms](docs/glossary.md) — every acronym and short protocol term used across the repo
-- [Signing Modes](docs/signing-modes/overview.md) - six carriers, distinct from four AAuth access modes
-- [Workflows](docs/workflows/identity-based-access.md) — identity-based, PS-asserted, federated
+- [Signing Modes](docs/signing-modes/overview.md) - six carriers, distinct from five AAuth access modes
+- [Workflows](docs/workflows/identity-based-access.md) — agent identity, PS authorization, federated authorization
 - [Server Guide](docs/server/verification-middleware.md) — verification middleware, token issuance
 - [Configuration Reference](docs/reference/configuration.md)
 
@@ -324,14 +327,17 @@ This SDK targets **draft-11** of the AAuth protocol specification:
 | [HTTP Signature Keys](aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt) | 09 |
 
 The pinned source is commit `178e9e68b6578e4d6f7d0bf30f33b4c38833e3a1`,
-published 2026-09-25. The locally validated implementation covers person tokens
-and all five resource access modes (`PersonServerMapperTests`,
-`AuthorizationEndpointTests`, `ResourceManagedFlowTests`,
-`FourPartyTrustTests`), presented-token exchanges and four-party trust
-(`DeferredFederationTests`, `FourPartyTrustTests`), `mission_s256` missions with
-updates, resources and expiry (`MissionS256Tests`, `MissionPersonTokenIssuanceTests`,
-`MissionTerminatedTests`), parent-mediated sub-agents (`AgentIdTests`,
-`AgentTokenVerificationTests`), call chaining through the person's PS
+published 2026-09-25. The locally validated implementation covers agent-identity
+verification and agent-token challenges (`AgentTokenVerificationTests`,
+`ChallengeMiddlewareTests`), resource-managed `AAuth-Access`
+(`ResourceManagedFlowTests`), person-token access (`AuthorizationEndpointTests`),
+PS authorization with `presented_token` exchanges (`PersonServerMapperTests`,
+`ChallengeMiddlewareTests`) and four-party trust (`DeferredFederationTests`,
+`FourPartyTrustTests`), `mission_s256` hashing, resource-scoped person-token
+issuance and termination/expiry (`MissionS256Tests`,
+`MissionPersonTokenIssuanceTests`, `MissionTerminatedTests`), sub-agent
+identifiers, token verification and parent-mediated minting (`AgentIdTests`,
+`AgentTokenVerificationTests`, `PersonServerMapperTests`), call chaining through the person's PS
 (`CallChainingTests`, `CallChainingHandlerTests`), `{jti, exp}` revocation with
 cascades (`RevocationLifecycleTests`, `PersonTokenRevocationCascadeTests`,
 `AgentTokenRevocationCascadeTests`), `202` auth-token delivery and polling

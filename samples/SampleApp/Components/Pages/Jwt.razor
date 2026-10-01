@@ -18,11 +18,12 @@
 </details>
 
 <p>
-    PS-asserted access: SampleApp acts as its own Agent Provider and publishes
-    its metadata and signing key. The SDK locally issues and refreshes an
-    <code>aa-agent+jwt</code> using that identity, presented with the
-    <code>jwt</code> signature scheme. Challenge handling automates the Person
-    Server consent exchange. There is no external AP enrollment in this page.
+    Agent-token access followed by a PS auth-token exchange: SampleApp acts as
+    its own Agent Provider and publishes its metadata and signing key. The SDK
+    locally issues and refreshes an <code>aa-agent+jwt</code> using that identity,
+    presented with the <code>jwt</code> signature scheme. Challenge handling
+    automates the Person Server consent exchange. There is no external AP
+    enrollment in this page.
 </p>
 
 <div class="row">

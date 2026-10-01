@@ -2,7 +2,7 @@
 
 > [PS authorization demo](https://explorer.aauth.dev/access/ps-asserted)
 
-Overview: When the Person Server doesn't have standing consent for the requested access, it returns a 202 with an interaction URL and a pending URL. The agent must present the interaction to the user and poll the pending URL until the PS mints the auth token.
+Overview: When the Person Server doesn't have standing consent for the requested access, it returns a 202 with an interaction URL and a pending URL. The agent should avoid waiting for the user to open the link before polling: surface the interaction promptly and poll the pending URL while the user may approve from that URL or from a PS dashboard. In the GuidedTour, polling starts as soon as the consent step is reached, and the next poll observes the result when the PS mints the auth token.
 
 ```mermaid
 sequenceDiagram
@@ -15,11 +15,12 @@ sequenceDiagram
     Agent->>PS: POST /token (resource_token, presented_token)
     Note over PS: Verifies resource token<br/>(typ/dwk/sig, exp/iat, aud, agent_jkt, ps)<br/>and the presented token it names
     PS-->>Agent: 202 + Location + Retry-After + no-store + requirement=interaction
+    Agent->>PS: Start polling pending URL
     Agent->>User: Present interaction URL + code
     User->>PS: Approve at interaction page
     loop Poll pending URL
         Agent->>PS: GET /pending/<id>
-        PS-->>Agent: 202 + Location + Retry-After + no-store
+        PS-->>Agent: 202 + Retry-After + no-store
     end
     PS-->>Agent: 200 + auth token
     Agent->>Resource: GET /data (auth token)
@@ -55,8 +56,9 @@ try
             PresentedToken = heldToken, // the person or auth token the resource token names
             OnInteractionRequired = async (interaction, ct) =>
             {
-                // Present to user - open browser, show notification, etc.
-                Console.WriteLine($"Approve at: {interaction.Url}");
+                // Return promptly so polling can continue; open a browser, show
+                // a notification, link to a dashboard, etc.
+                Console.WriteLine($"Approve at: {interaction.BuildUserUrl()}");
                 Console.WriteLine($"Code: {interaction.Code}");
             },
             PollerOptions = new DeferredPollerOptions
@@ -102,7 +104,7 @@ using var client = AAuthClientBuilder.Enrolled(key)
         options.PreferWaitSeconds = 30; // long-poll (RFC 7240 §4.3)
         options.OnInteractionRequired = async (interaction, ct) =>
         {
-            Console.WriteLine($"Approve at: {interaction.Url}");
+            Console.WriteLine($"Approve at: {interaction.BuildUserUrl()}");
             Console.WriteLine($"Code: {interaction.Code}");
         };
     })
@@ -162,7 +164,7 @@ class BrowserPresenter : IInteractionPresenter
 {
     public Task PresentAsync(Interaction interaction, CancellationToken ct)
     {
-        Process.Start(new ProcessStartInfo(interaction.Url) { UseShellExecute = true });
+        Process.Start(new ProcessStartInfo(interaction.BuildUserUrl()) { UseShellExecute = true });
         return Task.CompletedTask;
     }
 }
@@ -178,12 +180,16 @@ class BrowserPresenter : IInteractionPresenter
 
 ## Error Scenarios
 
-- `AAuthInteractionDeniedException` — user clicked "Deny"
+- `AAuthInteractionDeniedException` — the user denied the request
 - `AAuthInteractionTimeoutException` — `MaxTotalWait` elapsed
-- PS returns `slow_down` — poller backs off automatically
+- PS returns `slow_down` — poller backs off automatically by 5 seconds
+- Polling terminal errors use registered codes: `invalid_code` (410 for an
+  unknown or consumed pending id), `expired` (408 before final consumption; a
+  consumed or evicted expired id is then `invalid_code` 410),
+  and `denied`/`abandoned`/`revoked` (403)
 
 ## Further Reading
 
-- [PS authorization access](ps-asserted-access.md)
+- [PS authorization](ps-asserted-access.md)
 - [Interaction Chaining](../advanced/interaction-chaining.md) — what an intermediary does when *its* downstream hop returns this same `202` and there is no user attached to the inbound request.
 - [Error Handling](../advanced/error-handling.md)

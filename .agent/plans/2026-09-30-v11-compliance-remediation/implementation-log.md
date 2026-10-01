@@ -1735,3 +1735,27 @@ Effect on this plan:
   collision, add a random `nonce` instead of waiting, and drop the wait.
 
 Status: the reply was received and the issue is tracked; no change to Q1.
+
+### [2026-10-01] Docs and rendered-snippet alignment pass
+
+Owner asked for another full documentation alignment pass after Phase 13, then a check of the
+code snippets rendered by the GuidedTour and SampleApp UIs.
+
+- **Docs:** 12 slice agents (README, src READMEs, SPEC-VERSION, conformance README, docs/**,
+  sample READMEs) aligned text with the draft-11 canonical facts (five resource access modes,
+  six Signature-Key schemes, Q1/Q2/Q19 deviations, registered error codes, `{jti, exp}`
+  revocation). A cross-doc consistency agent then normalised terminology ("PS authorization",
+  no `agent`/`act` in resource-facing tokens, `PersonServerAudience` removed) and fixed
+  contradictions. Orchestrator fixed 5 docs-test regressions: anchor
+  `#signature-errors-resource--agent`, per-field resource metadata rows,
+  `### AAuthCollapsedFederationDeclaration` table heading, and restoring the
+  `PersonServerAudience` removal note on `AuthorizationEndpoint` rows.
+- **Rendered snippets:** GuidedTour (53 code-pane snippets) and SampleApp/CapabilitySupport/
+  EventSupport (40 snippets) scratch-compiled against Release assemblies — all compile. Text
+  fixes: "PS-Asserted" → "PS Authorization" labels (+ Playwright expectations), `jkt-jwt` framed
+  as generic Signature-Key refresh, stale `act` chain claims removed, Deferred response shows
+  `ps` not `agent`, Federated PS→AS body = `resource_token` + `presented_token`, mission gate
+  count = five, revocation text keyed by `jti`.
+- **Gates:** Release build clean; AAuth.Tests 1853, Conformance 1411, R3 345, Events 89;
+  docs 108/108 (inventory refreshed); ApiSurface rewritten (sample snippet constant text only,
+  no SDK API change); Playwright 79 passed / 1 skipped.

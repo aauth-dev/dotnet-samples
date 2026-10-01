@@ -20,7 +20,7 @@
         <ul class="intro__servers">
             <li><span class="srv srv--profile">Profile</span> your saved travel preferences (identity-based access)</li>
             <li><span class="srv srv--inbox">Inbox</span> importing trip confirmations (resource-managed, two-party)</li>
-            <li><span class="srv srv--calendar">Calendar</span> when you're free (PS-asserted, three-party)</li>
+            <li><span class="srv srv--calendar">Calendar</span> when you're free (PS authorization, three-party)</li>
             <li><span class="srv srv--trips">Trips</span> browsing and booking trips (mission-governed)</li>
             <li><span class="srv srv--wallet">Wallet</span> paying for a booking (federated, four-party)</li>
             <li><span class="srv srv--bookings">Bookings</span> reserving dining &amp; experiences (Rich Resource Requests, R3, four-party)</li>
@@ -80,10 +80,10 @@
         new(3, "ResourceManaged", "Resource-Managed — Two-Party",
             "Aria reads your Inbox to import trip confirmations, but the Inbox manages authorization itself — its own consent page issues an opaque AAuth-Access token, no Person Server in sight.",
             new[] { "Agent + Inbox", "6 steps", "you approve", "first-party OAuth role" }),
-        new(4, "Autonomous", "PS-Asserted — Direct Grant",
+        new(4, "Autonomous", "PS Authorization — Direct Grant",
             "Aria reads your Calendar. Because you granted standing consent earlier, the Person Server issues a token immediately — no human in the loop.",
             new[] { "Agent + Calendar + PS", "8 steps", "no prompt" }),
-        new(5, "Deferred", "PS-Asserted — Deferred Consent",
+        new(5, "Deferred", "PS Authorization — Deferred Consent",
             "Aria wants your Calendar but has no consent yet, so the Person Server pauses and waits for your one-time approval in a new tab.",
             new[] { "Agent + Calendar + PS", "11 steps", "you approve" }),
         new(6, "CallChain", "Call Chain — Multi-Agent",

@@ -15,7 +15,7 @@ rejecting outright (§Clarification Chat). Two places use it:
   requests permission, the PS may ask the agent to refine the intent before
   approving.
 
-The agent answers the question, replaces its request with a narrower one, or
+The agent answers the question, replaces its request with an updated one, or
 withdraws — and the exchange continues until the server decides or the round
 limit is reached.
 

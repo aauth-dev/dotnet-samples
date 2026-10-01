@@ -1,4 +1,4 @@
-# Identity-Based Access
+# Agent Identity Access
 
 > [Live demo](https://explorer.aauth.dev/access/identity-based) | [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
 
@@ -84,9 +84,9 @@ Inject via `IHttpClientFactory.CreateClient("identity")`. See [Dependency Inject
 
 | Status | Signature-Error | Cause |
 |--------|----------------|-------|
-| 401 | `invalid_signature` | Signature doesn't verify |
-| 401 | `unknown_key` | For jwks_uri: kid not found in JWKS |
-| 401 | `unsupported_algorithm` | Missing or unsupported fully specified alg; Ed25519 and ES256 are accepted |
+| 401 | `error=invalid_signature` | Signature doesn't verify |
+| 401 | `error=unknown_key` | For jwks_uri: kid not found in JWKS |
+| 401 | `error=unsupported_algorithm` | Missing or unsupported fully specified alg; Ed25519 and ES256 are accepted |
 | 403 | *(none)* | Signature valid but policy denies access |
 
 ## Further Reading

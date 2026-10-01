@@ -33,8 +33,9 @@ Both supported algorithms, Ed25519 and ES256, require fully specified public
 JWK algorithms. `EdDSA` and `none` are rejected. Subscribe tokens require
 `cnf.jwk`; event tokens forbid `cnf`. Both reject unsupported JOSE `crit` and
 require current issuance/expiration claims, exact well-known document names, an
-audience and a non-empty `eid`; `exp` has zero tolerance.
-No Events `jti` requirement is introduced; a permitted optional `jti` is accepted.
+audience and a non-empty `eid`; `exp` has zero tolerance. Event tokens require
+`jti` for `(iss, jti)` delivery deduplication. Subscribe tokens do not require
+`jti`; a permitted optional `jti` is accepted.
 
 Events requests with no payload omit the HTTP body and do not cover
 `content-type` or `content-digest`. `EventsProtocol.SendAsync` treats both
@@ -86,8 +87,9 @@ after that transport has been discarded.
 
 ## Draft Limitation
 
-The draft permits unlimited subscriptions but tells agents to deduplicate by
-`eid` and issuer. The implementation follows that rule literally. Later distinct
-notifications for the same pair are ignored by the agent. The sample is
-single-shot with `max_uses: 1`; it does not invent a standard per-event identifier
-or claim to resolve recurring-event semantics.
+The draft uses `eid` and issuer as the subscription identity. The implementation
+stores subscription context by `eid`, but event delivery requires a fresh event
+token `jti` and deduplicates received events by `(iss, jti)`. The sample's
+controlled notification trigger is single-shot with `max_uses: 1`; it does not
+invent additional recurring-event semantics beyond distinct event-token `jti`
+values.

@@ -3,6 +3,7 @@
 @using AAuth.Crypto
 @using AAuth.Headers
 @using AAuth.HttpSig
+@using AAuth.Person
 @implements IAAuthInteractionHandler
 @inject IJSRuntime JS
 @inject SampleAgents Agents
@@ -69,7 +70,8 @@ var response = await client.SendAsync(request);</code></pre>
 <pre><code class="language-csharp">// Register the host's authenticated identity/consent policy first.
 // The mapper verifies agent and resource tokens before routing:
 // aud == PS: direct grant; admitted AS audience: signed federation.
-// The signed PS-to-AS body carries resource_token and agent_token.
+// The signed PS-to-AS body carries resource_token and presented_token
+// (the person token that obtained the resource challenge).
 // Deferred AS consent/clarification is relayed through PS pending state.
 builder.Services.AddAAuthPersonServer(configure: options =&gt;
     {

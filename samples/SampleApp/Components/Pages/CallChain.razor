@@ -34,7 +34,8 @@
         the Concierge has no user, so it re-emits its <em>own</em> <code>202</code>
         (AAuth §Interaction Chaining). Agent&nbsp;A relays you to the Concierge
         interaction URL, which redirects to the Person Server consent page, then
-        receives the final chained result.</li>
+        receives the final chained result. Each intermediary issues its <em>own</em>
+        interaction code and poll URL.</li>
 </ul>
 
 <p class="text-muted">
@@ -83,7 +84,7 @@ async Task&lt;IResult&gt; RunChainAsync(HttpContext ctx, string upstream)
         .WithPersonServer(psUrl)
         .WithCallChaining(upstream)   // sends upstream_token to the PS it
                                       // names (a mission_s256 would travel
-                                      //  on; omitted here)
+                                      // on; omitted here)
         .WithChallengeHandling(opts =&gt;
         {
             opts.OnInteractionRequired = (i, _) =&gt;

@@ -4,7 +4,7 @@
 > separate [`AAuth.R3`](../../src/AAuth.R3/) preview package, not the core `AAuth` package.
 
 Overview: R3 adds **resource-declared, vocabulary-based** authorization on top of the
-four AAuth access modes. Instead of opaque scope strings, the resource publishes a
+five AAuth resource access modes. Instead of opaque scope strings, the resource publishes a
 content-addressed **R3 document** describing the operations a class of access covers
 (in a vocabulary the agent already understands — here **OpenAPI** operation IDs) and the
 human consequences of granting it. The auth token then carries `r3_granted` (serve

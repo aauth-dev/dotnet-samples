@@ -12,7 +12,7 @@ inspector: one step per wire exchange, with consent, clarification and poll
 steps that adapt to what the PS and Access Server actually answer. `make demo-keycloak` uses the real configured IdP policy instead
 of the isolated stub consent page.
 
-Wallet remains a travel-wallet resource. These scenarios inspect and withdraw
+Wallet remains a travel-wallet resource. These scenarios inspect and revoke
 its grants; they do not implement payment settlement. SampleApp uses
 [WalletDemoSession](../../samples/CapabilitySupport/WalletDemoSession.cs) and
 [browser assertions](../../tests/e2e/helpers/wallet-protocol.ts); the tour's
@@ -22,10 +22,14 @@ Both show the same [displayed C#](../../samples/CapabilitySupport/WalletScenario
 ## AS Clarification
 
 1. Enroll a new key with the AP and obtain its assigned agent identity.
-2. Request Wallet review access. The resource returns an AS-audience challenge.
-3. Exchange through the PS, answer AS clarification and complete consent. The PS
-   retains the authenticated pending context; the SDK sends an explicit
-   `clarification_response` action and polls for the signed grant.
+2. Request Wallet review access. Wallet first returns a `person-token`
+   requirement; the agent obtains a Wallet person token from the PS, retries,
+   and Wallet returns an AS-audience `auth-token` challenge bound to that
+   person token.
+3. Exchange the resource token and presented person token through the PS, answer
+   AS clarification and complete consent. The PS retains the authenticated
+   pending context; the SDK sends an explicit `clarification_response` action
+   and polls for the signed grant.
 4. Read Wallet with the approved `wallet.review` grant.
 5. Attempt a charge with that grant; Wallet rejects the out-of-scope operation.
 
@@ -40,9 +44,13 @@ sequenceDiagram
     participant PS
     participant AS
     Agent->>Wallet: Signed review request, agent JWT
+    Wallet-->>Agent: 401 requirement=person-token
+    Agent->>PS: Signed person-token request (resource=Wallet)
+    PS-->>Agent: Wallet person_token
+    Agent->>Wallet: Retry review with person_token
     Wallet-->>Agent: 401, resource_token aud=AS
-    Agent->>PS: Signed token request, resource_token
-    PS->>AS: Signed federation, agent_token and resource_token
+    Agent->>PS: Signed token request, resource_token + presented_token
+    PS->>AS: Signed federation, agent_token, resource_token and presented_token
     AS-->>PS: 202, clarification and pending Location
     PS-->>Agent: 202, relayed clarification and PS Location
     Agent->>PS: POST action=clarification_response
@@ -62,7 +70,8 @@ an intermediary routes to the PS its upstream token names (an auth token's
 `AsGrantChaining`.
 
 1. Enroll a new agent.
-2. Request Concierge Wallet access and retain the AS-audience resource token.
+2. Request Concierge Wallet access. Concierge first requires a person token,
+   then returns an AS-audience resource token bound to that person token.
 3. Complete consent and obtain an AS-issued upstream grant with no mission.
 4. Call Concierge with that grant. Concierge signs with its own agent JWT,
    requests a Wallet person token at the grant's PS with the grant as
@@ -97,19 +106,19 @@ sequenceDiagram
 ## Federated Revocation
 
 1. Enroll a new agent.
-2. Request Wallet access and retain the resource challenge and the person token
-   the agent presented.
+2. Request Wallet access and retain the AS-audience resource challenge and the
+   person token the agent presented to obtain it.
 3. Complete consent. The PS federates to the Wallet's AS with that person token
    as `presented_token`, and the AS issues the Wallet grant against it.
 4. Read Wallet with that grant.
-5. Try withdrawal as the agent. An agent signs with its agent token, not as a
+5. Try revocation as the agent. An agent signs with its agent token, not as a
    server, so Wallet answers `403 unsupported_iss`.
 6. Ask the sample PS to terminate the access it federated. The PS signs
    `{"jti":"<person token id>","exp":<its exp>}` to the AS revocation
    endpoint; the AS records it and revokes the auth token it issued against
    that person token at the Wallet, then reports the Wallet in `downstream`.
    Repeating it is idempotent.
-7. Reuse the withdrawn grant and observe the `401` rejection.
+7. Reuse the revoked grant and observe the `401` rejection.
 8. Obtain a fresh person token and grant through the normal consent callback.
    Its new `jti` restores the Wallet read without undoing the old revocation.
 
@@ -137,7 +146,7 @@ sequenceDiagram
 
 The shared browser tests run in both app-local Playwright projects and cover
 clarification answer/cancel, scope rejection, AS-issued upstream grant audience
-rejection, idempotent withdrawal, recovery callbacks, reset and narrow layouts.
+rejection, idempotent revocation, recovery callbacks, reset and narrow layouts.
 Captures show the requests visible to the scenario transport; the builder's
 separate PS exchange channel is verified by endpoint tests, not invented in the
 inspector.

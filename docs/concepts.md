@@ -33,7 +33,7 @@ Six Signature-Key schemes (see [Signing Schemes](signing-modes/overview.md)):
 Anonymous public requests have no signature and are not a Signature-Key scheme.
 SelfIssuing/Enrolled/Bootstrap describe credential provisioning, not an access
 mode or the `self-jwt` scheme. The Profile pseudonymous demonstrations are
-generic signing examples, not identity-based AAuth access.
+generic signing examples, not agent identity AAuth access.
 
 ### 2. Resource Access
 
@@ -41,11 +41,11 @@ How a resource decides what the agent may do. See [Access Mode Comparison](https
 
 Five modes:
 
-- **Identity-Based** — Resource trusts the signature directly. No tokens beyond the agent token.
-- **Resource-Managed** (2-party): Resource handles its own consent and issues an opaque `AAuth-Access` token bound to the verified agent/key/account. SDK: `WithResourceManagedAccess`, `AddAAuthResourceManaged` and `ResolveAAuthAccessAsync`. Browser decisions require authenticated sessions and CSRF protection; the correlation code is not approval.
-- **Person Identity** — Resource needs the PS-issued person token before it can decide what authorization to request. The token identifies the person; it is not authorization.
-- **PS Authorization** (3-party) — Agent presents a person token → resource issues a resource token naming it → agent exchanges both at PS → auth token. SDK: `ChallengeHandler`, `TokenExchangeClient`
-- **Federated** (4-party) — PS delegates to Access Server. SDK: same agent-side types; AS is the PS's concern.
+- **Agent Identity** (`agent-token`) — Resource authorizes the verified agent token directly.
+- **Resource-Managed** (`session-token` / `AAuth-Access`) — Resource handles its own consent and issues an opaque `AAuth-Access` response token bound to the verified agent/key/account; the agent replays it as `Authorization: AAuth <token68>`. SDK: `WithResourceManagedAccess`, `AddAAuthResourceManaged` and `ResolveAAuthAccessAsync`. Browser decisions require authenticated sessions and CSRF protection; the correlation code is not approval.
+- **Person Identity** (`person-token`) — Resource needs the PS-issued person token before it can decide what authorization to request. The token identifies the person; it is not authorization.
+- **PS Authorization** (`auth-token`, 3-party) — Agent presents a person token → resource issues a resource token naming it → agent exchanges both at PS → PS-issued auth token (`dwk=aauth-person.json`). SDK: `ChallengeHandler`, `TokenExchangeClient`
+- **Federated Authorization** (`auth-token`, 4-party) — PS delegates to the resource's Access Server, which issues the auth token (`dwk=aauth-access.json`). SDK: same agent-side types; AS is the PS's concern.
 
 ### 3. Governance (Missions)
 
@@ -87,7 +87,7 @@ and [Events](workflows/events.md) for runnable rejection/recovery paths.
 | `Signature-Input` | Request | Declares covered components + params | `AAuthSigningHandler` |
 | `Signature` | Request | The actual signature | `AAuthSigningHandler` |
 | `Signature-Error` | Response | Machine-readable verification error | `SignatureError` |
-| `AAuth-Requirement` | Response | What the resource needs (auth-token, interaction) | `AAuthRequirementHeader` |
+| `AAuth-Requirement` | Response | What is required (`person-token`, `auth-token`, `agent-token`, `interaction`, `clarification`, `claims`) | `AAuthRequirementHeader` |
 | `AAuth-Capabilities` | Request | Agent declares supported flows | `AAuthCapabilitiesHeader`, `AAuthConstants.Capabilities` |
 
 ## Further Reading

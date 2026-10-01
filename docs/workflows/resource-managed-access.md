@@ -39,6 +39,7 @@ sequenceDiagram
     Note over Agent: Setup complete: self-issued or AP-enrolled agent JWT
     Agent->>Resource: GET /data (jwt + HTTP proof)
     Resource-->>Agent: 202 + Location + requirement=interaction; url; code
+    Note over Agent: Start signed polling immediately
     User->>Resource: Completes interaction at resource's page
     Agent->>Resource: GET /pending/<id> (poll)
     Resource-->>Agent: 200 + AAuth-Access: <opaque-token>
@@ -50,7 +51,7 @@ sequenceDiagram
 
 ### Client-Side (Agent)
 
-`WithResourceManagedAccess()` captures the `AAuth-Access` token and replays it as `Authorization: AAuth <token68>` (the signer covers `authorization` automatically). Combine with `WithInteractionHandling()` to drive the resource's `202 → consent → 200` handshake:
+`WithResourceManagedAccess()` captures the `AAuth-Access` token and replays it as `Authorization: AAuth <token68>` (the signer covers `authorization` automatically). Combine with `WithInteractionHandling()` to drive the resource's `202 → poll/interaction → 200` handshake:
 
 ```csharp
 var keyStore = FileKeyStore.Default();
@@ -73,8 +74,9 @@ using var client = AAuthClientBuilder.Enrolled(enrollment.Key)
     })
     .Build();
 
-// First call drives the 202 → consent → poll handshake; the SDK captures the
-// AAuth-Access token. Subsequent calls replay it, bound to the signature.
+// First call drives the 202 → poll-on-arrival → consent → 200 handshake; the
+// SDK captures the AAuth-Access token. Subsequent calls replay it, bound to the
+// signature.
 await client.GetAsync("https://resource.example/messages");
 var response = await client.GetAsync("https://resource.example/messages");
 ```
@@ -100,7 +102,9 @@ if (response.StatusCode == HttpStatusCode.Accepted)
     // Parse AAuth-Requirement header for the interaction URL + code
     var requirement = AAuthRequirementHeader.Parse(
         response.Headers.GetValues("AAuth-Requirement").First());
-    // Present the interaction URL to the user, then poll the Location URL.
+    // Start signed polling of the Location URL immediately, then present the
+    // interaction URL to the user. The user may decide from that page or from a
+    // dashboard while the agent is already polling.
     // On 200, read AAuth-Access and present it on the next request as
     // Authorization: AAuth <token68> (covered by the signature).
 }
@@ -186,9 +190,11 @@ builder.Services.AddAAuthResourceManaged(options =>
 ```
 
 The endpoints then drive the flow with `ResolveAAuthAccessAsync` /
-`RequireAAuthInteraction` and `MapAAuthInteractionPoll`; the consent page records
-the decision using an authenticated, owner-bound `BrowserConsentSessions`
-session and the pending-store generation. See the actual
+`RequireAAuthInteraction` and `MapAAuthInteractionPoll`; the agent can poll as
+soon as it receives the `202`, while the consent page records the decision using
+an authenticated, owner-bound `BrowserConsentSessions` session and the
+pending-store generation. Opening the code does not grant access; only the
+session-bound approve/deny POST does. See the actual
 [Inbox consent endpoints](../../samples/MockResourceServers/Inbox/Program.cs).
 
 See [Dependency Injection](../reference/dependency-injection.md) for full reference.
@@ -197,12 +203,12 @@ See [Dependency Injection](../reference/dependency-injection.md) for full refere
 
 | Status | Header | Cause |
 |--------|--------|-------|
-| 401 | `Signature-Error: invalid_signature` | Signature doesn't verify |
+| 401 | `Signature-Error: error=invalid_signature` | Signature doesn't verify |
 | 202 | `AAuth-Requirement: requirement=interaction; url=...; code=...` plus `Location` | Authorization pending — user interaction required |
 | 403 | *(none)* | Interaction completed but access denied by resource policy |
 
 ## Further Reading
 
 - [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
-- [Identity-Based Access](identity-based-access.md)
-- [PS authorization access](ps-asserted-access.md)
+- [Agent identity access](identity-based-access.md)
+- [PS authorization](ps-asserted-access.md)

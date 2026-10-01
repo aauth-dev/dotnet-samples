@@ -40,10 +40,10 @@ public sealed class Mission
     public required DateTimeOffset ApprovedAt { get; init; }  // approval timestamp (keeps s256 unique)
     public DateTimeOffset? ExpiresAt { get; init; }           // optional expires_at; terminated after it
     public required string Description { get; init; }         // Markdown intent
-    public IReadOnlyList<MissionTool> ApprovedTools { get; init; }  // pre-approved tools (may be a subset)
-    public IReadOnlyList<string> ApprovedResources { get; init; }   // resources pre-approved at proposal time
-    public IReadOnlyList<string> Capabilities { get; init; }  // envelope: capabilities the PS provides now
-    public IReadOnlyDictionary<string, string> PersonTokens { get; init; } // envelope: resource -> person token
+    public IReadOnlyList<MissionTool> ApprovedTools { get; init; } = Array.Empty<MissionTool>();
+    public IReadOnlyList<string> ApprovedResources { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> Capabilities { get; init; } = Array.Empty<string>();
+    public IReadOnlyDictionary<string, string> PersonTokens { get; init; } = new Dictionary<string, string>();
     public required string S256 { get; init; }                // base64url(SHA-256(blob)) — the identity
     public ReadOnlyMemory<byte> RawBytes { get; init; }       // verbatim mission blob bytes
 

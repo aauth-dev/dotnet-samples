@@ -58,7 +58,7 @@
                 <p class="card-text">
                     A generic Signature Keys example. The AP publishes the agent's public
                     key at a direct JWKS URL, and Profile verifies that discovered key.
-                    It is not one of the four AAuth resource access modes.
+                    It is not one of the five AAuth resource access modes.
                 </p>
                 <span class="badge bg-success">agent + resource</span>
                 <span class="badge bg-secondary">sig=jwks</span>
@@ -152,8 +152,9 @@
                 <h5 class="card-title">🔗 Call Chain — Multi-Agent</h5>
                 <p class="card-text">
                     Multi-hop delegation: Agent&nbsp;A → Concierge → Calendar. Each hop
-                    authenticates independently. The PS builds a nested <code>act</code>
-                    chain so the final resource sees the full delegation path.
+                    authenticates independently; downstream requests carry
+                    <code>upstream_token</code> through the person's PS while resource-facing
+                    tokens omit <code>agent</code> and <code>act</code> claims.
                 </p>
                 <span class="badge bg-danger">multi-hop</span>
                 <span class="badge bg-secondary">sig=jwt</span>
@@ -174,7 +175,8 @@
                     <strong>worker</strong> sub-agent with its own key (individually auditable
                     and revocable). Three explicit decisions cover the upstream caller, the
                     worker's Wallet scope, and federation; the parent mediates the exchange via
-                    <code>subagent_token</code>, and the auth token's <code>act</code> records the chain.
+                    <code>subagent_token</code>, and the worker-bound token has no
+                    <code>agent</code> or <code>act</code> claim.
                 </p>
                 <span class="badge bg-danger">sub-agents</span>
                 <span class="badge bg-secondary">parent_agent</span>
@@ -233,9 +235,10 @@
                 <h5 class="card-title">🎯 Mission — PS-Governed Agent</h5>
                 <p class="card-text">
                     A human-approved <strong>mission</strong> lets the Person Server govern
-                    every step. One run drives all four gates: two resolve
-                    <strong>silently</strong> (in-scope token, pre-approved tool), two
-                    <strong>prompt</strong> the user (mission creation, an out-of-tool action).
+                    every step. One run drives all five gates: two resolve
+                    <strong>silently</strong> (in-scope token, pre-approved tool), three
+                    <strong>prompt</strong> the user (mission creation, an elevated scope,
+                    and an out-of-tool action).
                 </p>
                 <span class="badge bg-warning text-dark">3-party</span>
                 <span class="badge bg-secondary">sig=jwt</span>

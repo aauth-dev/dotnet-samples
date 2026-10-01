@@ -94,10 +94,10 @@ Canonical expansions follow the AAuth specification drafts under
 | **UMA** | User-Managed Access | The grant the Keycloak Access Server adapter uses to get a policy decision. |
 | **RBAC** | Role-Based Access Control | Authorization by role (e.g. `wallet.payer`, `calendar.owner`). |
 | **ABAC** | Attribute-Based Access Control | Authorization by attributes pushed to the AS (e.g. tenant, group). |
-| **Identity-Based** | _(access mode)_ | Two-party: the resource decides from the signature alone. |
-| **Resource-Managed** | _(access mode)_ | Two-party: the resource runs its own authorization (interaction/OAuth/policy). |
-| **PS authorization** | _(access mode)_ | Three-party: the resource delegates authorization to the agent's PS. |
-| **Federated** | _(access mode)_ | Four-party: the resource has its own AS; the PS federates to it. |
+| **Agent Identity** | _(access mode)_ | Two-party: the resource authorizes the verified agent token directly. |
+| **Resource-Managed** | _(access mode)_ | Two-party: the resource runs its own authorization (interaction/OAuth/policy) and issues an opaque `AAuth-Access` token. |
+| **PS authorization** | _(access mode)_ | Three-party: the resource delegates authorization to the agent's PS, which issues the auth token. |
+| **Federated authorization** | _(access mode)_ | Four-party: the resource has its own AS; the PS federates to it and the AS issues the auth token. |
 
 ## Well-known documents & HTTP headers
 
@@ -111,9 +111,9 @@ Canonical expansions follow the AAuth specification drafts under
 | **Signature-Key** | Request header conveying the signing key material (inline JWK, JWKS reference, or JWT). |
 | **Signature-Input** | RFC 9421 header listing which request components are covered by the signature. |
 | **Signature-Error** | Response header conveying a signature-verification failure code. |
-| **AAuth-Requirement** | Response header on `401`/`202` signalling what is required (`person-token`, `auth-token`, `interaction`, `claims`). |
+| **AAuth-Requirement** | Response header on `401`/`202` signalling what is required (`person-token`, `auth-token`, `agent-token`, `interaction`, `clarification`, `claims`). |
 | **AAuth-Capabilities** | Header advertising agent/server capabilities. |
-| **AAuth-Access** | Header carrying an opaque access token in resource-managed access. |
+| **AAuth-Access** | Response header carrying an opaque resource-managed access token; the agent replays it as `Authorization: AAuth <token68>`. |
 
 ## Protocol concepts
 
@@ -123,7 +123,7 @@ Canonical expansions follow the AAuth specification drafts under
 | **Mission Log** | The PS-held, ordered record of token/permission/audit/interaction/update/clarification events within a mission. |
 | **Bootstrap / Enrollment** | How an agent first acquires an agent token (AP enrollment, or self-issuing for hosted services). |
 | **Refresh** | Obtaining a fresh agent token using the durable key (chaining a new ephemeral key via `jkt-jwt`). |
-| **Challenge → Exchange → Retry** | The PS-asserted pattern: `401 requirement=person-token` → person token → `401` + resource token → exchange resource token + presented token at PS → retry with the auth token. |
+| **Challenge → Exchange → Retry** | The PS authorization pattern: `401 requirement=person-token` → person token → `401` + resource token → exchange resource token + presented token at PS → retry with the auth token. |
 | **Call chaining** | A resource acting as an agent downstream, passing the caller's person or auth token as `upstream_token`; the PS holds the chain, and tokens carry no delegation claim. |
 | **Interaction Chaining** | Propagating a downstream consent requirement back up the chain to the original agent. |
 | **Clarification** | A PS follow-up question during a token/permission request; the agent answers before the user approves. |

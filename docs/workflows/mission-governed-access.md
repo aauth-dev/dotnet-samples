@@ -33,7 +33,7 @@ sequenceDiagram
     Agent->>PS: 2. person token request (resource, mission_s256)
     PS-->>Agent: person token (mission_s256)
     Agent->>Resource: GET /data (signed, person token)
-    Resource-->>Agent: 401 + resource token (mission_s256 copied in)
+    Resource-->>Agent: 401 requirement=auth-token + resource token (mission_s256 copied in)
     Agent->>PS: 3. auth token request (resource_token, presented_token)
     Note over PS: scope fits intent → grant silently
     PS-->>Agent: auth token (mission_s256)
@@ -106,7 +106,7 @@ other action goes to the PS, which prompts the user when it is out of mission.
 // Pre-approved tool → granted silently.
 var add = await session.RequestPermissionAsync(new MissionAction("add_to_calendar"));
 
-// Out-of-mission tool → the PS prompts the user (gate 3).
+// Out-of-mission tool → the PS prompts the user (gate 2).
 var cancel = await session.RequestPermissionAsync(
     new MissionAction("cancel_booking"),
     description: "Cancel the existing hotel reservation the user flagged.");

@@ -180,11 +180,26 @@ public sealed class AzureKeyVaultStore : IKeyStore
 For AP key refresh with continuity, use the `jkt-jwt` signing mode only for the
 agent ↔ AP refresh ceremony. AAuth resource-facing requests continue to use
 `sig=jwt` with the agent, person or auth token returned by the AP/PS/AS.
+`Enrolled(...).RefreshingFrom(...)` and `AgentProviderTokenRefresher` perform
+single-key refresh only; the SDK does not perform automatic two-key refresh.
 
-1. Generate the new ephemeral key and store it in `IKeyStore`.
-2. Create a delegation JWT from the durable key to the new key.
-3. Call the AP refresh endpoint with `JktJwtSignatureKeyProvider`.
-4. Rebuild the resource client with the returned agent JWT and new key.
+```csharp
+using AAuth.Agent;
+using AAuth.Crypto;
+using AAuth;
+
+using var apHttp = AAuth.Discovery.AAuthHttpTransport.CreateClient();
+var apClient = new AgentProviderClient(apHttp, keyStore);
+var refreshed = await apClient.RefreshTwoKeyAsync(apRefreshEndpoint, localKeyHandle);
+
+using var client = new AAuthClientBuilder(refreshed.EphemeralKey)
+    .UseJwt(refreshed.AgentToken)
+    .Build();
+```
+
+1. Keep the enrolled durable key in `IKeyStore` under the local key handle.
+2. Call `AgentProviderClient.RefreshTwoKeyAsync(refreshEndpoint, localKeyHandle)`.
+3. Rebuild the resource client with the returned `EphemeralKey` and `AgentToken`.
 
 Old auth tokens remain bound to their original confirmation key; after the AP
 returns a token bound to a different key, obtain fresh person/auth tokens for
@@ -223,9 +238,13 @@ new active key, never a mix.
 ## Security Considerations
 
 - Never expose private keys in logs or error messages
-- Use file permissions (600) for `FileKeyStore` directory
+- Use owner-only permissions for local key storage (Unix-like `FileKeyStore`
+  creates directories as `0700` and key files as `0600`; verify equivalent
+  ACLs on Windows)
 - Prefer KMS/HSM backends for production workloads
-- Rotate keys periodically (jkt-jwt enables seamless rotation)
+- Rotate keys periodically; AP two-key refresh rotates the request key for
+  newly issued agent tokens, while existing person/auth tokens remain bound to
+  their original confirmation key
 
 ## Further Reading
 

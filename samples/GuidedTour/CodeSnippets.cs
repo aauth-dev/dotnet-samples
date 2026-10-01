@@ -89,10 +89,11 @@ internal static class CodeSnippets
         """;
 
     public const string SignedGetJktJwt = """
-        // jkt-jwt mode: the durable key signs a self-issued naming JWT that
+        // Generic jkt-jwt mode: the durable key signs a self-issued naming JWT that
         // embeds its own public key in the header and binds the ephemeral
         // signing key via cnf.jwk. The ephemeral key signs the HTTP request.
-        // Supports key rotation without re-enrolment.
+        // This is a Signature-Key/AP key-refresh primitive; AAuth resource
+        // requests use jwt agent-token identity.
         //
         // Self-anchored (Signature Keys draft-09 section 3.5): the verifier computes the durable
         // key's thumbprint from the header jwk, checks it equals iss

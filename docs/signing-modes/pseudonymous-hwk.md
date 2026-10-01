@@ -5,7 +5,7 @@
 The signer proves possession of a key without asserting an issuer identity.
 Public JWK members are carried as structured string parameters. This is a
 generic Signature Keys scheme, not an AAuth resource-access credential.
-AAuth agents present an agent or auth token using `jwt`.
+AAuth agents present agent, person or auth tokens using `sig=jwt`.
 
 ## When to Use
 

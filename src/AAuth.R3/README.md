@@ -77,7 +77,10 @@ token, document/proposal, auth token, and requested resource account.
 
 ## Reader and transport policy
 
-`R3DocumentReaderPolicy` defaults to the designated AS using `aauth-access.json`.
+`r3_uri` values must be absolute HTTPS URIs (apart from the SDK's explicit
+development-loopback exception), and the document origin must match the verified
+resource issuer. `R3DocumentReaderPolicy` defaults to the designated AS using
+`aauth-access.json`.
 Explicit PS evaluators must use `aauth-person.json`. PS evaluation is the logged
 Q4 interpretation of conflicting draft readership clauses, not an unconditional
 PS entitlement. Agent requests are rejected.

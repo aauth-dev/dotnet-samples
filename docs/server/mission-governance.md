@@ -143,18 +143,24 @@ mapping below only when an endpoint needs behavior the seams do not express.
 
 The default interaction relay has no user channel and returns
 `424 interaction_unavailable` for `interaction`, `payment`, and `question`.
-Relays that can reach the user must return exactly one state: `Answer` for an
-answered question, `Pending = true` to produce a `202` poll response, or
-`Unavailable = true` to let the agent fall back. If `Pending` is returned but no
-`IDeferredConsentStore` is registered, the mapper fails closed with
-`424 interaction_unavailable`. Audit records and permission log entries preserve
-JSON object `parameters`; audit entries also preserve JSON object `result`.
+For a completion proposal, the default relay returns `Accepted = false`, so the
+mission stays active.
+For `interaction`, `payment`, and `question`, relays that can reach the user
+must return exactly one state: `Answer` for an answered question,
+`Pending = true` to produce a `202` poll response, or `Unavailable = true` to let
+the agent fall back. Completion proposals use `Accepted = true` to terminate,
+`Accepted = false` to keep the mission active, or `Pending = true` to defer while
+the person reviews the summary. If `Pending` is returned but no
+`IDeferredConsentStore` is registered, interaction/payment relay fails closed
+with `424 interaction_unavailable`; completion remains active.
+Audit records and permission log entries preserve JSON object `parameters`;
+audit entries also preserve JSON object `result`.
 
 > **Carrier-type guard.** The governed endpoints require the request to carry the
 > expected token type. When the wrong carrier is presented (e.g. an auth token
-> where the mission flow expects an agent token), the mapper reports the relevant
-> closed-table token or polling error. It is an authorization failure on a valid
-> signature, not a `401` authentication failure.
+> where the mission flow expects an agent token), the mapper reports `403
+> invalid_request` without signature negotiation headers. It is an authorization
+> failure on a valid signature, not a `401` authentication failure.
 
 ## Parsing requests by hand
 
@@ -247,6 +253,8 @@ public sealed record MissionLogEntry(string S256, MissionLogEntryKind Kind, Date
     public string? Action { get; init; }   // for permission/audit entries
     public bool? Granted { get; init; }     // governance decision
     public string? Detail { get; init; }    // justification or clarification text
+    public JsonObject? Parameters { get; init; } // permission/audit parameters
+    public JsonObject? Result { get; init; }     // audit result
 }
 
 public interface IMissionLog
@@ -338,6 +346,7 @@ public sealed record InteractionRelayResult
     public string? Answer { get; init; }  // for question
     public bool? Accepted { get; init; }  // for a relayed completion — true terminates the mission
     public bool Pending { get; init; }    // defer + let the agent poll
+    public bool Unavailable { get; init; } // no PS channel; agent falls back
 }
 
 public interface IInteractionRelay

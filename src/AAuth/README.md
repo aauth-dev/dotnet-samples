@@ -38,11 +38,11 @@ AAuth supports five resource access modes. Each adds parties and capabilities, a
 
 | Mode | Parties | When to Use | Signing |
 |------|---------|-------------|---------|
-| **Identity-Based** | Agent + Resource | Resource authorizes verified agent identity | `jwt` |
+| **Agent Identity** | Agent + Resource | Resource authorizes verified agent identity (`agent-token`) | `jwt` |
 | **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization itself | `jwt` plus opaque AAuth-Access |
 | **Person Identity** | Agent + Resource + PS | Resource requires a PS-issued person token before issuing an auth-token challenge | `jwt` with a person token |
 | **PS Authorization** (three-party) | Agent + Resource + PS | Resource accepts consent and identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from a trusted Person Server | `jwt` |
-| **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` |
+| **Federated authorization** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` |
 
 ## Three-Party Flow (Agent → Resource → Person Server)
 

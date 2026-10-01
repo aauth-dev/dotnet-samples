@@ -25,6 +25,7 @@ OpenAPI `operationId`s.
 | Path | operationId | Grant | Notes |
 |------|-------------|-------|-------|
 | `/` | _(index)_ | — | Sample metadata |
+| `/accounts` | — | — | Lists demo account choices (`personal`, `work`) for account-bound R3 documents and Events |
 | `/openapi.json` | — | — | OpenAPI discovery document (the OpenAPI vocabulary's discovery endpoint) |
 | `/authorize` | — | — | Proactive R3 request: the agent posts `r3_operations`; Bookings returns a resource token (`aud` = R3 AS) referencing the R3 document |
 | `/search_availability` | `searchAvailability` | `r3_granted` | Read availability — served immediately |

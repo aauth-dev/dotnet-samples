@@ -9,7 +9,7 @@ JWT's header, and the issuer is that key's own thumbprint — so a verifier need
 no external lookup. Access stays **pseudonymous**. Defined in
 [`draft-hardt-httpbis-signature-key-09`](../../aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt)
 section 3.5. Draft-11 AAuth uses this scheme only in the Agent Provider key-refresh
-ceremony (`#keying-material`, L2196) or in explicitly generic Signature-Key
+ceremony (#keying-material) or in explicitly generic Signature-Key
 demonstrations. AAuth resource, PS and AS requests present the returned
 `aa-agent+jwt`, `aa-person+jwt` or `aa-auth+jwt` under `sig=jwt`.
 
@@ -38,7 +38,31 @@ for the implemented two-key refresh and [platform limits](../advanced/platform-a
 
 ## Code Example
 
+**Implemented AP two-key refresh:**
+
 ```csharp
+using AAuth.Agent;
+using AAuth.Crypto;
+using AAuth;
+
+using var apHttp = AAuth.Discovery.AAuthHttpTransport.CreateClient();
+var apClient = new AgentProviderClient(apHttp, keyStore);
+var refreshed = await apClient.RefreshTwoKeyAsync(apRefreshEndpoint, localKeyHandle);
+
+using var client = new AAuthClientBuilder(refreshed.EphemeralKey)
+    .UseJwt(refreshed.AgentToken)
+    .Build();
+```
+
+The SDK does not perform this rotation automatically. Call
+`AgentProviderClient.RefreshTwoKeyAsync`, then rebuild the resource client with
+the returned `EphemeralKey` and `AgentToken` together. `Enrolled(...).RefreshingFrom(...)`
+and `AgentProviderTokenRefresher` use the single-key refresh path.
+
+**Generic/manual `jkt-jwt` signing:**
+
+```csharp
+using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth;
 

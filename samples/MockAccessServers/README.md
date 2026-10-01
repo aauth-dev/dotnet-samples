@@ -14,7 +14,7 @@ mirroring [MockResourceServers/](../MockResourceServers/)):
 
 | Server | Port | Authorizes | Model |
 |--------|------|-----------|-------|
-| [**Federated**](Federated/) | 5500 | Wallet | Scope- and role-based policy (stub or Keycloak); the classic four-party payment gate |
+| [**Federated authorization**](Federated/) | 5500 | Wallet | Scope- and role-based policy (stub or Keycloak); the classic four-party payment gate |
 | [**R3**](R3/) | 5501 | Bookings, Travel Catalog | Rich Resource Requests — fetches + hash-verifies the resource's R3 document, validates operations against the sample resources' authoritative OpenAPI definitions, splits `r3_granted` vs `r3_per_call` **by its own policy**, and mints R3 auth tokens |
 
 ## Federated (:5500)
@@ -24,7 +24,7 @@ signature, verifies the agent and resource tokens, evaluates a pluggable
 `IAccessPolicy` (`stub` by default, or `keycloak`), and mints the auth token. The
 whole pipeline ships as the SDK helper `MapAAuthAccessServer`. See
 [Federated/README.md](Federated/README.md) and the
-[Federated Access workflow](../../docs/workflows/federated-access.md).
+[Federated authorization workflow](../../docs/workflows/federated-access.md).
 
 ## R3 (:5501)
 

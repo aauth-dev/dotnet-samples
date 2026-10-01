@@ -79,7 +79,7 @@ public sealed class WalletDemoSession(IAAuthAgentFactory agents, string provider
             case 4:
                 using (var signed = Signed(_agentToken!))
                 {
-                    // An agent signs with its agent token, not as a server: unsupported_iss.
+                    // An agent signs with its agent token, not as an issuer role.
                     var claims = ScenarioWireHandler.Claims(_authToken!);
                     using var rejected = await signed.PostAsJsonAsync(wallet + "/revoke",
                         new { jti = (string)claims["jti"]!, exp = (long)claims["exp"]! }, cancellationToken);

@@ -1,4 +1,4 @@
-# Calendar — PS-Asserted (three-party) resource server
+# Calendar — PS Authorization (three-party) resource server
 
 Aria's core user-data service. The **Calendar** holds the traveler's events, so
 Aria must present a person-scoped **auth token** (issued by the user's Person
@@ -19,7 +19,7 @@ Port: `http://localhost:5001`. Trusts the Person Server at
 | `/` | _(index)_ | — | — |
 | `/events` | `calendar.read` | three-party baseline read | `three-party` |
 | `/events/write` | `calendar.write` | **step-up** scope (a second consent) | `three-party` |
-| `/events/admin` | role `calendar.owner` | **RBAC** by a PS-asserted role | `three-party` |
+| `/events/admin` | role `calendar.owner` | **RBAC** by a role asserted by the PS | `three-party` |
 
 `/events/admin` enforces a role the PS asserts in the auth token's `roles`
 claim. If the PS issues a token **without** that role, the policy returns an

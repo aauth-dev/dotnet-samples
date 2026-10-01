@@ -1,8 +1,8 @@
-# Federated Access (Four-Party)
+# Federated Authorization (Four-Party)
 
 > [Live demo](https://explorer.aauth.dev/access/federated) | [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
 
-Overview: The resource has its own Access Server (AS) that enforces policy. The PS federates with the AS to obtain the auth token. From the agent's perspective, the flow looks identical to PS-asserted — the federation happens between PS and AS transparently.
+Overview: The resource has its own Access Server (AS) that enforces policy. The PS federates with the AS to obtain the auth token. From the agent's perspective, the four-party federated authorization flow looks identical to PS authorization — the federation happens between PS and AS transparently.
 
 ```mermaid
 sequenceDiagram
@@ -26,7 +26,7 @@ sequenceDiagram
 
 ## Agent-Side Code
 
-Identical to PS-asserted — `WithChallengeHandling()` handles it transparently. The only difference is the resource token's `aud` points to the AS URL instead of the PS URL. The PS passes the person token through to the AS as `presented_token`; the AS verifies it against the resource token and requires its PS (`iss` or `ps`) to be the PS that signed the request.
+Identical to PS authorization — `WithChallengeHandling()` handles it transparently. The only difference is the resource token's `aud` points to the AS URL instead of the PS URL. The PS passes the person token through to the AS as `presented_token`; the AS verifies it against the resource token and requires its PS (`iss` or `ps`) to be the PS that signed the request.
 
 ```csharp
 using AAuth.Agent;
@@ -49,7 +49,7 @@ var response = await client.GetAsync("https://resource.example/data");
 
 ## DI Registration
 
-Identical to PS-asserted — the federation is transparent to the agent:
+Identical to PS authorization — the federation is transparent to the agent:
 
 ```csharp
 using AAuth.Agent;
@@ -186,8 +186,9 @@ When the AS policy engine needs an interactive user login/consent, the
 AS cannot decide synchronously. It returns `202` with
 `AAuth-Requirement: requirement=interaction` and a `Location` URL. The PS
 **relays** that `202` back to the agent on the same challenge pipeline, and the
-agent surfaces the AS interaction URL and polls until the verdict resolves —
-structurally identical to PS-asserted deferred consent, but the consent screen is
+agent starts polling the PS pending URL immediately while it surfaces the AS
+interaction URL until the verdict resolves — structurally identical to PS
+authorization deferred consent, but the consent screen is
 the AS's, not the Person Server's. Both AS policies exercise this path: the
 `stub` policy renders its own Approve/Deny consent page
 (`AccessServer:RequireConsent`), and the `keycloak` policy hands off to
@@ -206,7 +207,7 @@ sequenceDiagram
     PS->>AS: POST /token (signed)
     AS-->>PS: 202 requirement=interaction + Location
     PS-->>Agent: 202 + interaction URL (relayed)
-    Note over Agent: surface URL, begin poll loop
+    Note over Agent: begin poll loop, surface URL
     Agent->>KC: user logs in / consents
     KC-->>AS: authorization decision
     Agent->>PS: poll pending URL
@@ -218,7 +219,7 @@ sequenceDiagram
 ```
 
 Because the relay rides the existing `WithChallengeHandling` /
-`OnInteractionRequired` callback, the agent code is unchanged from PS-asserted
+`OnInteractionRequired` callback, the agent code is unchanged from PS authorization
 deferred consent — federation (and any AS interaction) is transparent.
 
 ## Try It
@@ -228,8 +229,8 @@ deferred consent — federation (and any AS interaction) is transparent.
 | Both UIs, no Docker | `make demo` | `stub` (interactive consent) |
 | Both UIs, real Keycloak | `make demo-keycloak` | `keycloak` (interactive) |
 
-In the GuidedTour pick **Federated** mode; in the SampleApp open the
-**Federated (Four-Party)** page. With the Keycloak policy, log in as `demo`/`demo`
+In the GuidedTour pick **Federated authorization** mode; in the SampleApp open the
+**Federated authorization (Four-Party)** page. With the Keycloak policy, log in as `demo`/`demo`
 (admin, full access) or `guest`/`guest` (limited).
 
 ## PS-AS Collapse
@@ -376,6 +377,6 @@ by configuring the Access Server with `AccessServer:RequireClaims` (e.g.
 
 ## Further Reading
 
-- [PS authorization access](ps-asserted-access.md)
+- [PS authorization](ps-asserted-access.md)
 - [Mock Access Server](../../samples/MockAccessServers/Federated/README.md)
 - [Access Mode Comparison](https://explorer.aauth.dev/access/compare)

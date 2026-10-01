@@ -23,14 +23,18 @@ The SDK now targets **draft-11** ([`v11/`](v11/)), following the separately
 verified migration on 2026-09-29 and the draft-11 compliance remediation phases
 whose definitions of done are ticked in
 [`implementation-plan.md`](../.agent/plans/2026-09-30-v11-compliance-remediation/implementation-plan.md).
-Locally passing conformance/unit tests cover person tokens and the fifth access
-mode (`PersonServerMapperTests`, `AuthorizationEndpointTests`),
-`presented_token` exchanges and four-party trust (`DeferredFederationTests`,
-`FourPartyTrustTests`), `mission_s256` missions with updates and expiry
+Locally passing conformance/unit tests cover agent-identity verification and
+agent-token challenges (`AgentTokenVerificationTests`, `ChallengeMiddlewareTests`),
+resource-managed `AAuth-Access` (`ResourceManagedFlowTests`), person-token
+access (`AuthorizationEndpointTests`), PS authorization with `presented_token`
+exchanges (`PersonServerMapperTests`, `ChallengeMiddlewareTests`) and four-party
+trust (`DeferredFederationTests`, `FourPartyTrustTests`), `mission_s256`
+hashing, resource-scoped person-token issuance and termination/expiry
 (`MissionS256Tests`, `MissionPersonTokenIssuanceTests`,
-`MissionTerminatedTests`), parent-mediated sub-agents
-(`AgentIdTests`, `AgentTokenVerificationTests`), call chaining through the
-person's PS (`CallChainingTests`, `CallChainingHandlerTests`), `{jti, exp}`
+`MissionTerminatedTests`), sub-agent identifiers, token verification and
+parent-mediated minting (`AgentIdTests`, `AgentTokenVerificationTests`,
+`PersonServerMapperTests`), call chaining through the person's PS
+(`CallChainingTests`, `CallChainingHandlerTests`), `{jti, exp}`
 revocation with cascades (`RevocationLifecycleTests`,
 `PersonTokenRevocationCascadeTests`, `AgentTokenRevocationCascadeTests`),
 `202` auth-token delivery and polling (`ChallengeHandlerTests` deferred
@@ -58,16 +62,17 @@ changed during migration.
 - **Consumed AP token lifetime (Q19).** SDK producers reject lifetimes over
   24 hours, but consumed AP tokens over 24 hours log a warning rather than
   failing verification because the draft uses SHOULD NOT, not MUST NOT.
-- **In-flight revocation guard (Phase 5).** In-flight federation sends poll the
+- **In-flight revocation guard.** In-flight federation sends poll the
   token inventory every 25 ms to detect source revocation and cancel the linked
   request; a push notification contract is left to durable store implementations.
-- **Sample admin exact match (Phase 1).** The sample admin grant matches the
-  exact agent id; demo keys are ephemeral, so the Phase 1 log records why it
+- **Sample admin exact match.** The sample admin grant matches the
+  exact agent id; demo keys are ephemeral, so the remediation log records why it
   does not pin a sample thumbprint. The SDK verifier still binds the agent id's
-  domain to the AP issuer, and Phase 7/11 closed the issuer/binding follow-up.
-- **Historical Phase 7 compatibility deviations.** The R10 enrollment and
+  domain to the AP issuer, and later remediation closed the issuer/binding
+  follow-up.
+- **Historical compatibility deviations.** The R10 enrollment and
   binding-inventory deviations were superseded on 2026-10-01; the legacy
-  `IMissionStore` sample compatibility deviation was removed in Phase 11.
+  `IMissionStore` sample compatibility deviation was also removed.
 
 Earlier snapshots are historical, not compatibility fallbacks. X.509/cached
 carriers and third-party login hosting are unsupported; platform/native

@@ -85,6 +85,12 @@ var resourceToken = await new ResourceTokenBuilder
 | `Lifetime` | No | 5 min | Token validity duration |
 | `IssuedAt` | No | Now | Override issuance time |
 | `TokenId` | No | Auto | Custom `jti` (auto-generated UUID if omitted) |
+| `ScopeDescriptions` | No | — | Resource-declared scopes used to validate requested resource scopes |
+| `PersonServerScopesSupported` | No | — | PS-declared identity scopes accepted in addition to resource scopes |
+| `EgressPolicy` | No | Production | URL validation policy; development loopback is allowed only when explicitly configured |
+
+When `Scope` is non-empty, each requested scope must appear either in the
+resource's `scope_descriptions` or in the Person Server's `scopes_supported`.
 
 ## Person Tokens (`aa-person+jwt`)
 
@@ -150,12 +156,17 @@ var authToken = await new AuthTokenBuilder
 | `KeyId` | Yes | — | Key ID (JWT header `kid`) |
 | `Dwk` | No | `"aauth-person.json"` | Discovery well-known path (`PersonDwk` or `AccessDwk`) |
 | `Scope` | No | — | Granted scope |
+| `Account` | No | — | Verified `account` binding copied into the token |
+| `Roles` | No | — | Enterprise roles emitted as a JSON string array |
+| `Groups` | No | — | Enterprise groups emitted as a JSON string array |
 | `MissionS256` | No | — | `mission_s256` copied from the resource token |
 | `Tenant` | No | — | `tenant` copied from the resource token |
 | `Lifetime` | No | 1 hour | Positive requested lifetime, at most one hour; capped by verified expiry |
 | `TimeProvider` | No | System | Clock used to reject expired contexts and determine issuance time |
 | `IssuedAt` | No | Now | Override issuance time |
 | `TokenId` | No | Auto | Custom `jti` |
+| `AdditionalClaims` | No | — | Extra identity claims, rejected if they collide with protocol-owned claims |
+| `EgressPolicy` | No | Production | URL validation policy; development loopback is allowed only when explicitly configured |
 
 The builder rejects expired source contexts, nonpositive lifetimes, and lifetimes
 over one hour. `IssuedAt` does not bypass the current-clock expiry check. For
@@ -195,6 +206,8 @@ The `Dwk` determines which `.well-known` document an agent fetches to find the i
 ## Agent Tokens (`aa-agent+jwt`)
 
 Issued by an Agent Provider to bind an agent's key to its identity.
+The builder defaults to a one-hour lifetime and rejects SDK-issued lifetimes over
+24 hours.
 
 ```csharp
 var agentToken = await new AgentTokenBuilder
@@ -356,7 +369,7 @@ request signature, and maps both token endpoints:
 - **`POST /token`** (`auth_token_endpoint`) — verifies the `resource_token` and
   its `presented_token`, then routes on the resource token's `aud` (§PS-AS
   Federation):
-  - **`aud` = this PS** → three-party (PS-asserted): mint the auth token directly
+  - **`aud` = this PS** → three-party (PS authorization): mint the auth token directly
     (`dwk=aauth-person.json`, `iss`=PS).
   - **`aud` = a trusted Access Server** → four-party (federated): forward a signed
     PS→AS request (resource token plus a presented token) via
@@ -402,6 +415,9 @@ instances with `MatchIssuerHost`, see
 
 | Property | Type | Required | Default | Description |
 |----------|------|:--------:|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | No | `Production` | URL validation policy; development loopback is allowed only when explicitly configured and rejected in Production |
+| `TimeProvider` | `TimeProvider` | No | System | Clock used for expiry, pending deadlines, source guards, and minted token times |
+| `TriageClarificationAsync` | `Func<PersonPendingEntry, ClarificationRequirement, CancellationToken, Task<ClarificationResponse?>>?` | No | `null` | Optional host triage hook for mission clarification before returning or parking a clarification response |
 | `Issuer` | `string` | Yes | — | HTTPS URL of this PS (`iss` of minted auth tokens); validated at startup |
 | `SigningKeys` | `AAuthSigningKeySet` | One of `SigningKeys` / `KeyHandle` | empty | Signing keys published at the PS JWKS; tokens are signed with the active key. Supports Ed25519 and ES256 keys |
 | `KeyHandle` | `string?` | One of `SigningKeys` / `KeyHandle` | `null` | Handle in the registered `IKeyStore` to load the signing key from when `SigningKeys` is empty |
@@ -410,12 +426,16 @@ instances with `MatchIssuerHost`, see
 | `TokenPath` | `string` | No | `/token` | The auth token endpoint path (`auth_token_endpoint`) |
 | `PersonTokenPath` | `string` | No | `/person` | The person token endpoint path (`person_token_endpoint`) |
 | `RevocationPath` | `string` | No | `/revoke` | The revocation endpoint path |
+| `ConfigureRevocation` | `Action<AAuthRevocationOptions>?` | No | `null` | Optional customization for the mapped revocation endpoint |
 | `PendingPathPrefix` | `string` | No | `/pending` | The deferred-consent poll path prefix |
 | `DefaultScope` | `string` | No | `""` | Scope assumed when the resource token omits one |
+| `ScopesSupported` | `IReadOnlyList<string>?` | No | `null` | Optional `scopes_supported` values advertised in PS metadata |
 | `PairwiseSubjectSecrets` | `IDictionary<string,string>` | Production | empty | Versioned HMAC secrets for default pairwise `sub` derivation. Development/test use an ephemeral secret with a warning |
 | `ActivePairwiseSubjectKeyId` | `string?` | No | `null` | Key id used for new derived subjects; existing enrollments keep their stored subject/key version |
 | `InteractionPath` | `string` | No | `/interaction` | Path the host maps for the consent page |
+| `ResourceInteractionSessions` | `BrowserConsentSessions?` | No | `null` | Optional browser-session store for relayed resource interactions; `null` uses the SDK default |
 | `Trust` | `AAuthTrustOptions` | No | `new()` | `Trust.AccessServers` governs the Access Server URLs the PS will federate to. Unconfigured ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); `Allowed` empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. `Predicate` AND-composes; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
+| `CollapsedFederation` | `IList<AAuthCollapsedFederationDeclaration>` | No | empty | Optional resource-to-collocated-AS declarations used before ordinary three-party handling |
 | `InteractionEndpointPath` | `string?` | No | `null` | Signed §Interaction Endpoint path; advertised in metadata as issuer + path when set or when `.WithGovernance()` supplies `/mission-interaction`. It never falls back to `InteractionPath`. |
 | `MissionPath` | `string?` | No | `null` | Mission endpoint path; advertised in `aauth-person.json` as issuer + path (the PS maps the endpoint) |
 | `PermissionPath` | `string?` | No | `null` | Permission endpoint path; advertised in `aauth-person.json` as issuer + path (the PS maps the endpoint) |
