@@ -1000,6 +1000,20 @@ public sealed partial class TourSession
         catch (JsonException) { return null; }
     }
 
+    /// <summary>
+    /// After a capability poll ends with a new interaction, surface it, record
+    /// the user's decision step and report whether the next step polls again.
+    /// </summary>
+    private async Task<bool> ContinueToNextConsentAsync(CancellationToken ct)
+    {
+        if (!IsCapabilityMode || _aborted || ct.IsCancellationRequested || NextCapKind != CapKind.DirectUser) return false;
+        await CapPlan[Steps.Count].Run!(ct);
+        if (!AwaitingUserApproval) return false;
+        RecordUserDecisionStep();
+        StateChanged?.Invoke();
+        return NextCapKind == CapKind.Poll;
+    }
+
     /// <summary>Records the user-decision step for a capability consent cycle.</summary>
     private void RecordCapabilityApproval(string userUrl)
     {
@@ -1028,15 +1042,15 @@ public sealed partial class TourSession
             From = resourceFirst ? Actor.Resource : entry.From,
             To = resourceFirst ? Actor.PersonServer : entry.To,
             Narrative = resourceFirst
-                ? "The tour opened the PS's resource-permission interstitial in a new tab. The PS sends the user to the " +
-                  "**Documents** permission page first; the document owner releases (or declines) this document, and the " +
-                  "resource redirects back to the PS callback. Only after the owner releases does the PS show its own consent " +
-                  "screen. If either authority declines, the agent's next poll sees `403 denied` and no token is issued. " +
-                  "The agent is not on this browser channel."
-                : $"The tour opened the {authority}'s interaction page in a new tab. The user signs in there and submits a " +
-                  "session-bound, CSRF-protected **Approve** or **Deny**. Opening the link does not approve anything. The " +
-                  "agent is not on this browser channel; it learns the decision on its next poll.",
-            TokenDecoded = $"Interaction URL opened in new tab:\n  {userUrl}\n\nUser performed (browser → {authority}):\n" +
+                ? "The agent started polling as soon as it surfaced the PS's resource-permission interstitial. The PS sends " +
+                  "the user to the **Documents** permission page first; the document owner releases (or declines) this document, " +
+                  "and the resource redirects back to the PS callback. Only after the owner releases does the PS show its own " +
+                  "consent screen, and the agent goes straight on to wait for that decision. If either authority declines, the " +
+                  "agent's next poll sees `403 denied` and no token is issued. The agent is not on this browser channel."
+                : $"The agent started polling as soon as it surfaced the {authority}'s interaction page. The user opens it, " +
+                  "signs in and submits a session-bound, CSRF-protected **Approve** or **Deny**. Opening the link does not " +
+                  "approve anything. The agent is not on this browser channel; it learns the decision on its next poll.",
+            TokenDecoded = $"Interaction URL surfaced to the user:\n  {userUrl}\n\nUser decides (browser → {authority}):\n" +
                 (resourceFirst
                     ? "  GET  {ps}/interaction/resource?code=…  → Documents /permission\n  Release or decline the document → PS callback\n  Approve or deny at the PS consent screen"
                     : "  Sign in; consume code once; open decision session\n  POST approve / deny (session + CSRF)"),

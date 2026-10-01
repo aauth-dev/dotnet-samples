@@ -687,9 +687,9 @@ public sealed partial class TourSession : IAsyncDisposable
             : Actor.PersonServer;
 
     /// <summary>
-    /// True when the tour is parked on the "User approves" step in deferred mode
-    /// and the UI should expose the consent link. Person Server consent never
-    /// stays here: <see cref="RunNextAsync"/> records the step and polls on arrival.
+    /// True when the next step is the user's decision. <see cref="RunNextAsync"/>
+    /// never leaves the tour here: it records the step and starts polling as soon
+    /// as the interaction is surfaced, whoever hosts the consent page.
     /// </summary>
     public bool AwaitingUserApproval =>
         IsCapabilityMode
@@ -709,11 +709,25 @@ public sealed partial class TourSession : IAsyncDisposable
     public string? PersonServer => string.IsNullOrWhiteSpace(_options.PersonServerUrl) ? null : _options.PersonServerUrl;
 
     /// <summary>
-    /// True when the latest interaction is the Person Server's own consent page, so
-    /// the person can decide it on the PS dashboard and the agent polls at once.
+    /// True when the Person Server decides the latest interaction, so the person can
+    /// decide it on the PS dashboard. Call-chain hop 2 counts: the Concierge issues
+    /// its own interaction URL, which only redirects to the PS consent page.
     /// </summary>
     public bool IsPersonServerConsent =>
-        CurrentInteraction is { } interaction && ConsentSupport.PersonServerConsent.IsPersonServerHosted(PersonServer, interaction);
+        CurrentInteraction is { } interaction
+        && (ConsentSupport.PersonServerConsent.IsPersonServerHosted(PersonServer, interaction) || IsRelayedPersonServerConsent);
+
+    /// <summary>True when an intermediary relays the latest interaction to the Person Server.</summary>
+    private bool IsRelayedPersonServerConsent =>
+        IsCallChainPending && Steps.Count >= CallChainHop1PollStep && PersonServer is not null;
+
+    /// <summary>The interaction the person must decide now: an in-step consent or the polled one.</summary>
+    public Interaction? ConsentInteraction => WorkerConsent ?? CurrentInteraction;
+
+    /// <summary>True when the Person Server decides <see cref="ConsentInteraction"/>.</summary>
+    public bool ConsentDecidedAtPersonServer => WorkerConsent is { } worker
+        ? ConsentSupport.PersonServerConsent.IsPersonServerHosted(PersonServer, worker)
+        : IsPersonServerConsent;
 
     /// <summary>Path portion of the pending URL (for compact UI display).</summary>
     public string? PendingUrlPath
@@ -911,16 +925,16 @@ public sealed partial class TourSession : IAsyncDisposable
 
     /// <summary>
     /// Run the next pending step and capture its <see cref="StepRecord"/>. When
-    /// the step leaves the agent waiting on Person Server consent, the agent starts
-    /// polling at once: the person may decide on the PS dashboard at any time, so
-    /// nothing waits for a click in this tab.
+    /// the step leaves the agent waiting on the user's decision, the agent starts
+    /// polling at once: the person may decide on the PS dashboard, the Access
+    /// Server or the resource at any time, so nothing waits for a click here.
     /// </summary>
     public async Task RunNextAsync(CancellationToken ct = default)
     {
-        await RunNextStepAsync(ct);
-        if (AwaitingUserApproval && IsPersonServerConsent)
+        if (!AwaitingUserApproval) await RunNextStepAsync(ct);
+        if (AwaitingUserApproval)
         {
-            await RecordUserApprovalOpenedAsync(ct);
+            RecordUserDecisionStep();
             _ = StartPendingPollAsync();
         }
     }
@@ -1307,20 +1321,20 @@ public sealed partial class TourSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Records the user-approval step: the person decides on the PS dashboard (or
-    /// the direct link), or opened an Access Server or resource page in a
-    /// separate browser tab and (hopefully) clicked Approve. The Guided
-    /// Tour itself does not make the HTTP call here — that happens
-    /// out-of-band, between the user's browser and the Person Server,
-    /// exactly as the spec intends. The poll step picks up the result.
+    /// Records the user-decision step as soon as the agent surfaces the
+    /// interaction. The person decides on the PS dashboard (or the direct link),
+    /// or on the Access Server's or resource's own page. The Guided Tour itself
+    /// does not make that call: it happens out-of-band, between the user's
+    /// browser and the deciding server, exactly as the spec intends. The agent
+    /// is already polling and picks up the result.
     /// </summary>
-    public Task RecordUserApprovalOpenedAsync(CancellationToken ct = default)
+    private void RecordUserDecisionStep()
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode || IsRichRequestsMode || IsCapabilityMode)) { return Task.CompletedTask; }
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode || IsRichRequestsMode || IsCapabilityMode)) { return; }
         if (Steps.Count + 1 != UserApprovalStepNumber)
         {
             throw new InvalidOperationException(
-                $"RecordUserApprovalOpenedAsync called at protocol step {Steps.Count + 1}; only valid at step {UserApprovalStepNumber}.");
+                $"RecordUserDecisionStep called at protocol step {Steps.Count + 1}; only valid at step {UserApprovalStepNumber}.");
         }
 
         var userUrl = UserInteractionUrl ?? "(no interaction URL captured)";
@@ -1329,7 +1343,7 @@ public sealed partial class TourSession : IAsyncDisposable
         if (IsCapabilityMode)
         {
             RecordCapabilityApproval(userUrl);
-            return Task.CompletedTask;
+            return;
         }
 
         if (IsResourceManagedMode)
@@ -1337,25 +1351,25 @@ public sealed partial class TourSession : IAsyncDisposable
             Steps.Add(new StepRecord
             {
                 Number = Steps.Count + 1,
-                Title = "Inbox browser session opened; decision pending",
+                Title = "User decides at the Inbox",
                 From = Actor.Resource,
                 To = Actor.Resource,
                 Narrative =
-                    "The tour opened the Inbox's **own consent page** in a new browser " +
-                    "tab. There is no Person Server here — the Inbox manages " +
-                    "authorization itself, just like a classic OAuth provider. The user " +
-                    "must sign in and submit **Approve** or **Deny** using a session and CSRF token " +
+                    "The agent started polling the pending URL as soon as it surfaced the " +
+                    "Inbox's **own consent page**. There is no Person Server here — the Inbox manages " +
+                    "authorization itself, just like a classic OAuth provider. The user opens the page, " +
+                    "signs in and submits **Approve** or **Deny** using a session and CSRF token " +
                     "via `POST /consent/approve`. Opening the code does not authorize access. This happens in the " +
                     "user's browser → Inbox channel; the agent is not on this path and " +
                     "discovers the result on its next poll of the pending URL.",
                 TokenDecoded =
-                    $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
-                    "User performed (browser → Inbox):\n" +
+                    $"Interaction URL surfaced to the user:\n  {userUrl}\n\n" +
+                    "User decides (browser → Inbox):\n" +
                     $"  GET  /consent?code={_interactionCode}\n" +
                     "  Sign in; consume code once; GET /consent?session=...\n" +
                     "  POST /consent/approve  (session + CSRF, no code)",
             });
-            return Task.CompletedTask;
+            return;
         }
 
         if (IsFederatedMode && !IsPersonServerConsent)
@@ -1363,12 +1377,12 @@ public sealed partial class TourSession : IAsyncDisposable
             Steps.Add(new StepRecord
             {
                 Number = Steps.Count + 1,
-                Title = "AS browser session opened; decision pending",
+                Title = "User decides at the Access Server",
                 From = Actor.AccessServer,
                 To = Actor.AccessServer,
                 Narrative =
-                    "The tour opened the Access Server's interaction URL in a new browser " +
-                    "tab. The AS rendered its **own consent screen** — clearly badged " +
+                    "The agent started polling the PS pending URL as soon as it surfaced the " +
+                    "Access Server's interaction URL. The AS renders its **own consent screen** — clearly badged " +
                     "*Access Server* so the user knows they are approving at the federated " +
                     "authority, not the Person Server. The user must sign in and submit a session-bound, " +
                     "CSRF-protected decision. Opening this link does not approve access. (With a Keycloak-backed " +
@@ -1378,13 +1392,13 @@ public sealed partial class TourSession : IAsyncDisposable
                     "channel — neither the agent nor the Person Server is on this path. The " +
                     "agent discovers the result on its next poll of the PS pending URL.",
                 TokenDecoded =
-                    $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
-                    "User performed (browser \u2192 AS):\n" +
+                    $"Interaction URL surfaced to the user:\n  {userUrl}\n\n" +
+                    "User decides (browser \u2192 AS):\n" +
                     $"  GET  {{as}}/interaction/login?code={_interactionCode}\n" +
                     "  Sign in; consume code once; open decision session\n" +
                     $"  POST {{as}}/interaction/approve (session + CSRF; stub only)",
             });
-            return Task.CompletedTask;
+            return;
         }
 
         if (IsRichRequestsMode)
@@ -1392,12 +1406,12 @@ public sealed partial class TourSession : IAsyncDisposable
             Steps.Add(new StepRecord
             {
                 Number = Steps.Count + 1,
-                Title = "R3 browser session opened; decision pending",
+                Title = "User decides at the R3 Access Server",
                 From = Actor.AccessServer,
                 To = Actor.AccessServer,
                 Narrative =
-                    "The tour opened the **R3 Access Server's** per-call consent screen in a " +
-                    "new browser tab. The R3 AS rendered the proposal's `display` — the concrete " +
+                    "The agent started polling the PS pending URL as soon as it surfaced the " +
+                    "**R3 Access Server's** per-call consent screen. The R3 AS renders the proposal's `display` — the concrete " +
                     "reservation (venue, date, party size, deposit) it is about to authorize — " +
                     "badged *R3 Access Server* so the user knows they are approving that single, " +
                     "consequential booking at the federated authority, not the Person Server. The " +
@@ -1406,13 +1420,13 @@ public sealed partial class TourSession : IAsyncDisposable
                     "agent nor the Person Server is on this path. The agent discovers the minted " +
                     "per-call auth token on its next poll of the PS pending URL.",
                 TokenDecoded =
-                    $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
-                    "User performed (browser \u2192 R3 AS):\n" +
+                    $"Interaction URL surfaced to the user:\n  {userUrl}\n\n" +
+                    "User decides (browser \u2192 R3 AS):\n" +
                     $"  GET  {{r3-as}}/interaction/consent?code={_interactionCode}\n" +
                     "  Sign in; consume code once; review the per-call proposal\n" +
                     $"  POST {{r3-as}}/interaction/consent/approve (session + CSRF)",
             });
-            return Task.CompletedTask;
+            return;
         }
 
         if (IsMissionCallChainMode)
@@ -1446,7 +1460,7 @@ public sealed partial class TourSession : IAsyncDisposable
                 Narrative = narrative,
                 TokenDecoded = PersonServerDecision(userUrl),
             });
-            return Task.CompletedTask;
+            return;
         }
 
         if (IsMissionMode)
@@ -1492,7 +1506,7 @@ public sealed partial class TourSession : IAsyncDisposable
                 Narrative = narrative,
                 TokenDecoded = PersonServerDecision(userUrl),
             });
-            return Task.CompletedTask;
+            return;
         }
 
         Steps.Add(new StepRecord
@@ -1521,7 +1535,6 @@ public sealed partial class TourSession : IAsyncDisposable
                     : ""),
             TokenDecoded = PersonServerDecision(userUrl),
         });
-        return Task.CompletedTask;
     }
 
     private const string DashboardLead =
@@ -1529,16 +1542,25 @@ public sealed partial class TourSession : IAsyncDisposable
         "The user decides on the Person Server **dashboard**, which lists every request " +
         "waiting for them, or opens this one request directly. ";
 
-    private string PersonServerDecision(string userUrl) =>
-        $"Person Server dashboard (every request waiting for you):\n  {ConsentSupport.PersonServerConsent.DashboardUrl(PersonServer!, _interactionCode)}\n" +
-        $"Or this request directly:\n  {userUrl}\n\n" +
-        "User decides (browser → PS) on the dashboard:\n" +
-        $"  GET  /dashboard?code={_interactionCode}   sign in; this request is highlighted\n" +
-        "  POST /dashboard/requests/{id}/approve  (X-CSRF-Token)\n" +
-        "Or directly:\n" +
-        $"  GET  /interaction?code={_interactionCode}\n" +
-        "  Sign in; consume code once; open decision session\n" +
-        "  POST /interaction/approve  (session + CSRF, no code)";
+    private string PersonServerDecision(string userUrl) => IsRelayedPersonServerConsent
+        ? $"Person Server dashboard (every request waiting for you):\n  {ConsentSupport.PersonServerConsent.DashboardUrl(PersonServer!)}\n" +
+          $"Or this request directly (the Concierge redirects to the PS):\n  {userUrl}\n\n" +
+          "User decides (browser → PS) on the dashboard:\n" +
+          "  GET  /dashboard   sign in; the Concierge's code is not the PS's, so the request is listed, not highlighted\n" +
+          "  POST /dashboard/requests/{id}/approve  (X-CSRF-Token)\n" +
+          "Or directly:\n" +
+          $"  GET  {{concierge}}/chain-interaction/{{id}}?code={_interactionCode}  → 302 PS /interaction?code=…\n" +
+          "  Sign in; consume code once; open decision session\n" +
+          "  POST /interaction/approve  (session + CSRF, no code)"
+        : $"Person Server dashboard (every request waiting for you):\n  {ConsentSupport.PersonServerConsent.DashboardUrl(PersonServer!, _interactionCode)}\n" +
+          $"Or this request directly:\n  {userUrl}\n\n" +
+          "User decides (browser → PS) on the dashboard:\n" +
+          $"  GET  /dashboard?code={_interactionCode}   sign in; this request is highlighted\n" +
+          "  POST /dashboard/requests/{id}/approve  (X-CSRF-Token)\n" +
+          "Or directly:\n" +
+          $"  GET  /interaction?code={_interactionCode}\n" +
+          "  Sign in; consume code once; open decision session\n" +
+          "  POST /interaction/approve  (session + CSRF, no code)";
 
     /// <summary>
     /// Ensure MockPersonServer's consent store matches what this mode
@@ -2398,13 +2420,12 @@ public sealed partial class TourSession : IAsyncDisposable
 
     private void StepUserApprovesPlaceholder()
     {
-        // Person Server consent never reaches here: RunNextAsync records this
-        // step and polls on arrival. Access Server and resource pages need the
-        // user to open the consent link first, which records the step.
+        // RunNextAsync records this step and starts polling as soon as the
+        // interaction is surfaced, so running it as an ordinary step is a bug.
         if (!_userApproved)
         {
             throw new InvalidOperationException(
-                "The user-approval step waits for the user to open the consent link. Call RecordUserApprovalOpenedAsync() instead of RunNextAsync().");
+                "The user-decision step is recorded on arrival by RunNextAsync; it is never run on its own.");
         }
     }
 
@@ -2692,9 +2713,9 @@ public sealed partial class TourSession : IAsyncDisposable
         using var client = new SampleHttpClient(signing);
         var pollerOptions = new DeferredPollerOptions
         {
-            // Generous budget: in deferred mode the user has to flip to
-            // another tab, read the consent screen, and click Approve.
-            MaxTotalWait = TimeSpan.FromMinutes(2),
+            // Polling starts as soon as the request is surfaced, so the budget
+            // covers the user switching tabs, signing in and deciding.
+            MaxTotalWait = TimeSpan.FromMinutes(5),
         };
         var poller = new DeferredPoller(client, pollerOptions)
         {
@@ -2849,6 +2870,13 @@ public sealed partial class TourSession : IAsyncDisposable
                         : hop2 ? StepCallChainPollHop2Async(ct)
                         : StepPollPendingAsync(ct);
                     await poll.ConfigureAwait(false);
+                    // A capability poll can end with a new interaction (the
+                    // Documents owner released, now the PS asks): wait for that
+                    // decision too, in the same loop, without another click.
+                    while (await ContinueToNextConsentAsync(ct).ConfigureAwait(false))
+                    {
+                        await CapPollAsync(ct).ConfigureAwait(false);
+                    }
                 }
                 catch (OperationCanceledException)
                 {

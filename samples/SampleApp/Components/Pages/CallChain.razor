@@ -147,7 +147,9 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
             @_currentHop
         </h5>
         <p>A <code>202 Accepted</code> was returned and the SDK is already polling for your decision.</p>
+        @* Hop 2's URL is the Concierge's relay, which redirects to the PS consent page. *@
         <PersonServerApprovalPrompt PersonServer="@Agents.PersonServer" Interaction="_interaction!" PollCount="_pollCount"
+                                    DecidedAtPersonServer="true"
                                     Lead="@(_currentHopNumber == 1
                                         ? $"Approval {_currentHopNumber} of 2. Decide it on your Person Server; a second approval (hop 2) follows."
                                         : $"Approval {_currentHopNumber} of 2, the last one. The chain completes after it.")" />

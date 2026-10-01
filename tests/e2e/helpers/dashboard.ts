@@ -48,11 +48,14 @@ export async function signInToDashboard(page: Page): Promise<void> {
  * Decide the request a prompt deep-linked to (the `?code=` highlight) on a
  * dashboard popup, then close it so the next prompt opens a fresh tab. A link
  * with nothing to decide (a four-party request the Access Server is working
- * on) shows the settled note instead; that is returned as `false`.
+ * on) shows the settled note instead; that is returned as `false`. A link
+ * without a code (an intermediary relayed the request, so its code is not the
+ * PS's) lists the request without highlighting it: decide the first pending one.
  */
 export async function decideHighlighted(popup: Page, action: 'approve' | 'deny'): Promise<boolean> {
   await signInToDashboard(popup);
-  const card = popup.locator('#pending article.card.highlight');
+  const coded = new URL(popup.url()).searchParams.has('code');
+  const card = popup.locator(coded ? '#pending article.card.highlight' : '#pending article.card').first();
   let state = 'wait';
   await expect.poll(async () => {
     if (await card.locator('button.' + action).isVisible()) return state = 'decide';

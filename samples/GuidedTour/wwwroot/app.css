@@ -199,11 +199,6 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
   gap: 0.5rem;
   margin-top: 0.75rem;
 }
-.flow-picker__action-hint {
-    flex: 1 1 18rem;
-    color: var(--muted);
-    font-size: 0.82rem;
-}
 
 .layout {
     display: grid;

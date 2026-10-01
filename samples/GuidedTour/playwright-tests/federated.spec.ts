@@ -46,14 +46,15 @@ test.describe('Federated (Guided Tour)', () => {
 
     // Run all: the exchange returns 202, the plan expands to 12 steps and the
     // agent polls from the waiting step (9 done). The PS consent comes first
-    // (decided on the PS dashboard), then the AS interaction link is shown.
+    // (decided on the PS dashboard), then the PS relays the AS interaction and
+    // the polling banner switches to the Access Server link.
     await runAll(page);
     await decidePersonServerPrompt(page, 'approve', { done: 9 });
     const link = page.locator('a.worker-consent');
     await expect(link).toBeVisible();
+    await expect(link).toHaveText('Open Access Server consent page');
 
-    // Opening the link starts the background poll loop and opens the Access
-    // Server's consent page in a new tab.
+    // The link opens the Access Server's consent page; the poll keeps running.
     const [popup] = await Promise.all([
       context.waitForEvent('page'),
       link.click(),
@@ -62,8 +63,9 @@ test.describe('Federated (Guided Tour)', () => {
     await decideAccessConsent(popup);
 
     // The poll loop resolves the auth_token step (10) and "Run all" finishes
-    // the replay (11) and inspect (12) steps.
+    // the replay (11) and inspect (12) steps. Opening the link records nothing.
     await expect(doneSteps(page)).toHaveCount(12, { timeout: 120_000 });
+    await expect(page.locator('header.topbar .error')).toHaveCount(0);
 
     // Step 5 ("GET /wallet with person token → 401"): the Wallet verified the
     // person token and issued a resource token for the Access Server.

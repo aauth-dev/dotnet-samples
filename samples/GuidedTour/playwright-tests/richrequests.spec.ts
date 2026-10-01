@@ -3,7 +3,6 @@ import { approvePersonConsent } from '../../../tests/e2e/helpers/consent';
 import {
   openTour,
   selectFlow,
-  runAll,
   selectStep,
   expectResponse,
   readResponseJson,
@@ -28,10 +27,11 @@ import { Urls } from '../../../tests/e2e/helpers/agents';
  * does the resource confirm it (steps 9–16).
  *
  * The R3 AS sets `RequireProposalConsent=true`, so confirm ALWAYS needs consent:
- * `runAll` parks on the user-approval step (12 done — the granted path plus the
- * confirm challenge/proposal exchange), the user approves at the R3 AS's own
- * consent screen (badged *R3 Access Server*), the poll resolves the per-call
- * token, and the retry confirms the reservation.
+ * "Run all" records the user-decision step and starts polling as soon as the
+ * R3 AS link is surfaced (13 done — the granted path, the confirm challenge /
+ * proposal exchange and the decision step), the user approves at the R3 AS's
+ * own consent screen (badged *R3 Access Server*), the poll resolves the
+ * per-call token, and "Run all" goes on to confirm the reservation.
  */
 test.describe('Rich Resource Requests (Guided Tour)', () => {
   test.describe.configure({ timeout: 180_000 });
@@ -102,16 +102,17 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     await expect(page.locator('.lanes .lane.as')).toContainText('R3 Access Server');
 
     // Run all: the person-token leg and granted path (search 1–8) and the
-    // confirm challenge + proposal exchange (9–11) run, then the flow parks on
-    // the user-approval step (12 done) with the R3 AS interaction link shown.
+    // confirm challenge, proposal exchange and direct-user steps (9–12) run, then the decision step
+    // (13) is recorded and the agent polls while the R3 AS link is shown.
     await page.getByRole('button', { name: 'Run all' }).click();
     await approvePersonConsent(page, 'a.primary.approve');
     const link = page.locator('a.primary.approve[href^="http://localhost:5501/"]');
     await expect(link).toBeVisible();
-    await expect(doneSteps(page)).toHaveCount(12);
+    await expect(link).toHaveText('Open R3 Access Server consent page');
+    await expect(doneSteps(page)).toHaveCount(13);
+    await expect(page.locator('section.polling .polling__detail')).toContainText(/[1-9]\d* polls? so far/, { timeout: 15_000 });
 
-    // Opening the link starts the background poll loop and opens the R3 Access
-    // Server's own per-call consent screen in a new tab.
+    // The link opens the R3 Access Server's own per-call consent screen.
     const [popup] = await Promise.all([
       context.waitForEvent('page'),
       link.click(),
@@ -122,11 +123,10 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     await expect(popup.locator('body')).toContainText('Personal reservations');
     await approveInPopup(popup);
 
-    // The poll loop resolves and records the per-call auth_token step (14 done).
-    // Running again finishes the confirm replay (15) and inspect (16) steps.
-    await expect(doneSteps(page)).toHaveCount(14, { timeout: 120_000 });
-    await runAll(page);
-    await expect(doneSteps(page)).toHaveCount(16, { timeout: 30_000 });
+    // The poll resolves the per-call auth_token (14) and "Run all" goes on with
+    // the confirm replay (15) and inspect (16) steps.
+    await expect(doneSteps(page)).toHaveCount(16, { timeout: 120_000 });
+    await expect(page.locator('header.topbar .error')).toHaveCount(0);
 
     // Step 8 ("Replay GET /search_availability → 200 (r3_granted)") — served
     // outright because searchAvailability is in r3_granted.

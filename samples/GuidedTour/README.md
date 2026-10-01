@@ -161,9 +161,9 @@ no token exchange; the **Inbox** manages authorization itself.
    page + single-use code.
 3. Agent surfaces the user-facing `{url}?code={code}` link to the Inbox's own
    consent page.
-4. **User approves at the Inbox.** The consent page opens in a new tab; the
-   user clicks **Approve** and the Inbox records consent. No Person Server is
-   involved.
+4. **User approves at the Inbox.** The agent is already polling; the user
+   opens the Inbox's consent page from the polling banner, clicks **Approve**
+   and the Inbox records consent. No Person Server is involved.
 5. Agent polls `Location` with a signed `GET` until the Inbox responds
    **`200`** with an opaque `AAuth-Access` token (token68) bound to the
    agent's signature.
@@ -197,14 +197,17 @@ Steps 1–6 are the same as **Direct Grant**. From step 7 onward:
 7. Signed `POST /token` → **`202 Accepted`** with `Location: /pending/{id}`
    and interaction URL + single-use code.
 8. Agent surfaces the user-facing `{url}?code={code}` link.
-9. **The agent is already polling; the user decides at the PS.** The tour
-   records this step and starts polling as soon as step 8 surfaces the
-   request, so "Run all" keeps running. The polling banner offers **Open
-   Person Server dashboard** (every request waiting for the user, this one
-   highlighted) and a direct link to this one request. Either way the user
-   signs in and clicks **Approve** or **Deny**; the agent is not on this
-   channel. Access Server and resource-hosted consent (Federated, R3,
-   Resource-Managed, Documents) still wait for the user to open the link.
+9. **The agent is already polling; the user decides.** The tour records this
+   step and starts polling as soon as step 8 surfaces the request, whoever
+   hosts the consent page, so "Run all" keeps running. For Person Server
+   consent the polling banner offers **Open Person Server dashboard** (every
+   request waiting for the user, this one highlighted) and a direct link to
+   this one request. Access Server and resource-hosted consent (Federated,
+   R3, Resource-Managed, Documents) show a direct link to that page instead.
+   Either way the user signs in and clicks **Approve** or **Deny**; the agent
+   is not on this channel. When a poll answers with another interaction (the
+   Documents owner releases, then the PS asks), the tour waits for that
+   decision too without another click.
 10. The background poll of `Location` (a signed `GET`) resolves. While
    polling, the
    sequence diagram shows a loop box with a live spinner and poll count.
@@ -244,7 +247,10 @@ name the person, not the agents.
 When neither hop has standing consent the flow grows to 15 steps: the
 exchange at step 7 returns `202` (hop 1 consent + poll), and the retry returns
 the Concierge's own `202` for the Concierge → Calendar hop (hop 2 consent +
-poll of the Concierge's pending URL).
+poll of the Concierge's pending URL). Hop 2's interaction URL is the
+Concierge's, which redirects to the PS consent page, so the banner still
+offers the PS dashboard (the Concierge's code is not the PS's, so the request
+is listed rather than highlighted).
 
 > [!TIP]
 > The PS-Asserted (Deferred) flow only fires when the Person Server is

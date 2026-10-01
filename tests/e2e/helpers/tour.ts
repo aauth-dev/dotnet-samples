@@ -7,8 +7,9 @@ import { waitForInteractive } from './blazor';
  * GuidedTour (Blazor Server) page-object helpers.
  *
  * The tour is a single page at `/` driven by two <select> pickers (flow +
- * signing mode), a primary action button that either steps or shows a consent
- * link, plus "Run all" / "Reset" buttons. Each executed step is recorded in the
+ * signing mode), a primary step button, plus "Run all" / "Reset" buttons. While
+ * the agent waits on the person, a `section.polling` banner shows the consent
+ * link. Each executed step is recorded in the
  * left step list; selecting a done step renders its captured request/response
  * payloads in the right `section.payload` inspector.
  *
@@ -128,10 +129,9 @@ export async function selectSigningMode(page: Page, mode: SigningMode): Promise<
 }
 
 /**
- * Click "Run all" and wait until the flow completes (Done), aborts, parks on an
- * Access Server or resource consent link, or waits on a Person Server prompt.
- * Person Server consent does not park the run: the agent polls on arrival and
- * "Run all" continues once the person decides.
+ * Click "Run all" and wait until the flow completes (Done), aborts, or waits on
+ * a consent prompt. Consent never parks the run: the agent polls on arrival,
+ * whoever hosts the page, and "Run all" continues once the person decides.
  */
 export async function runAll(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Run all' }).click();
@@ -256,10 +256,9 @@ export async function readResponseJson(page: Page): Promise<unknown> {
 
 /**
  * Drive the selected flow to its end, answering every consent link it surfaces.
- * "Run all" parks on Access Server and resource links and keeps running through
- * Person Server prompts (the agent polls on arrival). `decide` handles each
- * popup (PS dashboard, AS or resource page) once. Returns the number of
- * decisions made.
+ * "Run all" keeps running through every consent (the agent polls on arrival).
+ * `decide` handles each popup (PS dashboard, AS or resource page) once. Returns
+ * the number of decisions made.
  */
 export async function driveTour(
   page: Page,
