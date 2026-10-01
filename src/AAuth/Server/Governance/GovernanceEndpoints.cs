@@ -23,20 +23,34 @@ public static class GovernanceEndpoints
     public const int MissionTerminatedStatus = StatusCodes.Status403Forbidden;
 
     /// <summary>
-    /// Authorize a governance request: the carrier is a verified agent token and,
+    /// Authorize a PS governance request: the carrier is a verified agent token
+    /// whose signed <c>ps</c> claim exactly names the mapped Person Server
+    /// (<paramref name="expectedPersonServer"/>, or the request origin when omitted).
+    /// This <c>ps</c> check is scoped only to governance endpoints; token issuance
+    /// and resource authorization use the person/auth token's PS instead.
     /// when <paramref name="missionS256"/> is present, the mission exists, is this
     /// agent's, and is active. A missing and a foreign mission are indistinguishable
     /// (<c>mission_not_found</c>, §Mission Endpoint Errors).
     /// </summary>
-    public static IResult? Authorize(HttpContext context, string? missionS256, StoredMission? mission)
+    public static IResult? Authorize(HttpContext context, string? missionS256, StoredMission? mission, string? expectedPersonServer = null)
     {
+        expectedPersonServer = string.IsNullOrWhiteSpace(expectedPersonServer)
+            ? $"{context.Request.Scheme}://{context.Request.Host}"
+            : expectedPersonServer;
         var verified = context.GetAAuthVerification();
         if (verified is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true, Agent: not null })
         {
             return AAuthProblemDetails.Create("invalid_request", "Governance endpoints require an agent token.", statusCode: StatusCodes.Status403Forbidden);
         }
+        if (!string.Equals(verified.AgentPersonServer, expectedPersonServer, StringComparison.Ordinal))
+        {
+            return AAuthProblemDetails.Create("invalid_request",
+                "Governance endpoints require an agent token whose ps claim names this Person Server.",
+                statusCode: StatusCodes.Status403Forbidden);
+        }
         if (missionS256 is null) return null;
-        if (mission is null || mission.S256 != missionS256 || mission.Agent != verified.Agent)
+        if (mission is null || mission.S256 != missionS256 || mission.Agent != verified.Agent
+            || !string.Equals(mission.PersonServer, expectedPersonServer, StringComparison.Ordinal))
         {
             return AAuthProblemDetails.Create("mission_not_found", statusCode: StatusCodes.Status404NotFound);
         }

@@ -41,6 +41,7 @@ public class ReusableChainingTests
         }.BuildAsync();
         var asserter = new Asserter();
         var inventory = new InMemoryJtiStore();
+        var enrollments = new InMemoryPersonResourceEnrollmentStore();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseKestrel().UseUrls(origin);
         builder.Services.AddSingleton(new MetadataClient(policy: egress));
@@ -50,6 +51,7 @@ public class ReusableChainingTests
         builder.Services.AddSingleton<UpstreamTokenValidator>();
         builder.Services.AddSingleton<IIdentityClaimsAsserter>(asserter);
         builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+        builder.Services.AddSingleton<IPersonResourceEnrollmentStore>(enrollments);
         builder.Services.AddAAuthGovernance();
         builder.Services.AddSingleton<IMissionTokenConsent, Consent>();
         builder.Services.AddAAuthPersonServer(configure: o =>
@@ -106,6 +108,9 @@ public class ReusableChainingTests
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
             }.BuildAsync();
             await RecordUpstreamProvenanceAsync(inventory, token, origin);
+            var subject = second && changed == "subject" ? "person-b" : "person-a";
+            await enrollments.RecordAsync(new PersonResourceEnrollment(
+                origin, new AAuthPersonKey("chain-" + subject), origin, subject, "test", DateTimeOffset.UtcNow));
             return token;
         }
         var current = await UpstreamAsync(false);
@@ -132,7 +137,7 @@ public class ReusableChainingTests
         var token = new TokenKey(payload["iss"]!.GetValue<string>(), payload["jti"]!.GetValue<string>());
         var expires = DateTimeOffset.FromUnixTimeSeconds(payload["exp"]!.GetValue<long>());
         var callerToken = new TokenKey(issuer, "caller-agent");
-        var binding = AgentPersonBinding.Key(issuer, issuer, "aauth:caller@origin.test");
+        var binding = AgentPersonBinding.Key(issuer, issuer, "aauth:caller@origin.test", generation: 1);
         var bindingExpires = new DateTimeOffset(9000, 1, 1, 0, 0, 0, TimeSpan.Zero);
         await inventory.RegisterAsync(callerToken, bindingExpires);
         await inventory.RegisterAsync(binding, bindingExpires);
@@ -151,7 +156,7 @@ public class ReusableChainingTests
         public Task<IdentityAssertion> AssertAsync(IdentityAssertionRequest request, CancellationToken cancellationToken = default)
         {
             Calls++;
-            return Task.FromResult(IdentityAssertion.Assert("downstream-" + request.UpstreamAuthorization?.Subject));
+            return Task.FromResult(IdentityAssertion.Assert(request.PersonKey ?? new AAuthPersonKey("chain-person"), "downstream-" + request.UpstreamAuthorization?.Subject));
         }
     }
 

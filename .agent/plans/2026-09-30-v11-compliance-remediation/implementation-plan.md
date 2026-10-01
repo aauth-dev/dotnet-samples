@@ -390,10 +390,10 @@ one critical-section design (RT-3 conflict 3).
 
 **Definition of Done**
 
-- [ ] A second person key for the same agent is denied until the binding is
+- [x] A second person key for the same agent is denied until the binding is
       revoked. A binding-store failure denies the request with no token or
       claims emitted.
-- [ ] The default `sub` differs across two resources and stays stable across
+- [x] The default `sub` differs across two resources and stays stable across
       signing-key rotation. HMAC key rotation keeps existing subjects.
 - [ ] A mission past `expires_at` gets `403 mission_terminated` with
       `termination_reason=expired` on the pending, federated, person and

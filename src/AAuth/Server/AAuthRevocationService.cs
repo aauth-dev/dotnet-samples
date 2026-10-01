@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Discovery;
 using AAuth.Errors;
+using AAuth.Person;
 using AAuth.Server.Governance;
 using AAuth.Tokens;
 using Microsoft.Extensions.DependencyInjection;
@@ -60,7 +61,8 @@ public interface IAAuthRevocationService
     /// <summary>
     /// Revoke every person token and auth token this Person Server issued to the agent
     /// <paramref name="sub"/> of <paramref name="agentIssuer"/>, whichever agent token it
-    /// presented. The agent-person binding is not altered.
+    /// presented, and revoke the agent-person binding so a new binding can be
+    /// established only after the cascade.
     /// </summary>
     Task<RevocationCascadeResult> RevokeAgentAsync(string agentIssuer, string sub,
         CancellationToken cancellationToken = default);
@@ -72,6 +74,7 @@ internal sealed class AAuthRevocationService : IAAuthRevocationService, IDisposa
     private readonly RevocationClient? _client;
     private readonly HttpClient? _ownedHttp;
     private readonly IMissionStore? _missions;
+    private readonly IAgentPersonBindingStore? _agentBindings;
     private readonly Func<TokenGrant, CancellationToken, Task<RevocationDownstreamError?>>? _revokeGrant;
 
     // An issuer-less engine treats every grant as its own and delivers through the hook.
@@ -84,7 +87,8 @@ internal sealed class AAuthRevocationService : IAAuthRevocationService, IDisposa
     }
 
     private AAuthRevocationService(IAAuthServerIdentity identity, IJtiStore inventory, TimeProvider clock,
-        MetadataClient metadata, RevocationClient? client, IMissionStore? missions)
+        MetadataClient metadata, RevocationClient? client, IMissionStore? missions,
+        IAgentPersonBindingStore? agentBindings)
     {
         Issuer = identity.Issuer;
         EgressPolicy = identity.EgressPolicy;
@@ -92,6 +96,7 @@ internal sealed class AAuthRevocationService : IAAuthRevocationService, IDisposa
         Clock = clock;
         _metadata = metadata;
         _missions = missions;
+        _agentBindings = agentBindings;
         if (client is null)
         {
             _ownedHttp = identity.CreateSignedClient();
@@ -105,7 +110,8 @@ internal sealed class AAuthRevocationService : IAAuthRevocationService, IDisposa
         IJtiStore inventory, TimeProvider clock, object? key, IMissionStore? missions = null)
         => new(identity, inventory, clock, services.GetRequiredService<MetadataClient>(),
             (key is null ? null : services.GetKeyedService<RevocationClient>(key)) ?? services.GetService<RevocationClient>(),
-            missions);
+            missions, key is null ? services.GetService<IAgentPersonBindingStore>()
+                : services.GetKeyedService<IAgentPersonBindingStore>(key) ?? services.GetService<IAgentPersonBindingStore>());
 
     internal string? Issuer { get; }
     internal AAuthEgressPolicy EgressPolicy { get; } = AAuthEgressPolicy.Production;
@@ -160,13 +166,21 @@ internal sealed class AAuthRevocationService : IAAuthRevocationService, IDisposa
         return await WalkAsync([new(mission, RevocationRecords.ExpiresAt, false)], [], cancellationToken);
     }
 
-    public Task<RevocationCascadeResult> RevokeAgentAsync(string agentIssuer, string sub,
+    public async Task<RevocationCascadeResult> RevokeAgentAsync(string agentIssuer, string sub,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentIssuer);
         ArgumentException.ThrowIfNullOrWhiteSpace(sub);
-        var agent = RevocationRecords.Subject(RequireIssuer(), agentIssuer, sub);
-        return WalkAsync([new(agent, RevocationRecords.ExpiresAt, false)], [], cancellationToken);
+        var issuer = RequireIssuer();
+        var agent = RevocationRecords.Subject(issuer, agentIssuer, sub);
+        var starts = new List<CascadeSource> { new(agent, RevocationRecords.ExpiresAt, false) };
+        if (_agentBindings is not null)
+        {
+            var binding = await AgentPersonBinding.RevokeAsync(Inventory, _agentBindings, issuer, agentIssuer, sub, cancellationToken);
+            if (binding is not null)
+                starts.Add(new(binding.InventoryKey, AgentPersonBinding.ExpiresAt, true));
+        }
+        return await WalkAsync(starts, [], cancellationToken);
     }
 
     /// <summary>Where a revocation of <paramref name="token"/> cascades from: the token, and its agent's records.</summary>

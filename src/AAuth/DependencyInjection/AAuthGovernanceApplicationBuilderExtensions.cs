@@ -63,7 +63,9 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         endpoints.MapPost(options.Resolve(options.PermissionPath),
             (HttpContext ctx, IMissionStore missions, IMissionLog log, IPermissionDecider decider) =>
                 HandlePermissionAsync(ctx, options, missions, log, decider));
-        endpoints.MapPost(options.Resolve(options.AuditPath), HandleAuditAsync);
+        endpoints.MapPost(options.Resolve(options.AuditPath),
+            (HttpContext ctx, IMissionStore missions, IAuditSink sink) =>
+                HandleAuditAsync(ctx, options, missions, sink));
         endpoints.MapPost(options.Resolve(options.InteractionPath),
             (HttpContext ctx, IMissionStore missions, IMissionLog log, IInteractionRelay relay) =>
                 HandleInteractionAsync(ctx, options, missions, log, relay));
@@ -178,7 +180,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         {
             stored = await missions.GetAsync(request.MissionS256).ConfigureAwait(false);
         }
-        if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, stored) is { } denied) return denied;
+        if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, stored, ResolvePersonServer(ctx, options)) is { } denied) return denied;
         if (request.MissionS256 is not null)
         {
             history = await log.ReadAsync(request.MissionS256).ConfigureAwait(false);
@@ -229,6 +231,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
 
     private static async Task<IResult> HandleAuditAsync(
         HttpContext ctx,
+        AAuthGovernancePipelineOptions options,
         IMissionStore missions,
         IAuditSink sink)
     {
@@ -250,7 +253,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         }
 
         var stored = await missions.GetAsync(record.MissionS256).ConfigureAwait(false);
-        if (GovernanceEndpoints.Authorize(ctx, record.MissionS256, stored) is { } denied) return denied;
+        if (GovernanceEndpoints.Authorize(ctx, record.MissionS256, stored, ResolvePersonServer(ctx, options)) is { } denied) return denied;
 
         await sink.RecordAsync(record, ctx.RequestAborted).ConfigureAwait(false);
         return Results.StatusCode(StatusCodes.Status201Created);
@@ -282,7 +285,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
 
         var stored = request.MissionS256 is null ? null
             : await missions.GetAsync(request.MissionS256).ConfigureAwait(false);
-        if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, stored) is { } denied) return denied;
+        if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, stored, ResolvePersonServer(ctx, options)) is { } denied) return denied;
 
         var result = await relay.RelayAsync(request, ctx.RequestAborted).ConfigureAwait(false);
 
@@ -373,7 +376,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             }
             var reference = entry.Permission?.MissionS256 ?? entry.Interaction?.MissionS256;
             var mission = reference is null ? null : await missions.GetAsync(reference, ctx.RequestAborted);
-            if (GovernanceEndpoints.Authorize(ctx, reference, mission) is { } denied) return denied;
+            if (GovernanceEndpoints.Authorize(ctx, reference, mission, ResolvePersonServer(ctx, options)) is { } denied) return denied;
             return await CompletePendingAsync(ctx, entry, options, missions, log);
         });
     }
@@ -486,7 +489,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         if (body is null || !AAuth.Tokens.MissionReference.IsValid(missionS256) || action is not ("update" or "completion"))
             return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         var stored = await missions.GetAsync(missionS256).ConfigureAwait(false);
-        if (GovernanceEndpoints.Authorize(ctx, missionS256, stored) is { } denied) return denied;
+        if (GovernanceEndpoints.Authorize(ctx, missionS256, stored, ResolvePersonServer(ctx, options)) is { } denied) return denied;
 
         if (action == "update")
         {

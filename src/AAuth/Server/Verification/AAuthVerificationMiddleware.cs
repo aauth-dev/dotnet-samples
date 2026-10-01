@@ -281,6 +281,8 @@ public sealed class AAuthVerificationMiddleware
             AuthTokenBuilder.TokenType => SignatureKeyParser.Text(trustedPayload, "ps"),
             _ => null,
         };
+        var agentPersonServer = tokenType == AgentTokenBuilder.TokenType
+            ? SignatureKeyParser.Text(trustedPayload, "ps") : null;
         context.Items[ParsedInfoItemKey] = parsedInfo;
         context.Items[ContextItemKey] = new VerificationResult
         {
@@ -316,6 +318,7 @@ public sealed class AAuthVerificationMiddleware
             Agent = agentIdentifier,
             Subject = SignatureKeyParser.Text(trustedPayload, "sub"),
             PersonServer = personServer,
+            AgentPersonServer = agentPersonServer,
             MissionS256 = personServer is null ? null : SignatureKeyParser.Text(trustedPayload, MissionReference.ClaimName),
             Tenant = personServer is null ? null : SignatureKeyParser.Text(trustedPayload, "tenant"),
             Scopes = scopes,

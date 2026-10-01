@@ -48,11 +48,13 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
                     Level = AAuthLevel.Identified, Scheme = "jwt", IssuerVerified = true,
                     TokenType = AAuthTokenType.AgentToken,
                     Agent = context.Request.Headers["Test-Agent"].FirstOrDefault() ?? "aauth:assistant@agent.example",
+                    AgentPersonServer = context.Request.Headers["Test-Agent-PS"].FirstOrDefault() is { } ps
+                        ? (ps == "absent" ? null : ps) : Ps,
                     CoveredComponents = new HashSet<string> { "@method", "@authority", "@path", "signature-key", "content-type", "content-digest" },
                 });
             await next();
         });
-        app.MapAAuthGovernance();
+        app.MapAAuthGovernance(options => options.PersonServer = Ps);
 
         // Seed an active mission with one pre-approved tool ("WebSearch").
         var store = app.Services.GetRequiredService<IMissionStore>();
@@ -94,6 +96,22 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await ReadJson(response);
         Assert.Equal("denied", (string?)json?["permission"]);
+    }
+
+    [Theory(DisplayName = "§Agent Governance — absent or foreign agent-token ps is rejected only on governance endpoints")]
+    [InlineData("absent")]
+    [InlineData("https://other-ps.example")]
+    public async Task Permission_AgentTokenPsMustNameThisPersonServer(string agentPs)
+    {
+        using var client = Client();
+        client.DefaultRequestHeaders.Add("Test-Agent-PS", agentPs);
+        var body = new JsonObject { ["action"] = "WebSearch" };
+
+        var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var json = await ReadJson(response);
+        Assert.Equal("invalid_request", (string?)json?["error"]);
     }
 
     [Fact(DisplayName = "§Permission Endpoint — missing action is a 400")]

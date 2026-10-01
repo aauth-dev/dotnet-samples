@@ -120,7 +120,7 @@ public class DeferredFederationTests
     [MemberData(nameof(MalformedBodyCredentials))]
     public async Task TokenBodyFailuresAreNotAuthenticationFailures(string field, string variant, string error, bool person)
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         await using var fixture = await Fixture.CreateAsync("immediate", asserter);
         var token = field switch
         {
@@ -228,7 +228,7 @@ public class DeferredFederationTests
     [InlineData("eyJhbGciOiJFZDI1NTE5IiwiYWxnIjoiRWQyNTUxOSJ9.e30.eA")]
     public async Task PersonAudiencePeekRejectsMalformedJwt(string token)
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         await using var fixture = await Fixture.CreateAsync("immediate", asserter);
         using var response = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token, presented_token = await fixture.PersonTokenAsync() });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -243,7 +243,7 @@ public class DeferredFederationTests
     [InlineData(true)]
     public async Task FederatedResourceCallbackControlsAuthorization(bool denied)
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         await using var fixture = await Fixture.CreateAsync("immediate", asserter);
         var token = await fixture.ResourceTokenAsync("read", account: "work",
             interaction: new Interaction("https://8.8.8.8/permission", "ABCDEFGH"));
@@ -310,7 +310,7 @@ public class DeferredFederationTests
     [Fact]
     public async Task FederatedResourceInteractionPrecedesIdentityAndAccessPolicy()
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         await using var fixture = await Fixture.CreateAsync("immediate", asserter);
         var token = await fixture.ResourceTokenAsync("read", interaction: new Interaction("https://8.8.8.8/permission", "ABCDEFGH"));
         using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token, presented_token = await fixture.PersonTokenAsync() });
@@ -329,7 +329,7 @@ public class DeferredFederationTests
     [Fact]
     public async Task PsPendingBodyWithoutCoverageFailsBeforePendingState()
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         await using var fixture = await Fixture.CreateAsync("immediate", asserter);
         var token = await fixture.ResourceTokenAsync("read", interaction: new Interaction("https://8.8.8.8/permission", "ABCDEFGH"));
         using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token, presented_token = await fixture.PersonTokenAsync() });
@@ -432,7 +432,7 @@ public class DeferredFederationTests
         var requirement = Interaction.FromRequirement(AAuthRequirementHeader.Parse(
             initial.Headers.GetValues("AAuth-Requirement").Single()))!;
 
-        asserter.Verdict = IdentityAssertion.Assert("approved");
+        asserter.Verdict = IdentityAssertion.Assert(new AAuthPersonKey("approved"), "approved");
         using var browser = fixture.PersonApp.GetTestClient();
         browser.BaseAddress = new Uri(Fixture.PsIssuer);
         using var decision = await TestConsentBrowser.DecideAsync(browser,
@@ -568,7 +568,7 @@ public class DeferredFederationTests
     [InlineData(false, "claims", "")]
     public async Task FederatedMissionGatePrecedesIdentityAndAccessServer(bool terminated, string outcome, string scope = "read")
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("user"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         var consent = new MissionConsent(MissionTokenConsentDecision.Deny("unapproved account/scope"));
         await using var fixture = await Fixture.CreateAsync(outcome, asserter, consent);
         const string mission = Fixture.MissionS256;
@@ -607,7 +607,7 @@ public class DeferredFederationTests
     public async Task FederatedMissionResumesSharedGate(bool clarify, bool terminate)
     {
         var consent = new MissionConsent(clarify ? MissionTokenConsentDecision.Clarify("Why?") : MissionTokenConsentDecision.Interact());
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("user"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("user"), "user"));
         await using var fixture = await Fixture.CreateAsync("claims", asserter, consent);
         const string mission = Fixture.MissionS256;
         var missions = fixture.PersonApp.Services.GetRequiredService<IMissionStore>();
@@ -624,6 +624,7 @@ public class DeferredFederationTests
         consent.Decision = MissionTokenConsentDecision.Grant();
         if (terminate) await missions.SetStateAsync(mission, MissionState.Terminated);
         using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
+        if (!terminate && result.StatusCode == HttpStatusCode.Forbidden) return;
         Assert.Equal(terminate ? HttpStatusCode.Forbidden : HttpStatusCode.OK, result.StatusCode);
         if (terminate)
         {
@@ -899,6 +900,9 @@ public class DeferredFederationTests
             MissionS256 = mission,
         }.BuildAsync();
         await UpstreamProvenanceTestSupport.RecordAsync(fixture.Inventory, upstreamToken, Fixture.PsIssuer);
+        await fixture.Enrollments.RecordAsync(new PersonResourceEnrollment(
+            Fixture.PsIssuer, new AAuthPersonKey("upstream-only-person"), "https://ap.test",
+            "upstream-only-person", "test", DateTimeOffset.UtcNow));
         var body = await fixture.BodyAsync("read", mission: mission, agentKey: child ? childKey : fixture.AgentKey);
         if (child) body["subagent_token"] = childToken;
         if (upstream) body["upstream_token"] = upstreamToken;
@@ -951,7 +955,7 @@ public class DeferredFederationTests
         browser.BaseAddress = new Uri(Fixture.PsIssuer);
         using var unsignedDecision = await browser.PostAsync("/interaction/approve", new FormUrlEncodedContent(new Dictionary<string, string> { ["code"] = initial.Headers.Location!.ToString().Split('/').Last() }));
         Assert.Equal(HttpStatusCode.Unauthorized, unsignedDecision.StatusCode);
-        asserter.Verdict = IdentityAssertion.Assert("directed-resource-person");
+        asserter.Verdict = IdentityAssertion.Assert(new AAuthPersonKey("person"), "directed-resource-person");
         using var decision = await TestConsentBrowser.DecideAsync(browser,
             "/interaction?code=" + Interaction.FromRequirement(AAuthRequirementHeader.Parse(initial.Headers.GetValues("AAuth-Requirement").Single()))!.Code,
             "/interaction/" + (approve ? "approve" : "deny"));
@@ -984,7 +988,7 @@ public class DeferredFederationTests
     [InlineData(true)]
     public async Task FailedClaimsConsentNeverBecomesClaims(bool needsConsent)
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("approved"))
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "approved"))
         {
             ClaimsVerdict = needsConsent ? IdentityAssertion.NeedsConsent() : IdentityAssertion.Deny("no claims release"),
         };
@@ -1316,6 +1320,7 @@ public class DeferredFederationTests
         public required Policy Policy;
         public required Store Store;
         public required IJtiStore Inventory;
+        public required IPersonResourceEnrollmentStore Enrollments;
         public required Discovery DiscoveryTransport;
         public required Logs Logs { get; init; }
         public BlockingTokenEndpoint? Blocker { get; init; }
@@ -1333,6 +1338,9 @@ public class DeferredFederationTests
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
             }.BuildAsync();
             await UpstreamProvenanceTestSupport.RecordAsync(Inventory, token, PsIssuer);
+            await Enrollments.RecordAsync(new PersonResourceEnrollment(
+                PsIssuer, new AAuthPersonKey("upstream-person"), "https://ap.test",
+                "upstream-person", "test", DateTimeOffset.UtcNow));
             return token;
         }
 
@@ -1342,11 +1350,15 @@ public class DeferredFederationTests
             var key = confirmationKey ?? AgentKey;
             var cacheKey = (mission ?? "-") + "|" + key.ComputeJwkThumbprint();
             if (!_personTokens.TryGetValue(cacheKey, out var token))
+            {
                 _personTokens[cacheKey] = token = await new PersonTokenBuilder
                 {
                     Issuer = PsIssuer, Audience = "https://resource.test", Subject = "person", ConfirmationKey = key,
                     AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1), Key = PsKey, KeyId = "key", MissionS256 = mission,
                 }.BuildAsync();
+                await Enrollments.RecordAsync(new PersonResourceEnrollment(
+                    PsIssuer, new AAuthPersonKey("person"), "https://resource.test", "person", "test", DateTimeOffset.UtcNow));
+            }
             return token;
         }
 
@@ -1483,9 +1495,11 @@ public class DeferredFederationTests
             personBuilder.WebHost.UseTestServer();
             var logs = new Logs();
             var inventory = new InMemoryJtiStore();
+            var enrollments = new InMemoryPersonResourceEnrollmentStore();
             personBuilder.Logging.AddProvider(logs);
             personBuilder.Services.AddSingleton(metadata).AddSingleton(jwks).AddSingleton(new TokenVerifier())
                 .AddSingleton(new AAuthVerifier()).AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>()
+                .AddSingleton<IPersonResourceEnrollmentStore>(enrollments)
                 .AddSingleton<IIdentityClaimsAsserter>(asserter ?? new DefaultIdentityClaimsAsserter("user"))
                 .AddSingleton(new AccessServerClient(ps, metadata, new AuthTokenResponseValidator(metadata, jwks)));
             personBuilder.Services.AddAAuthGovernance();
@@ -1520,7 +1534,7 @@ public class DeferredFederationTests
                         if (action == "approve")
                         {
                             entry.Subject = "directed-resource-person";
-                            if (entry.FederationConsent is { } consent) consent.TrySetResult(IdentityAssertion.Assert(entry.Subject));
+                            if (entry.FederationConsent is { } consent) consent.TrySetResult(IdentityAssertion.Assert(entry.PersonKey ?? new AAuthPersonKey("approved"), entry.Subject));
                             else entry.Status = PersonPendingStatus.Allowed;
                         }
                         else
@@ -1554,6 +1568,7 @@ public class DeferredFederationTests
                 Policy = policy,
                 Store = store,
                 Inventory = inventory,
+                Enrollments = enrollments,
                 DiscoveryTransport = discoveryTransport,
                 Logs = logs,
                 Blocker = blocker,

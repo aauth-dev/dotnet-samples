@@ -23,7 +23,11 @@ namespace AAuth.Person;
 /// same asserter gates federation independently of AS claims negotiation and
 /// answers the AS's §Claims Required push: the host maps an
 /// <see cref="IdentityAssertion.Assert"/> into the directed <c>sub</c> + claims
-/// pushed to the AS. The host packages the mission three-gate model around the
+/// pushed to the AS. Returning <see cref="IdentityAssertion.Assert"/> is the
+/// host's approval decision: when it includes an explicit directed
+/// <c>Subject</c> for a new resource, the SDK still records the
+/// person/resource enrollment before minting instead of inferring identity from
+/// a later token. The host packages the mission three-gate model around the
 /// asserter (terminated rejection and prior-consent silent grant use the
 /// <c>IMissionStore</c>/<c>IMissionLog</c> primitives); the asserter owns the
 /// in-scope / prompt policy decision for a mission-bound request.
@@ -51,6 +55,9 @@ public sealed class IdentityAssertionRequest
 
     /// <summary>The verified agent identifier (the agent token's <c>sub</c>).</summary>
     public required string AgentId { get; init; }
+
+    /// <summary>The verified agent-token issuer (<c>iss</c>).</summary>
+    public string AgentIssuer { get; init; } = "";
 
     /// <summary>
     /// <see langword="true"/> for a person token request: decide which person the
@@ -117,6 +124,12 @@ public sealed class IdentityAssertionRequest
     public AgentAssertedContent? AgentAsserted { get; init; }
 
     public UpstreamTokenValidationResult? UpstreamAuthorization { get; init; }
+
+    /// <summary>
+    /// The resolved stable person key for auth-token requests, or a known key
+    /// carried into a resumed consent decision. It is never emitted on the wire.
+    /// </summary>
+    public AAuthPersonKey? PersonKey { get; init; }
 }
 
 /// <summary>The kinds of decision an <see cref="IIdentityClaimsAsserter"/> can return.</summary>
@@ -142,6 +155,7 @@ public sealed class IdentityAssertion
     private IdentityAssertion(
         IdentityAssertionKind kind,
         string? subject = null,
+        AAuthPersonKey? personKey = null,
         string? tenant = null,
         IReadOnlyList<string>? roles = null,
         IReadOnlyList<string>? groups = null,
@@ -150,6 +164,7 @@ public sealed class IdentityAssertion
     {
         Kind = kind;
         Subject = subject;
+        PersonKey = personKey;
         Tenant = tenant;
         Roles = roles;
         Groups = groups;
@@ -162,6 +177,9 @@ public sealed class IdentityAssertion
 
     /// <summary>The directed (pairwise) person identifier: a person token's <c>sub</c>. Ignored for auth token requests, whose <c>sub</c> is the verified resource token's.</summary>
     public string? Subject { get; }
+
+    /// <summary>The stable PS-internal person key. This is never emitted in tokens.</summary>
+    public AAuthPersonKey? PersonKey { get; }
 
     /// <summary>The asserted tenant claim, if any.</summary>
     public string? Tenant { get; }
@@ -180,44 +198,46 @@ public sealed class IdentityAssertion
 
     /// <summary>
     /// Assert identity + consent. <paramref name="subject"/> is the directed
-    /// <c>sub</c>; the remaining fields are optional asserted identity claims.
+    /// <c>sub</c>; the SDK records the person/resource enrollment before
+    /// minting when this is the first approval for that resource. The remaining
+    /// fields are optional asserted identity claims.
     /// </summary>
     public static IdentityAssertion Assert(
-        string subject,
+        AAuthPersonKey personKey,
+        string? subject = null,
         string? tenant = null,
         IReadOnlyList<string>? roles = null,
         IReadOnlyList<string>? groups = null,
         IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null)
-        => new(IdentityAssertionKind.Assert, subject, tenant, roles, groups, additionalClaims);
+        => new(IdentityAssertionKind.Assert, subject, personKey, tenant, roles, groups, additionalClaims);
 
     /// <summary>Deny the request with a reason.</summary>
     public static IdentityAssertion Deny(string reason)
         => new(IdentityAssertionKind.Deny, reason: reason);
 
     /// <summary>Require the user to review/consent before the request resolves.</summary>
-    public static IdentityAssertion NeedsConsent()
-        => new(IdentityAssertionKind.NeedsConsent);
+    public static IdentityAssertion NeedsConsent(AAuthPersonKey? personKey = null)
+        => new(IdentityAssertionKind.NeedsConsent, personKey: personKey);
 }
 
 /// <summary>
-/// The default <see cref="IIdentityClaimsAsserter"/>: asserts a fixed directed
-/// <c>sub</c> and no further claims, with no consent prompt. Suitable for a
-/// non-interactive demo PS; a production PS swaps in an implementation that
-/// derives the principal's directed identity and consent decision.
+/// The default <see cref="IIdentityClaimsAsserter"/>: asserts a fixed stable
+/// person key and no further claims, with no consent prompt. The host derives
+/// pairwise directed <c>sub</c> values per resource.
 /// </summary>
 public sealed class DefaultIdentityClaimsAsserter : IIdentityClaimsAsserter
 {
-    private readonly string _subject;
+    private readonly AAuthPersonKey _personKey;
 
     /// <summary>Create the default asserter.</summary>
-    /// <param name="subject">The directed <c>sub</c> to assert. Default <c>pairwise-sub</c>.</param>
-    public DefaultIdentityClaimsAsserter(string subject = "pairwise-sub")
+    /// <param name="personKey">The internal stable person key. Default <c>demo-person</c>.</param>
+    public DefaultIdentityClaimsAsserter(string personKey = "demo-person")
     {
-        _subject = subject;
+        _personKey = new AAuthPersonKey(personKey);
     }
 
     /// <inheritdoc />
     public Task<IdentityAssertion> AssertAsync(
         IdentityAssertionRequest request, CancellationToken cancellationToken = default)
-        => Task.FromResult(IdentityAssertion.Assert(_subject));
+        => Task.FromResult(IdentityAssertion.Assert(request.PersonKey ?? _personKey, request.Subject));
 }

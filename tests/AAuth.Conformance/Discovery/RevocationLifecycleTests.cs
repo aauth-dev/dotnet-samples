@@ -81,7 +81,7 @@ public class RevocationLifecycleTests
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         using var issuer = graph.Signed(Person, AuthTokenBuilder.PersonDwk);
         Assert.Equal(HttpStatusCode.OK, (await Revoke(issuer, Person, upstream)).StatusCode);
-        graph.Pending.MarkAllowed(initial.Headers.Location!.ToString().Split('/').Last(), "person");
+        graph.Pending.MarkAllowed(initial.Headers.Location!.ToString().Split('/').Last(), new AAuthPersonKey("person"), "person");
         using var client = graph.AgentClient(agent);
         using var result = await client.GetAsync(Person + initial.Headers.Location);
         // §Polling Error Codes: a pending request whose upstream token was revoked is 403 revoked.
@@ -103,7 +103,7 @@ public class RevocationLifecycleTests
 
         using var ps = graph.Signed(Person, AuthTokenBuilder.PersonDwk);
         Assert.Equal(HttpStatusCode.OK, (await Revoke(ps, Person, personToken)).StatusCode);
-        graph.Pending.MarkAllowed(initial.Headers.Location!.ToString().Split('/').Last(), "person");
+        graph.Pending.MarkAllowed(initial.Headers.Location!.ToString().Split('/').Last(), new AAuthPersonKey("person"), "person");
 
         using var client = graph.AgentClient(agent);
         using var result = await client.GetAsync(Person + initial.Headers.Location);
@@ -166,16 +166,17 @@ public class RevocationLifecycleTests
         var upstream = await graph.GrantAsync(caller, FirstResource, false);
         Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(upstream, FirstResource));
 
-        await AgentPersonBinding.RevokeAsync(graph.PersonInventory, Person, FirstProvider, "aauth:demo@first-ap.example");
+        await AgentPersonBinding.RevokeAsync(graph.PersonInventory, graph.Bindings,
+            Person, FirstProvider, "aauth:demo@first-ap.example");
 
         // The agent token itself is not revoked; only the binding is.
         using var blocked = await graph.RequestAsync(intermediary, SecondResource, federated, upstream);
         var body = await blocked.Content.ReadAsStringAsync();
         Assert.True(blocked.StatusCode == HttpStatusCode.BadRequest, $"Status={(int)blocked.StatusCode} {body}");
         Assert.Equal("revoked_upstream_token", (string?)JsonNode.Parse(body)!["error"]);
-        // A refreshed agent token (new jti) for the same agent stays unbound.
+        // A refreshed agent token (new jti) for the same agent can establish a new binding.
         using var refreshed = await graph.RequestAsync(await graph.AgentTokenAsync(FirstProvider, "caller-refreshed"), SecondResource, federated);
-        Assert.NotEqual(HttpStatusCode.OK, refreshed.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
         // Another agent at the same provider is unaffected.
         var other = await graph.AgentTokenAsync(SecondProvider, "other");
         Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(await graph.GrantAsync(other, SecondResource, federated), SecondResource));
@@ -300,7 +301,7 @@ public class RevocationLifecycleTests
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var pendingPath = response.Headers.Location!.ToString();
         var entry = graph.Pending.Get(pendingPath[(pendingPath.LastIndexOf('/') + 1)..])!;
-        graph.Pending.MarkAllowed(entry.Id, "person");
+        graph.Pending.MarkAllowed(entry.Id, new AAuthPersonKey("person"), "person");
         using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
         Assert.Equal(HttpStatusCode.OK, (await Revoke(ap, Person, original)).StatusCode);
         var fresh = await graph.AgentTokenAsync(FirstProvider, "fresh");
@@ -404,6 +405,8 @@ public class RevocationLifecycleTests
         private readonly Dictionary<string, AAuthKey> _agentKeys = new();
         public InMemoryPersonPendingStore Pending { get; } = new();
         public Asserter Consent { get; } = new(false);
+        public InMemoryAgentPersonBindingStore Bindings { get; } = new();
+        public InMemoryPersonResourceEnrollmentStore Enrollments { get; } = new();
         public List<(string Resource, TokenKey Token)> Revocations { get; } = [];
         public InMemoryJtiStore PersonInventory { get; } = new();
         public Dictionary<string, string> Failing { get; } = new();
@@ -432,6 +435,8 @@ public class RevocationLifecycleTests
             graph._hosts.Add(Access, access);
             var personBuilder = graph.Builder();
             personBuilder.Services.AddSingleton<IPersonPendingStore>(graph.Pending);
+            personBuilder.Services.AddSingleton<IAgentPersonBindingStore>(graph.Bindings);
+            personBuilder.Services.AddSingleton<IPersonResourceEnrollmentStore>(graph.Enrollments);
             graph.Consent.Required = consent;
             personBuilder.Services.AddSingleton<IIdentityClaimsAsserter>(graph.Consent);
             personBuilder.Services.AddSingleton(new RevocationClient(graph.Signed(Person, "aauth-person.json")));
@@ -549,12 +554,18 @@ public class RevocationLifecycleTests
         }.BuildAsync();
 
         // The person token this PS issued the agent for the resource (the presented token).
-        public ValueTask<string> PersonTokenAsync(string agentToken, string resource) => new PersonTokenBuilder
+        public async ValueTask<string> PersonTokenAsync(string agentToken, string resource)
         {
-            EgressPolicy = TestEgress.Policy, Issuer = Person, Audience = resource, Subject = "person",
-            ConfirmationKey = AgentKey(agentToken), AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
-            Key = _keys[Person], KeyId = "key",
-        }.BuildAsync();
+            var token = await new PersonTokenBuilder
+            {
+                EgressPolicy = TestEgress.Policy, Issuer = Person, Audience = resource, Subject = "person",
+                ConfirmationKey = AgentKey(agentToken), AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+                Key = _keys[Person], KeyId = "key",
+            }.BuildAsync();
+            await Enrollments.RecordAsync(new PersonResourceEnrollment(
+                Person, new AAuthPersonKey("person"), resource, "person", "test", DateTimeOffset.UtcNow));
+            return token;
+        }
 
         public HttpClient Signed(string issuer, string dwk) => new InProcessHttpClient(new AAuthSigningHandler(_keys[issuer],
             new JwksUriSignatureKeyProvider(issuer, dwk, "key")) { InnerHandler = new Router(this) });
@@ -659,7 +670,7 @@ public class RevocationLifecycleTests
         {
             public bool Required { get; set; } = consent;
             public Task<IdentityAssertion> AssertAsync(IdentityAssertionRequest request, CancellationToken ct = default)
-                => Task.FromResult(Required ? IdentityAssertion.NeedsConsent() : IdentityAssertion.Assert("person"));
+                => Task.FromResult(Required ? IdentityAssertion.NeedsConsent() : IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         }
 
         private sealed class AllowPolicy : IAccessPolicy

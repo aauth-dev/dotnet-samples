@@ -28,9 +28,10 @@ internal sealed class AgentFlowHost : IAsyncDisposable
     private readonly AAuthKey _issuerKey;
     private readonly Counter _posts;
     private readonly IJtiStore _inventory;
+    private readonly IPersonResourceEnrollmentStore _enrollments;
 
     private AgentFlowHost(WebApplication app, string origin, string secondOrigin, AAuthKey issuerKey, ConsentScript consent,
-        Counter posts, IJtiStore inventory)
+        Counter posts, IJtiStore inventory, IPersonResourceEnrollmentStore enrollments)
     {
         _app = app;
         Origin = origin;
@@ -39,6 +40,7 @@ internal sealed class AgentFlowHost : IAsyncDisposable
         Consent = consent;
         _posts = posts;
         _inventory = inventory;
+        _enrollments = enrollments;
     }
 
     public string Origin { get; }
@@ -63,6 +65,7 @@ internal sealed class AgentFlowHost : IAsyncDisposable
         var posts = new Counter();
         var issuerKey = AAuthKey.Generate();
         var inventory = new InMemoryJtiStore();
+        var enrollments = new InMemoryPersonResourceEnrollmentStore();
         var consent = new ConsentScript();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseKestrel().UseUrls(origin, secondOrigin);
@@ -73,6 +76,7 @@ internal sealed class AgentFlowHost : IAsyncDisposable
         builder.Services.AddSingleton<UpstreamTokenValidator>();
         builder.Services.AddSingleton<IIdentityClaimsAsserter>(new Asserter());
         builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+        builder.Services.AddSingleton<IPersonResourceEnrollmentStore>(enrollments);
         builder.Services.AddAAuthGovernance();
         builder.Services.AddSingleton<IMissionTokenConsent>(consent);
         builder.Services.AddAAuthPersonServer(configure: o =>
@@ -124,7 +128,7 @@ internal sealed class AgentFlowHost : IAsyncDisposable
             return Results.StatusCode(401);
         });
         await app.StartAsync();
-        return new AgentFlowHost(app, origin, secondOrigin, issuerKey, consent, posts, inventory);
+        return new AgentFlowHost(app, origin, secondOrigin, issuerKey, consent, posts, inventory, enrollments);
     }
 
     private static string ReserveOrigin()
@@ -166,6 +170,8 @@ internal sealed class AgentFlowHost : IAsyncDisposable
         AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
         }.BuildAsync();
         await UpstreamProvenanceTestSupport.RecordAsync(_inventory, token, Origin);
+        await _enrollments.RecordAsync(new PersonResourceEnrollment(
+            Origin, new AAuthPersonKey(person), Origin, person, "test", DateTimeOffset.UtcNow));
         return token;
     }
 
@@ -186,7 +192,7 @@ internal sealed class AgentFlowHost : IAsyncDisposable
     private sealed class Asserter : IIdentityClaimsAsserter
     {
         public Task<IdentityAssertion> AssertAsync(IdentityAssertionRequest request, CancellationToken cancellationToken = default)
-            => Task.FromResult(IdentityAssertion.Assert(request.UpstreamAuthorization?.Subject is { } upstream
+            => Task.FromResult(IdentityAssertion.Assert(request.PersonKey ?? new AAuthPersonKey("chain-person"), request.UpstreamAuthorization?.Subject is { } upstream
                 ? "downstream-" + upstream : "person"));
     }
 

@@ -66,7 +66,7 @@ internal sealed class AllowAll : IAccessPolicy
 internal sealed class NamedAsserter : IIdentityClaimsAsserter
 {
     public Task<IdentityAssertion> AssertAsync(IdentityAssertionRequest request, CancellationToken cancellationToken = default)
-        => Task.FromResult(IdentityAssertion.Assert("named"));
+        => Task.FromResult(IdentityAssertion.Assert(new AAuthPersonKey("named"), "named"));
 }
 
 internal sealed class CapturingLoggerProvider : ILoggerProvider
@@ -221,7 +221,11 @@ public class PersonServerRegistrationTests
         builder.Services.AddAAuthPersonServer(configure: options =>
         {
             RoleHost.PersonServer(options, issuer: environment == "Production" ? "https://ps.example" : RoleHost.Ps);
-            if (environment == "Production") options.EgressPolicy = AAuth.Discovery.AAuthEgressPolicy.Production;
+            if (environment == "Production")
+            {
+                options.EgressPolicy = AAuth.Discovery.AAuthEgressPolicy.Production;
+                options.PairwiseSubjectSecrets["test"] = "0123456789abcdef0123456789abcdef";
+            }
         });
         await using var app = builder.Build();
         app.MapAAuthPersonServer();

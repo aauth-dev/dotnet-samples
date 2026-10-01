@@ -19,6 +19,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace AAuth.Conformance.Person;
@@ -55,10 +56,12 @@ public class PersonServerMapperTests
     // consent seam (default = the conservative DefaultMissionTokenConsent).
     private static async Task<IHost> BuildHostAsync(
         IIdentityClaimsAsserter? asserter = null, IMissionTokenConsent? consent = null, bool demoResource = false,
-        IJtiStore? inventory = null)
+        IJtiStore? inventory = null, bool preEnrollDefaults = true,
+        IAgentPersonBindingStore? bindingStore = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
+        var enrollments = new InMemoryPersonResourceEnrollmentStore();
 
         builder.Services.AddSingleton(new AAuthVerifier { MaxAge = TimeSpan.FromSeconds(300) });
         builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = TestEgress.Policy });
@@ -68,6 +71,9 @@ public class PersonServerMapperTests
         builder.Services.AddSingleton(sp => new UpstreamTokenValidator(
             sp.GetRequiredService<MetadataClient>(), sp.GetRequiredService<JwksClient>()));
         builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+        builder.Services.AddSingleton<IPersonResourceEnrollmentStore>(enrollments);
+        builder.Services.AddSingleton<IPersonSubjectDeriver>(new FixedSubjectDeriver());
+        if (bindingStore is not null) builder.Services.AddSingleton(bindingStore);
         builder.Services.AddSingleton(asserter ?? new DefaultIdentityClaimsAsserter("user-42"));
         if (consent is not null)
         {
@@ -87,9 +93,25 @@ public class PersonServerMapperTests
         var app = builder.Build();
         app.MapAAuthPersonServer();
         await app.StartAsync();
+        if (preEnrollDefaults)
+        {
+            await enrollments.RecordAsync(new PersonResourceEnrollment(
+                PsIssuer, new AAuthPersonKey("user-42"), ResourceUrl, "user-42", "test", DateTimeOffset.UtcNow));
+            await enrollments.RecordAsync(new PersonResourceEnrollment(
+                PsIssuer, new AAuthPersonKey("upstream-user"), "https://ap.example", "upstream-user", "test", DateTimeOffset.UtcNow));
+            await enrollments.RecordAsync(new PersonResourceEnrollment(
+                PsIssuer, new AAuthPersonKey("upstream-user"), ResourceUrl, "upstream-user", "test", DateTimeOffset.UtcNow));
+        }
         await app.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
             S256, PsIssuer, AgentId, new byte[] { 1, 2, 3 }));
         return app;
+    }
+
+    private sealed class FixedSubjectDeriver : IPersonSubjectDeriver
+    {
+        public Task<DerivedPersonSubject> DeriveAsync(
+            string personServer, AAuthPersonKey personKey, string resource, CancellationToken cancellationToken = default)
+            => Task.FromResult(new DerivedPersonSubject(personKey.Value, "test"));
     }
 
     private static async Task<HttpClient> SignedAgentClientAsync(IHost host, AAuthKey agentKey, string agentId, TimeSpan? lifetime = null,
@@ -277,6 +299,94 @@ public class PersonServerMapperTests
         Assert.Equal(agentKey.ComputeJwkThumbprint(), boundKey.ComputeJwkThumbprint());
 
         await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Agent-Person Binding — a second person key for the same agent is denied until revocation")]
+    public async Task PersonTokenEndpoint_RejectsSecondPersonUntilBindingRevoked()
+    {
+        var agentKey = AAuthKey.Generate();
+        var inventory = new InMemoryJtiStore();
+        var bindings = new InMemoryAgentPersonBindingStore();
+        var asserter = new SequenceAsserter(
+            IdentityAssertion.Assert(new AAuthPersonKey("alice")),
+            IdentityAssertion.Assert(new AAuthPersonKey("bob")),
+            IdentityAssertion.Assert(new AAuthPersonKey("bob")));
+        using var host = await BuildHostAsync(asserter, inventory: inventory,
+            preEnrollDefaults: false, bindingStore: bindings);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+
+        using var first = await http.PostAsJsonAsync("/person", new JsonObject { ["resource"] = ResourceUrl });
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        await Task.Delay(TimeSpan.FromSeconds(1.1));
+        using var second = await http.PostAsJsonAsync("/person", new JsonObject { ["resource"] = ResourceUrl });
+        Assert.Equal(HttpStatusCode.Forbidden, second.StatusCode);
+
+        await bindings.RevokeAsync(PsIssuer, "https://ap.example", AgentId);
+        await Task.Delay(TimeSpan.FromSeconds(1.1));
+        using var third = await http.PostAsJsonAsync("/person", new JsonObject { ["resource"] = ResourceUrl });
+        Assert.Equal(HttpStatusCode.Accepted, third.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Agent-Person Binding — binding store failure denies before token emission")]
+    public async Task PersonTokenEndpoint_BindingStoreFailure_DeniesWithoutToken()
+    {
+        var agentKey = AAuthKey.Generate();
+        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert(new AAuthPersonKey("alice"))),
+            preEnrollDefaults: false, bindingStore: new ThrowingBindingStore());
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+
+        using var response = await http.PostAsJsonAsync("/person", new JsonObject { ["resource"] = ResourceUrl });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("denied", (string?)json?["error"]);
+        Assert.DoesNotContain("person_token", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact(DisplayName = "§Person Token Exposure — first issuance for a new resource requires approval")]
+    public async Task PersonTokenEndpoint_FirstIssuanceRequiresApproval()
+    {
+        var agentKey = AAuthKey.Generate();
+        using var host = await BuildHostAsync(preEnrollDefaults: false);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+
+        using var initial = await http.PostAsJsonAsync("/person", new JsonObject { ["resource"] = ResourceUrl });
+
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        Assert.DoesNotContain("person_token", await initial.Content.ReadAsStringAsync());
+        var id = initial.Headers.Location!.ToString().Split('/')[^1];
+        host.Services.GetRequiredService<IPersonPendingStore>()
+            .MarkAllowed(id, new AAuthPersonKey("user-42"), "user-42");
+        using var completed = await http.GetAsync(initial.Headers.Location);
+        Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Directed Identifiers — default HMAC subjects are pairwise and persisted by key version")]
+    public async Task HmacPairwiseSubjects_ArePairwiseAndPersistedAcrossKeyRotation()
+    {
+        var options = new MutableOptionsMonitor();
+        options.Current.PairwiseSubjectSecrets["v1"] = "0123456789abcdef0123456789abcdef";
+        options.Current.PairwiseSubjectSecrets["v2"] = "abcdef0123456789abcdef0123456789";
+        options.Current.ActivePairwiseSubjectKeyId = "v1";
+        var deriver = new HmacPersonSubjectDeriver(options, AAuthPersonServerBuilder.DefaultName);
+        var person = new AAuthPersonKey("person");
+
+        var a1 = await deriver.DeriveAsync(PsIssuer, person, "https://a.example");
+        var a2 = await deriver.DeriveAsync(PsIssuer, person, "https://a.example");
+        var b = await deriver.DeriveAsync(PsIssuer, person, "https://b.example");
+
+        Assert.Equal(a1.Subject, a2.Subject);
+        Assert.NotEqual(a1.Subject, b.Subject);
+        Assert.Equal("v1", a1.KeyId);
+
+        var store = new InMemoryPersonResourceEnrollmentStore();
+        await store.RecordAsync(new PersonResourceEnrollment(PsIssuer, person, "https://a.example", a1.Subject, a1.KeyId, DateTimeOffset.UtcNow));
+        options.Current.ActivePairwiseSubjectKeyId = "v2";
+        var rotated = await deriver.DeriveAsync(PsIssuer, person, "https://a.example");
+        var persisted = await store.GetAsync(PsIssuer, person, "https://a.example");
+        Assert.NotEqual(a1.Subject, rotated.Subject);
+        Assert.Equal(a1.Subject, persisted!.DirectedSubject);
+        Assert.Equal("v1", persisted.SubjectKeyId);
     }
 
     [Theory(DisplayName = "§Person Token Structure — a person token is capped at 1 h and by the agent, upstream and mission expiry")]
@@ -680,7 +790,7 @@ public class PersonServerMapperTests
         // The host's interaction page resolves the verdict against the store.
         var store = (InMemoryPersonPendingStore)host.Services.GetRequiredService<IPersonPendingStore>();
         var id = location[(location.LastIndexOf('/') + 1)..];
-        store.MarkAllowed(id, "user-99");
+        store.MarkAllowed(id, new AAuthPersonKey("user-99"), "user-99");
 
         using var poll = await http.GetAsync(location);
         Assert.Equal(HttpStatusCode.OK, poll.StatusCode);
@@ -999,8 +1109,8 @@ public class PersonServerMapperTests
         using var initial = await client.PostAsJsonAsync("/token", await TokenRequestAsync(key));
         var store = host.Services.GetRequiredService<IPersonPendingStore>();
         var id = initial.Headers.Location!.ToString().Split('/')[^1];
-        if (allow) { store.MarkAllowed(id, "user"); store.MarkDenied(id, "reversal"); }
-        else { store.MarkDenied(id, "denied"); store.MarkAllowed(id, "reversal"); }
+        if (allow) { store.MarkAllowed(id, new AAuthPersonKey("user"), "user"); store.MarkDenied(id, "reversal"); }
+        else { store.MarkDenied(id, "denied"); store.MarkAllowed(id, new AAuthPersonKey("reversal"), "reversal"); }
         var responses = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => client.GetAsync(initial.Headers.Location)));
         Assert.Single(responses, response => response.StatusCode == (allow ? HttpStatusCode.OK : HttpStatusCode.Forbidden));
         Assert.Equal(11, responses.Count(response => response.StatusCode == HttpStatusCode.Gone));
@@ -1062,7 +1172,7 @@ public class PersonServerMapperTests
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync(
-            new StubAsserter(IdentityAssertion.Assert("user-42")),
+            new StubAsserter(IdentityAssertion.Assert(new AAuthPersonKey("user-42"), "user-42")),
             new StubMissionConsent(_ => MissionTokenConsentDecision.Grant()));
         using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
@@ -1093,7 +1203,7 @@ public class PersonServerMapperTests
         var consent = new StubMissionConsent(ctx => ctx.ClarificationHistory.Count == 0
             ? MissionTokenConsentDecision.Clarify("Why do you need this scope?")
             : MissionTokenConsentDecision.Grant());
-        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
+        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert(new AAuthPersonKey("user-42"), "user-42")), consent);
         using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
         using var first = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: s256));
@@ -1134,7 +1244,7 @@ public class PersonServerMapperTests
         var consent = new StubMissionConsent(ctx => ctx.Stage == MissionTokenConsentStage.Gate
             ? MissionTokenConsentDecision.Interact()
             : MissionTokenConsentDecision.Deny("not allowed"));
-        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
+        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert(new AAuthPersonKey("user-42"), "user-42")), consent);
         using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
         using var first = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: s256));
@@ -1159,7 +1269,7 @@ public class PersonServerMapperTests
         var agentKey = AAuthKey.Generate();
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         var consent = new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?"));
-        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
+        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert(new AAuthPersonKey("user-42"), "user-42")), consent);
         using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
 
         using var first = await http.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: s256));
@@ -1184,7 +1294,7 @@ public class PersonServerMapperTests
         var agentKey = AAuthKey.Generate();
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         var consent = new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?"));
-        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
+        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert(new AAuthPersonKey("user-42"), "user-42")), consent);
         using var owner = await SignedAgentClientAsync(host, agentKey, AgentId);
 
         using var first = await owner.PostAsJsonAsync("/token", await TokenRequestAsync(agentKey, missionS256: s256));
@@ -1350,7 +1460,7 @@ public class PersonServerMapperTests
         Assert.True(entry.MissionGate);
         Assert.Equal(0, entry.ClarificationRounds);
         await missions.SetStateAsync(S256, MissionState.Terminated);
-        store.MarkAllowed(id, "user-42");
+        store.MarkAllowed(id, new AAuthPersonKey("user-42"), "user-42");
         using var poll = await client.GetAsync(initial.Headers.Location);
         Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
         Assert.Equal("mission_terminated", (string?)(await poll.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
@@ -1454,7 +1564,7 @@ public class PersonServerMapperTests
         var store = host.Services.GetRequiredService<IPersonPendingStore>();
         var entry = store.Get(response.Headers.Location!.ToString().Split('/')[^1])!;
         Assert.True(JsonNode.DeepEquals(payload, entry.ResourceContext));
-        store.MarkAllowed(entry.Id, "forged approval");
+        store.MarkAllowed(entry.Id, new AAuthPersonKey("forged approval"), "forged approval");
         using var poll = await client.GetAsync(response.Headers.Location);
         Assert.Equal(HttpStatusCode.Accepted, poll.StatusCode);
         Assert.Null(asserter.Last);
@@ -1601,8 +1711,33 @@ public class PersonServerMapperTests
             IdentityAssertionRequest request, CancellationToken cancellationToken = default)
         {
             Last = request;
-            return Task.FromResult(IdentityAssertion.Assert("user-42"));
+            return Task.FromResult(IdentityAssertion.Assert(new AAuthPersonKey("user-42"), "user-42"));
         }
+    }
+
+    private sealed class SequenceAsserter(params IdentityAssertion[] assertions) : IIdentityClaimsAsserter
+    {
+        private int _index;
+        public Task<IdentityAssertion> AssertAsync(
+            IdentityAssertionRequest request, CancellationToken cancellationToken = default)
+            => Task.FromResult(assertions[Math.Min(_index++, assertions.Length - 1)]);
+    }
+
+    private sealed class ThrowingBindingStore : IAgentPersonBindingStore
+    {
+        public Task<AgentPersonBindingRecord?> BindOrVerifyAsync(AgentPersonBindingContext binding, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("store unavailable");
+
+        public Task<AgentPersonBindingRecord?> RevokeAsync(string personServer, string agentIssuer, string agentId, CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentPersonBindingRecord?>(null);
+    }
+
+    private sealed class MutableOptionsMonitor : IOptionsMonitor<AAuthPersonServerOptions>
+    {
+        public AAuthPersonServerOptions Current { get; } = new() { Issuer = PsIssuer };
+        public AAuthPersonServerOptions CurrentValue => Current;
+        public AAuthPersonServerOptions Get(string? name) => Current;
+        public IDisposable? OnChange(Action<AAuthPersonServerOptions, string?> listener) => null;
     }
 
     // Serves the resource's well-known metadata + JWKS so the SDK's

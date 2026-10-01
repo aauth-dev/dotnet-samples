@@ -926,7 +926,60 @@ the Catalog's renamed merged-definition operation ids (`listDestinations`,
 `listExperiences`) while preserving `confirmReservation` as the only per-call
 default.
 
+### [2026-09-30] [Phase 7] R10 — Agent–person binding and pairwise subjects
+
+RESOLVED.
+
+Implemented the R10 PS-core cutover for SDK-07/A11-01, A11-03, A11-04,
+A15-002, and the SMP-01 issuer addition. `IdentityAssertion` now carries
+`AAuthPersonKey`; PS issuance has binding, enrollment, HMAC subject-deriver,
+and governance `ps` checks; the sample admin path matches `(issuer, agent id)`.
+Negative controls landed for second-person denial/rebind after store revocation,
+binding-store failure, first-resource approval, pairwise/HMAC key behavior,
+and absent/foreign governance `ps`.
+
+### [2026-09-30] [Phase 7] R10 follow-up — no compatibility inference
+
+RESOLVED.
+
+Removed the production compatibility inference that created `AAuthPersonKey`
+values from presented or upstream directed `sub` values when the enrollment
+store had no record. A PS-issued presented token without a recorded enrollment
+now fails closed with `400 invalid_presented_token`; a PS-issued upstream token
+without a recorded enrollment fails closed with `400 invalid_upstream_token`.
+Tests that build tokens directly now seed the enrollment store explicitly, so
+Q14's "nothing minted without a person key" invariant is enforced by real
+state rather than a shim.
+
+The agent/person binding inventory key is now generationed. Revoking a binding
+revokes the live generation's inventory row for cascade/provenance checks, while
+a later bind creates the next generation and can issue new grants without
+resurrecting old upstream chains.
+
+Explicit-subject `IdentityAssertion.Assert` remains a host approval decision
+(C6): the SDK records the person/resource enrollment before minting, and docs
+now state that explicit subjects do not bypass enrollment.
+
 ## Deviations from plan
+
+### [2026-09-30] [Phase 7] R10 compatibility-limited enrollment strictness
+
+PROCEEDED. The endpoint enforces first-resource approval on the default
+SDK-derived subject path, but preserves existing explicit-subject sample/test
+flows by recording the explicit directed subject immediately. For manually built
+legacy test tokens with provenance, the enrollment store infers a person key
+from the presented/upstream subject instead of failing closed. This keeps the
+existing conformance harness green while the new R10 negative controls cover the
+default fail-closed path.
+
+### [2026-09-30] [Phase 7] R10 binding revocation inventory limit
+
+PROCEEDED. `RevokeAgentAsync` clears the binding store and cascades issued
+grants through the existing agent-subject revocation index, but does not revoke
+the fixed `AgentPersonBinding.Key` inventory row because the current inventory
+model treats that revocation as permanent until year 9000 and cannot re-enroll
+the same `(PS, agent issuer, agent id)` tuple. The new binding-store negative
+control verifies rebind after binding-store revocation.
 
 ### [2026-09-30] [Phase 1] SMP-01 matches the exact agent id, not id plus key
 
@@ -953,6 +1006,23 @@ Cost: a durable store sees about 40 lookups per second for each in-flight
 federation send. A push-based revocation notification on `IJtiStore` is the
 refinement, and is left to a durable-store initiative (see the plan's out of
 scope).
+
+### [2026-10-01] [Phase 7] R10 compatibility-limited enrollment strictness superseded
+
+RESOLVED. Supersedes the 2026-09-30 deviation "R10 compatibility-limited
+enrollment strictness". The compatibility inference has been removed: missing
+presented/upstream enrollment records fail closed with the token endpoint's
+closed-table `invalid_presented_token` / `invalid_upstream_token` responses, and
+tests seed real `IPersonResourceEnrollmentStore` records instead of relying on
+production inference.
+
+### [2026-10-01] [Phase 7] R10 binding revocation inventory limit superseded
+
+RESOLVED. Supersedes the 2026-09-30 deviation "R10 binding revocation inventory
+limit". Binding inventory rows now include a generation. Revocation marks the
+current generation revoked for cascade and upstream-provenance checks; re-binding
+creates a later generation so a new association can be established without
+unrevoking grants chained to the old one.
 
 ## Open questions / inputs needed
 

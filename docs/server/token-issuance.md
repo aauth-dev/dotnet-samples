@@ -408,6 +408,8 @@ instances with `MatchIssuerHost`, see
 | `RevocationPath` | `string` | No | `/revoke` | The revocation endpoint path |
 | `PendingPathPrefix` | `string` | No | `/pending` | The deferred-consent poll path prefix |
 | `DefaultScope` | `string` | No | `""` | Scope assumed when the resource token omits one |
+| `PairwiseSubjectSecrets` | `IDictionary<string,string>` | Production | empty | Versioned HMAC secrets for default pairwise `sub` derivation. Development/test use an ephemeral secret with a warning |
+| `ActivePairwiseSubjectKeyId` | `string?` | No | `null` | Key id used for new derived subjects; existing enrollments keep their stored subject/key version |
 | `InteractionPath` | `string` | No | `/interaction` | Path the host maps for the consent page |
 | `Trust` | `AAuthTrustOptions` | No | `new()` | `Trust.AccessServers` governs the Access Server URLs the PS will federate to. Unconfigured ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); `Allowed` empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. `Predicate` AND-composes; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
 | `InteractionEndpointPath` | `string?` | No | `null` | §Interaction Endpoint path; advertised in metadata as issuer + path (falls back to `InteractionPath`) |
@@ -423,9 +425,9 @@ on the builder, or resolve the default with
 ### The `IIdentityClaimsAsserter` seam
 
 The asserter is the only PS-specific decision the helper cannot make for you —
-it returns the directed `sub` (plus optional `tenant` / `roles` / `groups` /
-additional claims) and the consent verdict. It mirrors `IAccessPolicy` on the AS
-side:
+it returns the stable internal `AAuthPersonKey`, an optional explicit directed
+`sub` (plus optional `tenant` / `roles` / `groups` / additional claims), and the
+consent verdict. It mirrors `IAccessPolicy` on the AS side:
 
 ```csharp
 public interface IIdentityClaimsAsserter
@@ -439,9 +441,16 @@ The host maps the returned `IdentityAssertion` to the spec wire response:
 
 | `IdentityAssertion` | Wire response |
 | --- | --- |
-| `IdentityAssertion.Assert(sub, …)` | mint the auth token (three-party) / push the claims (four-party) |
+| `IdentityAssertion.Assert(personKey, subject, …)` | host-approved identity/consent: record enrollment, then mint the person/auth token (three-party) or push the claims (four-party) |
 | `IdentityAssertion.Deny(reason)` | `403 denied` |
 | `IdentityAssertion.NeedsConsent()` | `202` + `AAuth-Requirement: requirement=interaction` + `Location` (poll `GET /pending/{id}`) |
+
+`Assert` is the host's approval decision. If it supplies an explicit directed
+`subject` for a resource the person has not used before, the SDK records the
+first-resource enrollment before minting; it does not infer a person key later
+from a presented or upstream token. If `subject` is omitted, the SDK derives the
+pairwise subject from `personKey`, fetches resource metadata for the first
+issuance, and parks for consent unless the enrollment already exists.
 
 When the asserter returns `NeedsConsent()`, the helper parks the request and
 returns the `202`; the host's own interaction page (mapped at `InteractionPath`)
@@ -471,7 +480,7 @@ builder.Services.AddSingleton<IPersonPendingObserver, DashboardFeed>();
 var decided = await entry.Browser.CompleteOutOfBandAsync(entry.Lifecycle, ct =>
 {
     if (entry.Status != PersonPendingStatus.Pending) return Task.FromResult(false);
-    pending.MarkAllowed(entry.Id, subject: directedSubject);
+    pending.MarkAllowed(entry.Id, personKey: new AAuthPersonKey("internal-person-id"), subject: directedSubject);
     return Task.FromResult(true);
 }, cancellationToken);
 

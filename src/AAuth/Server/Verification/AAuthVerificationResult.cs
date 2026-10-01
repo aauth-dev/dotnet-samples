@@ -39,6 +39,14 @@ public sealed class AAuthVerificationResult
     /// <summary>The person's PS: a person token's <c>iss</c>, an auth token's <c>ps</c>.</summary>
     public string? PersonServer { get; init; }
 
+    /// <summary>
+    /// The signed agent-token <c>ps</c> claim. This is used only by Person
+    /// Server governance endpoints to ensure the agent is governed by this PS;
+    /// resource authorization and token issuance derive the PS from person/auth
+    /// tokens instead.
+    /// </summary>
+    public string? AgentPersonServer { get; init; }
+
     /// <summary>The mission the person or auth token is under (<c>mission_s256</c>).</summary>
     public string? MissionS256 { get; init; }
 

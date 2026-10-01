@@ -53,7 +53,9 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
                 && entry.PendingExpiresAt > DateTimeOffset.UtcNow
                 && _consent.IsConsented(entry.ConsentAgentId, entry.ResourceUrl, entry.Scope, entry.Account, entry.ResourceKeyThumbprint))
             {
-                var isAdmin = SampleIdentityClaimsAsserter.IsAdminAgent(entry.ConsentAgentId);
+                var isAdmin = entry.OwnerIssuer is not null
+                    && SampleIdentityClaimsAsserter.IsAdminAgent(entry.OwnerIssuer, entry.ConsentAgentId);
+                entry.PersonKey = SampleIdentityClaimsAsserter.DemoPersonKey;
                 entry.Subject = SampleIdentityClaimsAsserter.DirectedSubject(entry.ResourceUrl);
                 entry.Tenant = null;
                 entry.Roles = isAdmin ? _demoRoles : null;
@@ -70,10 +72,10 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
     public PersonPendingEntry? GetByCode(string code) => _inner.GetByCode(code);
 
     public void MarkAllowed(
-        string id, string subject, string? tenant = null,
+        string id, AAuthPersonKey personKey, string? subject = null, string? tenant = null,
         IReadOnlyList<string>? roles = null, IReadOnlyList<string>? groups = null,
         IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null)
-        => _inner.MarkAllowed(id, subject, tenant, roles, groups, additionalClaims);
+        => _inner.MarkAllowed(id, personKey, subject, tenant, roles, groups, additionalClaims);
 
     public void MarkDenied(string id, string reason) => _inner.MarkDenied(id, reason);
 }

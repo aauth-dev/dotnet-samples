@@ -56,12 +56,15 @@ public sealed class PersonConsentDecisions(ConsentStore consent,
         var asserted = await asserter.AssertAsync(new IdentityAssertionRequest
         {
             ResourceUrl = entry.ResourceUrl, Scope = entry.Scope, AgentId = entry.ConsentAgentId,
+            AgentIssuer = entry.OwnerIssuer ?? "https://ap.example",
             Account = entry.Account, AgentKeyThumbprint = entry.ResourceKeyThumbprint,
+            PersonKey = entry.PersonKey,
             MissionS256 = entry.MissionS256, RequiredClaims = entry.RequiredIdentityClaims,
             ResourceContext = entry.ResourceContext, AgentAsserted = entry.AgentAsserted, InteractionId = entry.Id,
         }, cancellationToken);
         if (asserted.Kind != IdentityAssertionKind.Assert) return ConsentOutcome.Refused;
         cancellationToken.ThrowIfCancellationRequested();
+        entry.PersonKey = asserted.PersonKey;
         entry.Subject = asserted.Subject!;
         entry.Tenant = asserted.Tenant;
         entry.Roles = asserted.Roles;

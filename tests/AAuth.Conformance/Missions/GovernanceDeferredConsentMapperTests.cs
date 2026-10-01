@@ -62,6 +62,7 @@ public class GovernanceDeferredConsentMapperTests
                 Jkt = ctx.Request.Headers["Test-Key"].FirstOrDefault() ?? "verified-key",
                 TokenType = AAuthTokenType.AgentToken,
                 Agent = ctx.Request.Headers["Test-Agent"].FirstOrDefault() ?? Agent,
+                AgentPersonServer = Ps,
                 CoveredComponents = ctx.Request.Headers.ContainsKey("Test-Uncovered-Body")
                     ? new HashSet<string> { "@method", "@authority", "@path", "signature-key" }
                     : new HashSet<string> { "@method", "@authority", "@path", "signature-key", "content-type", "content-digest" },

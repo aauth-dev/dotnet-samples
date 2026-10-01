@@ -270,7 +270,7 @@ public class MissionPersonTokenIssuanceTests
             {
                 Consent => IdentityAssertion.NeedsConsent(),
                 Denied => IdentityAssertion.Deny("not for this resource"),
-                _ => IdentityAssertion.Assert("user-42"),
+                _ => IdentityAssertion.Assert(new AAuthPersonKey("user-42"), "user-42"),
             });
     }
 

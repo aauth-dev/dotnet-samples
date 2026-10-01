@@ -56,6 +56,7 @@ public class GovernancePendingSignatureTests
             {
                 EgressPolicy = TestEgress.Policy, Issuer = issuer, Subject = agent,
                 Key = issuerKey, KeyId = "key", ConfirmationKey = key,
+                PersonServer = "https://ps.example",
             }.BuildAsync();
             return new InProcessHttpClient(new AAuthSigningHandler(key, new JwtSignatureKeyProvider(() => token))
             {

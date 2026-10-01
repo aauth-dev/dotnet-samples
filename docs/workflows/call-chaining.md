@@ -234,21 +234,24 @@ The PS also answers `revoked_upstream_token` when it has revoked the calling
 agent (the agent it issued the upstream token to): its agent token, or its
 agent-person binding. Every token the PS issues directly to an agent is recorded
 against that agent's binding, so revoking the binding blocks the agent, even
-after it refreshes its agent token, and every chain that started from it. Register
-the inventory with `UseTokenInventory` on the Person Server builder so the host
-holds it:
+after it refreshes its agent token, and every chain that started from it. A
+later enrollment creates a new binding generation; it does not un-revoke the old
+chains. Register the inventory and the binding store on the Person Server
+builder so the host holds both:
 
 ```csharp
 var inventory = new InMemoryJtiStore();   // use a durable IJtiStore in production
+var bindings = new InMemoryAgentPersonBindingStore();
 builder.Services.AddAAuthPersonServer(configure: options =>
     {
         options.Issuer      = psIssuer;
         options.SigningKeys = new AAuthSigningKeySet(PsKid, psKey);
     })
+    .UseAgentPersonBindingStore(bindings)
     .UseTokenInventory(inventory);
 
 // Later, when the person unlinks the agent:
-await AgentPersonBinding.RevokeAsync(inventory, psIssuer, "https://ap.example", "aauth:assistant@ap.example");
+await AgentPersonBinding.RevokeAsync(inventory, bindings, psIssuer, "https://ap.example", "aauth:assistant@ap.example");
 ```
 
 ### Downstream Auth Tokens Carry No Delegation Chain

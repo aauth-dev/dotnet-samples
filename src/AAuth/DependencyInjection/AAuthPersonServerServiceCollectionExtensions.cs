@@ -7,6 +7,7 @@ using AAuth.Server.Governance;
 using AAuth.Tokens;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -69,6 +70,33 @@ public sealed class AAuthPersonServerBuilder
 
     /// <inheritdoc cref="UseClaimsAsserter{T}()"/>
     public AAuthPersonServerBuilder UseClaimsAsserter(Func<IServiceProvider, IIdentityClaimsAsserter> factory) => Use(factory);
+
+    /// <summary>Replace the agent/person binding store (default <see cref="InMemoryAgentPersonBindingStore"/>).</summary>
+    public AAuthPersonServerBuilder UseAgentPersonBindingStore<T>() where T : class, IAgentPersonBindingStore => Use<IAgentPersonBindingStore, T>();
+
+    /// <inheritdoc cref="UseAgentPersonBindingStore{T}()"/>
+    public AAuthPersonServerBuilder UseAgentPersonBindingStore(IAgentPersonBindingStore store) => Use(store);
+
+    /// <inheritdoc cref="UseAgentPersonBindingStore{T}()"/>
+    public AAuthPersonServerBuilder UseAgentPersonBindingStore(Func<IServiceProvider, IAgentPersonBindingStore> factory) => Use(factory);
+
+    /// <summary>Replace the person/resource enrollment store (default <see cref="InMemoryPersonResourceEnrollmentStore"/>).</summary>
+    public AAuthPersonServerBuilder UsePersonResourceEnrollmentStore<T>() where T : class, IPersonResourceEnrollmentStore => Use<IPersonResourceEnrollmentStore, T>();
+
+    /// <inheritdoc cref="UsePersonResourceEnrollmentStore{T}()"/>
+    public AAuthPersonServerBuilder UsePersonResourceEnrollmentStore(IPersonResourceEnrollmentStore store) => Use(store);
+
+    /// <inheritdoc cref="UsePersonResourceEnrollmentStore{T}()"/>
+    public AAuthPersonServerBuilder UsePersonResourceEnrollmentStore(Func<IServiceProvider, IPersonResourceEnrollmentStore> factory) => Use(factory);
+
+    /// <summary>Replace the pairwise subject deriver (default <see cref="HmacPersonSubjectDeriver"/>).</summary>
+    public AAuthPersonServerBuilder UsePersonSubjectDeriver<T>() where T : class, IPersonSubjectDeriver => Use<IPersonSubjectDeriver, T>();
+
+    /// <inheritdoc cref="UsePersonSubjectDeriver{T}()"/>
+    public AAuthPersonServerBuilder UsePersonSubjectDeriver(IPersonSubjectDeriver deriver) => Use(deriver);
+
+    /// <inheritdoc cref="UsePersonSubjectDeriver{T}()"/>
+    public AAuthPersonServerBuilder UsePersonSubjectDeriver(Func<IServiceProvider, IPersonSubjectDeriver> factory) => Use(factory);
 
     /// <summary>Replace the token verifier (default: the instance's egress policy and time provider).</summary>
     public AAuthPersonServerBuilder UseTokenVerifier(TokenVerifier verifier) => Use(verifier);
@@ -175,6 +203,13 @@ public static class AAuthPersonServerServiceCollectionExtensions
             sp.GetService<IPersonPendingStore>() ?? new InMemoryPersonPendingStore());
         services.TryAddKeyedSingleton<IIdentityClaimsAsserter>(name, (sp, _) =>
             sp.GetService<IIdentityClaimsAsserter>() ?? new DefaultIdentityClaimsAsserter());
+        services.TryAddKeyedSingleton<IAgentPersonBindingStore>(name, (sp, _) =>
+            sp.GetService<IAgentPersonBindingStore>() ?? new InMemoryAgentPersonBindingStore());
+        services.TryAddKeyedSingleton<IPersonResourceEnrollmentStore>(name, (sp, _) =>
+            sp.GetService<IPersonResourceEnrollmentStore>() ?? new InMemoryPersonResourceEnrollmentStore());
+        services.TryAddKeyedSingleton<IPersonSubjectDeriver>(name, (sp, key) =>
+            sp.GetService<IPersonSubjectDeriver>() ?? new HmacPersonSubjectDeriver(
+                sp.GetRequiredService<IOptionsMonitor<AAuthPersonServerOptions>>(), (string)key!));
         services.TryAddKeyedSingleton<TokenVerifier>(name, (sp, key) => sp.GetService<TokenVerifier>() ?? Verifier(sp, (string)key!));
         services.TryAddKeyedSingleton<IJtiStore>(name, (sp, key) => sp.GetService<IJtiStore>()
             ?? new InMemoryJtiStore(sp.GetRequiredService<IOptionsMonitor<AAuthPersonServerOptions>>().Get((string)key!).TimeProvider));
@@ -216,6 +251,12 @@ internal sealed class PersonServerOptionsValidator(IServiceProvider services) : 
         catch (InvalidOperationException exception) { failures.Add(exception.Message); }
         if (options.SigningKeys.Count == 0 && string.IsNullOrEmpty(options.KeyHandle))
             failures.Add("AAuthPersonServerOptions needs a signing key: add one to SigningKeys or set KeyHandle.");
+        if (services.GetService<Microsoft.Extensions.Hosting.IHostEnvironment>()?.IsProduction() == true
+            && options.PairwiseSubjectSecrets.Count == 0)
+            failures.Add("AAuthPersonServerOptions.PairwiseSubjectSecrets must configure a durable secret in Production.");
+        if (!string.IsNullOrWhiteSpace(options.ActivePairwiseSubjectKeyId)
+            && !options.PairwiseSubjectSecrets.ContainsKey(options.ActivePairwiseSubjectKeyId))
+            failures.Add("AAuthPersonServerOptions.ActivePairwiseSubjectKeyId must name an entry in PairwiseSubjectSecrets.");
         AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.TokenPath, nameof(options.TokenPath), failures);
         AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.PersonTokenPath, nameof(options.PersonTokenPath), failures);
         AAuthMetadataUrl.ValidateDerivedEndpoint(options.EgressPolicy, options.Issuer, options.RevocationPath, nameof(options.RevocationPath), failures);

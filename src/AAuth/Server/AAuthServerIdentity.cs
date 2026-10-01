@@ -130,7 +130,8 @@ internal static class AAuthServerRoles
         if (environment is null || environment.IsDevelopment()) return;
         foreach (var seam in seams)
         {
-            if (seam is InMemoryJtiStore or InMemoryPersonPendingStore or InMemoryAccessPendingStore
+            if (seam is InMemoryJtiStore or InMemoryPersonPendingStore or InMemoryAgentPersonBindingStore
+                or InMemoryPersonResourceEnrollmentStore or InMemoryAccessPendingStore
                 or InMemoryMissionStore or InMemoryMissionLog or InMemorySingleUseGate or InMemoryHeldInvocationStore)
             {
                 logger.LogWarning(

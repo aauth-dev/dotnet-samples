@@ -39,7 +39,8 @@ public interface IPersonPendingStore
     /// </summary>
     void MarkAllowed(
         string id,
-        string subject,
+        AAuthPersonKey personKey,
+        string? subject = null,
         string? tenant = null,
         IReadOnlyList<string>? roles = null,
         IReadOnlyList<string>? groups = null,
@@ -77,9 +78,9 @@ internal sealed class ObservedPersonPendingStore(IPersonPendingStore inner, IRea
     public PersonPendingEntry? Get(string id) => inner.Get(id);
     public PersonPendingEntry? GetByCode(string code) => inner.GetByCode(code);
 
-    public void MarkAllowed(string id, string subject, string? tenant = null, IReadOnlyList<string>? roles = null,
+    public void MarkAllowed(string id, AAuthPersonKey personKey, string? subject = null, string? tenant = null, IReadOnlyList<string>? roles = null,
         IReadOnlyList<string>? groups = null, IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null)
-        => inner.MarkAllowed(id, subject, tenant, roles, groups, additionalClaims);
+        => inner.MarkAllowed(id, personKey, subject, tenant, roles, groups, additionalClaims);
 
     public void MarkDenied(string id, string reason) => inner.MarkDenied(id, reason);
 }
@@ -222,6 +223,12 @@ public sealed class PersonPendingEntry
     /// <summary>The directed <c>sub</c> the asserter supplied on approval.</summary>
     public string? Subject { get; set; }
 
+    /// <summary>The stable PS-internal person key approved for this entry.</summary>
+    public AAuthPersonKey? PersonKey { get; set; }
+
+    /// <summary>Resource metadata fetched before first issuance approval.</summary>
+    public JsonObject? ResourceMetadata { get; set; }
+
     /// <summary>The asserted tenant claim, if any.</summary>
     public string? Tenant { get; set; }
 
@@ -334,7 +341,8 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
     /// <inheritdoc />
     public void MarkAllowed(
         string id,
-        string subject,
+        AAuthPersonKey personKey,
+        string? subject = null,
         string? tenant = null,
         IReadOnlyList<string>? roles = null,
         IReadOnlyList<string>? groups = null,
@@ -347,13 +355,14 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
             {
                 if (entry.Lifecycle.Delivered || entry.Lifecycle.Cancelled || entry.PendingExpiresAt <= DateTimeOffset.UtcNow
                     || entry.Status != PersonPendingStatus.Pending) return;
+                entry.PersonKey = personKey;
                 entry.Subject = subject;
                 entry.Tenant = tenant;
                 entry.Roles = roles;
                 entry.Groups = groups;
                 entry.AdditionalClaims = additionalClaims;
                 if (entry.FederationConsent is { } consent)
-                    consent.TrySetResult(IdentityAssertion.Assert(subject, tenant, roles, groups, additionalClaims));
+                    consent.TrySetResult(IdentityAssertion.Assert(personKey, subject, tenant, roles, groups, additionalClaims));
                 else
                     entry.Status = PersonPendingStatus.Allowed;
             }

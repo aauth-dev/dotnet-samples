@@ -19,7 +19,7 @@ internal static class UpstreamProvenanceTestSupport
         var agentIssuer = audience;
         var agentId = callerAgentId ?? "aauth:caller@origin.test";
         var callerToken = new TokenKey(agentIssuer, "caller-agent " + agentId);
-        var binding = AgentPersonBinding.Key(personServer, agentIssuer, agentId);
+        var binding = AgentPersonBinding.Key(personServer, agentIssuer, agentId, generation: 1);
         await inventory.RegisterAsync(callerToken, BindingExpiresAt);
         await inventory.RegisterAsync(binding, BindingExpiresAt);
         var caller = new UpstreamCallerRecord(agentIssuer, agentId, callerToken, binding);

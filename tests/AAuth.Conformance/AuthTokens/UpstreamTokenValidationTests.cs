@@ -127,7 +127,7 @@ public class UpstreamTokenValidationTests
         var auth = Registration(authToken);
         var expires = DateTimeOffset.UtcNow.AddHours(1);
         var agent = new TokenKey(Intermediary, "agent-token");
-        var binding = AgentPersonBinding.Key(PsIssuer, Intermediary, "aauth:agent@localhost");
+        var binding = AgentPersonBinding.Key(PsIssuer, Intermediary, "aauth:agent@localhost", generation: 1);
         var presented = new TokenKey(PsIssuer, "presented-person");
         await store.RegisterAsync(agent, expires);
         await store.RegisterAsync(binding, BindingExpiresAt);

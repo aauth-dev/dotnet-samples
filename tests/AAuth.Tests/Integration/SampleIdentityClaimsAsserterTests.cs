@@ -28,10 +28,30 @@ public class SampleIdentityClaimsAsserterTests
             ResourceUrl = "https://calendar.example",
             Scope = "calendar.read",
             AgentId = agentId,
+            AgentIssuer = "https://ap.example",
         });
 
         Assert.Equal(IdentityAssertionKind.Assert, assertion.Kind);
         Assert.Equal(admin, assertion.Roles is not null);
         Assert.Equal(admin, assertion.Groups is not null);
+    }
+
+    [Fact]
+    public async Task AdminRoles_RequireExactAgentIssuer()
+    {
+        var asserter = new SampleIdentityClaimsAsserter(new ConsentStore(), requireConsent: false,
+            demoRoles: ["calendar.owner"], demoGroups: ["demo-users"],
+            demoUserClaims: new Dictionary<string, string>());
+
+        var assertion = await asserter.AssertAsync(new IdentityAssertionRequest
+        {
+            ResourceUrl = "https://calendar.example",
+            Scope = "calendar.read",
+            AgentId = "aauth:demo@ap.example",
+            AgentIssuer = "https://attacker.example",
+        });
+
+        Assert.Null(assertion.Roles);
+        Assert.Null(assertion.Groups);
     }
 }

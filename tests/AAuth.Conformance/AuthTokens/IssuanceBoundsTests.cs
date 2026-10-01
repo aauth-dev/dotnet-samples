@@ -187,6 +187,7 @@ public class IssuanceBoundsTests
         public required AAuthKey ApKey { get; init; }
         public required AAuthKey ResourceKey { get; init; }
         public required IJtiStore Inventory { get; init; }
+        public required IPersonResourceEnrollmentStore Enrollments { get; init; }
         public AAuthKey ParentKey { get; } = AAuthKey.Generate();
         public AAuthKey ChildKey { get; } = AAuthKey.Generate();
 
@@ -198,6 +199,7 @@ public class IssuanceBoundsTests
             var apKey = AAuthKey.Generate();
             var resourceKey = AAuthKey.Generate();
             var inventory = new InMemoryJtiStore(clock);
+            var enrollments = new InMemoryPersonResourceEnrollmentStore();
             var discovery = new DiscoveryHandler(new Dictionary<string, IAAuthKey>
             {
                 [Ps] = psKey, [As] = issuerKey, [Ap] = apKey, [Resource] = resourceKey,
@@ -209,6 +211,7 @@ public class IssuanceBoundsTests
             builder.Services.AddSingleton(new MetadataClient(new InProcessHttpClient(discovery)));
             builder.Services.AddSingleton(new JwksClient(new InProcessHttpClient(discovery)));
             builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+            builder.Services.AddSingleton<IPersonResourceEnrollmentStore>(enrollments);
             builder.Services.AddSingleton<IAccessPendingStore, InMemoryAccessPendingStore>();
             builder.Services.AddSingleton<IIdentityClaimsAsserter>(new Asserter(deferred));
             builder.Services.AddSingleton<IAccessPolicy>(new Policy(deferred, claims, injectClaim));
@@ -240,7 +243,7 @@ public class IssuanceBoundsTests
                 app.MapAAuthPersonServer();
             await app.StartAsync();
             return new IssuerFixture { App = app, Access = access, Clock = clock, IssuerKey = issuerKey,
-                PsKey = psKey, ApKey = apKey, ResourceKey = resourceKey, Inventory = inventory };
+                PsKey = psKey, ApKey = apKey, ResourceKey = resourceKey, Inventory = inventory, Enrollments = enrollments };
         }
 
         private ValueTask<string> AgentTokenAsync(int seconds, bool child = false) => new AgentTokenBuilder
@@ -275,6 +278,11 @@ public class IssuanceBoundsTests
                 AgentTokenExpiresAt = Clock.Now.AddHours(1), TimeProvider = Clock, MissionS256 = mission,
                 Key = PsKey, KeyId = "key",
             }.BuildAsync();
+            if (!Access)
+            {
+                await Enrollments.RecordAsync(new PersonResourceEnrollment(
+                    Ps, new AAuthPersonKey("user"), Resource, "user", "test", Clock.Now));
+            }
             var body = new JsonObject
             {
                 ["agent_token"] = await AgentTokenAsync(parentSeconds),
@@ -303,6 +311,11 @@ public class IssuanceBoundsTests
                 MissionS256 = mission,
             }.BuildAsync();
                 if (!Access) await UpstreamProvenanceTestSupport.RecordAsync(Inventory, upstreamToken, Ps);
+                if (!Access)
+                {
+                    await Enrollments.RecordAsync(new PersonResourceEnrollment(
+                        Ps, new AAuthPersonKey("upstream-person"), Ap, "upstream-person", "test", Clock.Now));
+                }
                 body["upstream_token"] = upstreamToken;
             }
             return body;
@@ -312,7 +325,7 @@ public class IssuanceBoundsTests
         {
             var id = pending.Headers.Location!.OriginalString.Split('/')[^1];
             if (Access) App.Services.GetRequiredService<IAccessPendingStore>().MarkAllowed(id);
-            else App.Services.GetRequiredService<IPersonPendingStore>().MarkAllowed(id, "user");
+            else App.Services.GetRequiredService<IPersonPendingStore>().MarkAllowed(id, new AAuthPersonKey("user"), "user");
         }
 
         public async Task<JsonObject> AssertTokenAsync(HttpResponseMessage response, DateTimeOffset expectedExpiry)
@@ -337,7 +350,7 @@ public class IssuanceBoundsTests
     private sealed class Asserter(bool deferred) : IIdentityClaimsAsserter
     {
         public Task<IdentityAssertion> AssertAsync(IdentityAssertionRequest request, CancellationToken cancellationToken = default)
-            => Task.FromResult(deferred ? IdentityAssertion.NeedsConsent() : IdentityAssertion.Assert("user"));
+            => Task.FromResult(deferred ? IdentityAssertion.NeedsConsent() : IdentityAssertion.Assert(new AAuthPersonKey("user"), "user"));
     }
 
     private sealed class Policy(bool deferred, bool claims, bool injectClaim) : IAccessPolicy

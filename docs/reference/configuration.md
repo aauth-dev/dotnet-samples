@@ -119,6 +119,8 @@ key are validated at startup (`OptionsValidationException`).
 | `PendingPathPrefix` | `string` | `/pending` | Deferred-consent poll path prefix |
 | `DefaultScope` | `string` | `""` | Scope assumed when the resource token omits one |
 | `ScopesSupported` | `IReadOnlyList<string>?` | `null` | Scopes advertised as `scopes_supported` in PS metadata |
+| `PairwiseSubjectSecrets` | `IDictionary<string,string>` | empty | Versioned HMAC secrets for the default pairwise person-token `sub` deriver. Production requires a durable configured secret; Development/test use an ephemeral secret with a warning |
+| `ActivePairwiseSubjectKeyId` | `string?` | `null` | Key id in `PairwiseSubjectSecrets` used for new derived subjects; existing enrollments keep their stored key id and subject |
 | `InteractionPath` | `string` | `/interaction` | Path the host maps for the consent page |
 | `ResourceInteractionSessions` | `BrowserConsentSessions?` | `null` (per-PS default) | *Code-only.* Browser sessions for resource-interaction chaining under `{InteractionPath}/resource` |
 | `UnsignedPathPrefixes` | `IReadOnlyCollection<string>?` | `null` | Extra path prefixes the mapper's signature verification skips (the PS's own browser pages) |

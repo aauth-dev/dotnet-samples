@@ -17,26 +17,45 @@ public static class AgentPersonBinding
     // Bindings outlive any one agent token; a fixed far expiry keeps re-registration idempotent.
     internal static readonly DateTimeOffset ExpiresAt = new(9000, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
-    /// <summary>The inventory key of the binding between <paramref name="agentIssuer"/>'s agent <paramref name="agentId"/> and its person.</summary>
-    public static TokenKey Key(string personServer, string agentIssuer, string agentId)
+    /// <summary>The inventory key of one binding generation between <paramref name="agentIssuer"/>'s agent <paramref name="agentId"/> and its person.</summary>
+    public static TokenKey Key(string personServer, string agentIssuer, string agentId, long generation)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(personServer);
         ArgumentException.ThrowIfNullOrWhiteSpace(agentIssuer);
         ArgumentException.ThrowIfNullOrWhiteSpace(agentId);
-        return new TokenKey(personServer, "agent-person-binding " + agentIssuer + " " + agentId);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(generation);
+        return new TokenKey(personServer, "agent-person-binding " + generation.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + " " + agentIssuer + " " + agentId);
     }
 
     /// <summary>
     /// Revoke the binding in the PS's token inventory (the <see cref="IJtiStore"/> the PS was mapped with;
     /// register it in DI to share it with the host).
     /// </summary>
-    public static Task RevokeAsync(IJtiStore inventory, string personServer, string agentIssuer, string agentId,
+    public static Task RevokeAsync(IJtiStore inventory, AgentPersonBindingRecord binding,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(inventory);
-        return inventory.RevokeAsync(Key(personServer, agentIssuer, agentId), ExpiresAt, cancellationToken);
+        ArgumentNullException.ThrowIfNull(binding);
+        return inventory.RevokeAsync(binding.InventoryKey, ExpiresAt, cancellationToken);
     }
 
-    internal static TokenRegistration Registration(string personServer, string agentIssuer, string agentId)
-        => new(Key(personServer, agentIssuer, agentId), ExpiresAt);
+    /// <summary>
+    /// Revoke the binding in both the token inventory and the binding store so a
+    /// different person key can be enrolled only after the existing binding is
+    /// revoked.
+    /// </summary>
+    public static async Task<AgentPersonBindingRecord?> RevokeAsync(IJtiStore inventory, IAgentPersonBindingStore bindingStore,
+        string personServer, string agentIssuer, string agentId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(inventory);
+        ArgumentNullException.ThrowIfNull(bindingStore);
+        var binding = await bindingStore.RevokeAsync(personServer, agentIssuer, agentId, cancellationToken).ConfigureAwait(false);
+        if (binding is not null)
+            await RevokeAsync(inventory, binding, cancellationToken).ConfigureAwait(false);
+        return binding;
+    }
+
+    internal static TokenRegistration Registration(AgentPersonBindingRecord binding)
+        => new(binding.InventoryKey, ExpiresAt);
 }
