@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Errors;
@@ -293,7 +294,7 @@ public sealed class ChallengeHandler : DelegatingHandler
                 // The exchange to the PS is agent-signed by a dedicated agent-token channel
                 // (see AAuthClientBuilder) that is independent of this handler's carrier
                 // holder, so it stays agent-signed across successive step-up challenges.
-                var exchangeOptions = ExchangeOptions(request, upstreamToken, requestedMission, presented);
+                var exchangeOptions = ExchangeOptions(request, upstreamToken, requestedMission, presented, verified.Payload);
                 carrier = await _holder.AcquireAsync(request, presented,
                     ct => _exchange.ExchangeAsync(personServer, requirement.ResourceToken!, exchangeOptions, ct),
                     cancellationToken).ConfigureAwait(false);
@@ -331,8 +332,17 @@ public sealed class ChallengeHandler : DelegatingHandler
         return response;
     }
 
+    private static string? ResourceLoginHint(JsonObject resourcePayload)
+    {
+        if (!resourcePayload.TryGetPropertyValue("login_hint", out var node) || node is null)
+            return null;
+        if (node is JsonValue value && value.TryGetValue<string>(out var text))
+            return text;
+        throw new TokenVerificationException("Resource token 'login_hint' must be a string.");
+    }
+
     private TokenExchangeRequest ExchangeOptions(HttpRequestMessage request, string? upstreamToken,
-        string? missionS256, string? presentedToken) => new()
+        string? missionS256, string? presentedToken, JsonObject? resourcePayload = null) => new()
     {
         Account = AAuthRequestOptions.GetAccount(request),
         PresentedToken = presentedToken,
@@ -343,6 +353,7 @@ public sealed class ChallengeHandler : DelegatingHandler
         UpstreamToken = upstreamToken,
         Capabilities = Capabilities,
         Prompt = Prompt,
+        LoginHint = resourcePayload is null ? null : ResourceLoginHint(resourcePayload),
         OnClarificationRequired = request.Options.TryGetValue(AAuthRequestOptions.ClarificationHandler, out var clarification)
             ? clarification.OnClarificationRequiredAsync : OnClarificationRequired,
         MaxClarificationRounds = MaxClarificationRounds,
@@ -389,7 +400,7 @@ public sealed class ChallengeHandler : DelegatingHandler
                 || payload["cnf"]?["jwk"] is not System.Text.Json.Nodes.JsonObject jwk
                 || AAuth.Crypto.KeyFactory.FromPublicJwk(jwk).ComputeJwkThumbprint() != signingKey.ComputeJwkThumbprint()
                 || payload["exp"] is not System.Text.Json.Nodes.JsonValue exp || !exp.TryGetValue<long>(out var expires)
-                || expires <= DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds())
+                || expires <= (DateTimeOffset.UtcNow + AAuthTokenHolder.CarrierRefreshMargin).ToUnixTimeSeconds())
                 return null;
             return token;
         }

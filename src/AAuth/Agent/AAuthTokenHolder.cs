@@ -17,6 +17,7 @@ public sealed class AAuthTokenHolder
     private volatile string _current;
     private readonly IAAuthTokenCache _cache;
     private static readonly System.Net.Http.HttpRequestOptionsKey<string> SourceToken = new("AAuth.CarrierSourceToken");
+    internal static readonly TimeSpan CarrierRefreshMargin = TimeSpan.FromMinutes(5);
 
     /// <summary>Create the holder with an initial token (typically the agent token).</summary>
     public AAuthTokenHolder(string initialToken)
@@ -51,7 +52,9 @@ public sealed class AAuthTokenHolder
     {
         request.Options.Set(SourceToken, agentToken);
         // Only the cache answers: a cleared cache (sign-out) must never fall back to Current.
-        return Key(request, agentToken, signingKeyThumbprint) is { } key && _cache.Get(key) is { } cached
+        return Key(request, agentToken, signingKeyThumbprint) is { } key
+            && _cache.Get(key) is { } cached
+            && IsUsable(cached)
             ? cached : agentToken;
     }
 
@@ -74,6 +77,15 @@ public sealed class AAuthTokenHolder
             && Key(request, agentToken, signingKey.ComputeJwkThumbprint()) is { } key
                 ? await _cache.AcquireAsync(key, presented, acquire, cancellationToken).ConfigureAwait(false)
                 : await acquire(cancellationToken).ConfigureAwait(false);
+        if (!IsUsable(token))
+        {
+            token = await acquire(cancellationToken).ConfigureAwait(false);
+            if (!IsUsable(token))
+            {
+                throw new AAuth.Tokens.TokenVerificationException(
+                    "Acquired carrier token expires within the refresh margin.");
+            }
+        }
         _current = token;
         return token;
     }
@@ -91,4 +103,7 @@ public sealed class AAuthTokenHolder
     internal static DateTimeOffset ExpiresAt(string token)
         => (long?)TokenRefreshHandler.ReadPayloadUnsafe(token)["exp"] is { } exp
             ? DateTimeOffset.FromUnixTimeSeconds(exp) : DateTimeOffset.MinValue;
+
+    internal static bool IsUsable(string token)
+        => ExpiresAt(token) > DateTimeOffset.UtcNow + CarrierRefreshMargin;
 }

@@ -13,6 +13,24 @@ using AAuth.Tokens;
 
 namespace AAuth.Agent;
 
+/// <summary>Primitive token-exchange verification policy.</summary>
+public sealed class TokenExchangeClientOptions
+{
+    /// <summary>
+    /// Verify the returned auth token's issuer signature through well-known
+    /// metadata and JWKS before accepting it. Structural and context checks
+    /// always run even when this policy opt-out is set to <see langword="false"/>.
+    /// </summary>
+    public bool VerifyAuthTokenSignature { get; init; } = true;
+
+    /// <summary>
+    /// JWKS client used for returned auth-token signature verification. When
+    /// omitted, the primitive creates a cached client using the metadata
+    /// client's egress policy. DI/builder paths pass the shared singleton.
+    /// </summary>
+    public JwksClient? JwksClient { get; init; }
+}
+
 /// <summary>
 /// Exchanges a resource token at the agent's Person Server for an auth
 /// token (three-party autonomous flow). Returns the auth-token JWT on
@@ -29,14 +47,18 @@ namespace AAuth.Agent;
 public sealed class TokenExchangeClient
 {
     private readonly DeferredExchange _exchange;
+    private readonly TokenExchangeClientOptions _options;
+    private readonly TokenVerifier _tokenVerifier;
 
     /// <summary>Create the exchange client.</summary>
     /// <param name="signedClient">HttpClient already wired with an <see cref="HttpSig.AAuthSigningHandler"/>.</param>
     /// <param name="metadata">Metadata client for resolving the PS <c>auth_token_endpoint</c>.</param>
-    public TokenExchangeClient(HttpClient signedClient, MetadataClient metadata)
+    public TokenExchangeClient(HttpClient signedClient, MetadataClient metadata, TokenExchangeClientOptions? options = null)
     {
         _exchange = new DeferredExchange(signedClient, metadata);
         EgressPolicy = metadata.Policy;
+        _options = options ?? new TokenExchangeClientOptions();
+        _tokenVerifier = new TokenVerifier { EgressPolicy = metadata.Policy };
     }
 
     public AAuthEgressPolicy EgressPolicy { get; }
@@ -160,14 +182,42 @@ public sealed class TokenExchangeClient
             var authToken = await ReadTokenAsync(response, "auth_token", cancellationToken).ConfigureAwait(false);
             if (signingKey is null || signedAgentToken is null)
                 throw new TokenVerificationException("Token exchange requires a locally signed agent-token request context.");
+            var expectedDwk = AuthTokenDwk(personServer, effectiveResourceToken);
+            var expectedConfirmationKey = ExpectedAuthTokenConfirmationKey(signingKey, options.SubagentToken);
+            if (_options.VerifyAuthTokenSignature)
+            {
+                using var ownedJwks = _options.JwksClient is null ? new JwksClient(policy: EgressPolicy) : null;
+                var jwks = _options.JwksClient ?? ownedJwks!;
+                await _tokenVerifier.VerifyAuthTokenWithJwksAsync(authToken, _exchange.Metadata, jwks,
+                    expectedAudience: (string?)AgentAuthTokenValidator.Payload(effectiveResourceToken)["iss"]
+                        ?? throw new TokenVerificationException("Resource token is missing 'iss'."),
+                    expectedConfirmationKey,
+                    expectedDwk,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
             AgentAuthTokenValidator.Validate(authToken, effectiveResourceToken, signingKey, signedAgentToken,
-                effectivePresentedToken!, options.SubagentToken, upstreamToken);
+                effectivePresentedToken!, options.SubagentToken, upstreamToken, expectedDwk);
             return authToken;
         }
         finally
         {
             response.Dispose();
         }
+    }
+
+    private static IAAuthKey ExpectedAuthTokenConfirmationKey(IAAuthKey signingKey, string? subagentToken)
+        => subagentToken is null
+            ? signingKey
+            : SignatureKeyParser.Confirmation(AgentAuthTokenValidator.Payload(subagentToken));
+
+    private static string AuthTokenDwk(string personServer, string resourceToken)
+    {
+        var resource = AgentAuthTokenValidator.Payload(resourceToken);
+        var issuer = (string?)resource["aud"]
+            ?? throw new TokenVerificationException("Resource token is missing 'aud'.");
+        return string.Equals(issuer, personServer, StringComparison.Ordinal)
+            ? AAuthConstants.DwkFiles.Person
+            : AAuthConstants.DwkFiles.Access;
     }
 
     /// <summary>Request a person token for <paramref name="resource"/> with default options.</summary>

@@ -28,7 +28,6 @@ public sealed class EnrolledBuilder
     private string? _refreshEndpoint;
     private string? _localKeyHandle;
     private IKeyStore? _keyStore;
-    private RefreshMode _refreshMode = RefreshMode.SingleKey;
     private AAuth.Discovery.AAuthEgressPolicy _egressPolicy = AAuth.Discovery.AAuthEgressPolicy.Production;
 
     public EnrolledBuilder WithEgressPolicy(AAuth.Discovery.AAuthEgressPolicy policy)
@@ -66,18 +65,6 @@ public sealed class EnrolledBuilder
     {
         ArgumentNullException.ThrowIfNull(keyStore);
         _keyStore = keyStore;
-        return this;
-    }
-
-    /// <summary>
-    /// Set the refresh mode. Default is <see cref="RefreshMode.SingleKey"/>.
-    /// </summary>
-    /// <remarks>TwoKey is rejected when building this fixed-key pipeline. Use AgentProviderClient.RefreshTwoKeyAsync and coordinate the returned token/key pair explicitly.</remarks>
-    /// <param name="mode">Refresh mode to use.</param>
-    public EnrolledBuilder WithRefreshMode(RefreshMode mode)
-    {
-        if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
-        _refreshMode = mode;
         return this;
     }
 
@@ -161,10 +148,6 @@ public sealed class EnrolledBuilder
         if (_refreshEndpoint is null || _localKeyHandle is null)
             throw new InvalidOperationException(
                 "RefreshingFrom(endpoint, keyHandle) must be called before building.");
-
-        if (_refreshMode == RefreshMode.TwoKey)
-            throw new InvalidOperationException(
-                "Enrolled uses a fixed signing key. Use AgentProviderClient.RefreshTwoKeyAsync and build with its returned EphemeralKey and AgentToken for two-key refresh.");
 
         var endpoint = _refreshEndpoint;
         var keyHandle = _localKeyHandle;

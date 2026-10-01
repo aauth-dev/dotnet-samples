@@ -6,6 +6,8 @@ using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.HttpSig;
 using AAuth.Tokens;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.Tokens;
 
@@ -109,6 +111,43 @@ public class SignatureV10WireTests
         new AAuthVerifier { TimeProvider = Time }.ValidateInput(input, "sig");
     }
 
+    [Fact]
+    public async Task ConsumedAgentTokenOverTwentyFourHoursLogsWarning()
+    {
+        var httpKey = AAuthKey.Generate();
+        var issuerKey = AAuthKey.Generate();
+        var payload = new JsonObject
+        {
+            ["iss"] = "https://issuer.example",
+            ["dwk"] = AgentTokenBuilder.AgentDwk,
+            ["sub"] = "aauth:wire@issuer.example",
+            ["jti"] = "long-lived-token",
+            ["iat"] = Now.ToUnixTimeSeconds(),
+            ["exp"] = Now.AddHours(25).ToUnixTimeSeconds(),
+            ["cnf"] = new JsonObject { ["jwk"] = httpKey.ToPublicJwk() },
+        };
+        var header = new JsonObject
+        {
+            ["typ"] = AgentTokenBuilder.TokenType,
+            ["kid"] = "issuer-key",
+            ["alg"] = AAuthKey.Ed25519Algorithm,
+        };
+        var wire = "sig=jwt;jwt=\"" + await JwtAsync(header, payload, issuerKey) + "\"";
+        var logger = new CapturingLoggerProvider();
+        var services = new ServiceCollection()
+            .AddLogging(builder => builder.AddProvider(logger))
+            .BuildServiceProvider();
+        using var http = new InProcessHttpClient(new DiscoveryHandler(issuerKey, httpKey),
+            policy: new AAuthEgressPolicy(crossOriginJwks: [("https://issuer.example", "https://keys.example")]));
+        var resolver = new DefaultSignatureKeyResolver(new JwksClient(http), new MetadataClient(http),
+            new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = Time, ClockSkew = TimeSpan.Zero },
+            services: services);
+
+        _ = await resolver.ResolveAsync(SignatureKeyParser.ParseAny(wire));
+
+        Assert.Contains(logger.Messages, message => message.Contains("24 hour", StringComparison.OrdinalIgnoreCase));
+    }
+
     internal static async Task<string> JwtAsync(JsonObject header, JsonObject payload, IAAuthSigner key)
     {
         var input = Base64UrlEncoder.Encode(header.ToJsonString()) + "." + Base64UrlEncoder.Encode(payload.ToJsonString());
@@ -187,6 +226,31 @@ public class SignatureV10WireTests
                 document = new() { ["keys"] = new JsonArray(new JsonObject { ["kid"] = "future", ["alg"] = "ML-DSA-65", ["kty"] = 42 }, issuerJwk, httpJwk) };
             }
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(document.ToJsonString(), Encoding.UTF8, "application/json") });
+        }
+    }
+
+    private sealed class CapturingLoggerProvider : ILoggerProvider
+    {
+        public List<string> Messages { get; } = [];
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(Messages);
+        public void Dispose() { }
+
+        private sealed class CapturingLogger(List<string> messages) : ILogger
+        {
+            public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+            public bool IsEnabled(LogLevel logLevel) => true;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+                Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                if (logLevel >= LogLevel.Warning)
+                    messages.Add(formatter(state, exception));
+            }
+        }
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+            public void Dispose() { }
         }
     }
 }

@@ -309,7 +309,7 @@ public class AAuthClientBuilderChallengeTests
     }
 
     [Fact]
-    public async Task ChallengeHandling_AutoAdds_AuthTokenCapability()
+    public async Task ChallengeHandling_DoesNotInventAuthTokenCapability()
     {
         var token = await BuildAgentTokenAsync();
         var handler = new StubHandler();
@@ -320,9 +320,7 @@ public class AAuthClientBuilderChallengeTests
             .Build();
 
         await client.GetAsync("https://resource.example/api");
-        Assert.True(handler.LastRequest!.Headers.Contains("AAuth-Capabilities"));
-        var caps = string.Join(",", handler.LastRequest.Headers.GetValues("AAuth-Capabilities"));
-        Assert.Contains("auth-token", caps);
+        Assert.False(handler.LastRequest!.Headers.Contains("AAuth-Capabilities"));
     }
 
     private sealed class StubHandler : HttpMessageHandler

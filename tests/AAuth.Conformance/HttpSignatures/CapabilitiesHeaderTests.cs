@@ -1,5 +1,8 @@
 using System;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
@@ -28,6 +31,23 @@ public class CapabilitiesHeaderTests
         Assert.Contains("interaction", caps);
         Assert.Contains("clarification", caps);
         Assert.Contains("payment", caps);
+    }
+
+    [Fact(DisplayName = "§AAuth-Capabilities — parser accepts item parameters and returns bare tokens")]
+    public void Parse_IgnoresItemParameters()
+    {
+        var caps = AAuthCapabilitiesHeader.Parse("interaction;v=1, clarification;flag, payment");
+
+        Assert.Equal(new[] { "interaction", "clarification", "payment" }, caps);
+    }
+
+    [Theory(DisplayName = "§AAuth-Capabilities — malformed SF List values are rejected")]
+    [InlineData("1bad")]
+    [InlineData("interaction,,payment")]
+    [InlineData("\"interaction\"")]
+    public void Parse_RejectsMalformedStructuredFieldList(string value)
+    {
+        Assert.Throws<FormatException>(() => AAuthCapabilitiesHeader.Parse(value));
     }
 
     [Fact(DisplayName = "§AAuth-Capabilities — AAuth-Capabilities empty value parses to empty list")]
@@ -95,6 +115,42 @@ public class CapabilitiesHeaderTests
         Assert.Contains("mission", headerValue);
     }
 
+    [Fact(DisplayName = "§Mission Approval — mission capabilities are unioned into signed request header")]
+    public async Task SigningPipeline_UnionsMissionCapabilities()
+    {
+        var key = AAuthKey.Generate();
+        var token = await new AAuth.Tokens.AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = "aauth:test@example.com",
+            Key = key,
+            KeyId = "k1",
+            PersonServer = "https://ps.example",
+        }.BuildAsync();
+        var capture = new CaptureHandler();
+        var signer = new AAuthSigningHandler(key, () => token)
+        {
+            Capabilities = new[] { "clarification" },
+            InnerHandler = capture,
+        };
+        var mission = new Mission
+        {
+            PersonServer = "https://ps.example",
+            Agent = "aauth:test@example.com",
+            ApprovedAt = DateTimeOffset.UtcNow,
+            Description = "test mission",
+            S256 = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(new byte[32]),
+            Capabilities = new[] { "interaction", "clarification" },
+        };
+        using var client = new HttpClient(new MissionContextHandler(mission) { InnerHandler = signer });
+
+        using var response = await client.GetAsync("https://resource.example/api");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var headerValue = string.Join(", ", capture.Request!.Headers.GetValues(AAuthCapabilitiesHeader.Name));
+        Assert.Equal("interaction, clarification", headerValue);
+    }
+
     [Fact(DisplayName = "§AAuth-Capabilities — AAuthSigningHandler does not emit Capabilities header when not configured")]
     public async Task SigningHandler_NoCapabilities_NoHeader()
     {
@@ -116,5 +172,16 @@ public class CapabilitiesHeaderTests
         await handler.SignHeadersAsync(request);
 
         Assert.False(request.Headers.Contains(AAuthCapabilitiesHeader.Name));
+    }
+
+    private sealed class CaptureHandler : HttpMessageHandler
+    {
+        public HttpRequestMessage? Request { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Request = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
     }
 }

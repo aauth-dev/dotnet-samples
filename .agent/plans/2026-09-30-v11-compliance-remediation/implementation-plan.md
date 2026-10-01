@@ -479,18 +479,18 @@ This comes after Phases 2–4 and 7–8.
 
 **Definition of Done**
 
-- [ ] The `TwoKey` refresher mode is gone from the API surface. The
+- [x] The `TwoKey` refresher mode is gone from the API surface. The
       `RefreshTwoKeyAsync` rebuild example compiles in a snippet test.
-- [ ] The resource-token `login_hint` reaches the PS body byte-for-byte.
-- [ ] A PS returning an auth token with the wrong `typ` or a bad signature is
+- [x] The resource-token `login_hint` reaches the PS body byte-for-byte.
+- [x] A PS returning an auth token with the wrong `typ` or a bad signature is
       rejected by default.
-- [ ] A cached carrier within five minutes of `exp` is refreshed, not
+- [x] A cached carrier within five minutes of `exp` is refreshed, not
       presented.
-- [ ] `WithLifetime(25h)` throws, and a 25 h AP token logs a warning.
-- [ ] A resource interaction is POSTed to the PS first. On 424 the agent falls
+- [x] `WithLifetime(25h)` throws, and a 25 h AP token logs a warning.
+- [x] A resource interaction is POSTed to the PS first. On 424 the agent falls
       back to the user.
-- [ ] Two `AAuth-Access` headers reject the response.
-- [ ] The gates are green.
+- [x] Two `AAuth-Access` headers reject the response.
+- [x] The gates are green.
 
 ## Phase 11 — Samples sweep (R18)
 

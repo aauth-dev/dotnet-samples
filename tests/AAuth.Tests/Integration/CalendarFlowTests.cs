@@ -310,7 +310,8 @@ public class CalendarFlowTests : IAsyncLifetime
         };
         var exchange = new TokenExchangeClient(
             new InProcessHttpClient(exchangeSigning),
-            new MetadataClient(new InProcessHttpClient(RoutingHandler())));
+            new MetadataClient(new InProcessHttpClient(RoutingHandler())),
+            new TokenExchangeClientOptions { JwksClient = new JwksClient(new InProcessHttpClient(RoutingHandler())) });
         var resourceSigning = new AAuthSigningHandler(agentKey, () => holder.Current)
         {
             InnerHandler = RoutingHandler(),
@@ -439,7 +440,8 @@ public class CalendarFlowTests : IAsyncLifetime
 
         var psHandler = new MultiHostHandler(new Dictionary<string, HttpMessageHandler> { [PsHost] = _ps!.Server.CreateHandler() });
         using var exchangeHttp = new InProcessHttpClient(new AAuthSigningHandler(agentKey, () => agentToken) { InnerHandler = psHandler });
-        var exchange = new TokenExchangeClient(exchangeHttp, new MetadataClient(new InProcessHttpClient(psHandler)));
+        var exchange = new TokenExchangeClient(exchangeHttp, new MetadataClient(new InProcessHttpClient(psHandler)),
+            new TokenExchangeClientOptions { JwksClient = new JwksClient(new InProcessHttpClient(psHandler)) });
         var personToken = await exchange.RequestPersonTokenAsync(PsIssuer, CalendarIssuer);
         holder.Update(personToken);
 
@@ -575,7 +577,8 @@ public class CalendarFlowTests : IAsyncLifetime
         };
         var exchangeHttp = new InProcessHttpClient(exchangeSigning);
         var metadata = new MetadataClient(new InProcessHttpClient(RoutingHandler()));
-        var exchange = new TokenExchangeClient(exchangeHttp, metadata);
+        var exchange = new TokenExchangeClient(exchangeHttp, metadata,
+            new TokenExchangeClientOptions { JwksClient = new JwksClient(new InProcessHttpClient(RoutingHandler())) });
 
         var pollerOptions = new DeferredPollerOptions
         {
@@ -698,7 +701,8 @@ public class CalendarFlowTests : IAsyncLifetime
         };
         var exchangeHttp = new InProcessHttpClient(exchangeSigning);
         var metadata = new MetadataClient(new InProcessHttpClient(RoutingHandler()));
-        var exchange = new TokenExchangeClient(exchangeHttp, metadata);
+        var exchange = new TokenExchangeClient(exchangeHttp, metadata,
+            new TokenExchangeClientOptions { JwksClient = new JwksClient(new InProcessHttpClient(RoutingHandler())) });
 
         var pollerOptions = new DeferredPollerOptions
         {
@@ -756,7 +760,8 @@ public class CalendarFlowTests : IAsyncLifetime
             };
             var exchangeHttp = new InProcessHttpClient(exchangeSigning);
             var metadata = new MetadataClient(new InProcessHttpClient(RoutingHandler()));
-            var exchange = new TokenExchangeClient(exchangeHttp, metadata);
+            var exchange = new TokenExchangeClient(exchangeHttp, metadata,
+                new TokenExchangeClientOptions { JwksClient = new JwksClient(new InProcessHttpClient(RoutingHandler())) });
             resourceInner = new ChallengeHandler(exchange, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy },
                 metadata, new JwksClient(new InProcessHttpClient(RoutingHandler())), personServer)
             {

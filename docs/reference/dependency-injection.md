@@ -100,10 +100,12 @@ builder.Services.AddAAuthAgent("identity", options =>
 ```
 
 `WithAgentProvider` also registers an `AgentProviderClient` keyed by the agent
-name, for enrollment and two-key refresh
-(`GetRequiredKeyedService<AgentProviderClient>("identity")`). Setting
-`AgentProvider:RefreshEndpoint` in configuration selects the same identity.
-The pipeline owns its internally created refresh transport.
+name, for enrollment and explicit two-key refresh
+(`GetRequiredKeyedService<AgentProviderClient>("identity")`). The SDK offers no
+automatic two-key refresh; callers that use `RefreshTwoKeyAsync` rebuild the
+client with the returned `EphemeralKey` and `AgentToken` together. Setting
+`AgentProvider:RefreshEndpoint` in configuration selects the same identity. The
+pipeline owns its internally created single-key refresh transport.
 For an already-held token with externally managed renewal, set `AgentToken`:
 
 ```csharp

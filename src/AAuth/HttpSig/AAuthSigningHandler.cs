@@ -342,9 +342,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
 
         // Emit capabilities header if configured
         IReadOnlyList<string>? capabilities = request.Options.TryGetValue(RequestCapabilitiesKey, out var added)
-            ? (Capabilities ?? [])
-                .Concat(AAuthProtocolInput.ValidateCapabilities(added, nameof(RequestCapabilitiesKey)))
-                .Distinct(StringComparer.Ordinal).ToArray()
+            ? AAuthCapabilitiesHeader.Union(added, Capabilities)
             : Capabilities;
         if (capabilities is { Count: > 0 })
         {

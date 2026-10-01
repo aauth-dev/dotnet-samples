@@ -167,7 +167,7 @@ internal sealed class AgentFlowHost : IAsyncDisposable
     {
         EgressPolicy = Egress, Issuer = Origin, Audience = Origin, PersonServer = Origin, Key = _issuerKey, KeyId = "key",
         Subject = person, Scope = "read", MissionS256 = mission, AgentConfirmationKey = AAuthKey.Generate(),
-        AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
+        AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
         }.BuildAsync();
         await UpstreamProvenanceTestSupport.RecordAsync(_inventory, token, Origin);
         await _enrollments.RecordAsync(new PersonResourceEnrollment(

@@ -442,7 +442,11 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     // §Person Token Endpoint under the mission, then a resource token naming it.
     private async Task<string> ExchangeAsync(Agent agent, Mission mission, string scope, TokenExchangeRequest options)
     {
-        var exchange = new TokenExchangeClient(agent.Signed, agent.Metadata);
+        var exchange = new TokenExchangeClient(agent.Signed, agent.Metadata,
+            new TokenExchangeClientOptions
+            {
+                JwksClient = new JwksClient(new InProcessHttpClient(_factory.Server.CreateHandler())),
+            });
         var personToken = await exchange.RequestPersonTokenAsync(PsIssuer, ResourceUrl, new TokenExchangeRequest
         {
             MissionS256 = mission.S256,

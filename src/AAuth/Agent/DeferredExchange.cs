@@ -69,6 +69,8 @@ internal sealed class DeferredExchange
         _metadata = metadata;
     }
 
+    internal MetadataClient Metadata => _metadata;
+
     /// <summary>
     /// Fetch PS metadata and resolve the endpoint named <paramref name="field"/>,
     /// pinned to the same origin as <paramref name="personServer"/> and required

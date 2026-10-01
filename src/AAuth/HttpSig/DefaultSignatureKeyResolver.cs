@@ -8,6 +8,8 @@ using AAuth.Discovery;
 using AAuth.Tokens;
 using AAuth.Errors;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace AAuth.HttpSig;
 
@@ -133,6 +135,7 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
             verified = await VerifyAsync(issuerKey).ConfigureAwait(false);
         }
         var key = info.Scheme == "self-jwt" ? issuerKey : SignatureKeyParser.Confirmation(verified.Payload);
+        WarnOnLongAgentToken(typ, verified);
         return new() { PublicKey = key, Info = WithKey(info, key), VerifiedToken = verified, IssuerKey = issuerKey,
             VerifiedIdentifier = verified.Issuer, KeyId = info.Scheme == "self-jwt" ? kid : key.ComputeJwkThumbprint() };
 
@@ -145,6 +148,23 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
             }
             return Task.FromResult(_tokenVerifier.Verify(info.Jwt!, signingKey, typ!, dwk!));
         }
+    }
+
+    private void WarnOnLongAgentToken(string? typ, TokenVerifier.VerifiedToken verified)
+    {
+        if (typ != AgentTokenBuilder.TokenType
+            || verified.Payload["iat"] is not JsonValue iatNode
+            || !iatNode.TryGetValue<long>(out var iat)
+            || verified.Payload["exp"] is not JsonValue expNode
+            || !expNode.TryGetValue<long>(out var exp)
+            || exp - iat <= (long)AgentTokenBuilder.MaximumLifetime.TotalSeconds)
+        {
+            return;
+        }
+
+        _services?.GetService<ILoggerFactory>()
+            ?.CreateLogger("AAuth.Verification")
+            .LogWarning("Consumed agent token lifetime exceeds the recommended 24 hour maximum.");
     }
 
     private SignatureTokenIssuerKeyContext CreateIssuerKeyContext(SignatureKeyParser.ParsedSignatureKeyInfo info, string typ, string? expectedDwk) => new(

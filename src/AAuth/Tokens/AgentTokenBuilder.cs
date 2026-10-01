@@ -29,6 +29,9 @@ public sealed class AgentTokenBuilder
     /// <summary>The fixed <c>dwk</c> value mandated by the spec.</summary>
     public const string AgentDwk = "aauth-agent.json";
 
+    /// <summary>Maximum SDK-issued agent token lifetime. The protocol recommends at most 24 hours.</summary>
+    public static readonly TimeSpan MaximumLifetime = TimeSpan.FromHours(24);
+
     /// <summary>HTTPS URL of the agent provider that issues this token (<c>iss</c>).</summary>
     public required string Issuer { get; init; }
 
@@ -63,7 +66,7 @@ public sealed class AgentTokenBuilder
     /// </summary>
     public string? ParentAgent { get; init; }
 
-    /// <summary>Token lifetime. Spec recommends &le; 24 hours; default is 1 hour.</summary>
+    /// <summary>Token lifetime. Must be greater than zero and no more than <see cref="MaximumLifetime"/>; default is 1 hour.</summary>
     public TimeSpan Lifetime { get; init; } = TimeSpan.FromHours(1);
 
     /// <summary>Issue time. Defaults to current UTC.</summary>
@@ -98,6 +101,10 @@ public sealed class AgentTokenBuilder
         if (!Key.HasPrivateKey)
         {
             throw new InvalidOperationException("Signing key must include a private component.");
+        }
+        if (Lifetime <= TimeSpan.Zero || Lifetime > MaximumLifetime)
+        {
+            throw new InvalidOperationException("Agent token lifetime must be greater than zero and no more than 24 hours.");
         }
         // Spec: Issuer (and PersonServer, when present) MUST be an HTTPS URL.
         // Fail fast at the issuer rather than waiting for a verifier reject.

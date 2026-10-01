@@ -171,7 +171,8 @@ public class AAuthAccessHandlerTests
         });
         using var client = BuildClient(key, store, inner);
 
-        await client.GetAsync("https://resource.example/messages");
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.GetAsync("https://resource.example/messages"));
 
         Assert.False(store.TryGet("https://resource.example", out _, signingKeyThumbprint: key.ComputeJwkThumbprint()));
     }
@@ -184,7 +185,8 @@ public class AAuthAccessHandlerTests
         var inner = new ProgrammableHandler(_ => Ok("not a token"));
         using var client = BuildClient(key, store, inner);
 
-        await client.GetAsync("https://resource.example/messages");
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.GetAsync("https://resource.example/messages"));
 
         Assert.False(store.TryGet("https://resource.example", out _, signingKeyThumbprint: key.ComputeJwkThumbprint()));
     }

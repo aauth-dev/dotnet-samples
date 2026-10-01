@@ -127,7 +127,7 @@ public class AccountBindingTests
         {
             Issuer = "https://ps.example", Audience = "https://resource.example",
             PersonServer = "https://ps.example", AgentConfirmationKey = agentKey,
-            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
             Key = issuerKey, KeyId = "ps1", Subject = "person", Account = tokenAccount,
         }.BuildAsync();
         var holder = new AAuth.Agent.AAuthTokenHolder();
@@ -162,7 +162,7 @@ public class AccountBindingTests
         var personToken = await new PersonTokenBuilder
         {
             Issuer = "https://ps.example", Audience = "https://resource.example", Subject = "person",
-            ConfirmationKey = agentKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+            ConfirmationKey = agentKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
             Key = issuerKey, KeyId = "ps1",
         }.BuildAsync();
         var holder = new AAuth.Agent.AAuthTokenHolder();

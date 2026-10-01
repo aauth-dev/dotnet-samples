@@ -143,15 +143,10 @@ public class EnrolledBuilderTests
     }
 
     [Fact]
-    public void Enrolled_with_two_key_mode_requires_explicit_rotating_key_pipeline()
+    public void Enrolled_two_key_mode_surface_is_removed()
     {
-        var builder = AAuthClientBuilder.Enrolled(_key)
-            .RefreshingFrom(RefreshEndpoint, LocalKeyHandle)
-            .WithKeyStore(new InMemoryKeyStore(_key))
-            .WithRefreshMode(RefreshMode.TwoKey);
-
-        var error = Assert.Throws<InvalidOperationException>(() => builder.Build());
-        Assert.Contains("RefreshTwoKeyAsync", error.Message);
+        Assert.Null(typeof(EnrolledBuilder).GetMethod("WithRefreshMode"));
+        Assert.Null(Type.GetType("AAuth.Agent.RefreshMode, AAuth"));
     }
 
     [Fact]

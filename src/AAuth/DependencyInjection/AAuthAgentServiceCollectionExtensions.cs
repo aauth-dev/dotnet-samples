@@ -276,6 +276,7 @@ internal static class AAuthAgentComposer
         if (options.OnSignatureBase is { } onSignatureBase) builder.OnSignatureBase(onSignatureBase);
         if (options.PersonServer is { } personServer) builder.WithPersonServer(personServer);
         if (options.Mission is { } mission) builder.WithMission(mission);
+        if (services.GetService<JwksClient>() is { } jwksClient) builder.WithTokenExchangeJwksClient(jwksClient);
 
         var upstream = options.UpstreamTokenProvider;
         if (options.ChainFromHttpContext)

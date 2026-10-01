@@ -14,7 +14,8 @@ namespace AAuth.Tokens;
 public static class AgentAuthTokenValidator
 {
     public static void Validate(string authToken, string resourceToken, IAAuthKey signingKey,
-        string agentToken, string presentedToken, string? subagentToken = null, string? upstreamToken = null)
+        string agentToken, string presentedToken, string? subagentToken = null, string? upstreamToken = null,
+        string? expectedDwk = null)
     {
         var resource = Payload(resourceToken);
         var presented = Payload(presentedToken);
@@ -23,7 +24,17 @@ public static class AgentAuthTokenValidator
         var expectedKey = subagentToken is null ? signingKey : SignatureKeyParser.Confirmation(bound);
         if (subagentToken is not null && (string?)bound["parent_agent"] != (string?)parent["sub"])
             throw new TokenVerificationException("Child token does not name the requesting parent.");
+        var authSegments = authToken.Split('.');
+        if (authSegments.Length != 3) throw new TokenVerificationException("Auth token must be a compact JWS.");
+        var authHeader = TokenVerifier.DecodeJsonSegment(authSegments[0], "header");
+        if ((string?)authHeader["typ"] != AuthTokenBuilder.TokenType)
+            throw new TokenVerificationException("Auth token response has an unexpected 'typ'.");
         var auth = Payload(authToken);
+        var authDwk = (string?)auth["dwk"];
+        if (expectedDwk is not null && authDwk != expectedDwk)
+            throw new TokenVerificationException("Auth token response has an unexpected 'dwk'.");
+        if (expectedDwk is null && authDwk is not (AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk))
+            throw new TokenVerificationException("Auth token response has an unexpected 'dwk'.");
         if (!AccountBinding.TryRead(resource, out var resourceAccount)
             || !AccountBinding.TryRead(auth, out var authAccount)
             || !AccountBinding.Matches(resourceAccount, authAccount))

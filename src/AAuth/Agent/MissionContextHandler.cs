@@ -29,6 +29,12 @@ public sealed class MissionContextHandler : DelegatingHandler
             request.Options.Set(AAuthRequestOptions.MissionS256, _mission.S256);
             request.Options.Set(AAuthRequestOptions.MissionPersonTokens, _mission.PersonTokens);
         }
+        if (_mission.Capabilities.Count > 0)
+        {
+            request.Options.TryGetValue(AAuth.HttpSig.AAuthSigningHandler.RequestCapabilitiesKey, out var existing);
+            request.Options.Set(AAuth.HttpSig.AAuthSigningHandler.RequestCapabilitiesKey,
+                AAuthCapabilitiesHeader.Union(_mission.Capabilities, existing));
+        }
         return base.SendAsync(request, cancellationToken);
     }
 }

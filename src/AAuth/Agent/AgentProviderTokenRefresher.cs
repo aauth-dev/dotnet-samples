@@ -6,24 +6,6 @@ using AAuth.Crypto;
 
 namespace AAuth.Agent;
 
-/// <summary>Refresh mode for AP token refresh.</summary>
-public enum RefreshMode
-{
-    /// <summary>
-    /// Single-key refresh: signs the refresh POST with the durable key under <c>hwk</c> scheme.
-    /// The AP returns a token whose <c>cnf.jwk</c> is the same durable key.
-    /// </summary>
-    SingleKey,
-
-    /// <summary>
-    /// Two-key refresh: generates a fresh ephemeral key, creates a self-issued
-    /// <c>jkt-s256+jwt</c> delegation JWT signed by the durable key, signs the refresh
-    /// POST with the ephemeral key under the <c>jkt-jwt</c> scheme. The AP returns a
-    /// token whose <c>cnf.jwk</c> is the new ephemeral key.
-    /// </summary>
-    TwoKey,
-}
-
 /// <summary>
 /// Built-in <see cref="ITokenRefresher"/> that refreshes agent tokens via an
 /// Agent Provider's refresh endpoint. Wraps <see cref="AgentProviderClient"/>.
@@ -42,33 +24,23 @@ public sealed class AgentProviderTokenRefresher : ITokenRefresher, IDisposable
     private readonly AgentProviderClient _client;
     private readonly string _refreshEndpoint;
     private readonly string _localKeyHandle;
-    private readonly RefreshMode _mode;
     private HttpClient? _ownedHttp;
     private bool _disposed;
-
-    /// <summary>
-    /// The latest ephemeral key produced by a two-key refresh.
-    /// Null when <see cref="RefreshMode.SingleKey"/> is used or before the first refresh.
-    /// </summary>
-    public AAuthKey? LatestEphemeralKey { get; private set; }
 
     /// <summary>Create a refresher that delegates to an Agent Provider.</summary>
     public AgentProviderTokenRefresher(
         HttpClient http,
         IKeyStore keyStore,
         string refreshEndpoint,
-        string localKeyHandle,
-        RefreshMode mode = RefreshMode.SingleKey)
+        string localKeyHandle)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(keyStore);
         ArgumentException.ThrowIfNullOrEmpty(refreshEndpoint);
         ArgumentException.ThrowIfNullOrEmpty(localKeyHandle);
-        if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
         _client = new AgentProviderClient(http, keyStore);
         _refreshEndpoint = refreshEndpoint;
         _localKeyHandle = localKeyHandle;
-        _mode = mode;
     }
 
     /// <summary>Start building a refresher with required parameters.</summary>
@@ -81,12 +53,6 @@ public sealed class AgentProviderTokenRefresher : ITokenRefresher, IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(context);
-        if (_mode == RefreshMode.TwoKey)
-        {
-            var result = await _client.RefreshTwoKeyAsync(_refreshEndpoint, _localKeyHandle, cancellationToken);
-            LatestEphemeralKey = result.EphemeralKey;
-            return result.AgentToken;
-        }
         return await _client.RefreshAsync(_refreshEndpoint, _localKeyHandle, cancellationToken);
     }
 
@@ -105,7 +71,6 @@ public sealed class AgentProviderTokenRefresher : ITokenRefresher, IDisposable
         private readonly string _localKeyHandle;
         private HttpClient? _http;
         private IKeyStore? _keyStore;
-        private RefreshMode _mode = RefreshMode.SingleKey;
         private Discovery.AAuthEgressPolicy _egressPolicy = Discovery.AAuthEgressPolicy.Production;
 
         /// <summary>Configure admission for the internally created refresh client.</summary>
@@ -129,21 +94,12 @@ public sealed class AgentProviderTokenRefresher : ITokenRefresher, IDisposable
         /// <summary>Use a custom <see cref="IKeyStore"/> instead of <see cref="FileKeyStore.Default()"/>.</summary>
         public RefresherBuilder WithKeyStore(IKeyStore keyStore) { _keyStore = keyStore ?? throw new ArgumentNullException(nameof(keyStore)); return this; }
 
-        /// <summary>Set the refresh mode. Default is <see cref="RefreshMode.SingleKey"/>.</summary>
-        /// <param name="mode">Refresh mode to use.</param>
-        public RefresherBuilder WithRefreshMode(RefreshMode mode)
-        {
-            if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
-            _mode = mode;
-            return this;
-        }
-
         /// <summary>Build a disposable refresher. It owns only the client it creates.</summary>
         public AgentProviderTokenRefresher Build()
         {
             var keyStore = _keyStore ?? FileKeyStore.Default();
             var http = _http ?? Discovery.AAuthHttpTransport.CreateClient(_egressPolicy);
-            return new(http, keyStore, _refreshEndpoint, _localKeyHandle, _mode)
+            return new(http, keyStore, _refreshEndpoint, _localKeyHandle)
             {
                 _ownedHttp = _http is null ? http : null,
             };

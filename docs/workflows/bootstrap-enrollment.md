@@ -230,9 +230,10 @@ using var client = new AAuthClientBuilder(refreshed.EphemeralKey)
     .Build();
 ```
 
-`Enrolled(...).WithRefreshMode(TwoKey)` is rejected: its fixed HTTP signing key
-cannot follow a newly generated ephemeral key. Advanced rotating clients must
-coordinate the returned token/key pair. The disposable
+The SDK does not offer automatic two-key refresh. `AgentProviderTokenRefresher`
+performs single-key refresh only; for two-key refresh, call
+`AgentProviderClient.RefreshTwoKeyAsync` and rebuild the client with the returned
+`EphemeralKey` and `AgentToken` together, as shown above. The disposable
 `AgentProviderTokenRefresher.Create(...).Build()` owns only its internally
 created HTTP client; the constructor and `WithHttpClient` borrow yours.
 

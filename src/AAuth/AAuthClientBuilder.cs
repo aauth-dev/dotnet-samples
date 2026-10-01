@@ -7,6 +7,7 @@ using AAuth.Agent;
 using AAuth.Agent.Governance;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Protocol;
 using AAuth.Server;
@@ -108,6 +109,7 @@ public sealed class AAuthClientBuilder
 
     // Carrier tokens obtained by exchange; shared when set, else per built pipeline.
     private IAAuthTokenCache? _tokenCache;
+    private JwksClient? _tokenExchangeJwksClient;
 
     // Stored token (for reading claims)
     private string? _agentToken;
@@ -504,6 +506,12 @@ public sealed class AAuthClientBuilder
         return this;
     }
 
+    internal AAuthClientBuilder WithTokenExchangeJwksClient(JwksClient jwks)
+    {
+        _tokenExchangeJwksClient = jwks ?? throw new ArgumentNullException(nameof(jwks));
+        return this;
+    }
+
     /// <summary>
     /// Build the configured <see cref="HttpClient"/>. The caller owns and disposes it. Build once and
     /// reuse it: the client holds the agent's token caches, so a client built per request repeats every
@@ -727,7 +735,7 @@ public sealed class AAuthClientBuilder
         var outerSigner = new AAuthSigningHandler(_key, resourceProvider)
         {
             InnerHandler = CreateTransport(),
-            Capabilities = MergeCapabilities("auth-token"),
+            Capabilities = _capabilities,
             OnSignatureBase = _onSignatureBase,
         };
         partial = outerSigner;
@@ -739,9 +747,11 @@ public sealed class AAuthClientBuilder
         var (exchangeHttpClient, metadata) = BuildSignedChannel(exchangeProvider, AAuthHttpTransport.CreateHandler(_egressPolicy));
         owned.Add(exchangeHttpClient);
         owned.Add(metadata);
-        var exchangeClient = new TokenExchangeClient(exchangeHttpClient, metadata);
-        var jwks = new JwksClient(policy: _egressPolicy);
-        owned.Add(jwks);
+        var jwks = _tokenExchangeJwksClient ?? new JwksClient(policy: _egressPolicy);
+        if (_tokenExchangeJwksClient is null)
+            owned.Add(jwks);
+        var exchangeClient = new TokenExchangeClient(exchangeHttpClient, metadata,
+            new TokenExchangeClientOptions { JwksClient = jwks });
 
         var pollerOptions = new DeferredPollerOptions
         {
@@ -805,6 +815,7 @@ public sealed class AAuthClientBuilder
             {
                 EgressPolicy = _egressPolicy,
                 TransportContract = _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy,
+                RelayInteractionAsync = BuildInteractionRelay(exchangeHttpClient, metadata, personServer),
                 InnerHandler = topHandler,
             };
             topHandler = interactionHandler;
@@ -833,6 +844,24 @@ public sealed class AAuthClientBuilder
         if (_mission is null || _upstreamTokenProvider is not null)
             return inner;
         return new MissionContextHandler(_mission) { InnerHandler = inner };
+    }
+
+    private Func<Interaction, CancellationToken, Task<bool>>? BuildInteractionRelay(
+        HttpClient signedClient, MetadataClient metadata, string? personServer)
+    {
+        personServer ??= _mission?.PersonServer;
+        if (personServer is null)
+            return null;
+        var relay = new InteractionClient(signedClient, metadata, personServer);
+        return async (interaction, cancellationToken) =>
+        {
+            var result = await relay.RelayInteractionAsync(
+                interaction.Url,
+                interaction.Code,
+                missionS256: _mission?.S256,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            return result is { Unavailable: false, Status: AAuthConstants.Governance.Status.Interacting };
+        };
     }
 
     // Wrap a signing handler with the resource-managed AAuth-Access handler when
@@ -946,16 +975,6 @@ public sealed class AAuthClientBuilder
         return (string?)payload["ps"];
     }
 
-    private IReadOnlyList<string>? MergeCapabilities(string required)
-    {
-        if (_capabilities is null || _capabilities.Count == 0)
-            return new[] { required };
-
-        var list = new List<string>(_capabilities);
-        if (!list.Contains(required))
-            list.Add(required);
-        return list;
-    }
 }
 
 internal sealed class DelegateTokenRefresher : ITokenRefresher

@@ -136,6 +136,9 @@ public static class AAuthConstants
             /// <summary>The deferred governance result is still pending.</summary>
             public const string Pending = "pending";
 
+            /// <summary>The PS relay has reached the user for a resource-hosted interaction.</summary>
+            public const string Interacting = "interacting";
+
             /// <summary>The relayed interaction completed successfully.</summary>
             public const string Ok = "ok";
         }

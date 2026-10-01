@@ -88,6 +88,72 @@ public class InteractionHandlerTests
     }
 
     [Fact]
+    public async Task Interaction_RelaysBeforeLocalCallback_WhenRelaySucceeds()
+    {
+        var order = new List<string>();
+        var handler = new ScriptedHandler(
+            _ => Make202Interaction("https://ps.example/interact", "ABC123", "https://ps.example/pending/1"),
+            _ => new HttpResponseMessage(HttpStatusCode.OK));
+
+        var interactionHandler = new InteractionHandler(
+            onInteractionRequired: (_, _) =>
+            {
+                order.Add("local");
+                return Task.CompletedTask;
+            },
+            minPollInterval: TimeSpan.Zero)
+        {
+            EgressPolicy = TestEgress.Policy,
+            TransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
+            RelayInteractionAsync = (interaction, _) =>
+            {
+                order.Add("relay:" + interaction.Code);
+                return Task.FromResult(true);
+            },
+            InnerHandler = handler,
+        };
+
+        using var client = new InProcessHttpClient(interactionHandler);
+        using var response = await client.GetAsync("https://ps.example/api");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(new[] { "relay:ABC123" }, order);
+    }
+
+    [Fact]
+    public async Task Interaction_FallsBackToLocalCallback_WhenRelayUnavailable()
+    {
+        var order = new List<string>();
+        var handler = new ScriptedHandler(
+            _ => Make202Interaction("https://ps.example/interact", "ABC123", "https://ps.example/pending/1"),
+            _ => new HttpResponseMessage(HttpStatusCode.OK));
+
+        var interactionHandler = new InteractionHandler(
+            onInteractionRequired: (interaction, _) =>
+            {
+                order.Add("local:" + interaction.Code);
+                return Task.CompletedTask;
+            },
+            minPollInterval: TimeSpan.Zero)
+        {
+            EgressPolicy = TestEgress.Policy,
+            TransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
+            RelayInteractionAsync = (interaction, _) =>
+            {
+                order.Add("relay:" + interaction.Code);
+                return Task.FromResult(false);
+            },
+            InnerHandler = handler,
+        };
+
+        using var client = new InProcessHttpClient(interactionHandler);
+        using var response = await client.GetAsync("https://ps.example/api");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(new[] { "relay:ABC123", "local:ABC123" }, order);
+    }
+
+    [Fact]
     public async Task Approval_PollsUntilSuccess()
     {
         var approvalCalled = false;

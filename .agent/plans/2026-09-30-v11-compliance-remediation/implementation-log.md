@@ -1118,6 +1118,76 @@ Gates:
 - Keycloak profile (`KEYCLOAK_E2E=1`): every `federated` spec passed (4);
   container removed.
 
+### [2026-10-01] [Phase 10] R15 — Agent client behaviour
+
+PROCEEDED.
+
+Implemented the R15 agent-client cutover: removed automatic `TwoKey` refresh
+surface (`RefreshMode`, `LatestEphemeralKey`, and builder refresh-mode methods)
+while keeping explicit `AgentProviderClient.RefreshTwoKeyAsync`; copied
+resource-token `login_hint` into PS token requests unchanged; verified returned
+auth-token signatures by default through `TokenExchangeClientOptions` and the
+shared builder/DI `JwksClient`; kept `typ`/`dwk`/issuer/audience/person/key
+context checks always on; applied the five-minute refresh margin to cached
+person/auth carriers; capped SDK-produced agent-token lifetimes at 24 hours and
+logged a warning for consumed AP tokens over that duration; wired resource
+interaction relay before local user fallback; rejected malformed or multiple
+`AAuth-Access` response credentials; and serialized/parsed capabilities as a
+strict Structured Field token list while unioning mission capabilities into
+signed requests. Direct primitive callers may opt out of auth-token signature
+verification only with `TokenExchangeClientOptions.VerifyAuthTokenSignature =
+false`; builder and DI paths remain default-on.
+
+### [2026-10-01] [Phase 10] e2e regressions
+
+RESOLVED.
+
+The Phase 10 e2e regressions had two SDK root causes. First,
+default-on auth-token response signature verification used the parent request
+signing key for the returned auth token's `cnf` check before the
+sub-agent-aware validator ran. Parent-mediated sub-agents legitimately receive
+auth tokens bound to the worker key (#sub-agents, L1888-L1939;
+#auth-token-response-verification, L1816-L1825), so the response signature
+verifier now uses the sub-agent token's confirmation key when
+`subagent_token` is present while leaving the parent/sub-agent binding checks in
+place. A regression unit test covers the worker-bound `cnf` path.
+
+Second, resource-interaction relay treated any non-`424` PS interaction
+response as handled. The samples' owner-edited hand route returns
+`status: "ok"` immediately without a pollable relay or actual user delivery,
+which caused the SDK to suppress the local interaction callback and then keep
+polling the resource-owned pending URL. Resource pending URLs remain
+authoritative (#interaction-response-poll-authority, L1160-L1182); the builder
+relay now only suppresses local user handling when the PS positively reports
+that it reached the user with `status: "interacting"` (#interaction-relay,
+L2402-L2442). Otherwise the agent falls back to its local callback while still
+polling the resource pending URL.
+
+Gates:
+
+- Build: Debug and Release clean, no warnings.
+- Targeted e2e: sub-agent and call-chain regressions passed (6).
+- Full e2e: 78 passed, 1 skipped.
+- Tests: AAuth.Tests 1843, Conformance 1403, R3 339, Events 89.
+
+### [2026-10-01] [Phase 10] Gates and wrap-up
+
+RESOLVED. R15 landed with the two e2e regression fixes recorded above:
+
+- sub-agent `cnf` in returned-token verification;
+- the PS relay counts as reaching the user only on `status: "interacting"`.
+
+The owner-edited sample `/mission-interaction` handler still answers
+`200 {"status":"ok"}` (SMP-02). The agent now treats that as "not relayed"
+and falls back to the user, so the sample keeps working until Phase 11.
+
+Gates:
+
+- The build is clean.
+- Tests: AAuth.Tests 1843, Conformance 1403, R3 339, Events 89.
+- The docs gates pass.
+- e2e: full Playwright 78 passed, 1 skipped.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 7] R09 owner-edited sample compatibility

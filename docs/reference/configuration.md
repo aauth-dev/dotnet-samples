@@ -367,7 +367,7 @@ delegates or instances; every other member binds from configuration, such as
 | `Challenge` | `ChallengeHandlingOptions` | No | PS interaction/clarification callbacks and polling |
 | `HandleInteractions` | `bool?` | No | Override the interaction-handling default (on when an `Interaction` callback is set) |
 | `Interaction` | `InteractionHandlingOptions` | No | Resource `202` interaction/approval callbacks and polling |
-| `Capabilities` | `string[]?` | No | `AAuth-Capabilities` on every signed request; entries must be HTTP tokens |
+| `Capabilities` | `string[]?` | No | `AAuth-Capabilities` on every signed request; entries must be Structured Field tokens |
 | `Mission` | `Mission?` | No | *Code-only.* The agent's approved mission |
 | `UpstreamTokenProvider` | `Func<string?>?` | No | *Code-only.* Upstream auth token to chain |
 | `ChainFromHttpContext` | `bool` | No | Chain the current request's verified upstream auth token |

@@ -105,7 +105,7 @@ public class ReusableChainingTests
             Scope = second && changed == "scope" ? "limited" : "read",
             MissionS256 = second && changed == "mission" ? mission : null,
             AgentConfirmationKey = second && changed == "key" ? AAuthKey.Generate() : callerKey,
-            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
             }.BuildAsync();
             await RecordUpstreamProvenanceAsync(inventory, token, origin);
             var subject = second && changed == "subject" ? "person-b" : "person-a";

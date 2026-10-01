@@ -58,7 +58,7 @@ public class ChallengeHandlerTests
 
         var holder = new AAuthTokenHolder("initial-token");
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
         var challengeHandler = new ChallengeHandler(
             exchangeClient, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
@@ -95,7 +95,7 @@ public class ChallengeHandlerTests
 
         var holder = new AAuthTokenHolder("initial-token");
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
         var challengeHandler = new ChallengeHandler(
             exchangeClient, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
@@ -124,7 +124,7 @@ public class ChallengeHandlerTests
 
         var holder = new AAuthTokenHolder("initial-token");
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
         var challengeHandler = new ChallengeHandler(
             exchangeClient, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
@@ -163,7 +163,7 @@ public class ChallengeHandlerTests
         var exchangeHandler = new CapturingExchangeHandler(_ => { });
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
         var challengeHandler = new ChallengeHandler(
-            new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient), new AAuthTokenHolder(AgentToken),
+            ExchangeClient(exchangeHandler, metaClient), new AAuthTokenHolder(AgentToken),
             new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
             personServer: PsUrl, onInteractionRequired: null, pollerOptions: null)
         {
@@ -188,6 +188,157 @@ public class ChallengeHandlerTests
         }
     }
 
+    [Fact(DisplayName = "ChallengeHandler — resource-token login_hint reaches PS body unchanged")]
+    public async Task ResourceTokenLoginHint_ReachesPersonServerBodyUnchanged()
+    {
+        const string loginHint = "acct:alice@example.com?raw=%2B%20";
+        string? capturedBody = null;
+        var authToken = await BuildAuthTokenAsync("auth-login-hint");
+        var exchangeHandler = new CapturingExchangeHandler(request =>
+        {
+            capturedBody = request.Content!.ReadAsStringAsync().Result;
+        }, authToken);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeHttp = new InProcessHttpClient(new AAuthSigningHandler(SigningKey, () => AgentToken)
+        {
+            InnerHandler = exchangeHandler,
+        });
+        var challengeHandler = new ChallengeHandler(
+            ExchangeClient(exchangeHttp, metaClient, exchangeHandler),
+            new AAuthTokenHolder(AgentToken),
+            new TokenVerifier { EgressPolicy = TestEgress.Policy },
+            metaClient,
+            new JwksClient(new InProcessHttpClient(exchangeHandler)),
+            personServer: PsUrl,
+            onInteractionRequired: null,
+            pollerOptions: null)
+        {
+            InnerHandler = SignedResource(await BuildResourceTokenAsync(loginHint: loginHint), PersonToken),
+        };
+        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+
+        using var response = await client.GetAsync("/data");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(capturedBody);
+        var body = JsonNode.Parse(capturedBody!)!.AsObject();
+        Assert.Equal(loginHint, (string?)body["login_hint"]);
+    }
+
+    [Fact(DisplayName = "TokenExchangeClient — returned auth token with wrong typ is rejected by default")]
+    public async Task ExchangeRejectsReturnedAuthTokenWithWrongTypByDefault()
+    {
+        var wrongTyp = await new PersonTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            Issuer = PsUrl,
+            Audience = ResourceUrl,
+            Subject = PersonSubject,
+            ConfirmationKey = SigningKey,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30),
+            Key = SigningKey,
+            KeyId = "ps-key",
+        }.BuildAsync();
+        var exchangeHandler = new CapturingExchangeHandler(_ => { }, wrongTyp);
+        var metadata = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var client = new TokenExchangeClient(
+            new InProcessHttpClient(new AAuthSigningHandler(SigningKey, () => AgentToken) { InnerHandler = exchangeHandler }),
+            metadata,
+            ExchangeOptions(exchangeHandler));
+
+        await Assert.ThrowsAsync<TokenVerificationException>(() =>
+            client.ExchangeAsync(PsUrl, ResourceToken, new TokenExchangeRequest { PresentedToken = PersonToken }));
+    }
+
+    [Fact(DisplayName = "TokenExchangeClient — returned auth token with bad signature is rejected by default")]
+    public async Task ExchangeRejectsReturnedAuthTokenWithBadSignatureByDefault()
+    {
+        var token = await BuildAuthTokenAsync("auth-bad-signature");
+        var parts = token.Split('.');
+        var bad = parts[0] + "." + parts[1] + "." + Base64UrlEncoder.Encode(Encoding.ASCII.GetBytes("bad"));
+        var exchangeHandler = new CapturingExchangeHandler(_ => { }, bad);
+        var metadata = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var client = new TokenExchangeClient(
+            new InProcessHttpClient(new AAuthSigningHandler(SigningKey, () => AgentToken) { InnerHandler = exchangeHandler }),
+            metadata,
+            ExchangeOptions(exchangeHandler));
+
+        await Assert.ThrowsAsync<TokenVerificationException>(() =>
+            client.ExchangeAsync(PsUrl, ResourceToken, new TokenExchangeRequest { PresentedToken = PersonToken }));
+    }
+
+    [Fact(DisplayName = "TokenExchangeClient — sub-agent auth-token response verifies against worker cnf")]
+    public async Task ExchangeAcceptsSubagentBoundReturnedAuthTokenByDefault()
+    {
+        var workerKey = AAuthKey.Generate();
+        var parent = AgentAuthTokenValidator.Payload(AgentToken);
+        var parentSubject = parent["sub"]!.GetValue<string>();
+        var workerSubject = parentSubject.Replace("@", "+worker@", StringComparison.Ordinal);
+        var workerToken = await new AgentTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            Issuer = parent["iss"]!.GetValue<string>(),
+            Subject = workerSubject,
+            ParentAgent = parentSubject,
+            Key = SigningKey,
+            KeyId = "ap-key",
+            ConfirmationKey = workerKey,
+            PersonServer = PsUrl,
+        }.BuildAsync();
+        var workerPersonToken = await new PersonTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            Issuer = PsUrl,
+            Audience = ResourceUrl,
+            Subject = PersonSubject,
+            TokenId = "worker-person-jti",
+            ConfirmationKey = workerKey,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30),
+            Key = SigningKey,
+            KeyId = "ps-key",
+        }.BuildAsync();
+        var workerResourceToken = await new ResourceTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            Issuer = ResourceUrl,
+            Audience = PsUrl,
+            PersonServer = PsUrl,
+            Subject = PersonSubject,
+            PresentedJti = "worker-person-jti",
+            AgentJkt = workerKey.ComputeJwkThumbprint(),
+            Key = SigningKey,
+            KeyId = "resource-key",
+        }.BuildAsync();
+        var workerAuthToken = await new AuthTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            Issuer = PsUrl,
+            Audience = ResourceUrl,
+            PersonServer = PsUrl,
+            Subject = PersonSubject,
+            AgentConfirmationKey = workerKey,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30),
+            Key = SigningKey,
+            KeyId = "ps-key",
+            TokenId = "worker-auth-jti",
+            Lifetime = TimeSpan.FromMinutes(10),
+        }.BuildAsync();
+        var exchangeHandler = new CapturingExchangeHandler(_ => { }, workerAuthToken);
+        var metadata = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var client = new TokenExchangeClient(
+            new InProcessHttpClient(new AAuthSigningHandler(SigningKey, () => AgentToken) { InnerHandler = exchangeHandler }),
+            metadata,
+            ExchangeOptions(exchangeHandler));
+
+        var result = await client.ExchangeAsync(PsUrl, workerResourceToken, new TokenExchangeRequest
+        {
+            PresentedToken = workerPersonToken,
+            SubagentToken = workerToken,
+        });
+
+        Assert.Equal(workerAuthToken, result);
+    }
+
     [Theory(DisplayName = "ChallengeHandler — wire: an agent token gets a person-token prerequisite; an auth token is stepped up with itself as presented_token")]
     [InlineData("prerequisite")]
     [InlineData("step-up")]
@@ -204,7 +355,7 @@ public class ChallengeHandlerTests
             posts.Add((req.RequestUri!.AbsolutePath, JsonNode.Parse(req.Content!.ReadAsStringAsync().Result)!.AsObject())));
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
         var challengeHandler = new ChallengeHandler(
-            new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient), new AAuthTokenHolder(AgentToken),
+            ExchangeClient(exchangeHandler, metaClient), new AAuthTokenHolder(AgentToken),
             new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
             personServer: PsUrl, onInteractionRequired: null, pollerOptions: null)
         {
@@ -248,7 +399,7 @@ public class ChallengeHandlerTests
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
         var holder = new AAuthTokenHolder(narrowAuthToken);
         var challengeHandler = new ChallengeHandler(
-            new TokenExchangeClient(exchangeHttp, metaClient), holder,
+            ExchangeClient(exchangeHttp, metaClient, exchangeHandler), holder,
             new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
             personServer: PsUrl, onInteractionRequired: null, pollerOptions: null)
         {
@@ -281,7 +432,7 @@ public class ChallengeHandlerTests
         var holder = new AAuthTokenHolder(PersonToken);
         var resource = new HoldingResourceHandler(await BuildResourceTokenAsync());
         var challengeHandler = new ChallengeHandler(
-            new TokenExchangeClient(exchangeHttp, metaClient), holder,
+            ExchangeClient(exchangeHttp, metaClient, exchangeHandler), holder,
             new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
             personServer: PsUrl, onInteractionRequired: null, pollerOptions: null)
         {
@@ -309,7 +460,7 @@ public class ChallengeHandlerTests
         var holder = new AAuthTokenHolder(PersonToken);
         var resource = new SlowDownHoldingResourceHandler(await BuildResourceTokenAsync());
         var challengeHandler = new ChallengeHandler(
-            new TokenExchangeClient(exchangeHttp, metaClient), holder,
+            ExchangeClient(exchangeHttp, metaClient, exchangeHandler), holder,
             new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
             personServer: PsUrl, onInteractionRequired: null, pollerOptions: new DeferredPollerOptions
             {
@@ -356,7 +507,7 @@ public class ChallengeHandlerTests
         var holder = new AAuthTokenHolder(PersonToken);
         var resource = new ReExchangeHoldingResourceHandler(firstResource, secondResource);
         var challengeHandler = new ChallengeHandler(
-            new TokenExchangeClient(exchangeHttp, metaClient), holder,
+            ExchangeClient(exchangeHttp, metaClient, exchangeHandler), holder,
             new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
             personServer: PsUrl, onInteractionRequired: null, pollerOptions: new DeferredPollerOptions
             {
@@ -473,7 +624,7 @@ public class ChallengeHandlerTests
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
         var holder = new AAuthTokenHolder(authToken);
         var challengeHandler = new ChallengeHandler(
-            new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient), holder,
+            ExchangeClient(exchangeHandler, metaClient), holder,
             new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
             personServer: PsUrl, onInteractionRequired: null, pollerOptions: null)
         {
@@ -503,7 +654,7 @@ public class ChallengeHandlerTests
             posts.Add((req.RequestUri!.AbsolutePath, JsonNode.Parse(req.Content!.ReadAsStringAsync().Result)!.AsObject())));
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
         var challengeHandler = new ChallengeHandler(
-            new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient), new AAuthTokenHolder(revoked),
+            ExchangeClient(exchangeHandler, metaClient), new AAuthTokenHolder(revoked),
             new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
             personServer: PsUrl, onInteractionRequired: null, pollerOptions: null)
         {
@@ -549,7 +700,7 @@ public class ChallengeHandlerTests
 
         var holder = new AAuthTokenHolder("initial-token");
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
         var challengeHandler = new ChallengeHandler(
             exchangeClient, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
@@ -572,7 +723,7 @@ public class ChallengeHandlerTests
     {
         var exchangeHandler = new CapturingExchangeHandler(_ => { });
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
         var holder = new AAuthTokenHolder("token");
 
         Assert.Throws<ArgumentException>(() => new ChallengeHandler(
@@ -594,7 +745,7 @@ public class ChallengeHandlerTests
 
         var holder = new AAuthTokenHolder("initial-token");
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
         // Use original constructor signature (non-nullable personServer)
         var challengeHandler = new ChallengeHandler(exchangeClient, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)), PsUrl)
@@ -621,7 +772,7 @@ public class ChallengeHandlerTests
         });
 
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync(
             PsUrl, ResourceToken,
@@ -645,7 +796,7 @@ public class ChallengeHandlerTests
         });
 
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync(
             PsUrl, ResourceToken,
@@ -730,7 +881,7 @@ public class ChallengeHandlerTests
         var exchangeHandler = new ErrorExchangeHandler(status,
             $"{{\"error\":\"{errorCode}\",\"detail\":\"boom\",\"type\":\"https://example.test/denied\"}}");
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
         var ex = await Assert.ThrowsAsync<AAuth.Errors.AAuthTokenExchangeException>(
             () => exchangeClient.ExchangeAsync(PsUrl, ResourceToken, "presented"));
@@ -761,7 +912,7 @@ public class ChallengeHandlerTests
         {
             var exchangeHandler = new ErrorExchangeHandler(status, $"{{\"error\":\"{code}\",\"detail\":\"detail {code}\"}}");
             var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-            var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+            var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
             var ex = await Assert.ThrowsAsync<AAuth.Errors.AAuthTokenExchangeException>(
                 () => exchangeClient.ExchangeAsync(PsUrl, ResourceToken, "presented"));
@@ -779,7 +930,7 @@ public class ChallengeHandlerTests
         var exchangeHandler = new ErrorExchangeHandler(
             HttpStatusCode.BadGateway, "<html>nginx 502</html>");
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
         await Assert.ThrowsAsync<HttpRequestException>(
             () => exchangeClient.ExchangeAsync(PsUrl, ResourceToken, "presented"));
@@ -791,7 +942,7 @@ public class ChallengeHandlerTests
         var exchangeHandler = new ErrorExchangeHandler(
             HttpStatusCode.BadRequest, "{\"detail\":\"something\"}");
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
         await Assert.ThrowsAsync<HttpRequestException>(
             () => exchangeClient.ExchangeAsync(PsUrl, ResourceToken, "presented"));
@@ -842,7 +993,7 @@ public class ChallengeHandlerTests
         });
 
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
 
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync(
             PsUrl, ResourceToken,
@@ -1037,7 +1188,7 @@ public class ChallengeHandlerTests
     {
         var exchangeHandler = new CapturingExchangeHandler(_ => { });
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
         holder = new AAuthTokenHolder("initial-token");
 
         var challengeHandler = new ChallengeHandler(
@@ -1091,7 +1242,8 @@ public class ChallengeHandlerTests
         using var jwks = new JwksClient(discovery);
         var consentCalls = 0;
         var holder = new AAuthTokenHolder(AgentToken);
-        using var client = new InProcessHttpClient(new ChallengeHandler(new TokenExchangeClient(discovery, metadata),
+        using var client = new InProcessHttpClient(new ChallengeHandler(
+            new TokenExchangeClient(discovery, metadata, new TokenExchangeClientOptions { JwksClient = jwks }),
             holder, new TokenVerifier { EgressPolicy = TestEgress.Policy }, metadata, jwks, PsUrl,
             (_, _) => { consentCalls++; return Task.CompletedTask; })
         {
@@ -1114,7 +1266,8 @@ public class ChallengeHandlerTests
         using var discovery = new InProcessHttpClient(exchangeHandler);
         using var metadata = new MetadataClient(discovery);
         using var jwks = new JwksClient(discovery);
-        using var client = new InProcessHttpClient(new ChallengeHandler(new TokenExchangeClient(discovery, metadata),
+        using var client = new InProcessHttpClient(new ChallengeHandler(
+            new TokenExchangeClient(discovery, metadata, new TokenExchangeClientOptions { JwksClient = jwks }),
             holder, new TokenVerifier { EgressPolicy = TestEgress.Policy }, metadata, jwks, PsUrl)
         {
             InnerHandler = new AAuthSigningHandler(SigningKey, () => holder.Current)
@@ -1137,7 +1290,8 @@ public class ChallengeHandlerTests
         using var metadata = new MetadataClient(discovery);
         using var jwks = new JwksClient(discovery);
         var holder = new AAuthTokenHolder(AgentToken);
-        using var client = new InProcessHttpClient(new ChallengeHandler(new TokenExchangeClient(discovery, metadata),
+        using var client = new InProcessHttpClient(new ChallengeHandler(
+            new TokenExchangeClient(discovery, metadata, new TokenExchangeClientOptions { JwksClient = jwks }),
             holder, new TokenVerifier { EgressPolicy = TestEgress.Policy }, metadata, jwks, PsUrl)
         {
             InnerHandler = new AAuthSigningHandler(SigningKey, () => holder.Current)
@@ -1160,6 +1314,17 @@ public class ChallengeHandlerTests
         InnerHandler = new MockResourceHandler(token),
     };
 
+    private static TokenExchangeClient ExchangeClient(HttpMessageHandler handler, MetadataClient metadata) =>
+        new(new InProcessHttpClient(handler), metadata, ExchangeOptions(handler));
+
+    private static TokenExchangeClient ExchangeClient(HttpClient signedClient, MetadataClient metadata, HttpMessageHandler jwksHandler) =>
+        new(signedClient, metadata, ExchangeOptions(jwksHandler));
+
+    private static TokenExchangeClientOptions ExchangeOptions(HttpMessageHandler handler) => new()
+    {
+        JwksClient = new JwksClient(new InProcessHttpClient(handler)),
+    };
+
     // Static field initializer cannot await; local key signing completes synchronously.
     private static readonly string PersonToken = new PersonTokenBuilder
     {
@@ -1170,7 +1335,8 @@ public class ChallengeHandlerTests
     }.BuildAsync().AsTask().GetAwaiter().GetResult();
 
     private static ValueTask<string> BuildResourceTokenAsync(string? missionS256 = null, string? failure = null,
-        string personServer = PsUrl, string presentedJti = PersonJti, string? tokenId = null) => new ResourceTokenBuilder
+        string personServer = PsUrl, string presentedJti = PersonJti, string? tokenId = null,
+        string? loginHint = null) => new ResourceTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = failure == "origin" ? "https://other.example" : ResourceUrl,
@@ -1184,6 +1350,7 @@ public class ChallengeHandlerTests
         TokenId = tokenId,
         Account = failure == "account" ? "other-account" : null,
         MissionS256 = missionS256,
+        LoginHint = loginHint,
         IssuedAt = failure == "expiry" ? DateTimeOffset.UtcNow.AddHours(-1) : null,
     }.BuildAsync();
 
@@ -1301,11 +1468,13 @@ public class ChallengeHandlerTests
                 PersonServerCalls++;
             if (request.RequestUri.AbsolutePath == "/jwks")
             {
-                var key = SigningKey.ToPublicJwk();
-                key["kid"] = "resource-key";
+                var resourceKey = SigningKey.ToPublicJwk();
+                resourceKey["kid"] = "resource-key";
+                var psKey = SigningKey.ToPublicJwk();
+                psKey["kid"] = "ps-key";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(new JsonObject { ["keys"] = new JsonArray(key) }.ToJsonString(), Encoding.UTF8, "application/json"),
+                    Content = new StringContent(new JsonObject { ["keys"] = new JsonArray(resourceKey, psKey) }.ToJsonString(), Encoding.UTF8, "application/json"),
                 });
             }
             // Metadata discovery — return auth_token_endpoint at the same origin

@@ -20,11 +20,12 @@ public sealed record AAuthTokenCacheKey(string AgentToken, string? Upstream, str
 
 /// <summary>
 /// Carrier tokens an agent obtained by exchange, reused across requests and, when shared,
-/// across clients. Implementations are thread-safe and ignore expired entries.
+/// across clients. Implementations are thread-safe and ignore entries that are
+/// expired or inside the carrier refresh margin.
 /// </summary>
 public interface IAAuthTokenCache
 {
-    /// <summary>The unexpired token cached for <paramref name="key"/>, if any.</summary>
+    /// <summary>The token cached for <paramref name="key"/>, if any, excluding tokens inside the refresh margin.</summary>
     string? Get(AAuthTokenCacheKey key);
 
     /// <summary>Cache <paramref name="token"/> for <paramref name="key"/> until <paramref name="expiresAt"/>.</summary>
@@ -109,12 +110,14 @@ public sealed class InMemoryAAuthTokenCache : IAAuthTokenCache
     }
 
     private string? Fresh(AAuthTokenCacheKey key)
-        => _entries.TryGetValue(key, out var entry) && entry.ExpiresAt > _clock.GetUtcNow() ? entry.Token : null;
+        => _entries.TryGetValue(key, out var entry)
+            && entry.ExpiresAt > _clock.GetUtcNow() + AAuthTokenHolder.CarrierRefreshMargin
+                ? entry.Token : null;
 
     private void Prune()
     {
         var now = _clock.GetUtcNow();
         foreach (var expired in new List<AAuthTokenCacheKey>(_entries.Keys))
-            if (_entries[expired].ExpiresAt <= now) _entries.Remove(expired);
+            if (_entries[expired].ExpiresAt <= now + AAuthTokenHolder.CarrierRefreshMargin) _entries.Remove(expired);
     }
 }

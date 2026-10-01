@@ -66,8 +66,7 @@ public sealed class AAuthAccessHandler : DelegatingHandler
             && response.Headers.TryGetValues(AAuthAccessHeader.Name, out var values))
         {
             // Per spec (§AAuth-Access), reject more than one credential: exactly
-            // one header value, and it must be a valid token68. Anything else is
-            // ignored rather than stored.
+            // one header value, and it must be a valid token68.
             string? single = null;
             var count = 0;
             foreach (var value in values)
@@ -80,7 +79,19 @@ public sealed class AAuthAccessHandler : DelegatingHandler
                 }
             }
 
-            if (count == 1 && AAuthAccessHeader.TryParseAccess(single, out var token))
+            if (count != 1)
+            {
+                response.Dispose();
+                throw new HttpRequestException("AAuth-Access response contains more than one credential.");
+            }
+
+            if (!AAuthAccessHeader.TryParseAccess(single, out var token))
+            {
+                response.Dispose();
+                throw new HttpRequestException("AAuth-Access response header is malformed.");
+            }
+
+            if (token.Length > 0)
             {
                 _store.Set(origin, token, account, _signingKeyThumbprint);
             }

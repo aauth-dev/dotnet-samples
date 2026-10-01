@@ -119,6 +119,29 @@ public class SelfIssuedTokenRefresherTests
     }
 
     [Fact]
+    public void WithLifetime_RejectsMoreThanTwentyFourHours()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            SelfIssuedTokenRefresher.Create(_key, "https://svc.example", "aauth:svc@svc.example")
+                .WithLifetime(TimeSpan.FromHours(25)));
+    }
+
+    [Fact]
+    public async Task AgentTokenBuilder_RejectsMoreThanTwentyFourHours()
+    {
+        var builder = new AgentTokenBuilder
+        {
+            Issuer = "https://svc.example",
+            Subject = "aauth:svc@svc.example",
+            KeyId = "k1",
+            Key = _key,
+            Lifetime = TimeSpan.FromHours(25),
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => builder.BuildAsync().AsTask());
+    }
+
+    [Fact]
     public async Task RefreshAsync_WithoutPersonServer_OmitsPsClaim()
     {
         var refresher = new SelfIssuedTokenRefresher(

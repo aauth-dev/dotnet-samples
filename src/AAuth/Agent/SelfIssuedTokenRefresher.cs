@@ -111,7 +111,16 @@ public sealed class SelfIssuedTokenRefresher : ITokenRefresher
         public RefresherBuilder WithPersonServer(string personServer) { _personServer = personServer; return this; }
 
         /// <summary>Set a custom token lifetime. Defaults to 1 hour.</summary>
-        public RefresherBuilder WithLifetime(TimeSpan lifetime) { _lifetime = lifetime; return this; }
+        public RefresherBuilder WithLifetime(TimeSpan lifetime)
+        {
+            if (lifetime <= TimeSpan.Zero || lifetime > AgentTokenBuilder.MaximumLifetime)
+            {
+                throw new ArgumentOutOfRangeException(nameof(lifetime),
+                    "Agent token lifetime must be greater than zero and no more than 24 hours.");
+            }
+            _lifetime = lifetime;
+            return this;
+        }
 
         /// <summary>Build the refresher.</summary>
         public SelfIssuedTokenRefresher Build()

@@ -26,6 +26,7 @@ public sealed class InteractionHandler : DelegatingHandler
     public AAuth.Discovery.AAuthTransportContract? TransportContract { get; init; }
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
     internal Func<TimeSpan, CancellationToken, Task>? DelayAsync { get; init; }
+    internal Func<Interaction, CancellationToken, Task<bool>>? RelayInteractionAsync { get; init; }
     private const string ApprovalRequirement = "approval";
     private static readonly TimeSpan BackoffIncrement = TimeSpan.FromSeconds(5);
 
@@ -78,7 +79,11 @@ public sealed class InteractionHandler : DelegatingHandler
         if (TransportContract is null) throw new InvalidOperationException("Interaction handlers require an explicit inner transport contract.");
         // Capabilities follow the handlers that resolve for this request (#aauth-capabilities).
         if (InteractionFor(request) is not null)
-            request.Options.Set(AAuth.HttpSig.AAuthSigningHandler.RequestCapabilitiesKey, [Interaction.RequirementType]);
+        {
+            request.Options.TryGetValue(AAuth.HttpSig.AAuthSigningHandler.RequestCapabilitiesKey, out var existing);
+            request.Options.Set(AAuth.HttpSig.AAuthSigningHandler.RequestCapabilitiesKey,
+                AAuthCapabilitiesHeader.Union(existing, [Interaction.RequirementType]));
+        }
         var response = await AAuth.Discovery.AAuthHttpTransport.SendBoundedAsync(EgressPolicy, request,
             token => base.SendAsync(request, token), cancellationToken).ConfigureAwait(false);
 
@@ -132,6 +137,13 @@ public sealed class InteractionHandler : DelegatingHandler
                             "Server requires user interaction but no interaction handler is configured.");
                     await AAuth.Discovery.AAuthHttpTransport.AdmitInteractionAsync(EgressPolicy, transportContract,
                         interaction.Url, cancellationToken).ConfigureAwait(false);
+                    if (RelayInteractionAsync is { } relay
+                        && await relay(interaction with { Source = InteractionSource.Resource }, cancellationToken)
+                            .ConfigureAwait(false))
+                    {
+                        handledInteraction = userUrl;
+                        return true;
+                    }
                     await interactionHandler.OnInteractionRequiredAsync(interaction with { Source = InteractionSource.Resource },
                         cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
                     handledInteraction = userUrl;

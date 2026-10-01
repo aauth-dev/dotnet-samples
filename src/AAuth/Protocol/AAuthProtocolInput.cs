@@ -104,13 +104,13 @@ internal static class AAuthProtocolInput
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            throw new ArgumentException("capability values must be non-empty HTTP tokens.", parameterName);
+            throw new ArgumentException("capability values must be non-empty Structured Field tokens.", parameterName);
         }
 
         var trimmed = value.Trim();
-        if (!IsHttpToken(trimmed))
+        if (!IsStructuredFieldToken(trimmed))
         {
-            throw new ArgumentException("capability values must be valid HTTP tokens.", parameterName);
+            throw new ArgumentException("capability values must be valid Structured Field tokens.", parameterName);
         }
 
         return trimmed;
@@ -144,9 +144,14 @@ internal static class AAuthProtocolInput
         return values.ToArray();
     }
 
-    private static bool IsHttpToken(string value)
+    public static bool IsStructuredFieldToken(string value)
     {
         if (value.Length == 0)
+        {
+            return false;
+        }
+
+        if (value[0] is not ((>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or '*'))
         {
             return false;
         }
@@ -156,6 +161,7 @@ internal static class AAuthProtocolInput
                 or >= 'A' and <= 'Z'
                 or >= 'a' and <= 'z'
                 or '!' or '#' or '$' or '%' or '&' or '\'' or '*'
-                or '+' or '-' or '.' or '^' or '_' or '`' or '|' or '~');
+                or '+' or '-' or '.' or '^' or '_' or '`' or '|' or '~'
+                or ':' or '/');
     }
 }

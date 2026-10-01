@@ -13,7 +13,7 @@ namespace AAuth.Agent;
 public static class AAuthCapabilitiesHeader
 {
     /// <summary>The HTTP header name.</summary>
-    public const string Name = "AAuth-Capabilities";
+    public const string Name = AAuthConstants.Headers.AAuthCapabilities;
 
     /// <summary>Format the header value from a set of capabilities.</summary>
     public static string Format(IEnumerable<string> capabilities)
@@ -30,9 +30,55 @@ public static class AAuthCapabilitiesHeader
     {
         if (string.IsNullOrWhiteSpace(headerValue))
             return Array.Empty<string>();
-        return AAuthProtocolInput.ValidateCapabilities(
-            headerValue.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries),
-            nameof(headerValue));
+        var result = new List<string>();
+        foreach (var rawItem in headerValue.Split(','))
+        {
+            var item = rawItem.Trim();
+            if (item.Length == 0)
+            {
+                throw new FormatException("AAuth-Capabilities must be a Structured Field List of Tokens.");
+            }
+
+            var tokenEnd = item.IndexOf(';');
+            var token = tokenEnd < 0 ? item : item[..tokenEnd].TrimEnd();
+            if (!AAuthProtocolInput.IsStructuredFieldToken(token))
+            {
+                throw new FormatException("AAuth-Capabilities item is not a Structured Field Token.");
+            }
+
+            if (tokenEnd >= 0)
+            {
+                ValidateParameters(item[(tokenEnd + 1)..]);
+            }
+
+            result.Add(token);
+        }
+
+        return AAuthProtocolInput.ValidateCapabilities(result, nameof(headerValue));
+    }
+
+    private static void ValidateParameters(string parameters)
+    {
+        foreach (var rawParameter in parameters.Split(';'))
+        {
+            var parameter = rawParameter.Trim();
+            if (parameter.Length == 0)
+            {
+                throw new FormatException("AAuth-Capabilities contains an empty item parameter.");
+            }
+
+            var equals = parameter.IndexOf('=');
+            var name = equals < 0 ? parameter : parameter[..equals].TrimEnd();
+            if (!AAuthProtocolInput.IsStructuredFieldToken(name))
+            {
+                throw new FormatException("AAuth-Capabilities contains an invalid item parameter.");
+            }
+
+            if (equals >= 0 && parameter[(equals + 1)..].Trim().Length == 0)
+            {
+                throw new FormatException("AAuth-Capabilities contains an empty parameter value.");
+            }
+        }
     }
 
     /// <summary>

@@ -34,7 +34,6 @@ public class AgentBuilderParityTests
         ["Enrolled"] = ["AgentProvider", "builder:WithAgentProvider"],
         ["RefreshingFrom"] = ["AgentProvider:RefreshEndpoint", "KeyHandle"],
         ["WithKeyStore"] = ["exclude: the key store is the DI IKeyStore"],
-        ["WithRefreshMode"] = ["exclude: Enrolled supports single-key refresh only; two-key refresh is AgentProviderClient.RefreshTwoKeyAsync (builder:WithAgentProvider)"],
         ["UseHwk"] = ["SignatureKeyProvider"],
         ["UseJwt"] = ["AgentToken", "AgentTokenFactory"],
         ["UseJwksUri"] = ["JwksUri"],
