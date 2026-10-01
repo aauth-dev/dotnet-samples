@@ -495,7 +495,9 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         var (attacker, _, _) = await BuildSignedAgentClientAsync(AAuthKey.Generate());
         using var signedAttacker = attacker;
         using var foreign = await attacker.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
-        Assert.Equal(HttpStatusCode.NotFound, foreign.StatusCode);
+        Assert.Equal(HttpStatusCode.Gone, foreign.StatusCode);
+        var body = await foreign.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("invalid_code", (string?)body?["error"]);
         using var cancel = await owner.DeleteAsync(path);
         Assert.Equal(HttpStatusCode.NoContent, cancel.StatusCode);
         using var replay = await owner.GetAsync(path);

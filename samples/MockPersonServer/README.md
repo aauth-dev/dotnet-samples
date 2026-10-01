@@ -24,8 +24,10 @@ A minimal AAuth Person Server for end-to-end demos and integration tests.
     `ConsentStore` into the SDK's id-keyed pending model. The sample's own
     consent pages inject it with
     `[FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] IPersonPendingStore`.
-- On `POST /token`, the mapper validates the signature, reads `resource_token`,
-  and returns an `aa-auth+jwt` bound to the agent's confirmation key.
+- On `POST /token`, the mapper validates the signature, reads both
+  `resource_token` and `presented_token`, verifies the pair, and returns an
+  `aa-auth+jwt` bound to the agent's confirmation key and bounded by the
+  presented token.
 - When started with `RequireConsent=true`, the exchange defers instead:
   `POST /token` returns `202 Accepted` with `Location: /pending/{id}`, a
   `Retry-After`, and `AAuth-Requirement: requirement=interaction; url; code`. The
@@ -40,12 +42,13 @@ A minimal AAuth Person Server for end-to-end demos and integration tests.
 - `GET /dashboard` lists every consent request for the person; see
   [Consent dashboard](#consent-dashboard).
 
-The mapper **verifies** the posted `resource_token` using the SDK helper
+The mapper **verifies** the posted `resource_token` and `presented_token` using the SDK helper
 `TokenVerifier.VerifyResourceTokenAsync` (JWKS discovery against the issuing
 resource per §Resource Token Verification): `typ`/`dwk`/signature, `exp`/`iat`,
 `aud`, `agent`, and `agent_jkt`. Forged or expired tokens are rejected with
-`invalid_resource_token` / `expired_resource_token`. The consent screen and the
-issued auth token derive only from the verified token.
+`invalid_resource_token` / `expired_resource_token`, and stale or mismatched
+presented tokens are rejected with the registered presented-token errors. The
+consent screen and the issued auth token derive from the verified token pair.
 
 ## Consent dashboard
 
@@ -118,6 +121,8 @@ registers an in-memory mission store and log; the sample then supplies the
 policy and user-channel seams (`IPermissionDecider`, `IAuditSink`,
 `IInteractionRelay`, and `IMissionTokenConsent` for the out-of-scope token gate)
 plus a deterministic consent script that stands in for a real user-consent screen.
+The governance endpoint paths are declared by `.WithGovernance()` and mapped by
+`MapAAuthPersonServer()`, so the sample does not hand-roll those protocol routes.
 
 It serves the four governance endpoints from the protocol exchange diagram:
 
@@ -126,7 +131,7 @@ It serves the four governance endpoints from the protocol exchange diagram:
 | `POST /mission` | §Mission Creation | The agent proposes a mission in natural language; the PS stores the approval bytes verbatim, computes `s256`, and returns the approval response (`mission` blob, `s256`, and `person_tokens` for approved `resources`). |
 | `POST /permission` | §Permission Endpoint | The agent asks whether an action is allowed. Pre-approved tools on the active mission short-circuit to *granted*; everything else runs the three-gate decision (in-scope / prior consent / prompt the user). |
 | `POST /audit` | §Audit Endpoint | The agent reports an action it took; the PS appends it to the mission log (fire-and-forget). |
-| `POST /mission-interaction` | §Interaction Endpoint | The agent relays a question, payment, or completion proposal to the user through the PS. |
+| `POST /mission-interaction` | §Interaction Endpoint | The agent relays a question, resource-hosted interaction, or payment to the user through the PS. Completion proposals are mission actions at `POST /mission/{s256}`. |
 
 The **mission token gate** (silent in-scope grant, prior-consent, the
 out-of-scope decision, and the clarification chat) is owned by

@@ -18,6 +18,7 @@ namespace AAuth.Conformance.Missions;
 public class GovernanceServerTests
 {
     private const string S256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    private const string Ps = "https://ps.example";
 
     // ---- §Request parsers ----
 
@@ -179,19 +180,19 @@ public class GovernanceServerTests
         var blob = System.Text.Encoding.UTF8.GetBytes("{\"approver\":\"https://ps.example\"}");
         await store.SaveAsync(new StoredMission(S256, "https://ps.example", "aauth:a@x.example", blob));
 
-        var loaded = await store.GetAsync(S256);
+        var loaded = await store.GetAsync(Ps, S256);
         Assert.NotNull(loaded);
         Assert.Equal(MissionState.Active, loaded!.State);
         Assert.True(blob.AsSpan().SequenceEqual(loaded.Blob.Span));
 
-        await store.SetStateAsync(S256, MissionState.Terminated);
-        var terminated = await store.GetAsync(S256);
+        await store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Administrative);
+        var terminated = await store.GetAsync(Ps, S256);
         Assert.Equal(MissionState.Terminated, terminated!.State);
     }
 
     [Fact(DisplayName = "§Mission store — absent mission returns null")]
     public async Task MissionStore_Absent_ReturnsNull()
-        => Assert.Null(await new InMemoryMissionStore().GetAsync("nope"));
+        => Assert.Null(await new InMemoryMissionStore().GetAsync(Ps, "nope"));
 
     [Fact(DisplayName = "§Mission Management — a terminated mission never returns to active, by transition or replacement")]
     public async Task MissionStore_TerminatedIsFinal()
@@ -199,13 +200,13 @@ public class GovernanceServerTests
         var store = new InMemoryMissionStore();
         var mission = new StoredMission(S256, "https://ps.example", "aauth:a@x.example", new byte[] { 1 });
         await store.SaveAsync(mission);
-        await store.SetStateAsync(S256, MissionState.Terminated);
+        await store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Administrative);
 
-        await store.SetStateAsync(S256, MissionState.Active);
-        Assert.Equal(MissionState.Terminated, (await store.GetAsync(S256))!.State);
+        await store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Revoked);
+        Assert.Equal(MissionState.Terminated, (await store.GetAsync(Ps, S256))!.State);
 
         await store.SaveAsync(mission);
-        Assert.Equal(MissionState.Terminated, (await store.GetAsync(S256))!.State);
+        Assert.Equal(MissionState.Terminated, (await store.GetAsync(Ps, S256))!.State);
     }
 
     [Fact(DisplayName = "§Mission Approval — replacing a mission never extends its expires_at")]
@@ -217,11 +218,11 @@ public class GovernanceServerTests
         await store.SaveAsync(mission);
 
         await store.SaveAsync(mission with { ExpiresAt = null });
-        Assert.Equal(expiresAt, (await store.GetAsync(S256))!.ExpiresAt);
+        Assert.Equal(expiresAt, (await store.GetAsync(Ps, S256))!.ExpiresAt);
         await store.SaveAsync(mission with { ExpiresAt = expiresAt.AddDays(1) });
-        Assert.Equal(expiresAt, (await store.GetAsync(S256))!.ExpiresAt);
-        await store.SetStateAsync(S256, MissionState.Terminated);
-        Assert.Equal(expiresAt, (await store.GetAsync(S256))!.ExpiresAt);
+        Assert.Equal(expiresAt, (await store.GetAsync(Ps, S256))!.ExpiresAt);
+        await store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Administrative);
+        Assert.Equal(expiresAt, (await store.GetAsync(Ps, S256))!.ExpiresAt);
     }
 
     [Fact(DisplayName = "§Mission Management — concurrent transitions and replacements cannot revive a terminated mission")]
@@ -238,13 +239,13 @@ public class GovernanceServerTests
                 var n = i;
                 tasks.Add(Task.Run(() => n switch
                 {
-                    0 => store.SetStateAsync(S256, MissionState.Terminated),
-                    _ when n % 2 == 0 => store.SetStateAsync(S256, MissionState.Active),
+                    0 => store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Administrative),
+                    _ when n % 2 == 0 => store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Revoked),
                     _ => store.SaveAsync(mission),
                 }));
             }
             await Task.WhenAll(tasks);
-            Assert.Equal(MissionState.Terminated, (await store.GetAsync(S256))!.State);
+            Assert.Equal(MissionState.Terminated, (await store.GetAsync(Ps, S256))!.State);
         }
     }
 
@@ -315,7 +316,7 @@ public class GovernanceServerTests
         {
             MissionS256 = S256,
         };
-        var mission = await store.GetAsync(S256);
+        var mission = await store.GetAsync(Ps, S256);
         var entries = await log.ReadAsync(S256);
 
         var decision = await decider.DecideAsync(new PermissionDecisionContext(request, mission, entries));

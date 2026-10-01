@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 205 changed public-source files, 910 added/replacement declarations, 408 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 240 changed public-source files, 1184 added/replacement declarations, 454 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -236,6 +236,19 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [ChainCaptureHandle
 ```
 
 Public owners: `Concierge.ChainCaptureHandler`, `Concierge`.
+
+### samples/Concierge/PendingStore.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [PendingStore.cs](../../../samples/Concierge/PendingStore.cs).
+
+```diff
+- Concierge.PendingStore: public Entry Add ( string upstreamToken , string interactionUrl , string interactionCode , string downstreamBase = "http://localhost:5001" , string downstreamPath = "/events" , string pendingPrefix = "/pending" )
+- Concierge.PendingStore: public sealed record Entry ( string Id , string UpstreamToken , string InteractionUrl , string InteractionCode , string DownstreamBase , string DownstreamPath , string PendingPrefix )
++ Concierge.PendingStore: public Entry Add ( string upstreamToken , ChainedInteractionEntry interaction , string downstreamBase = "http://localhost:5001" , string downstreamPath = "/events" , string pendingPrefix = "/pending" )
++ Concierge.PendingStore: public sealed record Entry ( string Id , string UpstreamToken , ChainedInteractionEntry Interaction , string DownstreamBase , string DownstreamPath , string PendingPrefix )
+```
+
+Public owners: `Concierge.PendingStore.Entry`, `Concierge.PendingStore`, `Concierge`.
 
 ### samples/Concierge/Program.cs
 
@@ -659,6 +672,14 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [TourSession.cs](..
 
 Public owners: `GuidedTour.TourSession`, `GuidedTour`.
 
+### samples/MockAccessServers/Federated/Policy/KeycloakAccessPolicy.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [KeycloakAccessPolicy.cs](../../../samples/MockAccessServers/Federated/Policy/KeycloakAccessPolicy.cs).
+
+Public signatures unchanged (5); behavior reviewed under sample-runtime.
+
+Public owners: `MockAccessServer.Policy.KeycloakAccessPolicy`, `MockAccessServer.Policy`.
+
 ### samples/MockAccessServers/Federated/Policy/WalletPolicyRules.cs
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [WalletPolicyRules.cs](../../../samples/MockAccessServers/Federated/Policy/WalletPolicyRules.cs).
@@ -683,6 +704,14 @@ Public signatures unchanged (1); behavior reviewed under sample-runtime.
 
 Public owners: `R3AccessServer`.
 
+### samples/MockAccessServers/R3/SqliteR3AuditSink.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [SqliteR3AuditSink.cs](../../../samples/MockAccessServers/R3/SqliteR3AuditSink.cs).
+
+Public signatures unchanged (4); behavior reviewed under sample-runtime.
+
+Public owners: `R3AccessServer.SqliteR3AuditSink`, `R3AccessServer`.
+
 ### samples/MockAgentProvider/Program.cs
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [Program.cs](../../../samples/MockAgentProvider/Program.cs).
@@ -698,8 +727,10 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [ConsentBridgePerso
 ```diff
 - MockPersonServer.ConsentBridgePersonPendingStore: public ConsentBridgePersonPendingStore ( ConsentStore consent , IReadOnlyList < string > demoRoles , IReadOnlyList < string > demoGroups )
 - MockPersonServer.ConsentBridgePersonPendingStore: public PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , JsonObject ? upstreamAct = null , MissionClaim ? mission = null , DateTimeOffset ? authorizationExpiresAt = null )
+- MockPersonServer.ConsentBridgePersonPendingStore: public void MarkAllowed ( string id , string subject , string ? tenant = null , IReadOnlyList < string > ? roles = null , IReadOnlyList < string > ? groups = null , IReadOnlyDictionary < string , JsonNode ? > ? additionalClaims = null )
 + MockPersonServer.ConsentBridgePersonPendingStore: public ConsentBridgePersonPendingStore ( ConsentStore consent , ConsentRegistry registry , IReadOnlyList < string > demoRoles , IReadOnlyList < string > demoGroups )
 + MockPersonServer.ConsentBridgePersonPendingStore: public PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , string ? missionS256 = null , DateTimeOffset ? authorizationExpiresAt = null )
++ MockPersonServer.ConsentBridgePersonPendingStore: public void MarkAllowed ( string id , AAuthPersonKey personKey , string ? subject = null , string ? tenant = null , IReadOnlyList < string > ? roles = null , IReadOnlyList < string > ? groups = null , IReadOnlyDictionary < string , JsonNode ? > ? additionalClaims = null )
 ```
 
 Public owners: `MockPersonServer.ConsentBridgePersonPendingStore`, `MockPersonServer`.
@@ -772,7 +803,7 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [ConsentRegistry.cs
 + MockPersonServer.ConsentRegistry: public ConsentRecord ? FindPendingByCode ( string code )
 + MockPersonServer.ConsentRegistry: public IReadOnlyList < ConsentRecord > Snapshot ( )
 + MockPersonServer.ConsentRegistry: public const int Capacity = 500 ;
-+ MockPersonServer.ConsentRegistry: public void Clear ( )
++ MockPersonServer.ConsentRegistry: public void DropPending ( )
 + MockPersonServer.ConsentRegistry: public void MarkDecided ( string id , ConsentDecider by )
 + MockPersonServer.ConsentRegistry: public void OnParked ( PersonPendingEntry entry )
 + MockPersonServer.ConsentRegistry: public void Register ( MissionPendingEntry entry )
@@ -801,10 +832,12 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [MissionGovernance.
 - MockPersonServer.MissionPendingEntry: public JsonObject ? UpstreamAct { get ; init ; }
 - MockPersonServer.MissionPendingEntry: public MissionClaim MissionClaim
 - MockPersonServer.MissionPendingEntry: public required string Approver { get ; init ; }
+- MockPersonServer.MissionPendingEntry: public required string S256 { get ; init ; }
 - MockPersonServer: public sealed class MissionPendingStore
 + MockPersonServer.MissionPendingEntry: public DateTimeOffset CreatedAt { get ; } = DateTimeOffset . UtcNow
 + MockPersonServer.MissionPendingEntry: public DateTimeOffset ExpiresAt
 + MockPersonServer.MissionPendingEntry: public required string PersonServer { get ; init ; }
++ MockPersonServer.MissionPendingEntry: public required string S256 { get ; set ; }
 + MockPersonServer: public sealed class MissionPendingStore ( ConsentRegistry registry )
 ```
 
@@ -842,7 +875,12 @@ Public owners: `MockPersonServer`.
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [SampleIdentityClaimsAsserter.cs](../../../samples/MockPersonServer/SampleIdentityClaimsAsserter.cs).
 
-Public signatures unchanged (5); behavior reviewed under sample-runtime.
+```diff
+- MockPersonServer.SampleIdentityClaimsAsserter: public static bool IsAdminAgent ( string agentId )
++ MockPersonServer.SampleIdentityClaimsAsserter: public static IReadOnlySet < ( string Issuer , string AgentId ) > AdminAgents { get ; } = new HashSet < ( string , string ) > { ( "https://ap.example" , "aauth:demo@ap.example" ) }
++ MockPersonServer.SampleIdentityClaimsAsserter: public static bool IsAdminAgent ( string agentIssuer , string agentId )
++ MockPersonServer.SampleIdentityClaimsAsserter: public static readonly AAuthPersonKey DemoPersonKey = new ( "isolated-demo-person" ) ;
+```
 
 Public owners: `MockPersonServer.SampleIdentityClaimsAsserter`, `MockPersonServer`.
 
@@ -956,15 +994,24 @@ Public owners: `AAuth.Events.EventReceiver`, `AAuth.Events`.
 Concept/decision: [events](#events). Source: [EventStores.cs](../../../src/AAuth.Events/EventStores.cs).
 
 ```diff
+- AAuth.Events: public sealed record EventAcceptance ( int StatusCode , long ? RemainingUses = null )
 - AAuth.Events: public sealed record EventEnvelope ( string Token , string Eid , string Issuer , string Agent , DateTimeOffset ExpiresAt , byte [  ] Body )
 - AAuth.Events: public sealed record ResourceSubscription ( string Eid , string Provider , string Agent , string Operation , string ? Account , string State , DateTimeOffset ExpiresAt )
 - AAuth.Events: public sealed record SubscriptionTicket ( string Ticket , string Agent , string Operation , string ? Account , string State , DateTimeOffset ExpiresAt )
++ AAuth.Events.EventAcceptanceOutcome: Accepted
++ AAuth.Events.EventAcceptanceOutcome: Duplicate
++ AAuth.Events.EventAcceptanceOutcome: Exhausted
++ AAuth.Events.EventAcceptanceOutcome: Expired
++ AAuth.Events.EventAcceptanceOutcome: Forbidden
++ AAuth.Events.EventAcceptanceOutcome: Unknown
++ AAuth.Events: public enum EventAcceptanceOutcome
++ AAuth.Events: public sealed record EventAcceptance ( EventAcceptanceOutcome Outcome , long ? RemainingUses = null )
 + AAuth.Events: public sealed record EventEnvelope ( string Token , string Eid , string Jti , string Issuer , string Agent , DateTimeOffset ExpiresAt , byte [  ] Body )
 + AAuth.Events: public sealed record ResourceSubscription ( string Eid , string Provider , string Agent , string Operation , string ? Account , string State , DateTimeOffset ExpiresAt , string ? KeyThumbprint = null )
 + AAuth.Events: public sealed record SubscriptionTicket ( string Ticket , string KeyThumbprint , string Operation , string ? Account , string State , DateTimeOffset ExpiresAt )
 ```
 
-Public owners: `AAuth.Events.IAgentEventStore`, `AAuth.Events.IAgentProviderEventStore`, `AAuth.Events.IResourceEventStore`, `AAuth.Events`.
+Public owners: `AAuth.Events.EventAcceptanceOutcome`, `AAuth.Events.IAgentEventStore`, `AAuth.Events.IAgentProviderEventStore`, `AAuth.Events.IResourceEventStore`, `AAuth.Events`.
 
 ### src/AAuth.Events/EventTokenBuilders.cs
 
@@ -1022,11 +1069,14 @@ Concept/decision: [events](#events). Source: [EventsSignatureTokenVerifier.cs](.
 
 ```diff
 - AAuth.Events.EventsServiceExtensions: public static IServiceCollection AddAAuthEvents ( this IServiceCollection services )
+- AAuth.Events.EventsSignatureTokenVerifier: public Task < TokenVerifier . VerifiedToken > VerifyAsync ( string jwt , IAAuthKey issuerKey , TokenVerifier verifier , CancellationToken cancellationToken )
 + AAuth.Events.AAuthEventsOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
 + AAuth.Events.AAuthEventsOptions: public AAuth . Discovery . AAuthTransportContract ? TransportContract { get ; set ; }
 + AAuth.Events.AAuthEventsOptions: public HttpMessageHandler ? InnerHandler { get ; set ; }
 + AAuth.Events.AAuthEventsOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
 + AAuth.Events.EventsServiceExtensions: public static IServiceCollection AddAAuthEvents ( this IServiceCollection services , Action < AAuthEventsOptions > ? configure = null )
++ AAuth.Events.EventsSignatureTokenVerifier: public Task < TokenVerifier . VerifiedToken > VerifyAsync ( SignatureTokenVerificationContext context , CancellationToken cancellationToken )
++ AAuth.Events.EventsSignatureTokenVerifier: public ValueTask < IAAuthKey ? > ResolveIssuerKeyAsync ( SignatureTokenIssuerKeyContext context , CancellationToken cancellationToken )
 + AAuth.Events: public sealed class AAuthEventsOptions
 ```
 
@@ -1161,6 +1211,8 @@ Concept/decision: [r3](#r3). Source: [R3AccessTokenEndpoint.cs](../../../src/AAu
 + AAuth.R3.R3AccessTokenEndpointOptions: public Func < string , string , bool > ? IsScopeAllowed { get ; set ; }
 + AAuth.R3.R3AccessTokenEndpointOptions: public HttpMessageHandler ? FetchHttpMessageHandler { get ; set ; }
 + AAuth.R3.R3AccessTokenEndpointOptions: public IR3AuditSink AuditSink { get ; set ; } = null !
++ AAuth.R3.R3AccessTokenEndpointOptions: public IR3AuthoritativeDefinitionProvider ? AuthoritativeDefinitions { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public IR3OperationValidator ? OperationValidator { get ; set ; }
 + AAuth.R3.R3AccessTokenEndpointOptions: public R3VocabularySchemas VocabularySchemas { get ; set ; } = R3VocabularySchemas . Standard
 + AAuth.R3.R3AccessTokenEndpointOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
 + AAuth.R3.R3AccessTokenEndpointOptions: public bool RequireProposalConsent { get ; set ; }
@@ -1171,6 +1223,17 @@ Concept/decision: [r3](#r3). Source: [R3AccessTokenEndpoint.cs](../../../src/AAu
 ```
 
 Public owners: `AAuth.R3.R3AccessTokenEndpointOptions`, `AAuth.R3.R3AccessTokenEndpoint`, `AAuth.R3`.
+
+### src/AAuth.R3/R3Audit.cs
+
+Concept/decision: [r3](#r3). Source: [R3Audit.cs](../../../src/AAuth.R3/R3Audit.cs).
+
+```diff
+- AAuth.R3: public sealed record R3TokenIssuanceAuditRecord ( string R3Uri , string R3S256 , string AgentId , string ResourceIssuer , string AccessServerIssuer , DateTimeOffset IssuedAt , R3TokenIssuanceKind IssuanceKind )
++ AAuth.R3: public sealed record R3TokenIssuanceAuditRecord ( string R3Uri , string R3S256 , string AgentId , string ResourceIssuer , string AccessServerIssuer , string PersonServer , string Subject , string AgentJkt , DateTimeOffset IssuedAt , R3TokenIssuanceKind IssuanceKind )
+```
+
+Public owners: `AAuth.R3.IR3AuditSink`, `AAuth.R3.InMemoryR3AuditSink`, `AAuth.R3.R3TokenIssuanceAuditRecord`, `AAuth.R3.R3TokenIssuanceKind`, `AAuth.R3`.
 
 ### src/AAuth.R3/R3AuthClaims.cs
 
@@ -1185,6 +1248,18 @@ Concept/decision: [r3](#r3). Source: [R3AuthClaims.cs](../../../src/AAuth.R3/R3A
 
 Public owners: `AAuth.R3.R3AuthClaims`, `AAuth.R3`.
 
+### src/AAuth.R3/R3AuthorizationEndpointExtensions.cs
+
+Concept/decision: [r3](#r3). Source: [R3AuthorizationEndpointExtensions.cs](../../../src/AAuth.R3/R3AuthorizationEndpointExtensions.cs).
+
+```diff
++ AAuth.R3.R3AuthorizationEndpointExtensions: public static IServiceCollection AddAAuthR3AuthorizationEndpoint ( this IServiceCollection services )
++ AAuth.R3.R3AuthorizationEndpointExtensions: public static R3Operations ? GetR3Operations ( this AAuthAuthorizationRequest request )
++ AAuth.R3: public static class R3AuthorizationEndpointExtensions
+```
+
+Public owners: `AAuth.R3.R3AuthorizationEndpointExtensions`, `AAuth.R3`.
+
 ### src/AAuth.R3/R3Challenge.cs
 
 Concept/decision: [r3](#r3). Source: [R3Challenge.cs](../../../src/AAuth.R3/R3Challenge.cs).
@@ -1196,6 +1271,7 @@ Concept/decision: [r3](#r3). Source: [R3Challenge.cs](../../../src/AAuth.R3/R3Ch
 - AAuth.R3.R3Challenge: public string BuildResourceToken ( TokenVerifier . VerifiedToken verifiedAuthToken , string r3Uri , string r3S256 , string ? scope = null )
 - AAuth.R3.R3Challenge: public string BuildResourceToken ( string agent , string agentJkt , string r3Uri , string r3S256 , string ? scope = null , string ? account = null )
 + AAuth.R3.R3Challenge: public IR3DocumentEntitlements ? Entitlements { get ; init ; }
++ AAuth.R3.R3Challenge: public IR3OperationValidator ? OperationValidator { get ; init ; }
 + AAuth.R3.R3Challenge: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
 + AAuth.R3.R3Challenge: public ValueTask < string > BuildResourceTokenAsync ( TokenVerifier . VerifiedToken presented , string agentJkt , string r3Uri , string r3S256 , string ? scope = null , string ? account = null , CancellationToken cancellationToken = default )
 + AAuth.R3.R3Challenge: public ValueTask < string > BuildResourceTokenAsync ( TokenVerifier . VerifiedToken verifiedAuthToken , string r3Uri , string r3S256 , string ? scope = null , CancellationToken cancellationToken = default )
@@ -1211,6 +1287,9 @@ Concept/decision: [r3](#r3). Source: [R3ClaimReader.cs](../../../src/AAuth.R3/R3
 
 ```diff
 - AAuth.R3.R3ClaimReader: public sealed record AuthTokenClaims ( string Uri , string S256 , R3Grant Granted , R3Grant ? Conditional )
++ AAuth.R3.R3ClaimReader.AuthTokenClaims: public DateTimeOffset ? ExpiresAt { get ; init ; }
++ AAuth.R3.R3ClaimReader.AuthTokenClaims: public string ? Issuer { get ; init ; }
++ AAuth.R3.R3ClaimReader.AuthTokenClaims: public string ? Jti { get ; init ; }
 + AAuth.R3.R3ClaimReader: public sealed record AuthTokenClaims ( string Uri , string S256 , R3Grant Granted , R3Grant ? PerCall )
 ```
 
@@ -1233,41 +1312,40 @@ Public owners: `AAuth.R3.R3DocumentEndpoint`, `AAuth.R3.R3FetchVerificationExcep
 Concept/decision: [r3](#r3). Source: [R3DocumentEntitlements.cs](../../../src/AAuth.R3/R3DocumentEntitlements.cs).
 
 ```diff
-+ AAuth.R3.IR3DocumentEntitlements: ValueTask < bool > IsEntitledAsync ( string s256 , string reader , CancellationToken cancellationToken = default )
-+ AAuth.R3.IR3DocumentEntitlements: ValueTask EntitleAsync ( string s256 , string reader , CancellationToken cancellationToken = default )
-+ AAuth.R3.InMemoryR3DocumentEntitlements: public ValueTask < bool > IsEntitledAsync ( string s256 , string reader , CancellationToken cancellationToken = default )
-+ AAuth.R3.InMemoryR3DocumentEntitlements: public ValueTask EntitleAsync ( string s256 , string reader , CancellationToken cancellationToken = default )
++ AAuth.R3.IR3DocumentEntitlements: ValueTask < bool > IsEntitledAsync ( string uri , string s256 , string reader , CancellationToken cancellationToken = default )
++ AAuth.R3.IR3DocumentEntitlements: ValueTask EntitleAsync ( string uri , string s256 , string reader , string resourceTokenId , DateTimeOffset expiresAt , CancellationToken cancellationToken = default )
++ AAuth.R3.InMemoryR3DocumentEntitlements: public ValueTask < bool > IsEntitledAsync ( string uri , string s256 , string reader , CancellationToken cancellationToken = default )
++ AAuth.R3.InMemoryR3DocumentEntitlements: public ValueTask EntitleAsync ( string uri , string s256 , string reader , string resourceTokenId , DateTimeOffset expiresAt , CancellationToken cancellationToken = default )
 + AAuth.R3: public interface IR3DocumentEntitlements
-+ AAuth.R3: public sealed class InMemoryR3DocumentEntitlements : IR3DocumentEntitlements
++ AAuth.R3: public sealed class InMemoryR3DocumentEntitlements ( TimeProvider ? timeProvider = null ) : IR3DocumentEntitlements
 ```
 
 Public owners: `AAuth.R3.IR3DocumentEntitlements`, `AAuth.R3.InMemoryR3DocumentEntitlements`, `AAuth.R3`.
-
-### src/AAuth.R3/R3DocumentReaderPolicy.cs
-
-Concept/decision: [r3](#r3). Source: [R3DocumentReaderPolicy.cs](../../../src/AAuth.R3/R3DocumentReaderPolicy.cs).
-
-```diff
-+ AAuth.R3.R3DocumentReaderPolicy: public Func < Microsoft . AspNetCore . Http . HttpContext , string , bool > ? IsEntitledPersonServer { get ; init ; }
-```
-
-Public owners: `AAuth.R3.R3DocumentReaderPolicy`, `AAuth.R3`.
 
 ### src/AAuth.R3/R3Enforcement.cs
 
 Concept/decision: [r3](#r3). Source: [R3Enforcement.cs](../../../src/AAuth.R3/R3Enforcement.cs).
 
 ```diff
+- AAuth.R3.R3Enforcement: public R3Enforcement ( R3ProposalStore proposalStore , Uri resourceBaseUri , string proposalPathPrefix = "/r3/proposals" , R3VocabularySchemas ? schemas = null )
 - AAuth.R3.R3EnforcementDecision: public IResult ToResult ( HttpContext context , R3Challenge challenge , TokenVerifier . VerifiedToken verifiedAuthToken , string ? scope = null )
 - AAuth.R3.R3EnforcementDecision: public IResult ToResult ( HttpContext context , R3Challenge challenge , string agent , string agentJkt , string ? scope = null )
 - AAuth.R3.R3EnforcementDecision: public static R3EnforcementDecision Conditional ( string proposalUri , string proposalS256 )
 - AAuth.R3.R3EnforcementDecisionKind: Conditional
++ AAuth.R3.R3Enforcement: public R3Enforcement ( R3ProposalStore proposalStore , Uri resourceBaseUri , string proposalPathPrefix = "/r3/proposals" , R3VocabularySchemas ? schemas = null , IAAuthSingleUseGate ? singleUseGate = null )
++ AAuth.R3.R3EnforcementDecision: public R3SingleUse ? SingleUseGrant { get ; init ; }
 + AAuth.R3.R3EnforcementDecision: public async Task < IResult > ToResultAsync ( HttpContext context , R3Challenge challenge , TokenVerifier . VerifiedToken verifiedAuthToken , string ? scope = null )
 + AAuth.R3.R3EnforcementDecision: public static R3EnforcementDecision PerCall ( string proposalUri , string proposalS256 )
++ AAuth.R3.R3EnforcementDecision: public static R3EnforcementDecision SingleUse ( R3SingleUse singleUse )
 + AAuth.R3.R3EnforcementDecisionKind: PerCall
++ AAuth.R3.R3EnforcementDecisionKind: SingleUse
++ AAuth.R3.R3SingleUse: public DateTimeOffset ExpiresAt { get ; }
++ AAuth.R3.R3SingleUse: public Task < HeldInvocationResult > ExecuteOnceAsync ( Func < CancellationToken , Task < HeldInvocationResult > > execute , CancellationToken cancellationToken = default )
++ AAuth.R3.R3SingleUse: public string Key { get ; }
++ AAuth.R3: public sealed class R3SingleUse
 ```
 
-Public owners: `AAuth.R3.R3EnforcementDecisionKind`, `AAuth.R3.R3EnforcementDecision`, `AAuth.R3.R3Enforcement`, `AAuth.R3`.
+Public owners: `AAuth.R3.R3EnforcementDecisionKind`, `AAuth.R3.R3EnforcementDecision`, `AAuth.R3.R3Enforcement`, `AAuth.R3.R3SingleUse`, `AAuth.R3`.
 
 ### src/AAuth.R3/R3FetchClient.cs
 
@@ -1287,6 +1365,30 @@ Concept/decision: [r3](#r3). Source: [R3Metadata.cs](../../../src/AAuth.R3/R3Met
 Public signatures unchanged (6); behavior reviewed under r3.
 
 Public owners: `AAuth.R3.R3Metadata`, `AAuth.R3`.
+
+### src/AAuth.R3/R3OperationValidation.cs
+
+Concept/decision: [r3](#r3). Source: [R3OperationValidation.cs](../../../src/AAuth.R3/R3OperationValidation.cs).
+
+```diff
++ AAuth.R3.IR3AuthoritativeDefinitionProvider: ValueTask < IReadOnlyList < R3OperationIdentity > > GetOperationsAsync ( string vocabulary , CancellationToken cancellationToken = default )
++ AAuth.R3.IR3OperationValidator: ValueTask ValidateDocumentAsync ( R3Document document , CancellationToken cancellationToken = default )
++ AAuth.R3.IR3OperationValidator: ValueTask ValidateProposalAsync ( R3ProposalDocument proposal , CancellationToken cancellationToken = default )
++ AAuth.R3.IR3OperationValidator: ValueTask ValidateReferenceAsync ( string r3Uri , string r3S256 , CancellationToken cancellationToken = default )
++ AAuth.R3.R3OperationValidation: public static void RejectAmbiguousBareIdentifiers ( string vocabulary , IEnumerable < R3OperationIdentity > authoritativeOperations )
++ AAuth.R3.R3OperationValidation: public static void ValidateGrant ( R3Grant grant , IEnumerable < R3OperationIdentity > authoritativeOperations , R3VocabularySchemas ? schemas = null )
++ AAuth.R3.R3OperationValidator: public ValueTask ValidateReferenceAsync ( string r3Uri , string r3S256 , CancellationToken cancellationToken = default )
++ AAuth.R3.R3OperationValidator: public async ValueTask ValidateDocumentAsync ( R3Document document , CancellationToken cancellationToken = default )
++ AAuth.R3.R3OperationValidator: public async ValueTask ValidateProposalAsync ( R3ProposalDocument proposal , CancellationToken cancellationToken = default )
++ AAuth.R3.StaticR3AuthoritativeDefinitionProvider: public ValueTask < IReadOnlyList < R3OperationIdentity > > GetOperationsAsync ( string vocabulary , CancellationToken cancellationToken = default )
++ AAuth.R3: public interface IR3AuthoritativeDefinitionProvider
++ AAuth.R3: public interface IR3OperationValidator
++ AAuth.R3: public sealed class R3OperationValidator ( R3ProposalStore store , IR3AuthoritativeDefinitionProvider provider , R3VocabularySchemas ? schemas = null ) : IR3OperationValidator
++ AAuth.R3: public sealed class StaticR3AuthoritativeDefinitionProvider ( IEnumerable < R3OperationIdentity > operations ) : IR3AuthoritativeDefinitionProvider
++ AAuth.R3: public static class R3OperationValidation
+```
+
+Public owners: `AAuth.R3.IR3AuthoritativeDefinitionProvider`, `AAuth.R3.IR3OperationValidator`, `AAuth.R3.R3OperationValidation`, `AAuth.R3.R3OperationValidator`, `AAuth.R3.StaticR3AuthoritativeDefinitionProvider`, `AAuth.R3`.
 
 ### src/AAuth/AAuthClientBuilder.cs
 
@@ -1314,16 +1416,55 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthConstants
 + AAuth.AAuthConstants.AccessModes: public const string PerCall = "per-call" ;
 + AAuth.AAuthConstants.AccessModes: public const string PersonToken = "person-token" ;
 + AAuth.AAuthConstants.AccessModes: public const string SessionToken = "session-token" ;
++ AAuth.AAuthConstants.Capabilities: public const string Clarification = "clarification" ;
++ AAuth.AAuthConstants.Capabilities: public const string Interaction = "interaction" ;
++ AAuth.AAuthConstants.Capabilities: public const string Payment = "payment" ;
++ AAuth.AAuthConstants.Claims: public const string Subject = "sub" ;
++ AAuth.AAuthConstants.Governance.ErrorCodes: public const string InteractionUnavailable = "interaction_unavailable" ;
++ AAuth.AAuthConstants.Governance.InteractionTypes: public const string Interaction = "interaction" ;
++ AAuth.AAuthConstants.Governance.InteractionTypes: public const string Payment = "payment" ;
++ AAuth.AAuthConstants.Governance.InteractionTypes: public const string Question = "question" ;
++ AAuth.AAuthConstants.Governance.Status: public const string Interacting = "interacting" ;
++ AAuth.AAuthConstants.Governance.Status: public const string Ok = "ok" ;
++ AAuth.AAuthConstants.Governance.Status: public const string Pending = "pending" ;
++ AAuth.AAuthConstants.Governance: public static class ErrorCodes
++ AAuth.AAuthConstants.Governance: public static class InteractionTypes
++ AAuth.AAuthConstants.Governance: public static class Status
++ AAuth.AAuthConstants.MetadataFields: public const string AdditionalSignatureComponents = "additional_signature_components" ;
 + AAuth.AAuthConstants.MissionTerminationReasons: public const string Administrative = "administrative" ;
 + AAuth.AAuthConstants.MissionTerminationReasons: public const string Completed = "completed" ;
 + AAuth.AAuthConstants.MissionTerminationReasons: public const string Expired = "expired" ;
 + AAuth.AAuthConstants.MissionTerminationReasons: public const string Revoked = "revoked" ;
 + AAuth.AAuthConstants.MissionTerminationReasons: public const string Superseded = "superseded" ;
++ AAuth.AAuthConstants.Platforms: public const string Desktop = "desktop" ;
++ AAuth.AAuthConstants.Platforms: public const string Mobile = "mobile" ;
++ AAuth.AAuthConstants.Platforms: public const string SelfHosted = "self-hosted" ;
++ AAuth.AAuthConstants.Platforms: public const string Web = "web" ;
++ AAuth.AAuthConstants.Platforms: public const string Workload = "workload" ;
 + AAuth.AAuthConstants.TokenTypes: public const string PersonToken = "aa-person+jwt" ;
++ AAuth.AAuthConstants: public static class Capabilities
++ AAuth.AAuthConstants: public static class Claims
++ AAuth.AAuthConstants: public static class Governance
++ AAuth.AAuthConstants: public static class MetadataFields
 + AAuth.AAuthConstants: public static class MissionTerminationReasons
++ AAuth.AAuthConstants: public static class Platforms
 ```
 
-Public owners: `AAuth.AAuthConstants.AccessModes`, `AAuth.AAuthConstants.DwkFiles`, `AAuth.AAuthConstants.Headers`, `AAuth.AAuthConstants.MissionTerminationReasons`, `AAuth.AAuthConstants.Schemes`, `AAuth.AAuthConstants.TokenTypes`, `AAuth.AAuthConstants`, `AAuth`.
+Public owners: `AAuth.AAuthConstants.AccessModes`, `AAuth.AAuthConstants.Capabilities`, `AAuth.AAuthConstants.Claims`, `AAuth.AAuthConstants.DwkFiles`, `AAuth.AAuthConstants.Governance.ErrorCodes`, `AAuth.AAuthConstants.Governance.InteractionTypes`, `AAuth.AAuthConstants.Governance.Status`, `AAuth.AAuthConstants.Governance`, `AAuth.AAuthConstants.Headers`, `AAuth.AAuthConstants.MetadataFields`, `AAuth.AAuthConstants.MissionTerminationReasons`, `AAuth.AAuthConstants.Platforms`, `AAuth.AAuthConstants.Schemes`, `AAuth.AAuthConstants.TokenTypes`, `AAuth.AAuthConstants`, `AAuth`.
+
+### src/AAuth/AAuthDiagnostics.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthDiagnostics.cs](../../../src/AAuth/AAuthDiagnostics.cs).
+
+```diff
++ AAuth.AAuthDiagnostics: public const string TagAuthority = "aauth.authority" ;
++ AAuth.AAuthDiagnostics: public const string TagHttpMethod = "http.request.method" ;
++ AAuth.AAuthDiagnostics: public const string TagPath = "aauth.path" ;
++ AAuth.AAuthDiagnostics: public static readonly Counter < double > SigningCreatedWait = Meter . CreateCounter < double > ( "aauth.signing.created_wait" , unit : "s" , description : "Total seconds spent waiting for the next free AAuth signature created timestamp." ) ;
++ AAuth.AAuthDiagnostics: public static readonly Meter Meter = new ( SourceName , "1.0.0" ) ;
+```
+
+Public owners: `AAuth.AAuthDiagnostics`, `AAuth`.
 
 ### src/AAuth/AAuthTokenType.cs
 
@@ -1374,6 +1515,35 @@ Concept/decision: [consent](#consent). Source: [AAuthAccessServerEndpoints.cs](.
 
 Public owners: `AAuth.Access.AAuthAccessServerEndpoints`, `AAuth.Access.AAuthAccessServerOptions`, `AAuth.Access`.
 
+### src/AAuth/Access/AAuthPayment.cs
+
+Concept/decision: [consent](#consent). Source: [AAuthPayment.cs](../../../src/AAuth/Access/AAuthPayment.cs).
+
+```diff
++ AAuth.Access.AAuthPaymentChallenge: public IReadOnlyList < string > WwwAuthenticate { get ; init ; } = [ ]
++ AAuth.Access.AAuthPaymentChallenge: public JsonObject ? Body { get ; init ; }
++ AAuth.Access.AAuthPaymentChallenge: public string Scheme { get ; init ; } = AAuthConstants . Governance . InteractionTypes . Payment
++ AAuth.Access.AAuthPaymentSettlementContext: public required AAuthPaymentChallenge Challenge { get ; init ; }
++ AAuth.Access.AAuthPaymentSettlementContext: public required Uri PendingUrl { get ; init ; }
++ AAuth.Access.AAuthPaymentSettlementContext: public required string AccessServerOrigin { get ; init ; }
++ AAuth.Access.AAuthPaymentSettlementResult: public bool Settled { get ; }
++ AAuth.Access.AAuthPaymentSettlementResult: public static AAuthPaymentSettlementResult Declined { get ; } = new ( false )
++ AAuth.Access.AAuthPaymentSettlementResult: public static AAuthPaymentSettlementResult Success { get ; } = new ( true )
++ AAuth.Access.IAAuthBillingRelationshipCache: Task < bool > IsEstablishedAsync ( string accessServerIssuer , string scheme , CancellationToken cancellationToken = default )
++ AAuth.Access.IAAuthBillingRelationshipCache: Task MarkEstablishedAsync ( string accessServerIssuer , string scheme , CancellationToken cancellationToken = default )
++ AAuth.Access.IAAuthPaymentSettler: Task < AAuthPaymentSettlementResult > SettleAsync ( AAuthPaymentSettlementContext context , CancellationToken cancellationToken = default )
++ AAuth.Access.InMemoryAAuthBillingRelationshipCache: public Task < bool > IsEstablishedAsync ( string accessServerIssuer , string scheme , CancellationToken cancellationToken = default )
++ AAuth.Access.InMemoryAAuthBillingRelationshipCache: public Task MarkEstablishedAsync ( string accessServerIssuer , string scheme , CancellationToken cancellationToken = default )
++ AAuth.Access: public interface IAAuthBillingRelationshipCache
++ AAuth.Access: public interface IAAuthPaymentSettler
++ AAuth.Access: public sealed class AAuthPaymentChallenge
++ AAuth.Access: public sealed class AAuthPaymentSettlementContext
++ AAuth.Access: public sealed class AAuthPaymentSettlementResult
++ AAuth.Access: public sealed class InMemoryAAuthBillingRelationshipCache : IAAuthBillingRelationshipCache
+```
+
+Public owners: `AAuth.Access.AAuthPaymentChallenge`, `AAuth.Access.AAuthPaymentSettlementContext`, `AAuth.Access.AAuthPaymentSettlementResult`, `AAuth.Access.IAAuthBillingRelationshipCache`, `AAuth.Access.IAAuthPaymentSettler`, `AAuth.Access.InMemoryAAuthBillingRelationshipCache`, `AAuth.Access`.
+
 ### src/AAuth/Access/AccessServerClient.cs
 
 Concept/decision: [consent](#consent). Source: [AccessServerClient.cs](../../../src/AAuth/Access/AccessServerClient.cs).
@@ -1389,7 +1559,10 @@ Concept/decision: [consent](#consent). Source: [AccessServerRequest.cs](../../..
 ```diff
 - AAuth.Access.AccessServerRequest: public JsonObject ? ExpectedActContext { get ; init ; }
 - AAuth.Access.AccessServerRequest: public MissionClaim ? ExpectedMission { get ; set ; }
+- AAuth.Access.AccessServerRequest: public required DateTimeOffset AuthorizationExpiresAt { get ; init ; }
 - AAuth.Access.AccessServerRequest: public required string ExpectedAgentId { get ; init ; }
++ AAuth.Access.AccessServerRequest: public Func < AAuthPaymentSettlementContext , CancellationToken , Task < AAuthPaymentSettlementResult > > ? OnPaymentRequired { get ; init ; }
++ AAuth.Access.AccessServerRequest: public required DateTimeOffset AuthorizationExpiresAt { get ; set ; }
 + AAuth.Access.AccessServerRequest: public required DateTimeOffset PresentedTokenExpiresAt { get ; set ; }
 + AAuth.Access.AccessServerRequest: public required string ExpectedPersonServer { get ; init ; }
 + AAuth.Access.AccessServerRequest: public required string ExpectedSubject { get ; init ; }
@@ -1404,12 +1577,16 @@ Public owners: `AAuth.Access.AccessServerRequest`, `AAuth.Access`.
 Concept/decision: [consent](#consent). Source: [IAccessPendingStore.cs](../../../src/AAuth/Access/IAccessPendingStore.cs).
 
 ```diff
+- AAuth.Access.AccessPendingEntry: public IReadOnlyList < AAuth . Server . TokenKey > SourceTokens { get ; set ; } = [ ]
 - AAuth.Access.AccessPendingEntry: public JsonObject ? UpstreamAct { get ; init ; }
 - AAuth.Access.AccessPendingEntry: public string ? OwnerAgentIssuer { get ; set ; }
 - AAuth.Access.AccessPendingEntry: public string ? OwnerAgentSubject { get ; set ; }
 - AAuth.Access.AccessPendingEntry: public string ? SuppliedSubject { get ; set ; }
 - AAuth.Access.IAccessPendingStore: AccessPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , JsonObject ? claims , IReadOnlyList < string > ? requiredClaims = null , DateTimeOffset ? authorizationExpiresAt = null , JsonObject ? upstreamAct = null )
 - AAuth.Access.InMemoryAccessPendingStore: public AccessPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , JsonObject ? claims , IReadOnlyList < string > ? requiredClaims = null , DateTimeOffset ? authorizationExpiresAt = null , JsonObject ? upstreamAct = null )
++ AAuth.Access.AccessPendingEntry: public AAuthPaymentChallenge ? PaymentChallenge { get ; set ; }
++ AAuth.Access.AccessPendingEntry: public IReadOnlyList < AAuth . Server . TokenRegistration > SourceTokens { get ; set ; } = [ ]
++ AAuth.Access.AccessPendingStatus: PaymentRequired
 + AAuth.Access.IAccessPendingStore: AccessPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , JsonObject ? claims , IReadOnlyList < string > ? requiredClaims = null , DateTimeOffset ? authorizationExpiresAt = null )
 + AAuth.Access.InMemoryAccessPendingStore: public AccessPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , JsonObject ? claims , IReadOnlyList < string > ? requiredClaims = null , DateTimeOffset ? authorizationExpiresAt = null )
 ```
@@ -1422,11 +1599,23 @@ Concept/decision: [consent](#consent). Source: [IAccessPolicy.cs](../../../src/A
 
 ```diff
 - AAuth.Access.AccessDecision: public static AccessDecision Allow ( string ? subject = null , string ? tenant = null , IReadOnlyDictionary < string , JsonNode ? > ? additionalClaims = null )
+- AAuth.Access.AccessDecision: public static AccessDecision NeedsPayment ( string paymentUrl )
+- AAuth.Access.AccessDecision: public string ? PaymentUrl { get ; }
 - AAuth.Access.AccessDecision: public string ? Subject { get ; }
++ AAuth.Access.AccessDecision: public AAuthPaymentChallenge ? PaymentChallenge { get ; }
 + AAuth.Access.AccessDecision: public static AccessDecision Allow ( string ? tenant = null , IReadOnlyDictionary < string , JsonNode ? > ? additionalClaims = null )
++ AAuth.Access.AccessDecision: public static AccessDecision NeedsPayment ( AAuthPaymentChallenge challenge )
 ```
 
 Public owners: `AAuth.Access.AccessDecisionKind`, `AAuth.Access.AccessDecision`, `AAuth.Access.AccessPolicyRequest`, `AAuth.Access.IAccessPolicy`, `AAuth.Access.IInteractiveAccessPolicy`, `AAuth.Access`.
+
+### src/AAuth/Agent/AAuthAccessHandler.cs
+
+Concept/decision: [resource-managed](#resource-managed). Source: [AAuthAccessHandler.cs](../../../src/AAuth/Agent/AAuthAccessHandler.cs).
+
+Public signatures unchanged (3); behavior reviewed under resource-managed.
+
+Public owners: `AAuth.Agent.AAuthAccessHandler`, `AAuth.Agent`.
 
 ### src/AAuth/Agent/AAuthAgentFactory.cs
 
@@ -1466,6 +1655,32 @@ Concept/decision: [agent-clients](#agent-clients). Source: [AAuthCallbackHandler
 ```
 
 Public owners: `AAuth.Agent.IAAuthClarificationHandler`, `AAuth.Agent.IAAuthDeferredObserver`, `AAuth.Agent.IAAuthInteractionHandler`, `AAuth.Agent`.
+
+### src/AAuth/Agent/AAuthCapabilitiesHeader.cs
+
+Concept/decision: [agent-clients](#agent-clients). Source: [AAuthCapabilitiesHeader.cs](../../../src/AAuth/Agent/AAuthCapabilitiesHeader.cs).
+
+```diff
+- AAuth.Agent.AAuthCapabilitiesHeader.Capabilities: public const string Clarification = "clarification" ;
+- AAuth.Agent.AAuthCapabilitiesHeader.Capabilities: public const string Interaction = "interaction" ;
+- AAuth.Agent.AAuthCapabilitiesHeader.Capabilities: public const string Payment = "payment" ;
+- AAuth.Agent.AAuthCapabilitiesHeader: public const string Name = "AAuth-Capabilities" ;
+- AAuth.Agent.AAuthCapabilitiesHeader: public static class Capabilities
++ AAuth.Agent.AAuthCapabilitiesHeader: public const string Name = AAuthConstants . Headers . AAuthCapabilities ;
+```
+
+Public owners: `AAuth.Agent.AAuthCapabilitiesHeader.Capabilities`, `AAuth.Agent.AAuthCapabilitiesHeader`, `AAuth.Agent`.
+
+### src/AAuth/Agent/AAuthInteractionExceptions.cs
+
+Concept/decision: [agent-clients](#agent-clients). Source: [AAuthInteractionExceptions.cs](../../../src/AAuth/Agent/AAuthInteractionExceptions.cs).
+
+```diff
+- AAuth.Agent.AAuthInteractionChainedException: public Interaction Interaction { get ; }
++ AAuth.Agent.AAuthInteractionChainedException: public Interaction DownstreamInteraction { get ; }
+```
+
+Public owners: `AAuth.Agent.AAuthClarificationCancelledException`, `AAuth.Agent.AAuthClarificationLimitException`, `AAuth.Agent.AAuthInteractionChainedException`, `AAuth.Agent.AAuthInteractionDeniedException`, `AAuth.Agent.AAuthInteractionTimeoutException`, `AAuth.Agent`.
 
 ### src/AAuth/Agent/AAuthRequestOptions.cs
 
@@ -1521,6 +1736,22 @@ Public signatures unchanged (16); behavior reviewed under agent-clients.
 
 Public owners: `AAuth.Agent.AgentProviderClient`, `AAuth.Agent.EnrollResult`, `AAuth.Agent.TwoKeyRefreshResult`, `AAuth.Agent`.
 
+### src/AAuth/Agent/AgentProviderTokenRefresher.cs
+
+Concept/decision: [agent-clients](#agent-clients). Source: [AgentProviderTokenRefresher.cs](../../../src/AAuth/Agent/AgentProviderTokenRefresher.cs).
+
+```diff
+- AAuth.Agent.AgentProviderTokenRefresher.RefresherBuilder: public RefresherBuilder WithRefreshMode ( RefreshMode mode )
+- AAuth.Agent.AgentProviderTokenRefresher: public AAuthKey ? LatestEphemeralKey { get ; private set ; }
+- AAuth.Agent.AgentProviderTokenRefresher: public AgentProviderTokenRefresher ( HttpClient http , IKeyStore keyStore , string refreshEndpoint , string localKeyHandle , RefreshMode mode = RefreshMode . SingleKey )
+- AAuth.Agent.RefreshMode: SingleKey
+- AAuth.Agent.RefreshMode: TwoKey
+- AAuth.Agent: public enum RefreshMode
++ AAuth.Agent.AgentProviderTokenRefresher: public AgentProviderTokenRefresher ( HttpClient http , IKeyStore keyStore , string refreshEndpoint , string localKeyHandle )
+```
+
+Public owners: `AAuth.Agent.AgentProviderTokenRefresher.RefresherBuilder`, `AAuth.Agent.AgentProviderTokenRefresher`, `AAuth.Agent.RefreshMode`, `AAuth.Agent`.
+
 ### src/AAuth/Agent/ChallengeHandler.cs
 
 Concept/decision: [agent-clients](#agent-clients). Source: [ChallengeHandler.cs](../../../src/AAuth/Agent/ChallengeHandler.cs).
@@ -1560,7 +1791,7 @@ Concept/decision: [agent-clients](#agent-clients). Source: [DeferredPoller.cs](.
 + AAuth.Agent.DeferredPollerOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
 + AAuth.Agent.DeferredPollerOptions: public TimeSpan DefaultPollInterval { get ; set ; } = TimeSpan . FromSeconds ( 5 )
 + AAuth.Agent.DeferredPollerOptions: public TimeSpan MaxTotalWait { get ; set ; } = TimeSpan . FromMinutes ( 5 )
-+ AAuth.Agent.DeferredPollerOptions: public TimeSpan MinPollInterval { get ; set ; } = TimeSpan . FromMilliseconds ( 100 )
++ AAuth.Agent.DeferredPollerOptions: public TimeSpan MinPollInterval { get ; set ; } = TimeSpan . Zero
 + AAuth.Agent.DeferredPollerOptions: public int ? PreferWaitSeconds { get ; set ; }
 ```
 
@@ -1620,6 +1851,14 @@ Concept/decision: [governance](#governance). Source: [InteractionRequest.cs](../
 ```
 
 Public owners: `AAuth.Agent.Governance.InteractionRequest`, `AAuth.Agent.Governance.InteractionType`, `AAuth.Agent.Governance`.
+
+### src/AAuth/Agent/Governance/InteractionResult.cs
+
+Concept/decision: [governance](#governance). Source: [InteractionResult.cs](../../../src/AAuth/Agent/Governance/InteractionResult.cs).
+
+Public signatures unchanged (6); behavior reviewed under governance.
+
+Public owners: `AAuth.Agent.Governance.InteractionResult`, `AAuth.Agent.Governance`.
 
 ### src/AAuth/Agent/Governance/MissionClient.cs
 
@@ -1769,12 +2008,17 @@ Concept/decision: [agent-clients](#agent-clients). Source: [TokenExchangeClient.
 
 ```diff
 - AAuth.Agent.TokenExchangeClient: public Task < string > ExchangeAsync ( string personServer , string resourceToken , CancellationToken cancellationToken = default )
+- AAuth.Agent.TokenExchangeClient: public TokenExchangeClient ( HttpClient signedClient , MetadataClient metadata )
 + AAuth.Agent.TokenExchangeClient: public Task < string > ExchangeAsync ( string personServer , string resourceToken , string presentedToken , CancellationToken cancellationToken = default )
 + AAuth.Agent.TokenExchangeClient: public Task < string > RequestPersonTokenAsync ( string personServer , string resource , CancellationToken cancellationToken = default )
++ AAuth.Agent.TokenExchangeClient: public TokenExchangeClient ( HttpClient signedClient , MetadataClient metadata , TokenExchangeClientOptions ? options = null )
 + AAuth.Agent.TokenExchangeClient: public async Task < string > RequestPersonTokenAsync ( string personServer , string resource , TokenExchangeRequest options , CancellationToken cancellationToken = default )
++ AAuth.Agent.TokenExchangeClientOptions: public JwksClient ? JwksClient { get ; init ; }
++ AAuth.Agent.TokenExchangeClientOptions: public bool VerifyAuthTokenSignature { get ; init ; } = true
++ AAuth.Agent: public sealed class TokenExchangeClientOptions
 ```
 
-Public owners: `AAuth.Agent.TokenExchangeClient`, `AAuth.Agent`.
+Public owners: `AAuth.Agent.TokenExchangeClientOptions`, `AAuth.Agent.TokenExchangeClient`, `AAuth.Agent`.
 
 ### src/AAuth/Agent/TokenExchangeRequest.cs
 
@@ -2016,6 +2260,14 @@ Concept/decision: [di](#di). Source: [AAuthApplicationBuilderExtensions.cs](../.
 
 Public owners: `Microsoft.AspNetCore.Builder.AAuthApplicationBuilderExtensions`, `Microsoft.AspNetCore.Builder`.
 
+### src/AAuth/DependencyInjection/AAuthDiscoveryServiceCollectionExtensions.cs
+
+Concept/decision: [di](#di). Source: [AAuthDiscoveryServiceCollectionExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthDiscoveryServiceCollectionExtensions.cs).
+
+Public signatures unchanged (2); behavior reviewed under di.
+
+Public owners: `Microsoft.Extensions.DependencyInjection.AAuthDiscoveryServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
+
 ### src/AAuth/DependencyInjection/AAuthFederationServiceCollectionExtensions.cs
 
 Concept/decision: [di](#di). Source: [AAuthFederationServiceCollectionExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthFederationServiceCollectionExtensions.cs).
@@ -2062,12 +2314,30 @@ Concept/decision: [di](#di). Source: [AAuthPersonServerServiceCollectionExtensio
 
 ```diff
 + Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder Configure ( Action < AAuthPersonServerOptions > configure )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseAgentPersonBindingStore ( Func < IServiceProvider , IAgentPersonBindingStore > factory )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseAgentPersonBindingStore ( IAgentPersonBindingStore store )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseAgentPersonBindingStore < T > ( ) where T : class , IAgentPersonBindingStore
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseBillingRelationshipCache ( Func < IServiceProvider , IAAuthBillingRelationshipCache > factory )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseBillingRelationshipCache ( IAAuthBillingRelationshipCache cache )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseBillingRelationshipCache < T > ( ) where T : class , IAAuthBillingRelationshipCache
 + Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseClaimsAsserter ( Func < IServiceProvider , IIdentityClaimsAsserter > factory )
 + Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseClaimsAsserter ( IIdentityClaimsAsserter asserter )
 + Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseClaimsAsserter < T > ( ) where T : class , IIdentityClaimsAsserter
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseCollocatedAccessServer ( Func < IServiceProvider , IAAuthCollapsedFederationPolicy > factory )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseCollocatedAccessServer ( IAAuthCollapsedFederationPolicy policy )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseCollocatedAccessServer ( string resourceIssuer , string accessServerName = AAuthAccessServerBuilder . DefaultName , string ? expectedAccessServerIssuer = null )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePaymentSettler ( Func < IServiceProvider , IAAuthPaymentSettler > factory )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePaymentSettler ( IAAuthPaymentSettler settler )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePaymentSettler < T > ( ) where T : class , IAAuthPaymentSettler
 + Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePendingStore ( Func < IServiceProvider , IPersonPendingStore > factory )
 + Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePendingStore ( IPersonPendingStore store )
 + Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePendingStore < T > ( ) where T : class , IPersonPendingStore
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePersonResourceEnrollmentStore ( Func < IServiceProvider , IPersonResourceEnrollmentStore > factory )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePersonResourceEnrollmentStore ( IPersonResourceEnrollmentStore store )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePersonResourceEnrollmentStore < T > ( ) where T : class , IPersonResourceEnrollmentStore
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePersonSubjectDeriver ( Func < IServiceProvider , IPersonSubjectDeriver > factory )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePersonSubjectDeriver ( IPersonSubjectDeriver deriver )
++ Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UsePersonSubjectDeriver < T > ( ) where T : class , IPersonSubjectDeriver
 + Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseTokenInventory ( IJtiStore inventory )
 + Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseTokenInventory < T > ( ) where T : class , IJtiStore
 + Microsoft.Extensions.DependencyInjection.AAuthPersonServerBuilder: public AAuthPersonServerBuilder UseTokenVerifier ( TokenVerifier verifier )
@@ -2097,7 +2367,9 @@ Concept/decision: [di](#di). Source: [AAuthResourceOptions.cs](../../../src/AAut
 - AAuth.AAuthResourceOptions: public TimeSpan MaxFutureSkew { get ; set ; } = TimeSpan . FromSeconds ( 5 )
 + AAuth.AAuthResourceOptions: public AAuthSigningKeySet SigningKeys { get ; set ; } = new ( )
 + AAuth.AAuthResourceOptions: public Action < AAuth . Server . AAuthRevocationOptions > ? ConfigureRevocation { get ; set ; }
++ AAuth.AAuthResourceOptions: public IReadOnlyList < string > ? AdditionalSignatureComponents { get ; set ; }
 + AAuth.AAuthResourceOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
++ AAuth.AAuthResourceOptions: public string ? AccessServer { get ; set ; }
 + AAuth.AAuthResourceOptions: public string ? DocumentationUri { get ; set ; }
 + AAuth.AAuthResourceOptions: public string ? KeyHandle { get ; set ; }
 + AAuth.AAuthResourceOptions: public string ? KeyId { get ; set ; }
@@ -2134,6 +2406,22 @@ Concept/decision: [di](#di). Source: [AAuthResourceServiceCollectionExtensions.c
 
 Public owners: `Microsoft.Extensions.DependencyInjection.AAuthResourceServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
 
+### src/AAuth/Discovery/AAuthEgressPolicy.cs
+
+Concept/decision: [discovery](#discovery). Source: [AAuthEgressPolicy.cs](../../../src/AAuth/Discovery/AAuthEgressPolicy.cs).
+
+Public signatures unchanged (14); behavior reviewed under discovery.
+
+Public owners: `AAuth.Discovery.AAuthEgressPolicy`, `AAuth.Discovery.IAAuthDnsResolver`, `AAuth.Discovery`.
+
+### src/AAuth/Discovery/AAuthHttpTransport.cs
+
+Concept/decision: [discovery](#discovery). Source: [AAuthHttpTransport.cs](../../../src/AAuth/Discovery/AAuthHttpTransport.cs).
+
+Public signatures unchanged (10); behavior reviewed under discovery.
+
+Public owners: `AAuth.Discovery.AAuthHttpTransport`, `AAuth.Discovery.AAuthTransportContract`, `AAuth.Discovery`.
+
 ### src/AAuth/Discovery/JwksClient.cs
 
 Concept/decision: [discovery](#discovery). Source: [JwksClient.cs](../../../src/AAuth/Discovery/JwksClient.cs).
@@ -2162,6 +2450,7 @@ Concept/decision: [discovery](#discovery). Source: [ServerMetadata.cs](../../../
 
 ```diff
 - AAuth.Discovery.ServerMetadata: public string ? TokenEndpoint { get ; init ; }
++ AAuth.Discovery.ResourceMetadata: public IReadOnlyList < string > ? AdditionalSignatureComponents { get ; init ; }
 + AAuth.Discovery.ServerMetadata: public string ? AuthTokenEndpoint { get ; init ; }
 + AAuth.Discovery.ServerMetadata: public string ? PersonTokenEndpoint { get ; init ; }
 ```
@@ -2172,7 +2461,9 @@ Public owners: `AAuth.Discovery.MetadataClientExtensions`, `AAuth.Discovery.Reso
 
 Concept/decision: [agent-clients](#agent-clients). Source: [EnrolledBuilder.cs](../../../src/AAuth/EnrolledBuilder.cs).
 
-Public signatures unchanged (20); behavior reviewed under agent-clients.
+```diff
+- AAuth.EnrolledBuilder: public EnrolledBuilder WithRefreshMode ( RefreshMode mode )
+```
 
 Public owners: `AAuth.EnrolledBuilder`, `AAuth`.
 
@@ -2243,6 +2534,7 @@ Concept/decision: [server-contracts](#server-contracts). Source: [TokenError.cs]
 
 ```diff
 - AAuth.Errors.TokenErrorCode: InteractionRequired
+- AAuth.Errors.TokenErrorCode: MissionTerminated
 + AAuth.Errors.TokenErrorCode: AsUnreachable
 + AAuth.Errors.TokenErrorCode: ClockSkew
 + AAuth.Errors.TokenErrorCode: ExpiredPresentedToken
@@ -2270,6 +2562,17 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthRequireme
 
 Public owners: `AAuth.Headers.AAuthRequirementHeader.ParsedRequirement`, `AAuth.Headers.AAuthRequirementHeader`, `AAuth.Headers`.
 
+### src/AAuth/Headers/ClaimsRequirement.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [ClaimsRequirement.cs](../../../src/AAuth/Headers/ClaimsRequirement.cs).
+
+```diff
++ AAuth.Headers.ClaimsRequirement: public static bool ContainsForbiddenClaimName ( IEnumerable < string > ? names )
++ AAuth.Headers.ClaimsRequirement: public static bool IsRequestableClaimName ( string name )
+```
+
+Public owners: `AAuth.Headers.ClaimsRequirement`, `AAuth.Headers`.
+
 ### src/AAuth/Headers/ClaimsResponse.cs
 
 Concept/decision: [server-contracts](#server-contracts). Source: [ClaimsResponse.cs](../../../src/AAuth/Headers/ClaimsResponse.cs).
@@ -2279,6 +2582,14 @@ Concept/decision: [server-contracts](#server-contracts). Source: [ClaimsResponse
 ```
 
 Public owners: `AAuth.Headers.ClaimsResponse`, `AAuth.Headers`.
+
+### src/AAuth/Headers/ClarificationRequirement.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [ClarificationRequirement.cs](../../../src/AAuth/Headers/ClarificationRequirement.cs).
+
+Public signatures unchanged (6); behavior reviewed under server-contracts.
+
+Public owners: `AAuth.Headers.ClarificationRequirement`, `AAuth.Headers`.
 
 ### src/AAuth/Headers/Interaction.cs
 
@@ -2340,13 +2651,52 @@ Concept/decision: [signatures](#signatures). Source: [AAuthVerifier.cs](../../..
 
 Public owners: `AAuth.HttpSig.AAuthVerificationException`, `AAuth.HttpSig.AAuthVerifier`, `AAuth.HttpSig`.
 
+### src/AAuth/HttpSig/ChallengeHandlingOptions.cs
+
+Concept/decision: [signatures](#signatures). Source: [ChallengeHandlingOptions.cs](../../../src/AAuth/HttpSig/ChallengeHandlingOptions.cs).
+
+```diff
+- AAuth.HttpSig.ChallengeHandlingOptions: public TimeSpan MinPollInterval { get ; set ; } = TimeSpan . FromMilliseconds ( 100 )
++ AAuth.HttpSig.ChallengeHandlingOptions: public ChallengeHandlingOptions AddResourceMetadata ( ResourceMetadata metadata )
++ AAuth.HttpSig.ChallengeHandlingOptions: public TimeSpan MinPollInterval { get ; set ; } = TimeSpan . Zero
+```
+
+Public owners: `AAuth.HttpSig.ChallengeHandlingOptions`, `AAuth.HttpSig`.
+
 ### src/AAuth/HttpSig/DefaultSignatureKeyResolver.cs
 
 Concept/decision: [signatures](#signatures). Source: [DefaultSignatureKeyResolver.cs](../../../src/AAuth/HttpSig/DefaultSignatureKeyResolver.cs).
 
-Public signatures unchanged (3); behavior reviewed under signatures.
+```diff
+- AAuth.HttpSig.DefaultSignatureKeyResolver: public DefaultSignatureKeyResolver ( JwksClient ? jwksClient = null , MetadataClient ? metadataClient = null , TokenVerifier ? tokenVerifier = null , IEnumerable < ISignatureTokenVerifier > ? tokenVerifiers = null )
++ AAuth.HttpSig.DefaultSignatureKeyResolver: public DefaultSignatureKeyResolver ( JwksClient ? jwksClient = null , MetadataClient ? metadataClient = null , TokenVerifier ? tokenVerifier = null , IEnumerable < ISignatureTokenVerifier > ? tokenVerifiers = null , IServiceProvider ? services = null , string ? expectedDwk = null )
+```
 
 Public owners: `AAuth.HttpSig.DefaultSignatureKeyResolver`, `AAuth.HttpSig`.
+
+### src/AAuth/HttpSig/ISignatureTokenVerifier.cs
+
+Concept/decision: [signatures](#signatures). Source: [ISignatureTokenVerifier.cs](../../../src/AAuth/HttpSig/ISignatureTokenVerifier.cs).
+
+```diff
+- AAuth.HttpSig.ISignatureTokenVerifier: Task < TokenVerifier . VerifiedToken > VerifyAsync ( string jwt , IAAuthKey issuerKey , TokenVerifier verifier , CancellationToken cancellationToken )
++ AAuth.HttpSig.ISignatureTokenVerifier: Task < TokenVerifier . VerifiedToken > VerifyAsync ( SignatureTokenVerificationContext context , CancellationToken cancellationToken )
++ AAuth.HttpSig.ISignatureTokenVerifier: ValueTask < IAAuthKey ? > ResolveIssuerKeyAsync ( SignatureTokenIssuerKeyContext context , CancellationToken cancellationToken )
++ AAuth.HttpSig.SignatureTokenIssuerKeyContext: public IServiceProvider ? Services { get ; init ; }
++ AAuth.HttpSig.SignatureTokenIssuerKeyContext: public string ? Dwk { get ; init ; }
++ AAuth.HttpSig.SignatureTokenIssuerKeyContext: public string ? ExpectedDwk { get ; init ; }
++ AAuth.HttpSig.SignatureTokenIssuerKeyContext: public string ? Issuer { get ; init ; }
++ AAuth.HttpSig.SignatureTokenIssuerKeyContext: public string ? Kid { get ; init ; }
++ AAuth.HttpSig.SignatureTokenVerificationContext: public IServiceProvider ? Services { get ; init ; }
++ AAuth.HttpSig.SignatureTokenVerificationContext: public string ? Dwk { get ; init ; }
++ AAuth.HttpSig.SignatureTokenVerificationContext: public string ? ExpectedDwk { get ; init ; }
++ AAuth.HttpSig.SignatureTokenVerificationContext: public string ? Issuer { get ; init ; }
++ AAuth.HttpSig.SignatureTokenVerificationContext: public string ? Kid { get ; init ; }
++ AAuth.HttpSig: public sealed record SignatureTokenIssuerKeyContext ( string Jwt , JsonObject Header , JsonObject Payload , string Scheme , string TokenType , TokenVerifier TokenVerifier )
++ AAuth.HttpSig: public sealed record SignatureTokenVerificationContext ( string Jwt , JsonObject Header , JsonObject Payload , string Scheme , string TokenType , IAAuthKey IssuerKey , TokenVerifier TokenVerifier )
+```
+
+Public owners: `AAuth.HttpSig.ISignatureTokenVerifier`, `AAuth.HttpSig.SignatureTokenIssuerKeyContext`, `AAuth.HttpSig.SignatureTokenVerificationContext`, `AAuth.HttpSig`.
 
 ### src/AAuth/HttpSig/InteractionHandlingOptions.cs
 
@@ -2354,7 +2704,9 @@ Concept/decision: [signatures](#signatures). Source: [InteractionHandlingOptions
 
 ```diff
 - AAuth.HttpSig.InteractionHandlingOptions: public Func < string , string , CancellationToken , Task > ? OnInteractionRequired { get ; set ; }
+- AAuth.HttpSig.InteractionHandlingOptions: public TimeSpan MinPollInterval { get ; set ; } = TimeSpan . FromMilliseconds ( 100 )
 + AAuth.HttpSig.InteractionHandlingOptions: public Func < AAuth . Headers . Interaction , CancellationToken , Task > ? OnInteractionRequired { get ; set ; }
++ AAuth.HttpSig.InteractionHandlingOptions: public TimeSpan MinPollInterval { get ; set ; } = TimeSpan . Zero
 ```
 
 Public owners: `AAuth.HttpSig.InteractionHandlingOptions`, `AAuth.HttpSig`.
@@ -2382,6 +2734,50 @@ Concept/decision: [discovery](#discovery). Source: [AgentId.cs](../../../src/AAu
 Public signatures unchanged (14); behavior reviewed under discovery.
 
 Public owners: `AAuth.Identifiers.AgentId`, `AAuth.Identifiers`.
+
+### src/AAuth/Person/AAuthCollapsedFederation.cs
+
+Concept/decision: [consent](#consent). Source: [AAuthCollapsedFederation.cs](../../../src/AAuth/Person/AAuthCollapsedFederation.cs).
+
+```diff
++ AAuth.Person.AAuthCollapsedFederationContext: public required HttpContext HttpContext { get ; init ; }
++ AAuth.Person.AAuthCollapsedFederationContext: public required JsonObject ResourceTokenPayload { get ; init ; }
++ AAuth.Person.AAuthCollapsedFederationContext: public required System . IServiceProvider Services { get ; init ; }
++ AAuth.Person.AAuthCollapsedFederationContext: public required TokenVerifier . VerifiedToken PresentedToken { get ; init ; }
++ AAuth.Person.AAuthCollapsedFederationContext: public required string PersonServerIssuer { get ; init ; }
++ AAuth.Person.AAuthCollapsedFederationContext: public required string PersonServerName { get ; init ; }
++ AAuth.Person.AAuthCollapsedFederationContext: public required string ResourceIssuer { get ; init ; }
++ AAuth.Person.AAuthCollapsedFederationContext: public required string Scope { get ; init ; }
++ AAuth.Person.AAuthCollapsedFederationContext: public string ? Account { get ; init ; }
++ AAuth.Person.AAuthCollapsedFederationDecision: public bool Declared { get ; }
++ AAuth.Person.AAuthCollapsedFederationDecision: public static AAuthCollapsedFederationDecision Declare ( string accessServerName , string expectedAccessServerIssuer )
++ AAuth.Person.AAuthCollapsedFederationDecision: public static AAuthCollapsedFederationDecision NotDeclared { get ; } = new ( false , null , null )
++ AAuth.Person.AAuthCollapsedFederationDecision: public string ? AccessServerName { get ; }
++ AAuth.Person.AAuthCollapsedFederationDecision: public string ? ExpectedAccessServerIssuer { get ; }
++ AAuth.Person.AAuthCollapsedFederationDeclaration: public required string ExpectedAccessServerIssuer { get ; init ; }
++ AAuth.Person.AAuthCollapsedFederationDeclaration: public required string ResourceIssuer { get ; init ; }
++ AAuth.Person.AAuthCollapsedFederationDeclaration: public string AccessServerName { get ; init ; } = Microsoft . Extensions . DependencyInjection . AAuthAccessServerBuilder . DefaultName
++ AAuth.Person.IAAuthCollapsedFederationPolicy: ValueTask < AAuthCollapsedFederationDecision > EvaluateAsync ( AAuthCollapsedFederationContext context , CancellationToken cancellationToken = default )
++ AAuth.Person: public interface IAAuthCollapsedFederationPolicy
++ AAuth.Person: public sealed class AAuthCollapsedFederationContext
++ AAuth.Person: public sealed class AAuthCollapsedFederationDecision
++ AAuth.Person: public sealed class AAuthCollapsedFederationDeclaration
+```
+
+Public owners: `AAuth.Person.AAuthCollapsedFederationContext`, `AAuth.Person.AAuthCollapsedFederationDecision`, `AAuth.Person.AAuthCollapsedFederationDeclaration`, `AAuth.Person.IAAuthCollapsedFederationPolicy`, `AAuth.Person`.
+
+### src/AAuth/Person/AAuthPersonKey.cs
+
+Concept/decision: [consent](#consent). Source: [AAuthPersonKey.cs](../../../src/AAuth/Person/AAuthPersonKey.cs).
+
+```diff
++ AAuth.Person.AAuthPersonKey: public AAuthPersonKey ( string value )
++ AAuth.Person.AAuthPersonKey: public override string ToString ( )
++ AAuth.Person.AAuthPersonKey: public string Value { get ; }
++ AAuth.Person: public readonly record struct AAuthPersonKey
+```
+
+Public owners: `AAuth.Person.AAuthPersonKey`, `AAuth.Person`.
 
 ### src/AAuth/Person/AAuthPersonServerEndpoints.cs
 
@@ -2416,10 +2812,13 @@ Concept/decision: [consent](#consent). Source: [AAuthPersonServerEndpoints.cs](.
 + AAuth.Person.AAuthPersonServerOptions: public Action < AAuthRevocationOptions > ? ConfigureRevocation { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public BrowserConsentSessions ? ResourceInteractionSessions { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public Func < PersonPendingEntry , ClarificationRequirement , System . Threading . CancellationToken , Task < ClarificationResponse ? > > ? TriageClarificationAsync { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public IDictionary < string , string > PairwiseSubjectSecrets { get ; } = new Dictionary < string , string > ( StringComparer . Ordinal )
++ AAuth.Person.AAuthPersonServerOptions: public IList < AAuthCollapsedFederationDeclaration > CollapsedFederation { get ; } = new List < AAuthCollapsedFederationDeclaration > ( )
 + AAuth.Person.AAuthPersonServerOptions: public IReadOnlyCollection < string > ? UnsignedPathPrefixes { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public IReadOnlyList < string > ? ScopesSupported { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
 + AAuth.Person.AAuthPersonServerOptions: public bool MatchIssuerHost { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string ? ActivePairwiseSubjectKeyId { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public string ? AuditPath { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public string ? InteractionEndpointPath { get ; set ; }
 + AAuth.Person.AAuthPersonServerOptions: public string ? KeyHandle { get ; set ; }
@@ -2455,24 +2854,52 @@ Public owners: `AAuth.Person.AgentAssertedContent`, `AAuth.Person`.
 Concept/decision: [consent](#consent). Source: [AgentPersonBinding.cs](../../../src/AAuth/Person/AgentPersonBinding.cs).
 
 ```diff
-+ AAuth.Person.AgentPersonBinding: public static Task RevokeAsync ( IJtiStore inventory , string personServer , string agentIssuer , string agentId , CancellationToken cancellationToken = default )
-+ AAuth.Person.AgentPersonBinding: public static TokenKey Key ( string personServer , string agentIssuer , string agentId )
++ AAuth.Person.AgentPersonBinding: public static Task RevokeAsync ( IJtiStore inventory , AgentPersonBindingRecord binding , CancellationToken cancellationToken = default )
++ AAuth.Person.AgentPersonBinding: public static TokenKey Key ( string personServer , string agentIssuer , string agentId , long generation )
++ AAuth.Person.AgentPersonBinding: public static async Task < AgentPersonBindingRecord ? > RevokeAsync ( IJtiStore inventory , IAgentPersonBindingStore bindingStore , string personServer , string agentIssuer , string agentId , CancellationToken cancellationToken = default )
 + AAuth.Person: public static class AgentPersonBinding
 ```
 
 Public owners: `AAuth.Person.AgentPersonBinding`, `AAuth.Person`.
+
+### src/AAuth/Person/AgentPersonBindingStore.cs
+
+Concept/decision: [consent](#consent). Source: [AgentPersonBindingStore.cs](../../../src/AAuth/Person/AgentPersonBindingStore.cs).
+
+```diff
++ AAuth.Person.AgentPersonBindingRecord: public AAuth . Server . TokenKey InventoryKey
++ AAuth.Person.IAgentPersonBindingStore: Task < AgentPersonBindingRecord ? > BindOrVerifyAsync ( AgentPersonBindingContext binding , CancellationToken cancellationToken = default )
++ AAuth.Person.IAgentPersonBindingStore: Task < AgentPersonBindingRecord ? > RevokeAsync ( string personServer , string agentIssuer , string agentId , CancellationToken cancellationToken = default )
++ AAuth.Person.InMemoryAgentPersonBindingStore: public Task < AgentPersonBindingRecord ? > BindOrVerifyAsync ( AgentPersonBindingContext binding , CancellationToken cancellationToken = default )
++ AAuth.Person.InMemoryAgentPersonBindingStore: public Task < AgentPersonBindingRecord ? > RevokeAsync ( string personServer , string agentIssuer , string agentId , CancellationToken cancellationToken = default )
++ AAuth.Person: public interface IAgentPersonBindingStore
++ AAuth.Person: public sealed class InMemoryAgentPersonBindingStore : IAgentPersonBindingStore
++ AAuth.Person: public sealed record AgentPersonBindingContext ( string PersonServer , string AgentIssuer , string AgentId , AAuthPersonKey PersonKey )
++ AAuth.Person: public sealed record AgentPersonBindingRecord ( string PersonServer , string AgentIssuer , string AgentId , AAuthPersonKey PersonKey , long Generation )
+```
+
+Public owners: `AAuth.Person.AgentPersonBindingRecord`, `AAuth.Person.IAgentPersonBindingStore`, `AAuth.Person.InMemoryAgentPersonBindingStore`, `AAuth.Person`.
 
 ### src/AAuth/Person/IIdentityClaimsAsserter.cs
 
 Concept/decision: [consent](#consent). Source: [IIdentityClaimsAsserter.cs](../../../src/AAuth/Person/IIdentityClaimsAsserter.cs).
 
 ```diff
+- AAuth.Person.DefaultIdentityClaimsAsserter: public DefaultIdentityClaimsAsserter ( string subject = "pairwise-sub" )
+- AAuth.Person.IdentityAssertion: public static IdentityAssertion Assert ( string subject , string ? tenant = null , IReadOnlyList < string > ? roles = null , IReadOnlyList < string > ? groups = null , IReadOnlyDictionary < string , JsonNode ? > ? additionalClaims = null )
+- AAuth.Person.IdentityAssertion: public static IdentityAssertion NeedsConsent ( )
 - AAuth.Person.IdentityAssertionRequest: public MissionClaim ? Mission { get ; init ; }
++ AAuth.Person.DefaultIdentityClaimsAsserter: public DefaultIdentityClaimsAsserter ( string personKey = "demo-person" )
++ AAuth.Person.IdentityAssertion: public AAuthPersonKey ? PersonKey { get ; }
++ AAuth.Person.IdentityAssertion: public static IdentityAssertion Assert ( AAuthPersonKey personKey , string ? subject = null , string ? tenant = null , IReadOnlyList < string > ? roles = null , IReadOnlyList < string > ? groups = null , IReadOnlyDictionary < string , JsonNode ? > ? additionalClaims = null )
++ AAuth.Person.IdentityAssertion: public static IdentityAssertion NeedsConsent ( AAuthPersonKey ? personKey = null )
++ AAuth.Person.IdentityAssertionRequest: public AAuthPersonKey ? PersonKey { get ; init ; }
 + AAuth.Person.IdentityAssertionRequest: public AgentAssertedContent ? AgentAsserted { get ; init ; }
 + AAuth.Person.IdentityAssertionRequest: public bool PersonTokenRequest { get ; init ; }
 + AAuth.Person.IdentityAssertionRequest: public string ? LoginHint { get ; init ; }
 + AAuth.Person.IdentityAssertionRequest: public string ? MissionS256 { get ; init ; }
 + AAuth.Person.IdentityAssertionRequest: public string ? Subject { get ; init ; }
++ AAuth.Person.IdentityAssertionRequest: public string AgentIssuer { get ; init ; } = ""
 ```
 
 Public owners: `AAuth.Person.DefaultIdentityClaimsAsserter`, `AAuth.Person.IIdentityClaimsAsserter`, `AAuth.Person.IdentityAssertionKind`, `AAuth.Person.IdentityAssertionRequest`, `AAuth.Person.IdentityAssertion`, `AAuth.Person`.
@@ -2483,14 +2910,23 @@ Concept/decision: [consent](#consent). Source: [IPersonPendingStore.cs](../../..
 
 ```diff
 - AAuth.Person.IPersonPendingStore: PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , JsonObject ? upstreamAct = null , MissionClaim ? mission = null , DateTimeOffset ? authorizationExpiresAt = null )
+- AAuth.Person.IPersonPendingStore: void MarkAllowed ( string id , string subject , string ? tenant = null , IReadOnlyList < string > ? roles = null , IReadOnlyList < string > ? groups = null , IReadOnlyDictionary < string , JsonNode ? > ? additionalClaims = null )
 - AAuth.Person.InMemoryPersonPendingStore: public PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , JsonObject ? upstreamAct = null , MissionClaim ? mission = null , DateTimeOffset ? authorizationExpiresAt = null )
+- AAuth.Person.InMemoryPersonPendingStore: public void MarkAllowed ( string id , string subject , string ? tenant = null , IReadOnlyList < string > ? roles = null , IReadOnlyList < string > ? groups = null , IReadOnlyDictionary < string , JsonNode ? > ? additionalClaims = null )
+- AAuth.Person.PersonPendingEntry: public IReadOnlyList < AAuth . Server . TokenKey > SourceTokens { get ; set ; } = [ ]
 - AAuth.Person.PersonPendingEntry: public JsonObject ? UpstreamAct { get ; init ; }
 - AAuth.Person.PersonPendingEntry: public MissionClaim ? Mission { get ; set ; }
 + AAuth.Person.IPersonPendingObserver: void OnParked ( PersonPendingEntry entry )
 + AAuth.Person.IPersonPendingStore: PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , string ? missionS256 = null , DateTimeOffset ? authorizationExpiresAt = null )
++ AAuth.Person.IPersonPendingStore: void MarkAllowed ( string id , AAuthPersonKey personKey , string ? subject = null , string ? tenant = null , IReadOnlyList < string > ? roles = null , IReadOnlyList < string > ? groups = null , IReadOnlyDictionary < string , JsonNode ? > ? additionalClaims = null )
 + AAuth.Person.InMemoryPersonPendingStore: public PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , string ? missionS256 = null , DateTimeOffset ? authorizationExpiresAt = null )
++ AAuth.Person.InMemoryPersonPendingStore: public void MarkAllowed ( string id , AAuthPersonKey personKey , string ? subject = null , string ? tenant = null , IReadOnlyList < string > ? roles = null , IReadOnlyList < string > ? groups = null , IReadOnlyDictionary < string , JsonNode ? > ? additionalClaims = null )
++ AAuth.Person.PersonPendingEntry: public AAuthPersonKey ? PersonKey { get ; set ; }
 + AAuth.Person.PersonPendingEntry: public AgentAssertedContent ? AgentAsserted { get ; set ; }
++ AAuth.Person.PersonPendingEntry: public IReadOnlyList < AAuth . Server . TokenRegistration > SourceTokens { get ; set ; } = [ ]
++ AAuth.Person.PersonPendingEntry: public JsonObject ? ResourceMetadata { get ; set ; }
 + AAuth.Person.PersonPendingEntry: public bool PersonToken { get ; set ; }
++ AAuth.Person.PersonPendingEntry: public string ? ErrorDetail { get ; set ; }
 + AAuth.Person.PersonPendingEntry: public string ? MissionS256 { get ; set ; }
 + AAuth.Person.PersonPendingEntry: public string ? PersonSubject { get ; set ; }
 + AAuth.Person.PersonPendingEntry: public string ? PersonTenant { get ; set ; }
@@ -2500,6 +2936,40 @@ Concept/decision: [consent](#consent). Source: [IPersonPendingStore.cs](../../..
 
 Public owners: `AAuth.Person.IPersonPendingObserver`, `AAuth.Person.IPersonPendingStore`, `AAuth.Person.InMemoryPersonPendingStore`, `AAuth.Person.PersonPendingEntry`, `AAuth.Person.PersonPendingStatus`, `AAuth.Person`.
 
+### src/AAuth/Person/PersonResourceEnrollmentStore.cs
+
+Concept/decision: [consent](#consent). Source: [PersonResourceEnrollmentStore.cs](../../../src/AAuth/Person/PersonResourceEnrollmentStore.cs).
+
+```diff
++ AAuth.Person.IPersonResourceEnrollmentStore: Task < PersonResourceEnrollment ? > FindBySubjectAsync ( string personServer , string resource , string directedSubject , CancellationToken cancellationToken = default )
++ AAuth.Person.IPersonResourceEnrollmentStore: Task < PersonResourceEnrollment ? > GetAsync ( string personServer , AAuthPersonKey personKey , string resource , CancellationToken cancellationToken = default )
++ AAuth.Person.IPersonResourceEnrollmentStore: Task < bool > RecordAsync ( PersonResourceEnrollment enrollment , CancellationToken cancellationToken = default )
++ AAuth.Person.InMemoryPersonResourceEnrollmentStore: public Task < PersonResourceEnrollment ? > FindBySubjectAsync ( string personServer , string resource , string directedSubject , CancellationToken cancellationToken = default )
++ AAuth.Person.InMemoryPersonResourceEnrollmentStore: public Task < PersonResourceEnrollment ? > GetAsync ( string personServer , AAuthPersonKey personKey , string resource , CancellationToken cancellationToken = default )
++ AAuth.Person.InMemoryPersonResourceEnrollmentStore: public Task < bool > RecordAsync ( PersonResourceEnrollment enrollment , CancellationToken cancellationToken = default )
++ AAuth.Person.PersonResourceEnrollment: public JsonObject ? ResourceMetadata { get ; init ; }
++ AAuth.Person: public interface IPersonResourceEnrollmentStore
++ AAuth.Person: public sealed class InMemoryPersonResourceEnrollmentStore : IPersonResourceEnrollmentStore
++ AAuth.Person: public sealed record PersonResourceEnrollment ( string PersonServer , AAuthPersonKey PersonKey , string Resource , string DirectedSubject , string SubjectKeyId , DateTimeOffset ApprovedAt )
+```
+
+Public owners: `AAuth.Person.IPersonResourceEnrollmentStore`, `AAuth.Person.InMemoryPersonResourceEnrollmentStore`, `AAuth.Person.PersonResourceEnrollment`, `AAuth.Person`.
+
+### src/AAuth/Person/PersonSubjectDeriver.cs
+
+Concept/decision: [consent](#consent). Source: [PersonSubjectDeriver.cs](../../../src/AAuth/Person/PersonSubjectDeriver.cs).
+
+```diff
++ AAuth.Person.HmacPersonSubjectDeriver: public HmacPersonSubjectDeriver ( IOptionsMonitor < AAuthPersonServerOptions > options , string name )
++ AAuth.Person.HmacPersonSubjectDeriver: public Task < DerivedPersonSubject > DeriveAsync ( string personServer , AAuthPersonKey personKey , string resource , CancellationToken cancellationToken = default )
++ AAuth.Person.IPersonSubjectDeriver: Task < DerivedPersonSubject > DeriveAsync ( string personServer , AAuthPersonKey personKey , string resource , CancellationToken cancellationToken = default )
++ AAuth.Person: public interface IPersonSubjectDeriver
++ AAuth.Person: public sealed class HmacPersonSubjectDeriver : IPersonSubjectDeriver
++ AAuth.Person: public sealed record DerivedPersonSubject ( string Subject , string KeyId )
+```
+
+Public owners: `AAuth.Person.HmacPersonSubjectDeriver`, `AAuth.Person.IPersonSubjectDeriver`, `AAuth.Person`.
+
 ### src/AAuth/SelfIssuingBuilder.cs
 
 Concept/decision: [agent-clients](#agent-clients). Source: [SelfIssuingBuilder.cs](../../../src/AAuth/SelfIssuingBuilder.cs).
@@ -2508,13 +2978,29 @@ Public signatures unchanged (19); behavior reviewed under agent-clients.
 
 Public owners: `AAuth.SelfIssuingBuilder`, `AAuth`.
 
+### src/AAuth/Server/AAuthAuthorizationRequest.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthAuthorizationRequest.cs](../../../src/AAuth/Server/AAuthAuthorizationRequest.cs).
+
+```diff
+- AAuth.Server: public sealed record AAuthAuthorizationRequest ( string Scope , AAuthVerificationResult Verification )
++ AAuth.Server.AAuthAuthorizationRequest: public IDictionary < string , object ? > Features { get ; } = new Dictionary < string , object ? > ( StringComparer . Ordinal )
++ AAuth.Server: public sealed record AAuthAuthorizationRequest ( string ? Scope , AAuthVerificationResult Verification )
+```
+
+Public owners: `AAuth.Server.AAuthAuthorizationRequest`, `AAuth.Server`.
+
 ### src/AAuth/Server/AAuthProblemDetails.cs
 
 Concept/decision: [server-contracts](#server-contracts). Source: [AAuthProblemDetails.cs](../../../src/AAuth/Server/AAuthProblemDetails.cs).
 
 ```diff
++ AAuth.Server.AAuthProblemDetails: public static IResult Polling ( PollingErrorCode code , string ? detail = null , IDictionary < string , object ? > ? extensions = null )
 + AAuth.Server.AAuthProblemDetails: public static IResult SourceExpired ( IEnumerable < TokenRegistration > sources , DateTimeOffset now , IResult ? otherwise = null )
 + AAuth.Server.AAuthProblemDetails: public static IResult SourceRevoked ( Tokens . TokenVerificationException exception )
++ AAuth.Server.AAuthProblemDetails: public static IResult TokenEndpoint ( TokenErrorCode code , string ? detail = null , IDictionary < string , object ? > ? extensions = null )
++ AAuth.Server.AAuthProblemDetails: public static int PollingStatus ( PollingErrorCode code )
++ AAuth.Server.AAuthProblemDetails: public static int TokenEndpointStatus ( TokenErrorCode code )
 ```
 
 Public owners: `AAuth.Server.AAuthProblemDetails`, `AAuth.Server`.
@@ -2570,6 +3056,19 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthServerIde
 
 Public owners: `AAuth.Server.IAAuthServerIdentity`, `AAuth.Server`.
 
+### src/AAuth/Server/AAuthTokenProvenance.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthTokenProvenance.cs](../../../src/AAuth/Server/AAuthTokenProvenance.cs).
+
+```diff
++ AAuth.Server.AAuthTokenProvenance: public TokenKey ? PresentedToken { get ; init ; }
++ AAuth.Server.AAuthTokenProvenance: public TokenKey ? UpstreamToken { get ; init ; }
++ AAuth.Server: public sealed record AAuthTokenProvenance ( string TokenType , string Audience , string Subject , string PersonServer , UpstreamCallerRecord Caller )
++ AAuth.Server: public sealed record UpstreamCallerRecord ( string AgentIssuer , string AgentId , TokenKey AgentToken , TokenKey AgentPersonBinding )
+```
+
+Public owners: `AAuth.Server.AAuthTokenProvenance`, `AAuth.Server`.
+
 ### src/AAuth/Server/AAuthTrust.cs
 
 Concept/decision: [server-contracts](#server-contracts). Source: [AAuthTrust.cs](../../../src/AAuth/Server/AAuthTrust.cs).
@@ -2587,6 +3086,7 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthTrustPoli
 + AAuth.Server.AAuthTrustContext: public AAuthTrustedParty Party { get ; }
 + AAuth.Server.AAuthTrustContext: public HttpContext ? HttpContext { get ; init ; }
 + AAuth.Server.AAuthTrustContext: public IServiceProvider Services { get ; }
++ AAuth.Server.AAuthTrustContext: public string ? TokenDwk { get ; init ; }
 + AAuth.Server.AAuthTrustContext: public string ? TokenType { get ; init ; }
 + AAuth.Server.AAuthTrustContext: public string Issuer { get ; }
 + AAuth.Server.AAuthTrustOptions: public AAuthTrustRule AccessServers { get ; set ; } = new ( )
@@ -2596,7 +3096,7 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthTrustPoli
 + AAuth.Server.AAuthTrustOptions: public AAuthTrustRule RuleFor ( AAuthTrustedParty party )
 + AAuth.Server.AAuthTrustOptions: public IAAuthTrustPolicy ? Policy { get ; set ; }
 + AAuth.Server.AAuthTrustOptions: public ValueTask < bool > IsTrustedAsync ( AAuthTrustContext context , CancellationToken cancellationToken = default )
-+ AAuth.Server.AAuthTrustOptions: public ValueTask < bool > IsTrustedAsync ( string issuer , AAuthTrustedParty party , IServiceProvider services , HttpContext ? httpContext = null , string ? tokenType = null , CancellationToken cancellationToken = default )
++ AAuth.Server.AAuthTrustOptions: public ValueTask < bool > IsTrustedAsync ( string issuer , AAuthTrustedParty party , IServiceProvider services , HttpContext ? httpContext = null , string ? tokenType = null , string ? tokenDwk = null , CancellationToken cancellationToken = default )
 + AAuth.Server.AAuthTrustOptions: public bool IsConfigured ( AAuthTrustedParty party , IServiceProvider ? services = null )
 + AAuth.Server.AAuthTrustRule: public Func < AAuthTrustContext , CancellationToken , ValueTask < bool > > ? PredicateAsync { get ; set ; }
 + AAuth.Server.AAuthTrustRule: public Func < string , bool > ? Predicate { get ; set ; }
@@ -2625,13 +3125,37 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AuthTokenRespo
 - AAuth.Server.AuthTokenResponse: public static IResult Create ( Func < string > mint , DateTimeOffset ceiling , TimeProvider ? timeProvider = null )
 - AAuth.Server.AuthTokenResponse: public static async Task < IResult > CreateTrackedAsync ( Func < string > mint , DateTimeOffset ceiling , IJtiStore inventory , IReadOnlyCollection < TokenKey > sources , TimeProvider ? timeProvider = null , CancellationToken cancellationToken = default )
 + AAuth.Server.AuthTokenResponse: public static IResult Revoked ( )
-+ AAuth.Server.AuthTokenResponse: public static Task < IResult > CreateTrackedAsync ( Func < CancellationToken , ValueTask < string > > mint , DateTimeOffset ceiling , IJtiStore inventory , IReadOnlyCollection < TokenRegistration > sources , string member , TimeProvider ? timeProvider = null , CancellationToken cancellationToken = default , IResult ? ceilingExpired = null )
++ AAuth.Server.AuthTokenResponse: public static Task < IResult > CreateTrackedAsync ( Func < CancellationToken , ValueTask < string > > mint , DateTimeOffset ceiling , IJtiStore inventory , IReadOnlyCollection < TokenRegistration > sources , TimeProvider ? timeProvider = null , CancellationToken cancellationToken = default )
 + AAuth.Server.AuthTokenResponse: public static async Task < IResult > CreateAsync ( Func < CancellationToken , ValueTask < string > > mint , DateTimeOffset ceiling , TimeProvider ? timeProvider = null , CancellationToken cancellationToken = default )
-+ AAuth.Server.AuthTokenResponse: public static async Task < IResult > CreateTrackedAsync ( Func < CancellationToken , ValueTask < string > > mint , DateTimeOffset ceiling , IJtiStore inventory , IReadOnlyCollection < TokenKey > sources , TimeProvider ? timeProvider = null , CancellationToken cancellationToken = default )
-+ AAuth.Server.AuthTokenResponse: public static async Task < IResult > CreateTrackedAsync ( Func < CancellationToken , ValueTask < string > > mint , DateTimeOffset ceiling , IJtiStore inventory , IReadOnlyCollection < TokenKey > sources , string member , TimeProvider ? timeProvider = null , CancellationToken cancellationToken = default )
++ AAuth.Server.AuthTokenResponse: public static async Task < IResult > CreateTrackedAsync ( Func < CancellationToken , ValueTask < string > > mint , DateTimeOffset ceiling , IJtiStore inventory , IReadOnlyCollection < TokenRegistration > sources , string member , TimeProvider ? timeProvider = null , CancellationToken cancellationToken = default , IResult ? ceilingExpired = null , AAuthTokenProvenance ? provenance = null )
 ```
 
 Public owners: `AAuth.Server.AuthTokenResponse`, `AAuth.Server`.
+
+### src/AAuth/Server/Authorization/AAuthAuthorizationEndpointExtension.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthAuthorizationEndpointExtension.cs](../../../src/AAuth/Server/Authorization/AAuthAuthorizationEndpointExtension.cs).
+
+```diff
++ AAuth.Server.Authorization.IAAuthAuthorizationEndpointExtension: ValueTask < AAuthAuthorizationExtensionResult > ReadAsync ( HttpContext context , JsonObject body , AAuthAuthorizationRequest request , CancellationToken cancellationToken = default )
++ AAuth.Server.Authorization: public interface IAAuthAuthorizationEndpointExtension
++ AAuth.Server.Authorization: public sealed record AAuthAuthorizationExtensionResult ( bool SatisfiesAuthorizationClaim = false )
+```
+
+Public owners: `AAuth.Server.Authorization.IAAuthAuthorizationEndpointExtension`, `AAuth.Server.Authorization`.
+
+### src/AAuth/Server/Authorization/AAuthAuthorizationExtensionException.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthAuthorizationExtensionException.cs](../../../src/AAuth/Server/Authorization/AAuthAuthorizationExtensionException.cs).
+
+```diff
++ AAuth.Server.Authorization.AAuthAuthorizationExtensionException: public AAuthAuthorizationExtensionException ( string error , string ? detail = null , Exception ? innerException = null )
++ AAuth.Server.Authorization.AAuthAuthorizationExtensionException: public string ? Detail { get ; }
++ AAuth.Server.Authorization.AAuthAuthorizationExtensionException: public string Error { get ; }
++ AAuth.Server.Authorization: public sealed class AAuthAuthorizationExtensionException : Exception
+```
+
+Public owners: `AAuth.Server.Authorization.AAuthAuthorizationExtensionException`, `AAuth.Server.Authorization`.
 
 ### src/AAuth/Server/BrowserConsentSessions.cs
 
@@ -2680,6 +3204,20 @@ Concept/decision: [governance](#governance). Source: [CallChainingRouter.cs](../
 
 Public owners: `AAuth.Server.CallChaining.CallChainingRouter`, `AAuth.Server.CallChaining`.
 
+### src/AAuth/Server/CallChaining/ChainedInteractions.cs
+
+Concept/decision: [governance](#governance). Source: [ChainedInteractions.cs](../../../src/AAuth/Server/CallChaining/ChainedInteractions.cs).
+
+```diff
++ AAuth.Server.CallChaining.AAuthChainedInteractions: public static ChainedInteractionEntry Park ( string intermediaryBaseUrl , string pendingPrefix , string interactionPrefix , AAuthInteractionChainedException exception , string operationName , JsonObject state , DateTimeOffset expiresAt )
++ AAuth.Server.CallChaining.AAuthChainedInteractions: public static IResult Accepted ( HttpContext context , ChainedInteractionEntry entry , AAuthEgressPolicy ? policy = null )
++ AAuth.Server.CallChaining.AAuthChainedInteractions: public static IResult RedirectToDownstream ( ChainedInteractionEntry entry )
++ AAuth.Server.CallChaining: public sealed record ChainedInteractionEntry ( string Id , string Code , string InteractionUrl , string PendingUrl , Interaction DownstreamInteraction , string OperationName , JsonObject State , DateTimeOffset ExpiresAt )
++ AAuth.Server.CallChaining: public static class AAuthChainedInteractions
+```
+
+Public owners: `AAuth.Server.CallChaining.AAuthChainedInteractions`, `AAuth.Server.CallChaining`.
+
 ### src/AAuth/Server/Challenge/AAuthChallengeMiddleware.cs
 
 Concept/decision: [server-contracts](#server-contracts). Source: [AAuthChallengeMiddleware.cs](../../../src/AAuth/Server/Challenge/AAuthChallengeMiddleware.cs).
@@ -2708,7 +3246,6 @@ Concept/decision: [server-contracts](#server-contracts). Source: [ChallengeOptio
 + AAuth.Server.Challenge.ChallengeOptions: public AAuthAccessMode AccessMode { get ; set ; } = AAuthAccessMode . RequireAuthToken
 + AAuth.Server.Challenge.ChallengeOptions: public AAuthSigningKeySet ? ResourceSigningKeys { get ; set ; }
 + AAuth.Server.Challenge.ChallengeOptions: public IReadOnlyDictionary < string , string > ? ScopeDescriptions { get ; set ; }
-+ AAuth.Server.Challenge.ChallengeOptions: public IReadOnlySet < string > ? AllowedSignatureKeySchemes { get ; set ; }
 + AAuth.Server.Challenge.ChallengeOptions: public System . Func < Microsoft . AspNetCore . Http . HttpContext , string ? > ? RequestedAccount { get ; set ; }
 + AAuth.Server.Challenge.ChallengeOptions: public string ? AccessServer { get ; set ; }
 + AAuth.Server.Challenge.ChallengeOptions: public string ? DefaultScopes { get ; set ; }
@@ -2717,6 +3254,17 @@ Concept/decision: [server-contracts](#server-contracts). Source: [ChallengeOptio
 
 Public owners: `AAuth.Server.Challenge.ChallengeOptions`, `AAuth.Server.Challenge`.
 
+### src/AAuth/Server/DeferredState.cs
+
+Concept/decision: [consent](#consent). Source: [DeferredState.cs](../../../src/AAuth/Server/DeferredState.cs).
+
+```diff
+- AAuth.Server.DeferredState: public async Task < IResult > ExecuteAsync ( HttpContext context , DateTimeOffset expiry , TimeProvider timeProvider , Func < Task < IResult > > operation )
++ AAuth.Server.DeferredState: public async Task < IResult > ExecuteAsync ( HttpContext context , DateTimeOffset expiry , TimeProvider timeProvider , Func < Task < IResult > > operation , Func < Task < IResult ? > > ? beforeExpiry = null )
+```
+
+Public owners: `AAuth.Server.DeferredState`, `AAuth.Server`.
+
 ### src/AAuth/Server/Endpoints/AAuthEndpointExtensions.cs
 
 Concept/decision: [server-contracts](#server-contracts). Source: [AAuthEndpointExtensions.cs](../../../src/AAuth/Server/Endpoints/AAuthEndpointExtensions.cs).
@@ -2724,6 +3272,7 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthEndpointE
 ```diff
 - Microsoft.AspNetCore.Builder.AAuthEndpointExtensions: public static RouteHandlerBuilder RequireAAuth ( this RouteHandlerBuilder builder , string ? scope = null , string ? role = null , bool missionAware = false )
 + Microsoft.AspNetCore.Builder.AAuthEndpointExtensions: public static RouteHandlerBuilder RequireAAuth ( this RouteHandlerBuilder builder , string ? scope = null , string ? role = null , IAAuthTrustPolicy ? trust = null )
++ Microsoft.AspNetCore.Builder.AAuthEndpointExtensions: public static RouteHandlerBuilder RequireAAuthPersonToken ( this RouteHandlerBuilder builder )
 ```
 
 Public owners: `Microsoft.AspNetCore.Builder.AAuthEndpointExtensions`, `Microsoft.AspNetCore.Builder`.
@@ -2755,7 +3304,10 @@ Concept/decision: [governance](#governance). Source: [AAuthGovernancePipelineOpt
 
 ```diff
 - AAuth.Server.Governance.AAuthGovernancePipelineOptions: public string ? Approver { get ; set ; }
+- AAuth.Server.Governance.AAuthGovernancePipelineOptions: public string InteractionPath { get ; set ; } = "/mission-interaction"
++ AAuth.Server.Governance.AAuthGovernancePipelineOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
 + AAuth.Server.Governance.AAuthGovernancePipelineOptions: public string ? PersonServer { get ; set ; }
++ AAuth.Server.Governance.AAuthGovernancePipelineOptions: public string InteractionEndpointPath { get ; set ; } = "/mission-interaction"
 ```
 
 Public owners: `AAuth.Server.Governance.AAuthGovernancePipelineOptions`, `AAuth.Server.Governance`.
@@ -2767,6 +3319,14 @@ Concept/decision: [governance](#governance). Source: [DefaultAuditSink.cs](../..
 Public signatures unchanged (3); behavior reviewed under governance.
 
 Public owners: `AAuth.Server.Governance.DefaultAuditSink`, `AAuth.Server.Governance`.
+
+### src/AAuth/Server/Governance/DefaultInteractionRelay.cs
+
+Concept/decision: [governance](#governance). Source: [DefaultInteractionRelay.cs](../../../src/AAuth/Server/Governance/DefaultInteractionRelay.cs).
+
+Public signatures unchanged (2); behavior reviewed under governance.
+
+Public owners: `AAuth.Server.Governance.DefaultInteractionRelay`, `AAuth.Server.Governance`.
 
 ### src/AAuth/Server/Governance/DefaultPermissionDecider.cs
 
@@ -2789,7 +3349,7 @@ Concept/decision: [governance](#governance). Source: [GovernanceEndpoints.cs](..
 - AAuth.Server.Governance.GovernanceEndpoints: public static MissionProposal ParseMissionProposal ( JsonObject body )
 - AAuth.Server.Governance.GovernanceEndpoints: public static PermissionRequest ParsePermission ( JsonObject body , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
 + AAuth.Server.Governance.GovernanceEndpoints: public static AuditRecord ParseAudit ( JsonObject body )
-+ AAuth.Server.Governance.GovernanceEndpoints: public static IResult ? Authorize ( HttpContext context , string ? missionS256 , StoredMission ? mission )
++ AAuth.Server.Governance.GovernanceEndpoints: public static IResult ? Authorize ( HttpContext context , string ? missionS256 , StoredMission ? mission , string ? expectedPersonServer = null )
 + AAuth.Server.Governance.GovernanceEndpoints: public static IResult MissionTerminated ( string ? terminationReason = null )
 + AAuth.Server.Governance.GovernanceEndpoints: public static InteractionRequest ParseInteraction ( JsonObject body )
 + AAuth.Server.Governance.GovernanceEndpoints: public static JsonObject MissionTerminatedBody ( string ? terminationReason = null )
@@ -2812,6 +3372,14 @@ Concept/decision: [consent](#consent). Source: [IDeferredConsentStore.cs](../../
 
 Public owners: `AAuth.Server.Governance.DeferredConsentKind`, `AAuth.Server.Governance.DeferredConsent`, `AAuth.Server.Governance.IDeferredConsentStore`, `AAuth.Server.Governance`.
 
+### src/AAuth/Server/Governance/IInteractionRelay.cs
+
+Concept/decision: [governance](#governance). Source: [IInteractionRelay.cs](../../../src/AAuth/Server/Governance/IInteractionRelay.cs).
+
+Public signatures unchanged (7); behavior reviewed under governance.
+
+Public owners: `AAuth.Server.Governance.IInteractionRelay`, `AAuth.Server.Governance.InteractionRelayResult`, `AAuth.Server.Governance`.
+
 ### src/AAuth/Server/Governance/IMissionApprover.cs
 
 Concept/decision: [governance](#governance). Source: [IMissionApprover.cs](../../../src/AAuth/Server/Governance/IMissionApprover.cs).
@@ -2830,6 +3398,8 @@ Public owners: `AAuth.Server.Governance.IMissionApprover`, `AAuth.Server.Governa
 Concept/decision: [governance](#governance). Source: [IMissionLog.cs](../../../src/AAuth/Server/Governance/IMissionLog.cs).
 
 ```diff
++ AAuth.Server.Governance.MissionLogEntry: public JsonObject ? Parameters { get ; init ; }
++ AAuth.Server.Governance.MissionLogEntry: public JsonObject ? Result { get ; init ; }
 + AAuth.Server.Governance.MissionLogEntryKind: Update
 ```
 
@@ -2860,8 +3430,13 @@ Public owners: `AAuth.Server.Governance.IMissionPersonTokenIssuer`, `AAuth.Serve
 Concept/decision: [governance](#governance). Source: [IMissionStore.cs](../../../src/AAuth/Server/Governance/IMissionStore.cs).
 
 ```diff
+- AAuth.Server.Governance.IMissionStore: Task < StoredMission ? > GetAsync ( string s256 , CancellationToken ct = default )
+- AAuth.Server.Governance.IMissionStore: Task SetStateAsync ( string s256 , MissionState state , CancellationToken ct = default )
 - AAuth.Server.Governance: public sealed record StoredMission ( string S256 , string Approver , string Agent , ReadOnlyMemory < byte > Blob )
++ AAuth.Server.Governance.IMissionStore: Task < StoredMission ? > GetAsync ( string personServer , string s256 , CancellationToken ct = default )
++ AAuth.Server.Governance.IMissionStore: Task TerminateAsync ( string personServer , string s256 , string terminationReason , CancellationToken ct = default )
 + AAuth.Server.Governance.StoredMission: public DateTimeOffset ? ExpiresAt { get ; init ; }
++ AAuth.Server.Governance.StoredMission: public string ? TerminationReason { get ; init ; }
 + AAuth.Server.Governance: public sealed record StoredMission ( string S256 , string PersonServer , string Agent , ReadOnlyMemory < byte > Blob )
 ```
 
@@ -2884,7 +3459,12 @@ Public owners: `AAuth.Server.Governance.IMissionTokenConsent`, `AAuth.Server.Gov
 
 Concept/decision: [governance](#governance). Source: [InMemoryMissionStore.cs](../../../src/AAuth/Server/Governance/InMemoryMissionStore.cs).
 
-Public signatures unchanged (4); behavior reviewed under governance.
+```diff
+- AAuth.Server.Governance.InMemoryMissionStore: public Task < StoredMission ? > GetAsync ( string s256 , CancellationToken ct = default )
+- AAuth.Server.Governance.InMemoryMissionStore: public Task SetStateAsync ( string s256 , MissionState state , CancellationToken ct = default )
++ AAuth.Server.Governance.InMemoryMissionStore: public Task < StoredMission ? > GetAsync ( string personServer , string s256 , CancellationToken ct = default )
++ AAuth.Server.Governance.InMemoryMissionStore: public Task TerminateAsync ( string personServer , string s256 , string terminationReason , CancellationToken ct = default )
+```
 
 Public owners: `AAuth.Server.Governance.InMemoryMissionStore`, `AAuth.Server.Governance`.
 
@@ -2923,11 +3503,14 @@ Concept/decision: [server-contracts](#server-contracts). Source: [HeldInvocation
 + AAuth.Server.AAuthHeldInvocationOptions: public TimeSpan PendingLifetime { get ; set ; } = TimeSpan . FromMinutes ( 10 )
 + AAuth.Server.AAuthHeldInvocationOptions: public string PathPrefix { get ; set ; } = "/aauth/held"
 + AAuth.Server.AAuthSingleUseGateExtensions: public static async Task < HeldInvocationResult > ExecuteOnceAsync ( this IAAuthSingleUseGate gate , string jti , DateTimeOffset expiresAt , Func < CancellationToken , Task < HeldInvocationResult > > execute , CancellationToken cancellationToken = default )
++ AAuth.Server.AAuthSingleUseKeys: public static string ForAuthToken ( string issuer , string jti )
++ AAuth.Server.HeldInvocation: public bool ExpiredObserved { get ; init ; }
 + AAuth.Server.HeldInvocation: public string ? ConsumedBy { get ; init ; }
 + AAuth.Server.HeldInvocationResult: public IResult ToResult ( )
 + AAuth.Server.HeldInvocationResult: public static HeldInvocationResult Json ( object value , int statusCode = StatusCodes . Status200OK )
 + AAuth.Server.IAAuthHeldInvocationStore: ValueTask < HeldInvocation ? > GetAsync ( string id , CancellationToken cancellationToken = default )
-+ AAuth.Server.IAAuthHeldInvocationStore: ValueTask < bool > TryConsumeAsync ( string id , string jti , DateTimeOffset retainUntil , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthHeldInvocationStore: ValueTask < bool > TryConsumeAsync ( string id , string singleUseKey , DateTimeOffset retainUntil , CancellationToken cancellationToken = default )
++ AAuth.Server.IAAuthHeldInvocationStore: ValueTask < bool > TryExpireAsync ( string id , CancellationToken cancellationToken = default )
 + AAuth.Server.IAAuthHeldInvocationStore: ValueTask AddAsync ( HeldInvocation invocation , CancellationToken cancellationToken = default )
 + AAuth.Server.IAAuthHeldInvocations: Task < IResult > HoldAsync ( HttpContext context , string resourceToken , IReadOnlyCollection < string > requiredScopes , JsonObject ? state = null )
 + AAuth.Server.IAAuthHeldInvocations: Task < IResult > PollAsync ( HttpContext context , string id )
@@ -2937,7 +3520,8 @@ Concept/decision: [server-contracts](#server-contracts). Source: [HeldInvocation
 + AAuth.Server.IAAuthSingleUseGate: ValueTask CompleteAsync ( string key , HeldInvocationResult result , CancellationToken cancellationToken = default )
 + AAuth.Server.IAAuthSingleUseGate: ValueTask ReleaseAsync ( string key , CancellationToken cancellationToken = default )
 + AAuth.Server.InMemoryHeldInvocationStore: public ValueTask < HeldInvocation ? > GetAsync ( string id , CancellationToken cancellationToken = default )
-+ AAuth.Server.InMemoryHeldInvocationStore: public ValueTask < bool > TryConsumeAsync ( string id , string jti , DateTimeOffset retainUntil , CancellationToken cancellationToken = default )
++ AAuth.Server.InMemoryHeldInvocationStore: public ValueTask < bool > TryConsumeAsync ( string id , string singleUseKey , DateTimeOffset retainUntil , CancellationToken cancellationToken = default )
++ AAuth.Server.InMemoryHeldInvocationStore: public ValueTask < bool > TryExpireAsync ( string id , CancellationToken cancellationToken = default )
 + AAuth.Server.InMemoryHeldInvocationStore: public ValueTask AddAsync ( HeldInvocation invocation , CancellationToken cancellationToken = default )
 + AAuth.Server.InMemorySingleUseGate: public ValueTask < HeldInvocationResult ? > GetResultAsync ( string key , CancellationToken cancellationToken = default )
 + AAuth.Server.InMemorySingleUseGate: public ValueTask < SingleUseClaim > TryClaimAsync ( string key , DateTimeOffset expiresAt , CancellationToken cancellationToken = default )
@@ -2955,9 +3539,10 @@ Concept/decision: [server-contracts](#server-contracts). Source: [HeldInvocation
 + AAuth.Server: public sealed record HeldInvocationResult ( int StatusCode , string ? ContentType , byte [  ] Body )
 + AAuth.Server: public static class AAuthHeldInvocationExtensions
 + AAuth.Server: public static class AAuthSingleUseGateExtensions
++ AAuth.Server: public static class AAuthSingleUseKeys
 ```
 
-Public owners: `AAuth.Server.AAuthHeldInvocationExtensions`, `AAuth.Server.AAuthHeldInvocationOptions`, `AAuth.Server.AAuthSingleUseGateExtensions`, `AAuth.Server.HeldInvocationResult`, `AAuth.Server.HeldInvocation`, `AAuth.Server.IAAuthHeldInvocationStore`, `AAuth.Server.IAAuthHeldInvocations`, `AAuth.Server.IAAuthSingleUseGate`, `AAuth.Server.InMemoryHeldInvocationStore`, `AAuth.Server.InMemorySingleUseGate`, `AAuth.Server`.
+Public owners: `AAuth.Server.AAuthHeldInvocationExtensions`, `AAuth.Server.AAuthHeldInvocationOptions`, `AAuth.Server.AAuthSingleUseGateExtensions`, `AAuth.Server.AAuthSingleUseKeys`, `AAuth.Server.HeldInvocationResult`, `AAuth.Server.HeldInvocation`, `AAuth.Server.IAAuthHeldInvocationStore`, `AAuth.Server.IAAuthHeldInvocations`, `AAuth.Server.IAAuthSingleUseGate`, `AAuth.Server.InMemoryHeldInvocationStore`, `AAuth.Server.InMemorySingleUseGate`, `AAuth.Server`.
 
 ### src/AAuth/Server/IJtiStore.cs
 
@@ -2966,6 +3551,7 @@ Concept/decision: [revocation](#revocation). Source: [IJtiStore.cs](../../../src
 ```diff
 - AAuth.Server.IJtiStore: Task < bool > RevokeAsync ( TokenKey token , CancellationToken ct = default )
 + AAuth.Server.IJtiStore: Task < TokenGrant ? > GetGrantAsync ( TokenKey token , CancellationToken ct = default )
++ AAuth.Server.IJtiStore: Task < bool > CheckProvenanceQuotaAsync ( UpstreamCallerRecord caller , string resource , CancellationToken ct = default )
 + AAuth.Server.IJtiStore: Task < string ? > GetSubjectAsync ( TokenKey token , CancellationToken ct = default )
 + AAuth.Server.IJtiStore: Task RecordSubjectAsync ( TokenKey token , string subject , CancellationToken ct = default )
 + AAuth.Server.IJtiStore: Task RevokeAsync ( TokenKey token , DateTimeOffset expiresAt , CancellationToken ct = default )
@@ -2978,8 +3564,11 @@ Public owners: `AAuth.Server.IJtiStore`, `AAuth.Server`.
 Concept/decision: [revocation](#revocation). Source: [InMemoryJtiStore.cs](../../../src/AAuth/Server/InMemoryJtiStore.cs).
 
 ```diff
+- AAuth.Server.InMemoryJtiStore: public InMemoryJtiStore ( TimeProvider ? timeProvider = null , int capacity = 100_000 , TimeSpan ? retention = null )
 - AAuth.Server.InMemoryJtiStore: public Task < bool > RevokeAsync ( TokenKey token , CancellationToken ct = default )
++ AAuth.Server.InMemoryJtiStore: public InMemoryJtiStore ( TimeProvider ? timeProvider = null , int capacity = 100_000 , TimeSpan ? retention = null , int provenanceResourceQuota = 1_000 )
 + AAuth.Server.InMemoryJtiStore: public Task < TokenGrant ? > GetGrantAsync ( TokenKey token , CancellationToken ct = default )
++ AAuth.Server.InMemoryJtiStore: public Task < bool > CheckProvenanceQuotaAsync ( UpstreamCallerRecord caller , string resource , CancellationToken ct = default )
 + AAuth.Server.InMemoryJtiStore: public Task < string ? > GetSubjectAsync ( TokenKey token , CancellationToken ct = default )
 + AAuth.Server.InMemoryJtiStore: public Task RecordSubjectAsync ( TokenKey token , string subject , CancellationToken ct = default )
 + AAuth.Server.InMemoryJtiStore: public Task RevokeAsync ( TokenKey token , DateTimeOffset expiresAt , CancellationToken ct = default )
@@ -3039,9 +3628,11 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthAgentMeta
 - AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? TosUri { get ; init ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public AAuthSigningKeySet SigningKeys { get ; set ; } = new ( )
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public bool LocalhostCallbackAllowed { get ; set ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? CallbackEndpoint { get ; set ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? Description { get ; set ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? DocumentationUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? EventEndpoint { get ; set ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? LogoDarkUri { get ; set ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? LogoUri { get ; set ; }
 + AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? Name { get ; set ; }
@@ -3125,9 +3716,11 @@ Concept/decision: [server-contracts](#server-contracts). Source: [WellKnownEndpo
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public AAuthSigningKeySet ? SigningKeys { get ; set ; }
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public IReadOnlyDictionary < string , JsonNode ? > ? AdditionalMetadata { get ; set ; }
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public IReadOnlyDictionary < string , string > ? ScopeDescriptions { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public IReadOnlyList < string > ? AdditionalSignatureComponents { get ; set ; }
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public int ? SignatureWindow { get ; set ; }
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public required string Issuer { get ; set ; }
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? AccessMode { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? AccessServer { get ; set ; }
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? AuthorizationEndpoint { get ; set ; }
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? Description { get ; set ; }
 + AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? DocumentationUri { get ; set ; }
@@ -3141,6 +3734,14 @@ Concept/decision: [server-contracts](#server-contracts). Source: [WellKnownEndpo
 ```
 
 Public owners: `AAuth.Server.Metadata.AAuthResourceMetadataOptions`, `AAuth.Server.Metadata.WellKnownEndpoints`, `AAuth.Server.Metadata`.
+
+### src/AAuth/Server/ResourceManaged/AAuthInteractionEndpointExtensions.cs
+
+Concept/decision: [resource-managed](#resource-managed). Source: [AAuthInteractionEndpointExtensions.cs](../../../src/AAuth/Server/ResourceManaged/AAuthInteractionEndpointExtensions.cs).
+
+Public signatures unchanged (2); behavior reviewed under resource-managed.
+
+Public owners: `Microsoft.AspNetCore.Builder.AAuthInteractionEndpointExtensions`, `Microsoft.AspNetCore.Builder`.
 
 ### src/AAuth/Server/RevocationClient.cs
 
@@ -3199,6 +3800,16 @@ Concept/decision: [revocation](#revocation). Source: [RevocationResult.cs](../..
 
 Public owners: `AAuth.Server.RevocationCascadeResult`, `AAuth.Server.RevocationDownstreamResult`, `AAuth.Server.RevocationResult`, `AAuth.Server`.
 
+### src/AAuth/Server/TokenGrant.cs
+
+Concept/decision: [revocation](#revocation). Source: [TokenGrant.cs](../../../src/AAuth/Server/TokenGrant.cs).
+
+```diff
++ AAuth.Server.TokenGrant: public AAuthTokenProvenance ? Provenance { get ; init ; }
+```
+
+Public owners: `AAuth.Server.TokenGrant`, `AAuth.Server`.
+
 ### src/AAuth/Server/TokenRegistration.cs
 
 Concept/decision: [revocation](#revocation). Source: [TokenRegistration.cs](../../../src/AAuth/Server/TokenRegistration.cs).
@@ -3207,6 +3818,7 @@ Concept/decision: [revocation](#revocation). Source: [TokenRegistration.cs](../.
 - AAuth.Server.TokenRegistration: public static TokenRegistration FromVerified ( TokenVerifier . VerifiedToken token )
 + AAuth.Server.TokenRegistration: public TokenCredential ? Credential { get ; init ; }
 + AAuth.Server.TokenRegistration: public static TokenRegistration FromVerified ( TokenVerifier . VerifiedToken token , TokenCredential ? credential = null )
++ AAuth.Server.TokenRegistration: public string ? TokenType { get ; init ; }
 ```
 
 Public owners: `AAuth.Server.TokenRegistration`, `AAuth.Server`.
@@ -3218,6 +3830,16 @@ Concept/decision: [server-contracts](#server-contracts). Source: [TokenRequestBo
 Public signatures unchanged (2); behavior reviewed under server-contracts.
 
 Public owners: `AAuth.Server.TokenRequestBody`, `AAuth.Server`.
+
+### src/AAuth/Server/Verification/AAuthAccessMode.cs
+
+Concept/decision: [signatures](#signatures). Source: [AAuthAccessMode.cs](../../../src/AAuth/Server/Verification/AAuthAccessMode.cs).
+
+```diff
++ AAuth.Server.Verification.AAuthAccessMode: PersonTokenRequired
+```
+
+Public owners: `AAuth.Server.Verification.AAuthAccessMode`, `AAuth.Server.Verification`.
 
 ### src/AAuth/Server/Verification/AAuthAuthenticationHandler.cs
 
@@ -3279,6 +3901,7 @@ Concept/decision: [signatures](#signatures). Source: [AAuthVerificationOptions.c
 + AAuth.Server.Verification.AAuthVerificationOptions: public bool GenericSignatureKeys { get ; set ; }
 + AAuth.Server.Verification.AAuthVerificationOptions: public bool RequireBodyCoverage { get ; set ; }
 + AAuth.Server.Verification.AAuthVerificationOptions: public static AAuthVerificationOptions Generic ( TimeProvider ? timeProvider = null )
++ AAuth.Server.Verification.AAuthVerificationOptions: public string ? ExpectedAuthTokenDwk { get ; set ; }
 + AAuth.Server.Verification.AAuthVerificationOptions: public string ? ResourceIdentifier { get ; set ; }
 + AAuth.Server.Verification.AAuthVerificationOptions: public string SignatureLabel { get ; set ; } = "sig"
 ```
@@ -3292,6 +3915,7 @@ Concept/decision: [signatures](#signatures). Source: [AAuthVerificationResult.cs
 ```diff
 - AAuth.Server.Verification.AAuthVerificationResult: public string ? ActorAgent { get ; init ; }
 + AAuth.Server.Verification.AAuthVerificationResult: public IReadOnlySet < string > CoveredComponents { get ; init ; } = new HashSet < string > ( )
++ AAuth.Server.Verification.AAuthVerificationResult: public string ? AgentPersonServer { get ; init ; }
 + AAuth.Server.Verification.AAuthVerificationResult: public string ? MissionS256 { get ; init ; }
 + AAuth.Server.Verification.AAuthVerificationResult: public string ? PersonServer { get ; init ; }
 + AAuth.Server.Verification.AAuthVerificationResult: public string ? Tenant { get ; init ; }
@@ -3342,7 +3966,7 @@ Concept/decision: [tokens](#tokens). Source: [AgentAuthTokenValidator.cs](../../
 
 ```diff
 - AAuth.Tokens.AgentAuthTokenValidator: public static void Validate ( string authToken , string resourceToken , IAAuthKey signingKey , string agentToken , string ? subagentToken = null , string ? upstreamToken = null , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
-+ AAuth.Tokens.AgentAuthTokenValidator: public static void Validate ( string authToken , string resourceToken , IAAuthKey signingKey , string agentToken , string presentedToken , string ? subagentToken = null , string ? upstreamToken = null )
++ AAuth.Tokens.AgentAuthTokenValidator: public static void Validate ( string authToken , string resourceToken , IAAuthKey signingKey , string agentToken , string presentedToken , string ? subagentToken = null , string ? upstreamToken = null , string ? expectedDwk = null )
 ```
 
 Public owners: `AAuth.Tokens.AgentAuthTokenValidator`, `AAuth.Tokens`.
@@ -3357,7 +3981,7 @@ Concept/decision: [tokens](#tokens). Source: [AgentIssuanceContext.cs](../../../
 - AAuth.Tokens.AgentIssuanceContext: public void ValidateResourceContext ( JsonObject resource , string ? governingPersonServer = null )
 + AAuth.Tokens.AgentIssuanceContext: public bool SubAgent { get ; init ; }
 + AAuth.Tokens.AgentIssuanceContext: public required string AgentIssuer { get ; init ; }
-+ AAuth.Tokens.AgentIssuanceContext: public static async Task < AgentIssuanceContext > VerifyAsync ( string agentToken , string ? subagentToken , string ? upstreamToken , string personServer , TokenVerifier verifier , MetadataClient metadata , JwksClient jwks , Func < string , CancellationToken , ValueTask < bool > > isTrustedAuthTokenIssuer , CancellationToken cancellationToken = default , TokenCredential ? agentTokenCredential = null )
++ AAuth.Tokens.AgentIssuanceContext: public static async Task < AgentIssuanceContext > VerifyAsync ( string agentToken , string ? subagentToken , string ? upstreamToken , string personServer , TokenVerifier verifier , MetadataClient metadata , JwksClient jwks , Func < string , CancellationToken , ValueTask < bool > > isTrustedAuthTokenIssuer , CancellationToken cancellationToken = default , TokenCredential ? agentTokenCredential = null , IJtiStore ? upstreamInventory = null )
 + AAuth.Tokens.AgentIssuanceContext: public void ValidateResourceContext ( JsonObject resource )
 ```
 
@@ -3372,6 +3996,7 @@ Concept/decision: [tokens](#tokens). Source: [AgentTokenBuilder.cs](../../../src
 - AAuth.Tokens.AgentTokenBuilder: public string Build ( )
 + AAuth.Tokens.AgentTokenBuilder: public async ValueTask < string > BuildAsync ( CancellationToken cancellationToken = default )
 + AAuth.Tokens.AgentTokenBuilder: public required IAAuthSigner Key { get ; init ; }
++ AAuth.Tokens.AgentTokenBuilder: public static readonly TimeSpan MaximumLifetime = TimeSpan . FromHours ( 24 ) ;
 ```
 
 Public owners: `AAuth.Tokens.AgentTokenBuilder`, `AAuth.Tokens`.
@@ -3500,7 +4125,7 @@ Concept/decision: [tokens](#tokens). Source: [TokenVerifier.cs](../../../src/AAu
 + AAuth.Tokens.TokenVerifier.VerifiedToken: public string ? Tenant
 + AAuth.Tokens.TokenVerifier.VerifiedToken: public string Jti
 + AAuth.Tokens.TokenVerifier: public Func < string , string , IAAuthKey ? > ? LocalIssuerKeys { get ; init ; }
-+ AAuth.Tokens.TokenVerifier: public Task < VerifiedToken > VerifyAuthTokenWithJwksAsync ( string jwt , MetadataClient metadata , JwksClient jwks , string expectedAudience , IAAuthKey httpSignatureKey , string ? expectedMaxScope = null , CancellationToken cancellationToken = default , AccountExpectation ? accountExpectation = null )
++ AAuth.Tokens.TokenVerifier: public Task < VerifiedToken > VerifyAuthTokenWithJwksAsync ( string jwt , MetadataClient metadata , JwksClient jwks , string expectedAudience , IAAuthKey httpSignatureKey , string ? expectedDwk = null , string ? expectedMaxScope = null , CancellationToken cancellationToken = default , AccountExpectation ? accountExpectation = null )
 + AAuth.Tokens.TokenVerifier: public Task < VerifiedToken > VerifyPersonTokenWithJwksAsync ( string jwt , MetadataClient metadata , JwksClient jwks , string expectedAudience , IAAuthKey httpSignatureKey , CancellationToken cancellationToken = default )
 + AAuth.Tokens.TokenVerifier: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
 + AAuth.Tokens.TokenVerifier: public TimeSpan ClockSkew { get ; init ; } = TimeSpan . FromSeconds ( 60 )
@@ -3525,12 +4150,15 @@ Concept/decision: [tokens](#tokens). Source: [UpstreamTokenValidator.cs](../../.
 - AAuth.Tokens.UpstreamTokenValidationResult: public string ? MissionApprover { get ; init ; }
 - AAuth.Tokens.UpstreamTokenValidator: public Task < UpstreamTokenValidationResult > ValidateAsync ( string upstreamToken , string expectedAudience , IReadOnlySet < string > trustedIssuers , CancellationToken ct = default )
 - AAuth.Tokens.UpstreamTokenValidator: public async Task < UpstreamTokenValidationResult > ValidateAsync ( string upstreamToken , string expectedAudience , Func < string , bool > isTrustedIssuer , CancellationToken ct = default )
++ AAuth.Tokens.UpstreamTokenValidationResult: public AAuthTokenProvenance ? Provenance { get ; init ; }
++ AAuth.Tokens.UpstreamTokenValidationResult: public UpstreamCallerRecord ? Caller { get ; init ; }
 + AAuth.Tokens.UpstreamTokenValidationResult: public string ? Audience { get ; init ; }
 + AAuth.Tokens.UpstreamTokenValidationResult: public string ? MissionS256 { get ; init ; }
 + AAuth.Tokens.UpstreamTokenValidationResult: public string ? PersonServer { get ; init ; }
 + AAuth.Tokens.UpstreamTokenValidationResult: public string ? Tenant { get ; init ; }
 + AAuth.Tokens.UpstreamTokenValidationResult: public string ? TokenType { get ; init ; }
 + AAuth.Tokens.UpstreamTokenValidator: public async Task < UpstreamTokenValidationResult > ValidateAsync ( string upstreamToken , string intermediary , string expectedPersonServer , Func < string , CancellationToken , ValueTask < bool > > isTrustedAuthTokenIssuer , CancellationToken ct = default )
++ AAuth.Tokens.UpstreamTokenValidator: public async Task < UpstreamTokenValidationResult > ValidateAtPersonServerAsync ( string upstreamToken , string intermediary , string personServer , IJtiStore inventory , Func < string , CancellationToken , ValueTask < bool > > isTrustedAuthTokenIssuer , CancellationToken ct = default )
 ```
 
 Public owners: `AAuth.Tokens.UpstreamTokenValidationResult`, `AAuth.Tokens.UpstreamTokenValidator`, `AAuth.Tokens`.

@@ -219,7 +219,7 @@ public sealed class SampleInteractionRelay : IInteractionRelay
         {
             InteractionType.Question => new InteractionRelayResult { Answer = _script.QuestionAnswer },
             InteractionType.Completion => new InteractionRelayResult { Accepted = _script.AcceptCompletion },
-            _ => new InteractionRelayResult { Pending = false },
+            _ => new InteractionRelayResult { Unavailable = true },
         });
 }
 
@@ -292,8 +292,8 @@ public sealed class MissionPendingEntry
     /// <summary>The agent that made the request (token `sub`).</summary>
     public required string AgentId { get; init; }
 
-    /// <summary>The mission this request belongs to.</summary>
-    public required string S256 { get; init; }
+    /// <summary>The mission this request belongs to; empty on a creation request until it is approved.</summary>
+    public required string S256 { get; set; }
 
     /// <summary>The PS that approves the mission.</summary>
     public required string PersonServer { get; init; }

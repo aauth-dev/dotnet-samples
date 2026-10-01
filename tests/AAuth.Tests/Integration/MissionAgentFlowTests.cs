@@ -342,6 +342,49 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
             (await _factory.Services.GetRequiredService<IMissionStore>().GetAsync(mission.PersonServer, mission.S256))!.State);
     }
 
+    [Theory]
+    [InlineData("interaction")]
+    [InlineData("payment")]
+    public async Task MissionInteraction_ResourceHostedRelayWithoutChannelReturnsUnavailable(string type)
+    {
+        var agent = await NewAgentAsync();
+        await ScriptAsync(agent, new JsonObject { ["reset"] = true });
+        var mission = await ProposeMissionAsync(agent, "relay unavailable regression");
+        var before = (await ReadLogAsync(mission)).Count;
+
+        using var response = await agent.Signed.PostAsJsonAsync("/mission-interaction", new JsonObject
+        {
+            ["type"] = type,
+            ["mission_s256"] = mission.S256,
+            ["url"] = "https://resource.example/interaction",
+            ["code"] = "ABCD-1234",
+        });
+
+        Assert.Equal(System.Net.HttpStatusCode.FailedDependency, response.StatusCode);
+        Assert.Equal("interaction_unavailable", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())?["error"]);
+        Assert.Equal(before, (await ReadLogAsync(mission)).Count);
+    }
+
+    [Fact]
+    public async Task MissionInteraction_QuestionUsesScriptedUserChannel()
+    {
+        var agent = await NewAgentAsync();
+        await ScriptAsync(agent, new JsonObject { ["reset"] = true });
+        var mission = await ProposeMissionAsync(agent, "question relay regression");
+
+        using var response = await agent.Signed.PostAsJsonAsync("/mission-interaction", new JsonObject
+        {
+            ["type"] = "question",
+            ["mission_s256"] = mission.S256,
+            ["question"] = "Proceed?",
+        });
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Yes, go ahead.", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())?["answer"]);
+        Assert.Contains(await ReadLogAsync(mission),
+            entry => entry.Kind == MissionLogEntryKind.Interaction && entry.Detail == InteractionType.Question.ToString());
+    }
+
     [Fact]
     public async Task PermissionPending_TerminatedMissionCannotReleaseLateApproval()
     {

@@ -46,11 +46,12 @@ const string PsScope = "calendar.read";
 // would resolve these from the signed-in user's directory entry. These let
 // the Calendar `/events/admin` (RBAC) endpoint succeed end-to-end.
 //
-// Roles/groups are asserted ONLY for recognized "admin" demo agents (those
-// whose id is `aauth:demo@...`). Any other agent receives an auth token
-// without the role, so role-based DENIAL is exercised end-to-end (a guest
-// agent calling `/events/admin` gets a 403). A production PS would resolve the
-// principal's directory membership instead of a hard-coded prefix.
+// Roles/groups are asserted ONLY for recognized "admin" demo agents: the AP
+// issuer and agent id must exactly match the configured demo binding. Any other
+// agent receives an auth token without the role, so role-based DENIAL is
+// exercised end-to-end (a guest agent calling `/events/admin` gets a 403).
+// A production PS would resolve the principal's directory membership instead
+// of a hard-coded demo binding.
 string[] demoRoles = ["calendar.owner"];
 string[] demoGroups = ["demo-users"];
 // Identity claims the PS can release for the bound principal when an Access
@@ -108,7 +109,6 @@ builder.Services.AddAAuthPersonServer(configure: options =>
         options.MissionPath = "/mission";
         options.PermissionPath = "/permission";
         options.AuditPath = "/audit";
-        options.InteractionEndpointPath = "/mission-interaction";
         options.UnsignedPathPrefixes = new[] { "/admin", "/dashboard" };
         options.ResourceInteractionSessions = browserConsent;
     })
@@ -192,13 +192,12 @@ app.MapPost("/local/wallet/revoke", async (HttpContext context,
     }
     var jti = (string)verified.Payload["jti"]!;
     var result = await revocation.RevokeTokenAsync(jti, context.RequestAborted);
-    var complete = result.Downstream.All(entry => entry.Error != RevocationDownstreamError.RevocationUnavailable);
     return Results.Json(new JsonObject
     {
         ["jti"] = jti,
         ["exp"] = verified.ExpiresAt.ToUnixTimeSeconds(),
-        ["revocations"] = new JsonArray(result.Downstream.Select(Report).ToArray()),
-    }, statusCode: complete ? 200 : 502);
+        ["downstream"] = new JsonArray(result.Downstream.Select(Report).ToArray()),
+    });
 
     static JsonNode Report(RevocationDownstreamResult entry) => new JsonObject
     {
@@ -318,7 +317,7 @@ app.MapMethods("/mission-create-pending/{id}", ["GET", "DELETE"], async (
     if (entry is null) return AAuth.Server.DeferredState.Missing(id);
     if (entry is null || entry.Kind != MissionPendingKind.Mission || !entry.MatchesOwner(ctx))
     {
-        return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: StatusCodes.Status404NotFound,
+        return AAuth.Server.AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode,
             extensions: new Dictionary<string, object?> { ["id"] = id });
     }
 
@@ -352,6 +351,7 @@ app.MapMethods("/mission-create-pending/{id}", ["GET", "DELETE"], async (
             approvedResources: proposal.Resources);
         await missions.SaveAsync(new StoredMission(s256, ps.Issuer, entry.AgentId, blob));
         policy.Record(s256, proposal.Description, approvedTools, script.InScopeSnapshot());
+        entry.S256 = s256;
         var personTokens = await ctx.IssueMissionPersonTokensAsync(ps.Issuer, s256, proposal.Resources);
         return Results.Json(MissionApprovalBuilder.Response(blob, s256, personTokens: personTokens));
     });
@@ -391,7 +391,7 @@ app.MapPost("/permission", async (
     IReadOnlyList<MissionLogEntry> history = [];
     if (request.MissionS256 is not null)
     {
-        stored = await missions.GetAsync(request.MissionS256);
+        stored = await missions.GetAsync(ps.Issuer, request.MissionS256);
     }
     if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, stored) is { } denied) return denied;
     if (request.MissionS256 is not null)
@@ -468,54 +468,11 @@ app.MapPost("/audit", async (
         return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
 
-    var stored = await missions.GetAsync(record.MissionS256);
+    var stored = await missions.GetAsync(ps.Issuer, record.MissionS256);
     if (GovernanceEndpoints.Authorize(ctx, record.MissionS256, stored) is { } denied) return denied;
 
     await sink.RecordAsync(record);
     return Results.StatusCode(StatusCodes.Status201Created);
-});
-
-// interaction_endpoint (§Interaction Endpoint): questions relayed to the user.
-// Completion is proposed at the mission endpoint (/mission/{s256}).
-app.MapPost("/mission-interaction", async (
-    HttpContext ctx,
-    IMissionStore missions,
-    IMissionLog log,
-    IInteractionRelay relay) =>
-{
-    var body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
-    if (body is null)
-    {
-        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
-    }
-
-    InteractionRequest request;
-    try
-    {
-        request = GovernanceEndpoints.ParseInteraction(body);
-    }
-    catch (FormatException)
-    {
-        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
-    }
-
-    var stored = request.MissionS256 is null ? null : await missions.GetAsync(request.MissionS256);
-    if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, stored) is { } denied) return denied;
-
-    var result = await relay.RelayAsync(request);
-
-    if (request.MissionS256 is not null)
-    {
-        await log.AppendAsync(new MissionLogEntry(
-            request.MissionS256, MissionLogEntryKind.Interaction, DateTimeOffset.UtcNow)
-        {
-            Detail = request.Type.ToString(),
-        });
-    }
-
-    return request.Type == InteractionType.Question
-        ? Results.Json(new { answer = result.Answer ?? string.Empty })
-        : Results.Json(new { status = "ok" });
 });
 
 // mission_endpoint actions (§Mission Update, §Mission Completion). A completion
@@ -531,7 +488,7 @@ app.MapPost("/mission/{missionS256}", async (
     var action = (string?)(body?["action"] as JsonValue);
     if (body is null || !AAuth.Tokens.MissionReference.IsValid(missionS256) || action is not ("update" or "completion"))
         return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
-    var stored = await missions.GetAsync(missionS256);
+    var stored = await missions.GetAsync(ps.Issuer, missionS256);
     if (GovernanceEndpoints.Authorize(ctx, missionS256, stored) is { } denied) return denied;
 
     if (action == "update")
@@ -554,7 +511,7 @@ app.MapPost("/mission/{missionS256}", async (
     });
     if (result.Accepted == true)
     {
-        await missions.SetStateAsync(missionS256, MissionState.Terminated);
+        await missions.TerminateAsync(ps.Issuer, missionS256, AAuthConstants.MissionTerminationReasons.Completed);
         return Results.Json(new { mission_status = "terminated" });
     }
     return Results.Json(new { mission_status = "active" });
@@ -570,7 +527,7 @@ app.MapMethods("/permission-pending/{id}", ["GET", "DELETE"], async (
     if (entry is null) return AAuth.Server.DeferredState.Missing(id);
     if (entry is null || entry.Kind != MissionPendingKind.Permission || !entry.MatchesOwner(ctx))
     {
-        return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: StatusCodes.Status404NotFound,
+        return AAuth.Server.AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode,
             extensions: new Dictionary<string, object?> { ["id"] = id });
     }
     return await entry.Lifecycle.ExecuteAsync(ctx, entry.ExpiresAt, TimeProvider.System, async () =>
@@ -581,7 +538,7 @@ app.MapMethods("/permission-pending/{id}", ["GET", "DELETE"], async (
             return Results.NoContent();
         }
         // Interactive mode: hold at 202 until the user decides in the browser.
-        var mission = await missions.GetAsync(entry.S256, ctx.RequestAborted);
+        var mission = await missions.GetAsync(entry.PersonServer, entry.S256, ctx.RequestAborted);
         if (GovernanceEndpoints.Authorize(ctx, entry.S256, mission) is { } denied) return denied;
         bool granted;
         if (script.InteractiveBrowser)
@@ -641,18 +598,19 @@ app.MapPost("/admin/revoke", async (HttpContext ctx, ConsentStore consent) =>
     return Results.Ok(new { ok = true, agent, resource, scope });
 });
 
-// Demo-only: wipe all consent + pending state back to baseline so an automated
+// Demo-only: wipe consent + pending state back to baseline so an automated
 // test harness can start each spec from a known-empty store (see the E2E suite's
 // resetConsent helper). A production PS would never expose this. The SDK-owned
 // token pending entries are id-keyed + TTL-evicted, so clearing the demo
-// ConsentStore + mission stores is enough to re-baseline.
+// ConsentStore + mission stores is enough to re-baseline. Decided requests stay
+// in the dashboard history; only abandoned pending ones are dropped.
 app.MapPost("/admin/reset", (ConsentStore consent, MissionPendingStore missionPending, MissionConsentScript script,
     ConsentRegistry registry) =>
 {
     consent.Clear();
     missionPending.Clear();
     script.Reset();
-    registry.Clear();
+    registry.DropPending();
     return Results.Ok(new { ok = true });
 });
 
@@ -714,7 +672,7 @@ app.MapPost("/admin/mission-terminate", async (HttpContext ctx, IMissionStore mi
     {
         return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing s256", statusCode: StatusCodes.Status400BadRequest);
     }
-    await missions.SetStateAsync(s256, MissionState.Terminated);
+    await missions.TerminateAsync(ps.Issuer, s256, AAuthConstants.MissionTerminationReasons.Administrative);
     policy.Remove(s256);
     return Results.Ok(new { ok = true, s256, mission_status = "terminated" });
 });
@@ -1023,7 +981,7 @@ app.MapPost("/interaction/approve", async (HttpContext ctx,
 
 // Deny handler. Marks the pending entry as denied (rather than removing
 // it) so the agent's next poll receives a deterministic
-// `403 denied` instead of an ambiguous `404 unknown_pending`.
+// `403 denied` instead of an ambiguous `410 invalid_code`.
 app.MapPost("/interaction/deny", async (HttpContext ctx,
     [FromKeyedServices(AAuthPersonServerBuilder.DefaultName)] IPersonPendingStore pending, MissionPendingStore missionPending, PersonConsentDecisions decisions) =>
 {

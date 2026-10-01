@@ -68,13 +68,4 @@ public interface IMissionStore
     /// </summary>
     Task TerminateAsync(string personServer, string s256, string terminationReason, CancellationToken ct = default);
 
-    /// <summary>Look up a mission by its <c>s256</c>. Returns <see langword="null"/> when absent.</summary>
-    Task<StoredMission?> GetAsync(string s256, CancellationToken ct = default);
-
-    /// <summary>
-    /// Transition a mission to <paramref name="state"/> (e.g. on completion or
-    /// revocation). No-op when the mission is absent. A terminated mission MUST
-    /// NOT return to active, even under concurrent transitions (§Mission Management).
-    /// </summary>
-    Task SetStateAsync(string s256, MissionState state, CancellationToken ct = default);
 }

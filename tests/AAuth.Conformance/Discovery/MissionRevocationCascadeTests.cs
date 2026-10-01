@@ -36,7 +36,7 @@ public class MissionRevocationCascadeTests
             Assert.Contains(result.Downstream, entry => entry.Recipient == resource && entry.Error is null);
         }
         Assert.DoesNotContain(graph.Revocations, entry => entry.Token.TokenId == (string)Decode(outside)["jti"]!);
-        var stored = await graph.PersonServices.GetRequiredService<IMissionStore>().GetAsync(mission.S256);
+        var stored = await graph.PersonServices.GetRequiredService<IMissionStore>().GetAsync(Person, mission.S256);
         Assert.Equal(MissionState.Terminated, stored!.State);
 
         // Subsequent token requests referencing the mission are denied.

@@ -342,7 +342,7 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
     }
 
     [Fact(DisplayName = "§Mission Endpoint Errors — absent, foreign-agent and foreign-PS missions are indistinguishable")]
-    public async Task MissionNotFound_ResponsesAreIdentical_AndNoS256Preload()
+    public async Task MissionNotFound_ResponsesAreIdentical()
     {
         var spy = new SpyMissionStore();
         var builder = WebApplication.CreateBuilder();
@@ -379,7 +379,6 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
 
         Assert.Equal(absent, foreignAgent);
         Assert.Equal(absent, foreignPs);
-        Assert.Equal(0, spy.S256OnlyLookups);
     }
 
     private static async Task<(HttpStatusCode Status, string? ContentType, string Body, string Headers)> CaptureNotFoundAsync(
@@ -419,7 +418,6 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
     private sealed class SpyMissionStore : IMissionStore
     {
         private readonly InMemoryMissionStore _inner = new();
-        public int S256OnlyLookups { get; private set; }
 
         public Task SaveAsync(StoredMission mission, CancellationToken ct = default)
             => _inner.SaveAsync(mission, ct);
@@ -429,14 +427,5 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
 
         public Task TerminateAsync(string personServer, string s256, string terminationReason, CancellationToken ct = default)
             => _inner.TerminateAsync(personServer, s256, terminationReason, ct);
-
-        public Task<StoredMission?> GetAsync(string s256, CancellationToken ct = default)
-        {
-            S256OnlyLookups++;
-            return _inner.GetAsync(s256, ct);
-        }
-
-        public Task SetStateAsync(string s256, MissionState state, CancellationToken ct = default)
-            => _inner.SetStateAsync(s256, state, ct);
     }
 }

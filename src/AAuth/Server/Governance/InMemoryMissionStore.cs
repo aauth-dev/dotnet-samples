@@ -60,29 +60,6 @@ public sealed class InMemoryMissionStore : IMissionStore
         return Task.CompletedTask;
     }
 
-    /// <inheritdoc/>
-    public Task<StoredMission?> GetAsync(string s256, CancellationToken ct = default)
-    {
-        System.ArgumentException.ThrowIfNullOrEmpty(s256);
-        var mission = _missions.Values.FirstOrDefault(m => m.S256 == s256);
-        return Task.FromResult(mission);
-    }
-
-    /// <inheritdoc/>
-    public Task SetStateAsync(string s256, MissionState state, CancellationToken ct = default)
-    {
-        System.ArgumentException.ThrowIfNullOrEmpty(s256);
-        foreach (var (key, existing) in _missions.Where(pair => pair.Value.S256 == s256).ToArray())
-        {
-            if (state == MissionState.Terminated)
-            {
-                _ = TerminateAsync(key.PersonServer, key.S256,
-                    AAuthConstants.MissionTerminationReasons.Administrative, ct);
-            }
-        }
-        return Task.CompletedTask;
-    }
-
     private static System.DateTimeOffset? Earliest(System.DateTimeOffset? a, System.DateTimeOffset? b)
         => a is null ? b : b is null ? a : a < b ? a : b;
 

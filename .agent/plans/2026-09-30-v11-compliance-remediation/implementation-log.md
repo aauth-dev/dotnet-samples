@@ -1188,6 +1188,17 @@ Gates:
 - The docs gates pass.
 - e2e: full Playwright 78 passed, 1 skipped.
 
+### [2026-10-01] [Phase 11] Mock Person Server sweep
+
+PROCEEDED. Removed the temporary MockPersonServer compatibility dependency
+from Phase 7: the sample now uses `(personServer, s256)` mission lookups and
+reasoned `TerminateAsync`, the SDK-owned governance interaction endpoint is the
+only `/mission-interaction` mapping, pending misses use the registered
+`410 invalid_code` polling helper, and the demo wallet revocation response uses
+the terminal downstream shape. With those call sites gone, the legacy
+`IMissionStore.GetAsync(s256)` and `SetStateAsync` members and in-memory
+implementations were removed per C1.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 7] R09 owner-edited sample compatibility

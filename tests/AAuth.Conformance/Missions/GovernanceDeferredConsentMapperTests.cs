@@ -255,7 +255,7 @@ public class GovernanceDeferredConsentMapperTests
 
         // The mission is persisted and verifiable by its s256.
         var store = host.Services.GetRequiredService<IMissionStore>();
-        var stored = await store.GetAsync(mission.S256);
+        var stored = await store.GetAsync(Ps, mission.S256);
         Assert.NotNull(stored);
 
         await host.StopAsync();
@@ -778,7 +778,7 @@ public class GovernanceDeferredConsentMapperTests
             Assert.Equal(Mission.ComputeS256(System.Text.Encoding.UTF8.GetBytes(update.Detail!)), updateS256);
             Assert.Equal("Also book a hotel.", (string?)JsonNode.Parse(update.Detail!)!["description"]);
             // The mission itself is unchanged: same identity, same blob, still active.
-            var stored = await host.Services.GetRequiredService<IMissionStore>().GetAsync(s256);
+            var stored = await host.Services.GetRequiredService<IMissionStore>().GetAsync(Ps, s256);
             Assert.Equal(new byte[] { 1, 2, 3 }, stored!.Blob.ToArray());
             Assert.Equal(MissionState.Active, stored.State);
         }

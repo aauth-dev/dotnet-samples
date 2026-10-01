@@ -361,7 +361,7 @@ public static class ConsentDashboard
               if (g.mission_s256) { const a = el('a', null, 'Mission log'); a.href = '/admin/mission-log/' + encodeURIComponent(g.mission_s256); a.target = '_blank'; a.rel = 'noopener'; h.append(a); }
               wrap.append(h);
             }
-            for (const r of g.records) wrap.append(card(r, r.id === highlight));
+            for (const r of g.records) wrap.append(card(r, r.id === highlight && r.status === 'Pending'));
             root.append(wrap);
           }
         }

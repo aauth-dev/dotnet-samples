@@ -170,9 +170,10 @@ app.MapPost("/aauth/permission", async (HttpContext ctx, IPermissionDecider deci
 {
     var body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
     PermissionRequest request = GovernanceEndpoints.ParsePermission(body!);
+    var personServer = "https://ps.example";
 
     StoredMission? mission = request.MissionS256 is { } missionS256
-        ? await store.GetAsync(missionS256)
+        ? await store.GetAsync(personServer, missionS256)
         : null;
 
     // Agent token required; 404 mission_not_found for a missing or foreign

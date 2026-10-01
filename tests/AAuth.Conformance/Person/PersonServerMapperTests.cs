@@ -1626,7 +1626,7 @@ public class PersonServerMapperTests
         Assert.Equal(S256, entry.MissionS256);
         Assert.True(entry.MissionGate);
         Assert.Equal(0, entry.ClarificationRounds);
-        await missions.SetStateAsync(S256, MissionState.Terminated);
+        await missions.TerminateAsync(PsIssuer, S256, AAuthConstants.MissionTerminationReasons.Revoked);
         store.MarkAllowed(id, new AAuthPersonKey("user-42"), "user-42");
         using var poll = await client.GetAsync(initial.Headers.Location);
         Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);

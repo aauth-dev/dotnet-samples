@@ -158,8 +158,8 @@ public sealed class ConsentRecord
 }
 
 /// <summary>
-/// In-memory, capped history of every PS-parked consent request (Q8). Cleared by
-/// <c>/admin/reset</c>.
+/// In-memory, capped history of every PS-parked consent request (Q8).
+/// <c>/admin/reset</c> drops only the requests still pending.
 /// </summary>
 public sealed class ConsentRegistry(MissionPolicyStore policy) : IPersonPendingObserver
 {
@@ -204,12 +204,21 @@ public sealed class ConsentRegistry(MissionPolicyStore policy) : IPersonPendingO
 
     public void MarkDecided(string id, ConsentDecider by) => Find(id)?.MarkDecided(by);
 
-    public void Clear()
+    /// <summary>Drop requests still pending (a reset abandons them); decided history stays.</summary>
+    public void DropPending()
     {
         lock (_lock)
         {
-            _records.Clear();
-            _byId.Clear();
+            for (var node = _records.First; node is not null;)
+            {
+                var next = node.Next;
+                if (node.Value.Status == ConsentStatus.Pending)
+                {
+                    _byId.Remove(node.Value.Id);
+                    _records.Remove(node);
+                }
+                node = next;
+            }
         }
     }
 
