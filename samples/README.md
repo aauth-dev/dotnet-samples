@@ -312,12 +312,12 @@ dotnet run --project samples/AgentConsole -- http://localhost:5003/wallet/charge
 > [interaction] Or decide on the PS dashboard: http://localhost:5100/dashboard?code=...
 > ```
 >
-> Open either URL in a browser and click **Approve**, or pre-approve programmatically:
+> Open either URL in a browser and click **Approve**, or pre-approve programmatically with the `Agent ID (AP-assigned)` and `Public JWK thumbprint` AgentConsole prints at startup (see [Granting consent](AgentConsole/README.md#granting-consent)):
 >
 > ```bash
 > curl -X POST http://localhost:5100/admin/consent \
 >   -H "Content-Type: application/json" \
->   -d '{"agent":"aauth:demo@ap.example","resource":"http://localhost:5001","scope":"calendar.read"}'
+>   -d '{"agent":"<agent id>","resource":"http://localhost:5001","scope":"calendar.read","key":"<key thumbprint>"}'
 > ```
 >
 > To skip consent entirely, start MockPersonServer separately without the flag: `dotnet run --project samples/MockPersonServer`

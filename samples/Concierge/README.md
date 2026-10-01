@@ -89,19 +89,24 @@ dotnet run --project samples/Concierge
 ## Using with AgentConsole
 
 ```bash
-# Pre-grant consent for both hops
-curl -X POST http://localhost:5100/admin/consent \
-  -H "Content-Type: application/json" \
-  -d '{"agent":"aauth:demo@ap.example","resource":"http://localhost:5200"}'
-
-curl -X POST http://localhost:5100/admin/consent \
-  -H "Content-Type: application/json" \
-  -d '{"agent":"aauth:concierge@localhost","resource":"http://localhost:5001"}'
-
-# Call through the chain
-dotnet run --project samples/AgentConsole -- http://localhost:5200 \
+# Call through the chain. The trailing "/" targets the Concierge root; without it
+# AgentConsole would append its default /events path.
+dotnet run --project samples/AgentConsole -- http://localhost:5200/ \
   --ap http://localhost:5301 --ps http://localhost:5100
 ```
+
+Under `make demo` (PS `RequireConsent=true`) the chain asks for consent twice:
+
+1. **Agent → Concierge** (scope `concierge`): AgentConsole prints a PS
+   interaction URL and dashboard link.
+2. **Concierge → Calendar** (scope `calendar.read`): the Concierge relays the
+   downstream prompt as its own `202` + `requirement=interaction`, and
+   AgentConsole prints a `/chain-interaction/...` URL that redirects to the PS.
+
+Approve each in the browser or on the PS dashboard
+(`http://localhost:5100/dashboard`). Pre-granting through `/admin/consent` is
+not practical for the second hop: consent is keyed by the agent's key, and
+the Concierge generates a new key every time it starts.
 
 ## Key Implementation Details
 

@@ -307,10 +307,11 @@ dotnet run --project samples/AgentConsole -- http://localhost:5001/events \
   --upstream-token "eyJ..."
 ```
 
-Or test the full call chain through the Concierge:
+Or test the full call chain through the Concierge (the trailing `/` targets
+its root; without it AgentConsole appends its default `/events` path):
 
 ```bash
-dotnet run --project samples/AgentConsole -- http://localhost:5200 \
+dotnet run --project samples/AgentConsole -- http://localhost:5200/ \
   --ap http://localhost:5301 --ps http://localhost:5100
 ```
 
