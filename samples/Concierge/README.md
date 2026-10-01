@@ -36,7 +36,7 @@ sequenceDiagram
     C->>Cal: GET /events (signed, person token)
     Cal-->>C: 401 + resource_token
     C->>PS: exchange resource_token + presented_token + upstream_token
-    PS-->>C: downstream auth token (ps + sub name the person; no agent or act)
+    PS-->>C: downstream auth token (ps + sub name the person, no agent or act)
     C->>Cal: GET /events (signed, downstream auth token)
     Cal-->>C: 200 OK
     C-->>A: 200 OK (combined chain result)

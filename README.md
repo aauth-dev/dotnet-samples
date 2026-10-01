@@ -141,7 +141,7 @@ sequenceDiagram
     Agent->>PS: POST /person (signed, resource)
     PS-->>Agent: person_token
     Agent->>Resource: GET /data (signed, person_token)
-    Resource-->>Agent: 401 + requirement=auth-token; resource_token
+    Resource-->>Agent: 401 + requirement=auth-token, resource_token
     Agent->>PS: POST /token (signed, resource_token + presented_token)
     PS->>User: Consent prompt (scope, justification)
     User-->>PS: Grant consent

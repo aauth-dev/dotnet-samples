@@ -213,8 +213,8 @@ sequenceDiagram
     participant AP as Agent Provider
     Note over Agent: Token nearing expiry
     Agent->>Agent: Generate ephemeral Ed25519 key
-    Agent->>Agent: Build naming JWT (jkt-s256+jwt, signed by durable key,<br/>durable jwk in header, iss=urn:jkt:sha-256:&lt;thumbprint&gt;,<br/>ephemeral key as cnf.jwk)
-    Agent->>AP: POST /refresh {} (signed with ephemeral key,<br/>Signature-Key: sig=jkt-jwt;jwt="&lt;naming-jwt&gt;")
+    Agent->>Agent: Build naming JWT (jkt-s256+jwt, signed by durable key,<br/>durable jwk in header, iss=urn:jkt:sha-256:#lt;thumbprint#gt;,<br/>ephemeral key as cnf.jwk)
+    Agent->>AP: POST /refresh {} (signed with ephemeral key,<br/>Signature-Key: sig=jkt-jwt#59;jwt="#lt;naming-jwt#gt;")
     AP->>AP: Self-anchor — thumbprint(header jwk) == iss, verify naming JWT signature
     AP->>AP: Look up enrolment by the durable key thumbprint (bind to record)
     AP->>AP: Verify HTTP signature against ephemeral cnf.jwk

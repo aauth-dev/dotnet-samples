@@ -17,7 +17,7 @@ sequenceDiagram
     Agent->>Resource: GET /data (signed, person token)
     Resource-->>Agent: 401 + resource token (aud=AS URL)
     Agent->>PS: POST /token (resource_token, presented_token)
-    PS->>AS: POST /token (signed; resource_token, agent_token, presented_token)
+    PS->>AS: POST /token (signed, resource_token, agent_token, presented_token)
     AS-->>PS: auth token (iss=AS)
     PS-->>Agent: auth token
     Agent->>Resource: GET /data (signed, auth token)
