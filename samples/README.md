@@ -370,7 +370,7 @@ dotnet run --project samples/LiveWhoAmITest
 
 Live interop test that runs against the public reference servers (`whoami.aauth.dev` and `person.hello.coop`) instead of the local mocks. It generates an agent key, starts a local metadata + JWKS endpoint on port 5199, exposes it via a `cloudflared` quick tunnel, and exercises all three protocol modes:
 
-- **Mode 1** — unsigned request returns `401` + `Accept-Signature`.
+- **Mode 1** — unsigned request returns `401` + `Accept-Signature-Scheme` / `Accept-Signature-Alg`.
 - **Mode 2** — `aa-agent+jwt` returns the agent identity (no scope) or a `401` + `AAuth-Requirement` resource token (scoped).
 - **Mode 3** — full three-party flow: agent token → resource token → PS exchange → auth token → identity claims.
 

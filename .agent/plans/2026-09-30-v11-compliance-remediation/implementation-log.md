@@ -1199,6 +1199,132 @@ the terminal downstream shape. With those call sites gone, the legacy
 `IMissionStore.GetAsync(s256)` and `SetStateAsync` members and in-memory
 implementations were removed per C1.
 
+### [2026-10-01] [Phase 11] Samples sweep
+
+PROCEEDED. R18 part B remediated the remaining sample behavior/prose items
+without SDK API changes except the sample-local GuidedTour option
+`ShowSensitiveProtocolArtifacts`.
+
+CHECKLIST:
+
+- [x] SMP-01 — closed by Phase 1 + Phase 7 exact demo admin binding and issuer
+      binding tests.
+- [x] SMP-02 — closed by Phase 11a mission interaction handling.
+- [x] SMP-03 — closed by Phase 5 call-chaining ownership.
+- [x] SMP-04 — closed by Phase 3 proactive authorization/person-token fix.
+- [x] S01-02, S01-03, S01-04 — closed by Phase 11a MockPersonServer prose and
+      mission dashboard updates.
+- [x] S03-02 — closed in Phase 11 by adding Catalog and Documents resource
+      revocation metadata/endpoints for accepted issuers.
+- [x] S03-03 — closed in Phase 11 by aligning Bookings person-token acceptance
+      with the same trusted PS predicate used for revocation.
+- [x] S03-04 — closed in Phase 11 by removing misleading Profile/Inbox
+      revocation endpoints.
+- [x] S03-05 — closed in Phase 11 by updating the resource README to five
+      draft-11 access modes and generic Profile wording.
+- [x] S04-01 — verified closed by Phase 9 SDK/sample claim filtering; Phase 11
+      kept the defensive Keycloak callback guard.
+- [x] S04-03 — closed in Phase 11 by correcting Federated AS trust comments.
+- [x] S05-002 — closed in Phase 11 by returning `status: "pending"` from
+      chained interactions and `410 invalid_code` through the SDK polling
+      problem helper.
+- [x] S05-003 — closed in Phase 11 by redacting AgentConsole/EventAgent and
+      GuidedTour credential-bearing output by default.
+- [x] S05-004 — closed in Phase 11 by replacing "signed approval blob" wording
+      with mission blob + `s256` digest.
+- [x] S05-005 — closed in Phase 11 by updating LiveWhoAmITest draft-11 challenge
+      wording and renamed signature challenge headers.
+- [x] S06-01 — closed by Phase 2 Events exhausted-subscription status.
+- [x] S06-02, S06-03 — closed in Phase 11 by removing nested-`act`/old
+      `Accept-Signature` sample wording.
+- [x] S07-01 — closed in Phase 11 by defaulting GuidedTour identity to `jwt`
+      and keeping `hwk`/`jwks`/`jkt-jwt` as explicit generic non-AAuth lessons.
+- [x] S07-02 — closed in Phase 11 by replacing "four modes" sample wording with
+      five access modes.
+- [x] S08-01 — closed in Phase 11 by resolving every GuidedTour pending
+      `Location` through `ValidatePendingLocation`.
+- [x] S08-02, S08-03, S09-01 — closed in Phase 11 by removing sample polling
+      loops in favor of `DeferredPoller` and preserving typed polling errors.
+- [x] S09-02 — closed by Phase 10 R15 behavior plus Phase 11 GuidedTour
+      capability headers on signed resource requests.
+- [x] S10-001 — closed in Phase 11 by default-redacting GuidedTour captured
+      headers, compact JWTs and decoded token panes, with one local-only setting
+      to show raw values.
+
+Validation run:
+
+- `dotnet build AAuth.slnx -c Release -v q -nologo 2>&1 | grep -E ' error |warn'`
+  produced no lines.
+- `dotnet test tests/{AAuth.Tests,AAuth.Conformance,AAuth.R3.Tests,AAuth.Events.Tests}
+  -c Release --no-build` passed: 1850 / 1403 / 339 / 89.
+- `AAUTH_UPDATE_DOCS_INVENTORY=1 dotnet test tests/AAuth.Tests -c Release
+  --no-build --filter FullyQualifiedName~Documentation_FrozenSurface` passed and
+  refreshed the inventory.
+- `dotnet test tests/AAuth.Tests -c Release --no-build --filter
+  "FullyQualifiedName~SnippetCompilationTests|FullyQualifiedName~DocumentationLinkTests"`
+  passed (108).
+- `dotnet run --project tools/ApiSurface -c Release -- . --write` passed; diff
+  reviewed as sample-runtime only, with one intentional sample option addition.
+- `npm --prefix tests/e2e run typecheck` passed.
+- Full Playwright `--retries=0` did **not** finish green: GuidedTour
+  `mission-call-chain.spec.ts` still times out waiting for the second PS prompt
+  after the mission approval step. The Phase 11 gates DoD remains unticked.
+
+### [2026-10-01] [Phase 11] mission-call-chain regression
+
+RESOLVED. The GuidedTour regression was caused by the Phase 11 sample redaction
+and poller cutover sharing one captured response body/header representation for
+both UI display and protocol state. Default redaction replaced compact JWTs and
+credential-bearing headers before later GuidedTour steps parsed them, so mission
+call-chain presented a redacted `person_token` to `/token`; federated/resource
+managed intermediate requirements and `AAuth-Access` headers were likewise
+hidden from internal state. The tour capture now stores raw response
+bodies/headers for protocol state while continuing to render redacted display
+artifacts by default. The mission clarification-answer step now waits for the
+next deferred requirement with the SDK `DeferredPoller` stop predicate, so the
+post-clarification interaction is surfaced instead of being swallowed by a
+terminal-only poll. Capability polling also records typed `denied` polling
+errors as denied steps instead of generic background timeouts.
+
+Validation run:
+
+- `dotnet build AAuth.slnx -c Release -v q -nologo` passed with 0 warnings and
+  0 errors.
+- `dotnet test tests/{AAuth.Tests,AAuth.Conformance,AAuth.R3.Tests,AAuth.Events.Tests}
+  -c Release --no-build` passed after refreshing the docs inventory:
+  1850 / 1403 / 339 / 89.
+- `npm --prefix tests/e2e run typecheck` passed.
+- Full Playwright `CI=1 NODE_PATH=./node_modules npx playwright test
+  --reporter=line --retries=0` passed: 79 passed, 1 skipped.
+
+### [2026-10-01] [Phase 11] Gates and wrap-up
+
+RESOLVED. Part A (Mock Person Server, commit `0bd74e0`) and part B (the samples
+sweep plus the mission-call-chain fix) landed.
+
+Changed wire behaviour, and where each is asserted:
+
+- **Step-up.** e2e: `tests/e2e/helpers/wallet-protocol.ts` (401 on a narrower
+  grant, Phase 5).
+- **Intermediary-owned interaction.** e2e: the call-chain specs (Phase 5).
+- **424 relay.** Asserted in `GovernanceEndpointMapperTests` and
+  `MissionAgentFlowTests`, not in e2e. The UI never shows a 424: the agent
+  falls back to the user.
+- **Person-token authorization endpoint.** Asserted in
+  `AuthorizationEndpointTests`, not in e2e: no sample UI calls `/authorize`
+  any more, because Inbox dropped it.
+- **404 events.** Asserted in `EventHttpTests`, not in e2e: the events demo
+  never exhausts `max_uses`.
+
+Gates:
+
+- The Release build is clean.
+- Tests: AAuth.Tests 1850, Conformance 1403, R3 339, Events 89.
+- The docs gates pass.
+- ApiSurface: +1186/-455.
+- e2e: typecheck clean; full Playwright 79 passed, 1 skipped (one new test
+  since Phase 10).
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 7] R09 owner-edited sample compatibility

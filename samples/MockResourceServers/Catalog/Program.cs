@@ -39,6 +39,9 @@ builder.Services.AddAAuthResource(options =>
 {
     options.EgressPolicy = SampleEgress.Policy; options.Issuer = issuer;
     options.AccessServer = access;
+    options.RevocationEndpoint = $"{issuer}/revoke";
+    options.ConfigureRevocation = revocation =>
+        revocation.IsAcceptedIssuer = caller => caller == access || caller == person;
     options.Name = "Travel Catalog"; options.SigningKeys[kid] = key;
     options.AdditionalMetadata = metadata.ToDictionary(field => field.Key, field => field.Value);
 });
@@ -46,6 +49,7 @@ builder.Services.AddAAuthResource(options =>
 builder.Services.AddAAuthR3Documents(_ => new R3DocumentReaderPolicy(access, [person], SampleEgress.Policy));
 var app = builder.Build();
 app.MapAAuthWellKnown();
+app.MapAAuthResourceRevocation();
 app.MapGet("/openapi.json", () => Results.Json(new JsonObject
 {
     ["openapi"] = "3.1.0", ["info"] = new JsonObject { ["title"] = "Travel Catalog", ["version"] = "1.0.0" },

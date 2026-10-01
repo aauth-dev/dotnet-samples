@@ -64,7 +64,7 @@ public static class AAuthChainedInteractions
         context.Response.Headers["Cache-Control"] = "no-store";
         context.Response.Headers[AAuthRequirementHeader.Name] =
             Interaction.Format(entry.InteractionUrl, entry.Code, policy);
-        return Results.Json(new { status = "interaction_required" }, statusCode: StatusCodes.Status202Accepted);
+        return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
     /// <summary>Redirect a browser that presented the intermediary code to the downstream interaction.</summary>

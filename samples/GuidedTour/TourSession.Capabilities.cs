@@ -8,6 +8,7 @@ using AAuth;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.Events;
 using AAuth.Headers;
 using AAuth.HttpSig;
@@ -514,8 +515,10 @@ public sealed partial class TourSession
         JsonNode? body = null, byte[]? rawBody = null, Action<HttpRequestMessage>? configure = null)
     {
         string? signatureBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
-        HttpMessageHandler handler = token is null ? capture : BuildSigningHandler(token, capture, (_, b) => signatureBase = b);
+        var capture = NewCapture();
+        HttpMessageHandler handler = token is null
+            ? capture
+            : BuildSigningHandler(token, capture, (_, b) => signatureBase = b, ResourceCapabilities(url));
         using var client = new SampleHttpClient(handler);
         using var request = new HttpRequestMessage(method, url);
         if (body is not null) request.Content = JsonContent.Create(body);
@@ -581,7 +584,7 @@ public sealed partial class TourSession
         {
             try
             {
-                if ((string?)JsonNode.Parse(exchange.ResponseBody)?["error"] == "denied") return CapOutcome.Denied;
+                if ((string?)JsonNode.Parse(exchange.RawResponseBody)?["error"] == "denied") return CapOutcome.Denied;
             }
             catch (JsonException) { }
             return CapOutcome.Other;
@@ -600,7 +603,7 @@ public sealed partial class TourSession
             if (parsed.Requirement == ClarificationRequirement.RequirementType)
             {
                 string? question = null;
-                try { question = (string?)JsonNode.Parse(exchange.ResponseBody)?[ClarificationRequirement.ClarificationField]; }
+                try { question = (string?)JsonNode.Parse(exchange.RawResponseBody)?[ClarificationRequirement.ClarificationField]; }
                 catch (JsonException) { }
                 if (poll && question == _clarificationQuestion) return CapOutcome.Pending;
                 _clarificationQuestion = question;
@@ -761,7 +764,7 @@ public sealed partial class TourSession
         string? token = null;
         if (outcome == CapOutcome.Done)
         {
-            _authToken = (string?)JsonNode.Parse(exchange.ResponseBody)?["auth_token"];
+            _authToken = (string?)JsonNode.Parse(exchange.RawResponseBody)?["auth_token"];
             token = _authToken;
         }
         var summary = outcome switch
@@ -805,17 +808,11 @@ public sealed partial class TourSession
         else if (outcome is CapOutcome.Pending or CapOutcome.Other && Status(exchange) is >= 200 and < 300)
         {
             // A bare 202 means the authority is still deciding; poll until it names the next requirement.
-            var polls = 0;
-            CapturedExchange nextExchange;
-            do
-            {
-                if (polls++ > 0) await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
-                var (next, polled, _) = await CapSendAsync(HttpMethod.Get, pending, () => _agentToken!, ct);
-                nextExchange = polled;
-                outcome = await CapOutcomeAsync(next, nextExchange, pending, poll: false, ct);
-                next.Dispose();
-            }
-            while (outcome == CapOutcome.Pending && polls < 60);
+            var (next, polled, _) = await PollUntilRequirementAsync(pending, ct);
+            var nextExchange = polled;
+            outcome = await CapOutcomeAsync(next, nextExchange, pending, poll: false, ct);
+            next.Dispose();
+            var polls = PollCount;
             followUp = $"\nThen GET {new Uri(pending).AbsolutePath} → {nextExchange.StatusLine}"
                 + (polls > 1 ? $" (after {polls} polls)" : "");
             if (outcome == CapOutcome.Done) token = CapApplySuccess(nextExchange);
@@ -849,28 +846,24 @@ public sealed partial class TourSession
         var deadline = DateTimeOffset.UtcNow.AddMinutes(5);
         try
         {
-            while (true)
+            var (response, exchange, signatureBase) = await PollUntilRequirementAsync(pending, ct, cycle.PollToken);
+            last = exchange;
+            lastBase = signatureBase;
+            outcome = await CapOutcomeAsync(response, exchange, pending, poll: true, ct);
+            response.Dispose();
+            if (DateTimeOffset.UtcNow > deadline && outcome == CapOutcome.Pending)
             {
-                ct.ThrowIfCancellationRequested();
-                var (response, exchange, signatureBase) = await CapSendAsync(HttpMethod.Get, pending, cycle.PollToken, ct,
-                    configure: request => request.Headers.TryAddWithoutValidation("Prefer", "wait=10"));
-                last = exchange;
-                lastBase = signatureBase;
-                PollCount++;
-                outcome = await CapOutcomeAsync(response, exchange, pending, poll: true, ct);
-                var delay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(1);
-                response.Dispose();
-                StateChanged?.Invoke();
-                if (outcome != CapOutcome.Pending) break;
-                if (DateTimeOffset.UtcNow > deadline)
-                {
-                    RecordTimeoutStep(last, lastBase, "No decision within five minutes.", Actor.Agent, cycle.PollTarget);
-                    _aborted = true;
-                    return;
-                }
-                await Task.Delay(delay < TimeSpan.FromMilliseconds(250) ? TimeSpan.FromMilliseconds(250)
-                    : delay > TimeSpan.FromSeconds(5) ? TimeSpan.FromSeconds(5) : delay, ct);
+                RecordTimeoutStep(last, lastBase, "No decision within five minutes.", Actor.Agent, cycle.PollTarget);
+                _aborted = true;
+                return;
             }
+        }
+        catch (PollingErrorException pex) when (pex.ErrorCode == PollingErrorCode.Denied)
+        {
+            RecordDeniedStep(last!, lastBase, last!.ResponseBody, Actor.Agent, cycle.PollTarget);
+            _aborted = true;
+            StateChanged?.Invoke();
+            return;
         }
         finally
         {
@@ -916,6 +909,74 @@ public sealed partial class TourSession
         StateChanged?.Invoke();
     }
 
+    private string[]? ResourceCapabilities(string url)
+        => IsCapabilityMode && IsResourceUrl(url)
+            ? [AAuthConstants.Capabilities.Interaction, AAuthConstants.Capabilities.Clarification]
+            : null;
+
+    private bool IsResourceUrl(string url)
+    {
+        var origin = new Uri(url).GetLeftPart(UriPartial.Authority);
+        return new[]
+        {
+            _options.BookingsUrl, _options.WalletUrl, _options.DocumentsUrl,
+            _options.CatalogUrl, _options.CalendarUrl, _options.TripsUrl,
+            _options.InboxUrl, _options.ProfileUrl,
+        }.Any(resource => string.Equals(
+            origin,
+            new Uri(resource.TrimEnd('/')).GetLeftPart(UriPartial.Authority),
+            StringComparison.Ordinal));
+    }
+
+    private async Task<(HttpResponseMessage Response, CapturedExchange Exchange, string? SignatureBase)> PollUntilRequirementAsync(
+        string pending, CancellationToken ct, Func<string>? pollToken = null)
+    {
+        string? signatureBase = null;
+        var capture = NewCapture();
+        var handler = BuildSigningHandler(pollToken ?? (() => _agentToken!), capture, (_, b) => signatureBase = b);
+        using var client = new SampleHttpClient(handler);
+        var poller = new DeferredPoller(client, new DeferredPollerOptions
+        {
+            MaxTotalWait = TimeSpan.FromMinutes(5),
+            StopWhenAccepted = ResponseCarriesNewRequirement,
+            OnPoll = _ =>
+            {
+                PollCount++;
+                StateChanged?.Invoke();
+            },
+        });
+        try
+        {
+            var response = await poller.PollAsync(new Uri(pending), ct);
+            return (response, capture.Last!, signatureBase);
+        }
+        catch (PollingErrorException ex) when (ex.ErrorCode == PollingErrorCode.Denied && capture.Last is not null)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent(capture.Last.RawResponseBody),
+            };
+            return (response, capture.Last, signatureBase);
+        }
+    }
+
+    private bool ResponseCarriesNewRequirement(HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values)) return false;
+        foreach (var raw in values)
+        {
+            try
+            {
+                var parsed = AAuthRequirementHeader.Parse(raw);
+                if (parsed.Requirement == ClarificationRequirement.RequirementType) return true;
+                var interaction = Interaction.FromRequirement(parsed, SampleEgress.Policy);
+                if (interaction is not null && interaction.Code != _interactionCode) return true;
+            }
+            catch (FormatException) { }
+        }
+        return false;
+    }
+
     // aud ≠ PS means four-party: the PS federates the request to an Access Server.
     private bool IsFederatedResourceToken()
     {
@@ -935,7 +996,7 @@ public sealed partial class TourSession
             onSuccess(exchange);
             return null;
         }
-        try { return _authToken = (string?)JsonNode.Parse(exchange.ResponseBody)?["auth_token"]; }
+        try { return _authToken = (string?)JsonNode.Parse(exchange.RawResponseBody)?["auth_token"]; }
         catch (JsonException) { return null; }
     }
 
@@ -1070,7 +1131,7 @@ public sealed partial class TourSession
     private async Task CapAgentRevokeAsync(CancellationToken ct)
     {
         string? signatureBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var signed = new SampleHttpClient(BuildSigningHandler(() => _agentToken!, capture, (_, b) => signatureBase = b));
         var claims = JsonNode.Parse(DecodeJwt(_authToken)!.Value.Payload)!;
         var endpoint = WalletUrl + "/revoke";
@@ -1136,7 +1197,7 @@ public sealed partial class TourSession
         var url = $"{BookingsUrl}/.well-known/aauth-resource.json";
         var (response, exchange, _) = await CapSendAsync(HttpMethod.Get, url, null, ct);
         response.Dispose();
-        var metadata = JsonNode.Parse(exchange.ResponseBody);
+        var metadata = JsonNode.Parse(exchange.RawResponseBody);
         var document = (string?)metadata?["r3_vocabularies"]?["urn:aauth:vocabulary:asyncapi"]
             ?? throw new InvalidOperationException("Bookings did not advertise an AsyncAPI document.");
         _eventsAsyncApiUrl = new Uri(new Uri(BookingsUrl), document).AbsoluteUri;
@@ -1152,7 +1213,7 @@ public sealed partial class TourSession
         var url = _eventsAsyncApiUrl!;
         var (response, exchange, _) = await CapSendAsync(HttpMethod.Get, url, null, ct);
         response.Dispose();
-        var address = (string?)JsonNode.Parse(exchange.ResponseBody)?["channels"]?["publicAvailability"]?["address"]
+        var address = (string?)JsonNode.Parse(exchange.RawResponseBody)?["channels"]?["publicAvailability"]?["address"]
             ?? throw new InvalidOperationException("Public channel address is missing.");
         _eventsPublicUrl = new Uri(new Uri(BookingsUrl), address).AbsoluteUri;
         CapRecord("Fetch the AsyncAPI channels", Actor.Agent, Actor.Resource,
@@ -1166,7 +1227,7 @@ public sealed partial class TourSession
         var url = $"{AgentProviderUrl}/.well-known/aauth-agent.json";
         var (response, exchange, _) = await CapSendAsync(HttpMethod.Get, url, null, ct);
         response.Dispose();
-        _eventsEndpoint = (string?)JsonNode.Parse(exchange.ResponseBody)?["event_endpoint"]
+        _eventsEndpoint = (string?)JsonNode.Parse(exchange.RawResponseBody)?["event_endpoint"]
             ?? throw new InvalidOperationException("The Agent Provider did not advertise an event_endpoint.");
         CapRecord("Discover the Agent Provider event endpoint", Actor.Agent, Actor.AgentProvider,
             "An agent cannot receive a public webhook, so its **Agent Provider** acts as a durable inbox. The AP's " +
@@ -1177,7 +1238,7 @@ public sealed partial class TourSession
     private async Task CapEventsEnrolAsync(CancellationToken ct)
     {
         _agentKey = AAuthKey.Generate();
-        var capture = new CapturingMessageHandler { InnerHandler = AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var http = new SampleHttpClient(capture);
         var enrolled = await new AgentProviderClient(http, new InMemoryKeyStore()).EnrolWithKeyAsync(
             AgentProviderUrl, null, AgentProviderUrl + "/enrol", _agentKey, PersonServerUrl, ct);
@@ -1194,7 +1255,7 @@ public sealed partial class TourSession
     {
         var (response, exchange, signatureBase) = await CapSendAsync(HttpMethod.Get, search, () => _authToken!, ct);
         response.Dispose();
-        var json = JsonNode.Parse(exchange.ResponseBody);
+        var json = JsonNode.Parse(exchange.RawResponseBody);
         _eventsSubscriptionUrl = (string?)json?["notifications"]?["subscribe_url"]
             ?? throw new InvalidOperationException($"Bookings returned no subscription ticket (HTTP {Status(exchange)}).");
         if ((string?)json?["account"] != _eventsAccount) throw new InvalidOperationException("Authorized account mismatch.");
@@ -1223,7 +1284,7 @@ public sealed partial class TourSession
         if (Status(exchange) is < 200 or >= 300)
             throw new InvalidOperationException($"HTTP {Status(exchange)}: {exchange.ResponseBody}");
         JsonNode? json = null;
-        try { json = exchange.ResponseBody.Length == 0 ? null : JsonNode.Parse(exchange.ResponseBody); } catch (JsonException) { }
+        try { json = exchange.RawResponseBody.Length == 0 ? null : JsonNode.Parse(exchange.RawResponseBody); } catch (JsonException) { }
         return (exchange, signatureBase, json);
     }
 
@@ -1283,7 +1344,7 @@ public sealed partial class TourSession
             var (exchange, sig, _) = await CapEventsSendAsync(HttpMethod.Get, target, _agentToken!, null, ct);
             last = exchange;
             signatureBase = sig;
-            var pending = JsonSerializer.Deserialize<PendingEvent[]>(exchange.ResponseBody, JsonSerializerOptions.Web) ?? [];
+            var pending = JsonSerializer.Deserialize<PendingEvent[]>(exchange.RawResponseBody, JsonSerializerOptions.Web) ?? [];
             _eventsPending = pending.SingleOrDefault(delivery => delivery.Event.Eid == _eventsEid);
             if (_eventsPending is not null) break;
             if (pending.Length == 0) await Task.Delay(TimeSpan.FromMilliseconds(500), ct);

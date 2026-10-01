@@ -152,5 +152,11 @@ public sealed class TourOptions
     /// regardless of this setting.
     /// </summary>
     public TourMode Mode { get; set; } = TourMode.Bootstrap;
-}
 
+    /// <summary>
+    /// Local-only educational override that shows raw protocol tokens, headers
+    /// and decoded JWT payloads in the tour inspector. Keep disabled for shared
+    /// or non-local demos.
+    /// </summary>
+    public bool ShowSensitiveProtocolArtifacts { get; set; }
+}

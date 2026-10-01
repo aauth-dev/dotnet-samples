@@ -324,21 +324,35 @@ Console.WriteLine();
 Console.WriteLine("Request headers:");
 foreach (var header in request.Headers)
 {
-    Console.WriteLine($"  {header.Key}: {string.Join(", ", header.Value)}");
+    Console.WriteLine($"  {header.Key}: {RedactHeader(header.Key, string.Join(", ", header.Value))}");
 }
 
 Console.WriteLine();
 Console.WriteLine($"Response: {(int)response.StatusCode} {response.ReasonPhrase}");
 foreach (var header in response.Headers)
 {
-    Console.WriteLine($"  {header.Key}: {string.Join(", ", header.Value)}");
+    Console.WriteLine($"  {header.Key}: {RedactHeader(header.Key, string.Join(", ", header.Value))}");
 }
 
 var body = await response.Content.ReadAsStringAsync();
 if (!string.IsNullOrEmpty(body))
 {
     Console.WriteLine();
-    Console.WriteLine(body);
+    Console.WriteLine(RedactProtocolArtifacts(body));
 }
 
 return 0;
+
+static string RedactHeader(string name, string value)
+    => name.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("Signature-Key", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("AAuth-Requirement", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("AAuth-Access", StringComparison.OrdinalIgnoreCase)
+            ? "[redacted protocol credential]"
+            : RedactProtocolArtifacts(value);
+
+static string RedactProtocolArtifacts(string value)
+    => System.Text.RegularExpressions.Regex.Replace(
+        value,
+        @"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])",
+        "[redacted compact JWT]");

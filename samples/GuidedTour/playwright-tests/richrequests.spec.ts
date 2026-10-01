@@ -48,7 +48,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     await selectStep(page, 3);
     await expect(page.locator('section.payload')).not.toContainText('"account"');
     await page.locator('button.primary').click();
-    await approvePersonConsent(page, 'a.worker-consent');
+    await approvePersonConsent(page, 'a.primary.approve');
     await expect(doneSteps(page)).toHaveCount(7);
     await page.locator('button.primary').click();
     await expect(doneSteps(page)).toHaveCount(8);
@@ -66,7 +66,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
       await expect(doneSteps(page)).toHaveCount(step);
     }
     await page.locator('button.primary').click();
-    const link = page.locator('a.worker-consent');
+    const link = page.locator('a.primary.approve');
     await expect(link).toBeVisible();
     const [popup] = await Promise.all([context.waitForEvent('page'), link.click()]);
     await authenticateConsent(popup);
@@ -76,7 +76,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     await expect(page.locator('header.topbar .error')).toContainText(/denied/i);
     await expect(doneSteps(page)).toHaveCount(6);
     await page.locator('button.primary').click();
-    await approvePersonConsent(page, 'a.worker-consent');
+    await approvePersonConsent(page, 'a.primary.approve');
     await expect(doneSteps(page)).toHaveCount(7);
     await page.locator('button.primary').click();
     await expect(doneSteps(page)).toHaveCount(8);
@@ -105,7 +105,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     // confirm challenge + proposal exchange (9–11) run, then the flow parks on
     // the user-approval step (12 done) with the R3 AS interaction link shown.
     await page.getByRole('button', { name: 'Run all' }).click();
-    await approvePersonConsent(page, 'a.worker-consent');
+    await approvePersonConsent(page, 'a.primary.approve');
     const link = page.locator('a.primary.approve[href^="http://localhost:5501/"]');
     await expect(link).toBeVisible();
     await expect(doneSteps(page)).toHaveCount(12);
@@ -170,7 +170,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     await selectFlow(page, TourMode.RichRequests);
 
     await page.getByRole('button', { name: 'Run all' }).click();
-    await approvePersonConsent(page, 'a.worker-consent');
+    await approvePersonConsent(page, 'a.primary.approve');
     const link = page.locator('a.primary.approve[href^="http://localhost:5501/"]');
     await expect(link).toBeVisible();
 

@@ -6,7 +6,7 @@
 // whoami.aauth.dev deployment and the live person.hello.coop PS, so it cannot
 // adopt the local renamed scopes/endpoints. Leave its `whoami` references as-is.
 //
-// Mode 1:  No signature        → 401 + Accept-Signature header
+// Mode 1:  No signature        → 401 + Accept-Signature-Scheme / Accept-Signature-Alg headers
 // Mode 2a: aa-agent+jwt (no scope) → 200 + agent identity (sub echoed back)
 // Mode 2b: aa-agent+jwt (scope)    → 401 + AAuth-Requirement (resource token)
 // Mode 3:  Full 3-party flow       → 200 + identity claims (via PS exchange)
@@ -140,11 +140,11 @@ for (int attempt = 1; attempt <= 15; attempt++)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MODE 1: No signature — raw GET, expect 401 + Accept-Signature
+// MODE 1: No signature — raw GET, expect 401 + Accept-Signature-Scheme
 // ═══════════════════════════════════════════════════════════════════════════════
 Console.WriteLine();
 Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-Console.WriteLine("MODE 1: No signature → 401 + Accept-Signature");
+Console.WriteLine("MODE 1: No signature → 401 + Accept-Signature-Scheme");
 Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 Console.WriteLine();
 
@@ -152,17 +152,19 @@ using var rawClient = new SampleHttpClient();
 var rawResp = await rawClient.GetAsync(WhoAmIUrl);
 
 Console.WriteLine($"  Status: {(int)rawResp.StatusCode} {rawResp.ReasonPhrase}");
-if (rawResp.Headers.TryGetValues("Accept-Signature", out var acceptSigValues))
-    Console.WriteLine($"  Accept-Signature: {string.Join(", ", acceptSigValues)}");
+if (rawResp.Headers.TryGetValues("Accept-Signature-Scheme", out var acceptSigSchemeValues))
+    Console.WriteLine($"  Accept-Signature-Scheme: {string.Join(", ", acceptSigSchemeValues)}");
+if (rawResp.Headers.TryGetValues("Accept-Signature-Alg", out var acceptSigAlgValues))
+    Console.WriteLine($"  Accept-Signature-Alg: {string.Join(", ", acceptSigAlgValues)}");
 var rawBody = await rawResp.Content.ReadAsStringAsync();
 Console.WriteLine($"  Body: {rawBody}");
 Console.WriteLine();
 var mode1Passed = LiveInteropValidation.IsSignatureChallenge(rawResp.StatusCode,
-    rawResp.Headers.TryGetValues("Accept-Signature", out var mode1SignatureValues) ? mode1SignatureValues : []);
+    rawResp.Headers.TryGetValues("Accept-Signature-Scheme", out var mode1SchemeValues) ? mode1SchemeValues : []);
 if (mode1Passed)
     Console.WriteLine("  → Resource tells the agent: sign with these components, use JWT key scheme.");
 else
-    Console.WriteLine("  ✗ Expected a usable 401 Accept-Signature challenge with the required components.");
+    Console.WriteLine("  ✗ Expected a usable 401 Accept-Signature-Scheme challenge including jwt.");
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODE 2a: aa-agent+jwt (no scope) — agent identity returned directly
@@ -246,7 +248,7 @@ if (mode2bPassed)
 }
 else
 {
-    Console.WriteLine("  ✗ Draft-10 scoped challenge was not returned.");
+    Console.WriteLine("  ✗ Draft-11 auth-token challenge was not returned.");
     Console.WriteLine("    Expected: requirement=auth-token; resource-token=\"<aa-resource+jwt>\"");
     Console.WriteLine($"    Received: requirement={mode2bRequirement?.Requirement ?? "(missing or malformed)"}");
     Console.WriteLine("    The client leaves this unsupported requirement unsatisfied and does not contact the PS.");
@@ -299,7 +301,7 @@ HttpResponseMessage? mode3Resp = null;
 string? mode3Body = null;
 if (!mode2bPassed)
 {
-    Console.WriteLine("  SKIPPED: The resource did not issue the draft-10 resource token required for PS exchange.");
+    Console.WriteLine("  SKIPPED: The resource did not issue the draft-11 resource token required for PS exchange.");
 }
 else try
 {

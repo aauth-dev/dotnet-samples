@@ -23,7 +23,7 @@ the unchanged protocol identifier. Per the spec, `jkt-jwt` is a key-rotation
 variant of presenting a hardware-backed key, so it yields **pseudonymous**
 access — the `/anchored` path reports `signingMode = "pseudonymous"`.
 
-Naming-JWT verification is self-anchored (Signature Keys draft-08 section 3.5):
+Naming-JWT verification is self-anchored (Signature Keys draft-09 section 3.5):
 the durable public key is carried in the naming JWT's header `jwk`, the issuer
 is that key's own thumbprint URN (`urn:jkt:sha-256:<thumbprint>`), and the
 resource computes the thumbprint from the header `jwk`, checks it equals `iss`,

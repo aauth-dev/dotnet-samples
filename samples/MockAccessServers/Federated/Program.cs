@@ -44,7 +44,9 @@ var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:Signatu
 // Person Servers this AS will broker for. The PS authenticates to the AS
 // via an HTTP Sig using the `jwks_uri` scheme; the helper resolves its key
 // from that URI during signature verification and pins the URI's host to this
-// trusted set (pre-established trust). An empty set trusts any signed caller.
+// trusted set (pre-established trust). An empty configured set denies all PS
+// callers; omit the setting only when intentionally accepting the SDK's open
+// trust semantics.
 var trustedPersonServers = builder.Configuration
     .GetSection("MockAccessServer:TrustedPersonServers")
     .Get<string[]>() ?? ["http://localhost:5100"];

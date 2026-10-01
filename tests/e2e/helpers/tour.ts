@@ -37,6 +37,7 @@ export const TourMode = {
 export type TourMode = (typeof TourMode)[keyof typeof TourMode];
 
 export const SigningMode = {
+  Jwt: 'Jwt',
   Hwk: 'Hwk',
   Jwks: 'Jwks',
   JktJwt: 'JktJwt',
@@ -141,7 +142,7 @@ export async function runAll(page: Page): Promise<void> {
 
 /** The dashboard link of the tour's Person Server prompt (polling banner). */
 export function personServerPrompt(page: Page): Locator {
-  return page.locator('section.polling [data-consent-prompt="dashboard"] a.ps-dashboard');
+  return page.locator('section.polling [data-consent-prompt="dashboard"] a.ps-direct-link');
 }
 
 /**
@@ -157,7 +158,13 @@ export async function decidePersonServerPrompt(
 ): Promise<string> {
   const link = personServerPrompt(page);
   await expect(link).toBeVisible({ timeout: 60_000 });
-  if (options.previous) await expect(link).not.toHaveAttribute('href', options.previous, { timeout: 60_000 });
+  if (options.previous) {
+    await expect.poll(async () => {
+      if (!await link.isVisible().catch(() => false)) return null;
+      return await link.getAttribute('href');
+    }, { timeout: 60_000 }).not.toBe(options.previous);
+    await expect(link).toBeVisible({ timeout: 60_000 });
+  }
   const href = (await link.getAttribute('href'))!;
   // Poll on arrival: the loop is live before the person does anything.
   await expect(page.locator('section.polling .polling__detail')).toContainText(/[1-9]\d* polls? so far/, { timeout: 15_000 });

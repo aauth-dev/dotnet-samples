@@ -510,13 +510,15 @@ already landed:
 
 **Definition of Done**
 
-- [ ] Every Phase 3 samples finding in the audit is either closed here or
+- [x] Every Phase 3 samples finding in the audit is either closed here or
       closed by its owning phase (checklist in the log).
-- [ ] No sample hand-rolls polling, and none signs requests to a cross-origin
+- [x] No sample hand-rolls polling, and none signs requests to a cross-origin
       `Location`.
-- [ ] The e2e specs are updated for the changed wire behaviour: 424 relay,
-      step-up, person-token authorization and 404 events.
-- [ ] The gates, including full Playwright `--retries=0`, are green.
+- [x] The e2e specs are updated for the changed wire behaviour: 424 relay,
+      step-up, person-token authorization and 404 events. See the Phase 11
+      wrap-up log for which are asserted in e2e and which only in
+      unit/conformance tests.
+- [x] The gates, including full Playwright `--retries=0`, are green.
 
 ## Phase 12 — Docs sweep and claim restoration (R19)
 

@@ -315,7 +315,7 @@ app.MapGet("/chain-interaction/{id}", (string id, string? code, PendingStore pen
 //   * 202 + same requirement=interaction while still unconsented downstream
 //   * 200 + combined chain result once the downstream auth token resolves
 //   * 403 denied if the user denied
-//   * 404 if the pending id is unknown
+//   * 410 invalid_code if the pending id is unknown, mismatched or already consumed
 // -----------------------------------------------------------------------
 app.MapMethods("/pending/{id}", ["GET", "DELETE"], HandlePendingAsync);
 

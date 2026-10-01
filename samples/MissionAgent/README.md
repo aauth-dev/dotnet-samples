@@ -92,7 +92,7 @@ sequenceDiagram
         PS->>User: approve this mission?
         User-->>PS: ✅ approve
     end
-    PS-->>Agent: signed approval blob + s256 thumbprint
+    PS-->>Agent: mission blob + s256 digest
 
     Note over Agent,R: Access a mission-aware resource — trips.read is mission-approved
     Agent->>PS: person token request (resource, mission_s256)

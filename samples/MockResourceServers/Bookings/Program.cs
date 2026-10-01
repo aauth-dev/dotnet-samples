@@ -41,6 +41,10 @@ var supportedOperations = openApiDocument["paths"]!.AsObject().SelectMany(path =
 var resourceUrl = (builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5005").TrimEnd('/');
 var accessServerUrl = (builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5501").TrimEnd('/');
 var personServerUrl = (builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100").TrimEnd('/');
+var trustedPersonServers = new HashSet<string>(
+    builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>()
+        ?? new[] { personServerUrl },
+    StringComparer.Ordinal);
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 var accounts = builder.Configuration.GetSection("Bookings:Accounts").Get<Dictionary<string, string>>()
     ?? new Dictionary<string, string>(StringComparer.Ordinal)
@@ -70,7 +74,7 @@ builder.Services.AddAAuthResource(o =>
     o.AccessServer = accessServerUrl;
     o.RevocationEndpoint = $"{resourceUrl}/revoke";
     o.ConfigureRevocation = revocation =>
-        revocation.IsAcceptedIssuer = caller => caller == personServerUrl || caller == accessServerUrl;
+        revocation.IsAcceptedIssuer = caller => caller == accessServerUrl || trustedPersonServers.Contains(caller);
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
     o.SigningKeys[ResourceKid] = resourceKey;
     o.Name = "Aria Reservations";
@@ -460,6 +464,8 @@ async Task<SignedPresenter> VerifyPresenterAsync(HttpContext ctx, R3VerifiedFetc
         resourceUrl,
         fetcher.ParsedKey.ConfirmationKey,
         ctx.RequestAborted);
+    if (!trustedPersonServers.Contains(verified.Issuer))
+        throw new InvalidOperationException("untrusted person token issuer");
     await TokenRegistration.RegisterAsync(tokenInventory, [TokenRegistration.FromVerified(verified)], ctx.RequestAborted);
     return new SignedPresenter(verified, fetcher.ParsedKey.ConfirmationKey);
 }

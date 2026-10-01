@@ -2,7 +2,6 @@ using System.Net;
 using System.Text.Json.Nodes;
 using AAuth.Headers;
 using Microsoft.IdentityModel.Tokens;
-using StructuredFieldValues;
 
 namespace LiveWhoAmITest;
 
@@ -10,7 +9,7 @@ public static class LiveInteropValidation
 {
     public static bool IsSignatureChallenge(HttpStatusCode status, IEnumerable<string> acceptSignatureValues)
         => status == HttpStatusCode.Unauthorized
-            && acceptSignatureValues.Any(HasRequiredSignatureComponents);
+            && acceptSignatureValues.Any(value => value.Split(',', StringSplitOptions.TrimEntries).Contains("jwt", StringComparer.OrdinalIgnoreCase));
 
     public static bool IsAgentIdentityResponse(HttpStatusCode status, string body,
         string expectedIssuer, string expectedSubject, string expectedPersonServer)
@@ -41,21 +40,6 @@ public static class LiveInteropValidation
             return false;
         try { return segments.All(segment => Base64UrlEncoder.DecodeBytes(segment).Length > 0); }
         catch (FormatException) { return false; }
-    }
-
-    private static bool HasRequiredSignatureComponents(string value)
-    {
-        if (SfvParser.ParseDictionary(value, out var dictionary) is not null) return false;
-        foreach (var member in dictionary.Values)
-        {
-            if (member.Value is not IReadOnlyList<ParsedItem> items
-                || member.Parameters.Count != 0
-                || items.Any(item => item.Value is not string || item.Parameters.Count != 0))
-                continue;
-            var components = items.Select(item => (string)item.Value).ToHashSet(StringComparer.Ordinal);
-            if (components.IsSupersetOf(["@method", "@authority", "@path", "signature-key"])) return true;
-        }
-        return false;
     }
 
     private static JsonObject? ParseObject(string body)

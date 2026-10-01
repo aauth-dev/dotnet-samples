@@ -39,7 +39,8 @@ test('flow picker offers all fifteen flows and reacts to selection', async ({ pa
     await flow.selectOption('Identity');
     await expect(page.locator('select#signing-mode-select')).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 20_000 });
-  await expect(page.locator('details.flow-picker__desc')).toContainText('access control');
+  await expect(page.locator('details.flow-picker__desc')).toContainText('generic Signature Keys');
+  await expect(page.locator('details.flow-picker__desc')).toContainText('AAuth agent identity');
 
   // Switching to a three-party flow hides the signing-mode picker again.
   await expect(async () => {

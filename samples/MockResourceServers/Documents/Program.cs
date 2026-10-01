@@ -19,12 +19,16 @@ builder.Services.AddAAuthResource(options =>
 {
     options.EgressPolicy = SampleEgress.Policy;
     options.Issuer = issuer;
+    options.RevocationEndpoint = $"{issuer}/revoke";
+    options.ConfigureRevocation = revocation =>
+        revocation.IsAcceptedIssuer = caller => caller == person;
     options.Name = "Document Release";
     options.SigningKeys[kid] = key;
     options.ScopeDescriptions = scopes;
 });
 var app = builder.Build();
 app.MapAAuthWellKnown();
+app.MapAAuthResourceRevocation();
 var permissions = new ConcurrentDictionary<string, Permission>();
 var callbacks = new ConcurrentDictionary<string, string>();
 var sessions = new BrowserConsentSessions("AAuth.Documents.Consent",

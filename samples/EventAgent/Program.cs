@@ -21,6 +21,12 @@ while (session.Step < EventDemoSession.Steps.Length)
     Console.WriteLine($"{session.Step + 1}. {EventDemoSession.Steps[session.Step]}");
     await session.NextAsync();
     var evidence = session.Evidence[^1];
-    Console.WriteLine($"HTTP {evidence.StatusCode}: {evidence.Exchange}");
-    Console.WriteLine(evidence.Json);
+    Console.WriteLine($"HTTP {evidence.StatusCode}: {RedactProtocolArtifacts(evidence.Exchange)}");
+    Console.WriteLine(RedactProtocolArtifacts(evidence.Json));
 }
+
+static string RedactProtocolArtifacts(string value)
+    => System.Text.RegularExpressions.Regex.Replace(
+        value,
+        @"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])",
+        "[redacted compact JWT]");

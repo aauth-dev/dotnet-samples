@@ -43,10 +43,10 @@
         || !string.IsNullOrWhiteSpace(Step.TokenPayload)
         || !string.IsNullOrWhiteSpace(Step.TokenDecoded))
     {
-        <TokenView Jwt="@Step.TokenJwt"
-                   Header="@Step.TokenHeader"
-                   Payload="@Step.TokenPayload"
-                   Decoded="@Step.TokenDecoded" />
+        <TokenView Jwt="@Step.RedactedTokenJwt"
+                   Header="@Step.RedactedTokenHeader"
+                   Payload="@Step.RedactedTokenPayload"
+                   Decoded="@Step.RedactedTokenDecoded" />
     }
 </article>
 

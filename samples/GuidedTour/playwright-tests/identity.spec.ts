@@ -14,31 +14,37 @@ import {
 /**
  * Identity-based access (no Person Server, 2 steps): the resource trusts the
  * agent's signature directly and returns 200 on the first signed call. Run for
- * each of the three signing modes; assert the actual 200 result plus the exact
- * mode/scheme the Profile resource reports back, plus the identifying claim it
- * surfaces (key thumbprint or key id).
+ * the default AAuth jwt identity mode and each generic Signature-Key lesson;
+ * assert the actual 200 result plus the exact mode/scheme the Profile resource
+ * reports back, plus the identifying claim it surfaces.
  *
- *   Hwk      → pseudonymous, scheme "hwk"      → jkt thumbprint
- *   JwksUri  → agent-identity, scheme "jwks_uri" → kid
- *   JktJwt   → pseudonymous, scheme "jkt-jwt"  → jkt thumbprint
+ *   Jwt      → agent-identity, scheme "jwt"     → identifier
+ *   Hwk      → pseudonymous, scheme "hwk"       → jkt thumbprint
+ *   Jwks     → agent-identity, scheme "jwks"    → kid
+ *   JktJwt   → pseudonymous, scheme "jkt-jwt"   → jkt thumbprint
  */
 
 const cases: Array<{
   mode: SigningMode;
   resultMode: string;
   scheme: string;
-  idClaim: 'jkt' | 'kid';
+  idClaim: 'identifier' | 'jkt' | 'kid';
+  generic: boolean;
 }> = [
-  { mode: SigningMode.Hwk, resultMode: 'pseudonymous', scheme: 'hwk', idClaim: 'jkt' },
-  { mode: SigningMode.Jwks, resultMode: 'agent-identity', scheme: 'jwks', idClaim: 'kid' },
-  { mode: SigningMode.JktJwt, resultMode: 'pseudonymous', scheme: 'jkt-jwt', idClaim: 'jkt' },
+  { mode: SigningMode.Jwt, resultMode: 'agent-identity', scheme: 'jwt', idClaim: 'identifier', generic: false },
+  { mode: SigningMode.Hwk, resultMode: 'pseudonymous', scheme: 'hwk', idClaim: 'jkt', generic: true },
+  { mode: SigningMode.Jwks, resultMode: 'agent-identity', scheme: 'jwks', idClaim: 'kid', generic: true },
+  { mode: SigningMode.JktJwt, resultMode: 'pseudonymous', scheme: 'jkt-jwt', idClaim: 'jkt', generic: true },
 ];
 
-for (const { mode, resultMode, scheme, idClaim } of cases) {
+for (const { mode, resultMode, scheme, idClaim, generic } of cases) {
   test(`identity flow (${mode}) returns 200 with scheme ${scheme}`, async ({ page }) => {
     await openTour(page);
     await selectFlow(page, TourMode.Identity);
     await selectSigningMode(page, mode);
+    if (generic) {
+      await expect(page.locator('body')).toContainText('non-AAuth');
+    }
 
     await runAll(page);
 

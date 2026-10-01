@@ -51,9 +51,10 @@
         <label class="flow-picker__label" for="signing-mode-select">
             <span class="flow-picker__title">Signature scheme</span>
             <select id="signing-mode-select" value="@Session.SigningMode" @onchange="OnSigningModeChanged" disabled="@_busy">
-                <option value="@SigningMode.Hwk">Pseudonymous (hwk) — key only, no identity</option>
-                <option value="@SigningMode.Jwks">Direct JWKS (jwks) - URL identity</option>
-                <option value="@SigningMode.JktJwt">Key Rotation (jkt-jwt) — ephemeral keys</option>
+                <option value="@SigningMode.Jwt">AAuth agent-token identity (jwt)</option>
+                <option value="@SigningMode.Hwk">Generic Signature-Key primitive (non-AAuth): hwk</option>
+                <option value="@SigningMode.Jwks">Generic Signature-Key primitive (non-AAuth): jwks</option>
+                <option value="@SigningMode.JktJwt">AP key-refresh ceremony only (non-AAuth resource access): jkt-jwt</option>
             </select>
         </label>
     }
@@ -122,7 +123,8 @@
         {
             <ConsentSupport.PersonServerApprovalPrompt @key="workerConsent.Code" PersonServer="@Session.PersonServer" Interaction="workerConsent"
                                                        ExternalLabel="@(Session.IsSubAgentMode ? WorkerConsentAction() : "Open consent page")"
-                                                       LinkClass="primary approve worker-consent" />
+                                                       LinkClass="primary approve worker-consent"
+                                                       OnOpen="MarkInteractionOpenedAsync" />
             @if (Session.IsSubAgentMode)
             {
                 <span class="flow-picker__action-hint">
@@ -173,26 +175,33 @@
                     These are generic Signature Keys demonstrations, not the
                     AAuth identity-based resource access mode, which requires an agent JWT.
                     Aria (your AI travel assistant) wants to read something from
-                    your <strong>Profile</strong> server, and the server decides access purely from the
-                    signature on the request — no Person Server and no consent screen.<br /><br />
-                    The resource verifies the agent's signature and applies its own access
-                    control — granting or denying based on who (or what key) signed the request.
+                    your <strong>Profile</strong> server. By default this is AAuth
+                    <code>jwt</code> agent-token identity: Profile verifies the agent token
+                    plus HTTP signature and decides access locally — no Person Server and no
+                    consent screen.<br /><br />
+                    The other selector values are generic Signature-Key primitives
+                    admitted only by Profile's <code>RequireGenericSignature()</code> lesson.
+                    They are not AAuth resource, PS, or AS request modes.
                     The signed request hits the mode's dedicated endpoint
                     (<code>/pseudonymous</code>, <code>/anchored</code>, or <code>/identified</code>) and returns
                     <code>200</code> on the first call — no Person Server involved.
                     @switch (Session.SigningMode)
                     {
+                        case SigningMode.Jwt:
+                            <strong>AAuth agent identity:</strong>
+                            <text> resource sees the verified agent id and bound signing key from <code>sig=jwt</code>.</text>
+                            break;
                         case SigningMode.Hwk:
-                            <strong>Pseudonymous:</strong>
+                            <strong>Generic pseudonymous (non-AAuth):</strong>
                             <text> resource sees a key thumbprint only — no agent identity disclosed.</text>
                             break;
                         case SigningMode.Jwks:
-                            <strong>Direct JWKS:</strong>
+                            <strong>Generic direct JWKS (non-AAuth):</strong>
                             <text> the exact key URL identifies the signer. This is a generic signing demonstration.</text>
                             break;
                         case SigningMode.JktJwt:
-                            <strong>Key Rotation:</strong>
-                            <text> durable key signs a naming JWT binding an ephemeral signing key — enables rotation without re-enrolment.</text>
+                            <strong>AP key-refresh ceremony (non-AAuth resource access):</strong>
+                            <text> durable key signs a naming JWT binding an ephemeral signing key — this illustrates the key-refresh primitive only.</text>
                             break;
                     }
                 </text>
@@ -443,7 +452,8 @@
             </div>
             @if (Session.WorkerConsent is null && Session.IsPersonServerConsent && Session.CurrentInteraction is { } interaction)
             {
-                <ConsentSupport.PersonServerApprovalPrompt @key="interaction.Code" PersonServer="@Session.PersonServer" Interaction="interaction" ShowWaiting="false" />
+                <ConsentSupport.PersonServerApprovalPrompt @key="interaction.Code" PersonServer="@Session.PersonServer" Interaction="interaction" ShowWaiting="false"
+                                                           OnOpen="StartPollingOnlyAsync" />
             }
             else
             {
@@ -772,6 +782,12 @@
             _error = $"{ex.GetType().Name}: {ex.Message}";
         }
         finally { _busy = false; }
+    }
+
+    private Task StartPollingOnlyAsync()
+    {
+        _ = Session.StartPendingPollAsync();
+        return Task.CompletedTask;
     }
 
     private async Task RunAllAsync()

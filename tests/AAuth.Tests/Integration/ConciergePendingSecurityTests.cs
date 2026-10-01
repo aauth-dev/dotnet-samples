@@ -6,6 +6,7 @@ using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.Server.CallChaining;
 using AAuth.Tokens;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -14,6 +15,31 @@ namespace AAuth.Tests.Integration;
 
 public class ConciergePendingSecurityTests
 {
+    [Fact]
+    public async Task ChainedInteractionPendingBody_UsesPendingStatus()
+    {
+        var context = new DefaultHttpContext();
+        context.RequestServices = new ServiceCollection().AddOptions().AddLogging().BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+        var entry = new ChainedInteractionEntry(
+            "pending-test",
+            "ABCDEFGH",
+            "https://concierge.example/chain-interaction/pending-test",
+            "/pending/pending-test",
+            new Interaction("https://ps.example/interaction", "DOWNSTREAM1"),
+            "test",
+            new JsonObject(),
+            DateTimeOffset.UtcNow.AddMinutes(10));
+
+        await AAuthChainedInteractions.Accepted(context, entry, TestEgress.Policy).ExecuteAsync(context);
+
+        context.Response.Body.Position = 0;
+        var body = await JsonNode.ParseAsync(context.Response.Body);
+        Assert.Equal(StatusCodes.Status202Accepted, context.Response.StatusCode);
+        Assert.Equal("pending", (string?)body?["status"]);
+        Assert.Equal("/pending/pending-test", context.Response.Headers.Location.ToString());
+    }
+
     [Theory]
     [InlineData("agent", "GET")]
     [InlineData("key", "GET")]

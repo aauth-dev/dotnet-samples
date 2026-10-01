@@ -31,7 +31,8 @@ test('autonomous flow exchanges and replays to a three-party 200', async ({ page
   // Step 2 ("Signed GET → 401 person-token"): the agent token alone names no person.
   await selectStep(page, 1);
   await expectResponse(page, 401);
-  await expect(page.locator('section.payload')).toContainText('requirement=person-token');
+  await expect(page.locator('section.payload')).toContainText('AAuth-Requirement:');
+  await expect(page.locator('section.payload')).toContainText('redacted protocol credential');
 
   // Step 8 ("Replay GET /events with auth_token") is the resource result.
   await selectStep(page, 7);

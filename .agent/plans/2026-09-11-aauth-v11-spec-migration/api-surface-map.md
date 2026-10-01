@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 240 changed public-source files, 1184 added/replacement declarations, 454 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 243 changed public-source files, 1186 added/replacement declarations, 455 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -612,6 +612,17 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [FederatedWorkerSce
 
 Public owners: `AAuth.Samples.FederatedWorkerScenario`, `AAuth.Samples`.
 
+### samples/GuidedTour/CapturingMessageHandler.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [CapturingMessageHandler.cs](../../../samples/GuidedTour/CapturingMessageHandler.cs).
+
+```diff
+- GuidedTour: public sealed record CapturedExchange ( string RequestLine , string RequestHeaders , string ? RequestBody , string StatusLine , string ResponseHeaders , string ResponseBody )
++ GuidedTour: public sealed record CapturedExchange ( string RequestLine , string RequestHeaders , string RawRequestHeaders , string ? RequestBody , string StatusLine , string ResponseHeaders , string RawResponseHeaders , string ResponseBody , string RawResponseBody )
+```
+
+Public owners: `GuidedTour.CapturingMessageHandler`, `GuidedTour`.
+
 ### samples/GuidedTour/Program.cs
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [Program.cs](../../../samples/GuidedTour/Program.cs).
@@ -619,6 +630,14 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [Program.cs](../../
 Public signatures unchanged (2); behavior reviewed under sample-runtime.
 
 Public owners: `GuidedTour`.
+
+### samples/GuidedTour/StepRecord.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [StepRecord.cs](../../../samples/GuidedTour/StepRecord.cs).
+
+Public signatures unchanged (34); behavior reviewed under sample-runtime.
+
+Public owners: `GuidedTour.Actor`, `GuidedTour.StepRecord`, `GuidedTour`.
 
 ### samples/GuidedTour/TourOptions.cs
 
@@ -629,6 +648,7 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [TourOptions.cs](..
 + GuidedTour.TourMode: Documents
 + GuidedTour.TourMode: Events
 + GuidedTour.TourMode: WalletProtocol
++ GuidedTour.TourOptions: public bool ShowSensitiveProtocolArtifacts { get ; set ; }
 + GuidedTour.TourOptions: public string CatalogUrl { get ; set ; } = "http://localhost:5006"
 + GuidedTour.TourOptions: public string DocumentsUrl { get ; set ; } = "http://localhost:5007"
 ```
@@ -671,6 +691,14 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [TourSession.cs](..
 ```
 
 Public owners: `GuidedTour.TourSession`, `GuidedTour`.
+
+### samples/LiveWhoAmITest/LiveInteropValidation.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [LiveInteropValidation.cs](../../../samples/LiveWhoAmITest/LiveInteropValidation.cs).
+
+Public signatures unchanged (5); behavior reviewed under sample-runtime.
+
+Public owners: `LiveWhoAmITest.LiveInteropValidation`, `LiveWhoAmITest`.
 
 ### samples/MockAccessServers/Federated/Policy/KeycloakAccessPolicy.cs
 

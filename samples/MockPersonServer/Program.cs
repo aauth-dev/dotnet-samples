@@ -271,7 +271,7 @@ app.MapPost("/mission", async (
     // important consent in the model, so park the proposal and let the user
     // approve it on the PS browser screen — the same deferred (202) path the
     // token and permission gates use. The agent's MissionClient polls the
-    // pending URL and receives the signed approval blob once the user decides.
+    // pending URL and receives the mission blob plus s256 digest once the user decides.
     if (script.InteractiveBrowser)
     {
         var pendingMission = pending.Add(new MissionPendingEntry

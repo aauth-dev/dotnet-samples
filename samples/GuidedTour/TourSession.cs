@@ -102,6 +102,7 @@ public sealed partial class TourSession : IAsyncDisposable
     {
         _options = options.Value;
         _selfIdentity = selfIdentity;
+        StepRecord.ShowSensitiveProtocolArtifacts = _options.ShowSensitiveProtocolArtifacts;
         _mode = _options.Mode;
     }
 
@@ -132,9 +133,10 @@ public sealed partial class TourSession : IAsyncDisposable
     public bool HasPersonServer => !string.IsNullOrWhiteSpace(_options.PersonServerUrl);
 
     /// <summary>
-    /// Which Signature-Key scheme the agent uses for identity-based access.
-    /// Only meaningful in the Identity flow (hwk or jwks_uri) — three-party
-    /// flows (Autonomous/Deferred) always use jwt (requires PS) per spec.
+    /// Which Signature-Key scheme the identity lesson uses. AAuth identity
+    /// defaults to <see cref="SigningMode.Jwt"/>; non-JWT choices are generic
+    /// Signature-Key demos against Profile's <c>RequireGenericSignature()</c>
+    /// endpoints, not AAuth access modes.
     /// </summary>
     public SigningMode SigningMode
     {
@@ -148,7 +150,7 @@ public sealed partial class TourSession : IAsyncDisposable
             Reset();
         }
     }
-    private SigningMode _signingMode = SigningMode.Hwk;
+    private SigningMode _signingMode = SigningMode.Jwt;
 
     /// <summary>
     /// The effective signing mode for the current flow. Identity flow
@@ -192,18 +194,17 @@ public sealed partial class TourSession : IAsyncDisposable
         "Calendar";
 
     /// <summary>
-    /// The effective resource endpoint URL for the current signing mode.
-    /// Identity-based modes target the Profile server's outcome-named paths
-    /// (the path describes what the resource concludes, not the scheme);
-    /// three-party targets the Calendar's <c>/events</c>.
+    /// The effective resource endpoint URL for the current flow. The identity
+    /// lesson targets Profile; PS-asserted flows target Calendar's <c>/events</c>.
     /// </summary>
-    private string EffectiveResourceUrl => EffectiveSigningMode switch
-    {
-        SigningMode.Hwk => $"{_options.ProfileUrl.TrimEnd('/')}/pseudonymous",
-        SigningMode.JktJwt => $"{_options.ProfileUrl.TrimEnd('/')}/anchored",
-        SigningMode.Jwks => $"{_options.ProfileUrl.TrimEnd('/')}/identified",
-        _ => $"{_options.CalendarUrl.TrimEnd('/')}/events",
-    };
+    private string EffectiveResourceUrl => Mode is TourMode.Identity
+        ? EffectiveSigningMode switch
+        {
+            SigningMode.Hwk => $"{_options.ProfileUrl.TrimEnd('/')}/pseudonymous",
+            SigningMode.JktJwt => $"{_options.ProfileUrl.TrimEnd('/')}/anchored",
+            _ => $"{_options.ProfileUrl.TrimEnd('/')}/identified",
+        }
+        : $"{_options.CalendarUrl.TrimEnd('/')}/events";
 
     /// <summary>
     /// The mission-aware resource endpoint (§Missions) on the Trips server.
@@ -825,10 +826,15 @@ public sealed partial class TourSession : IAsyncDisposable
     private HttpMessageHandler BuildSigningHandler(
         Func<string> tokenFactory,
         HttpMessageHandler inner,
-        Action<HttpRequestMessage, string>? onSignatureBase = null)
+        Action<HttpRequestMessage, string>? onSignatureBase = null,
+        IReadOnlyCollection<string>? capabilities = null)
     {
         var builder = new AAuthClientBuilder(_agentKey!).WithEgressPolicy(SampleEgress.Policy)
             .WithInnerHandler(inner, AAuth.Discovery.AAuthTransportContract.EnforcesEgressPolicy);
+        if (capabilities is not null)
+        {
+            builder.WithCapabilities(capabilities.ToArray());
+        }
 
         switch (EffectiveSigningMode)
         {
@@ -863,6 +869,22 @@ public sealed partial class TourSession : IAsyncDisposable
             builder.OnSignatureBase(onSignatureBase);
 
         return builder.BuildHandler();
+    }
+
+    private CapturingMessageHandler NewCapture() => new()
+    {
+        InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy),
+        ShowSensitiveProtocolArtifacts = _options.ShowSensitiveProtocolArtifacts,
+    };
+
+    private static string ResolvePendingLocation(HttpResponseMessage response, string issuingEndpoint)
+    {
+        if (response.Headers.Location is not { } location)
+        {
+            throw new HttpRequestException("Deferred response did not include a pending Location.");
+        }
+
+        return SampleEgress.Policy.ValidatePendingLocation(new Uri(issuingEndpoint), location).AbsoluteUri;
     }
 
     /// <summary>
@@ -1704,7 +1726,7 @@ public sealed partial class TourSession : IAsyncDisposable
         var apBase = _options.AgentProviderUrl!.TrimEnd('/');
         var metadataUrl = $"{apBase}/.well-known/aauth-agent.json";
 
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var client = new SampleHttpClient(capture);
         await client.GetAsync(metadataUrl, ct);
         var ex = capture.Last!;
@@ -1741,7 +1763,7 @@ public sealed partial class TourSession : IAsyncDisposable
             ["jwk"] = _agentKey!.ToPublicJwk(),
         };
 
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var client = new SampleHttpClient(capture);
         using var request = new HttpRequestMessage(HttpMethod.Post, enrolUrl) { Content = JsonContent.Create(requestBody) };
         request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
@@ -1751,7 +1773,7 @@ public sealed partial class TourSession : IAsyncDisposable
         response.EnsureSuccessStatusCode();
         var ex = capture.Last!;
 
-        var body = JsonNode.Parse(ex.ResponseBody);
+        var body = JsonNode.Parse(ex.RawResponseBody);
         _agentToken = (string?)body?["agent_token"];
         _assignedKeyId = (string?)body?["key_id"];
         _agentJwksUri = (string?)body?["jwks_uri"];
@@ -1937,7 +1959,7 @@ public sealed partial class TourSession : IAsyncDisposable
 
     private async Task StepFetchResourceMetadataAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var client = new SampleHttpClient(capture);
         var url = $"{ResourceBaseUrl}/.well-known/aauth-resource.json";
         await client.GetAsync(url, ct);
@@ -1963,7 +1985,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepSignedGetAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -1976,28 +1998,29 @@ public sealed partial class TourSession : IAsyncDisposable
             Number = Steps.Count + 1,
             Title = EffectiveSigningMode switch
             {
-                SigningMode.Hwk => "Signed GET (pseudonymous — hwk)",
-                SigningMode.Jwks => "Signed GET (direct key URL - jwks)",
-                SigningMode.JktJwt => "Signed GET (key rotation — jkt-jwt)",
-                _ => "Signed GET (agent token) → 401 person-token",
+                SigningMode.Jwt => "Signed GET (AAuth agent identity — jwt)",
+                SigningMode.Hwk => "Generic signed GET (non-AAuth hwk)",
+                SigningMode.Jwks => "Generic signed GET (non-AAuth jwks)",
+                SigningMode.JktJwt => "AP key-refresh ceremony demo (non-AAuth jkt-jwt)",
+                _ => "Signed GET",
             },
             From = Actor.Agent,
             To = Actor.Resource,
             Narrative = EffectiveSigningMode switch
             {
                 SigningMode.Hwk =>
-                    "The agent signs the request per RFC 9421. The Signature-Key header " +
+                    "Generic Signature-Key primitive (non-AAuth access mode): the agent signs the request per RFC 9421. The Signature-Key header " +
                     "carries `sig=hwk` with standard kty, crv, x and alg parameters " +
                     "(plus y for EC keys). The resource extracts the public key " +
                     "directly — no pre-registration needed. Use for: accountable " +
                     "pseudonymous access, rate-limiting by key.",
                 SigningMode.Jwks =>
-                    "The agent signs the request per RFC 9421. The Signature-Key header " +
+                    "Generic Signature-Key primitive (non-AAuth access mode): the agent signs the request per RFC 9421. The Signature-Key header " +
                     "carries `sig=jwks` with url and kid. The resource fetches the " +
                     "public key directly. The exact URL identifies the signer. " +
                     "This is a generic Signature Keys demonstration, not AAuth agent access.",
                 SigningMode.JktJwt =>
-                    "The agent signs the request per RFC 9421. The Signature-Key header " +
+                    "AP key-refresh ceremony demo (non-AAuth resource access mode): the agent signs the request per RFC 9421. The Signature-Key header " +
                     "carries `sig=jkt-jwt` with a naming JWT and the durable key's JWK " +
                     "thumbprint. The naming JWT (signed by the durable key) binds the " +
                     "current ephemeral signing key via `cnf.jwk`. The resource verifies " +
@@ -2007,11 +2030,10 @@ public sealed partial class TourSession : IAsyncDisposable
                     "The agent signs the request per RFC 9421. The Signature-Key header " +
                     "carries `sig=jwt` with the full agent token inline. The resource " +
                     "learns the agent identity, its `ps` claim (which Person Server can " +
-                    "vouch for the person), and the bound signing key via `cnf.jwk`. An " +
-                    "agent token says nothing about the person, and a resource issues a " +
-                    "resource token only after verifying a person token or auth token — so " +
-                    "it answers `401` with `AAuth-Requirement: requirement=person-token` " +
-                    "and no resource token (§Person Token Required).",
+                    "vouch for the person), and the bound signing key via `cnf.jwk`. " +
+                    "This is the draft-11 AAuth agent-identity mode: Profile authorizes " +
+                    "the verified agent identity directly, with no Person Server or " +
+                    "auth-token exchange.",
             },
             RequestLine = $"{ex.RequestLine}  →  {EffectiveResourceUrl}",
             RequestHeaders = ex.RequestHeaders,
@@ -2057,7 +2079,7 @@ public sealed partial class TourSession : IAsyncDisposable
 
     private async Task StepFetchPersonMetadataAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var client = new SampleHttpClient(capture);
         var url = $"{_options.PersonServerUrl!.TrimEnd('/')}/.well-known/aauth-person.json";
         await client.GetAsync(url, ct);
@@ -2096,7 +2118,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepRequestPersonTokenAsync(string resourceUrl, Actor resourceActor, CancellationToken ct, string? missionS256 = null)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(() => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
 
@@ -2105,7 +2127,7 @@ public sealed partial class TourSession : IAsyncDisposable
         if (missionS256 is not null) body["mission_s256"] = missionS256;
         using var resp = await client.PostAsJsonAsync(endpoint, body, ct);
         var ex = capture.Last!;
-        _personToken = (string?)JsonNode.Parse(ex.ResponseBody)?["person_token"];
+        _personToken = (string?)JsonNode.Parse(ex.RawResponseBody)?["person_token"];
 
         var resourceName = resourceActor == Actor.Concierge ? "Concierge" : ResourceDisplayName;
         Steps.Add(new StepRecord
@@ -2148,7 +2170,7 @@ public sealed partial class TourSession : IAsyncDisposable
         string url, Actor resourceActor, CancellationToken ct, string? title = null, string? narrative = null, string? snippet = null)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(() => _personToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
 
@@ -2202,7 +2224,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepTokenExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         // The exchange request is always signed with the AGENT token, never the
         // post-exchange auth token. The PS authenticates the agent identity.
         var signing = BuildSigningHandler(
@@ -2216,7 +2238,7 @@ public sealed partial class TourSession : IAsyncDisposable
         }, ct);
 
         var ex = capture.Last!;
-        var body = JsonNode.Parse(ex.ResponseBody);
+        var body = JsonNode.Parse(ex.RawResponseBody);
         _authToken = (string?)body?["auth_token"];
 
         Steps.Add(new StepRecord
@@ -2251,7 +2273,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepRetryWithAuthTokenAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -2290,7 +2312,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepDeferredExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -2306,13 +2328,7 @@ public sealed partial class TourSession : IAsyncDisposable
         // Deferred mode expects 202 + Location + AAuth-Requirement interaction.
         if (resp.StatusCode == HttpStatusCode.Accepted)
         {
-            var location = resp.Headers.Location?.ToString();
-            if (location is not null)
-            {
-                _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                    ? location
-                    : $"{_options.PersonServerUrl!.TrimEnd('/')}{location}";
-            }
+            _pendingUrl = ResolvePendingLocation(resp, _tokenEndpoint!);
 
             if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
             {
@@ -2402,7 +2418,7 @@ public sealed partial class TourSession : IAsyncDisposable
             // body — reuse it rather than reading via `terminal.Content`
             // again, which would force another round-trip through the
             // disposed-content guard.
-            var body = JsonNode.Parse(last.ResponseBody);
+            var body = JsonNode.Parse(last.RawResponseBody);
             _authToken = (string?)body?["auth_token"];
 
             // Federated consent happens at the Access Server's page, even
@@ -2443,7 +2459,7 @@ public sealed partial class TourSession : IAsyncDisposable
 
     private async Task StepResourceManagedDiscoverAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var client = new SampleHttpClient(capture);
         var url = $"{ResourceBaseUrl}/.well-known/aauth-resource.json";
         await client.GetAsync(url, ct);
@@ -2473,7 +2489,7 @@ public sealed partial class TourSession : IAsyncDisposable
     {
         await EnsureAgentReadyAsync(ct);
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -2487,13 +2503,7 @@ public sealed partial class TourSession : IAsyncDisposable
         // AAuth-Requirement: requirement=interaction (its own consent URL + code).
         if (resp.StatusCode == HttpStatusCode.Accepted)
         {
-            var location = resp.Headers.Location?.ToString();
-            if (location is not null)
-            {
-                _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                    ? location
-                    : $"{ResourceBaseUrl}{location}";
-            }
+            _pendingUrl = ResolvePendingLocation(resp, url);
 
             if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
             {
@@ -2551,7 +2561,7 @@ public sealed partial class TourSession : IAsyncDisposable
             // RESPONSE header (§AAuth-Access Response Header). CapturedExchange
             // only buffers the formatted header block, so pull the value out of
             // it and validate the token68 grammar before storing.
-            var headerValue = ExtractHeaderValue(last.ResponseHeaders, AAuthAccessHeader.Name);
+            var headerValue = ExtractHeaderValue(last.RawResponseHeaders, AAuthAccessHeader.Name);
             if (headerValue is not null && AAuthAccessHeader.TryParseAccess(headerValue, out var token68))
             {
                 _aauthAccessToken = token68;
@@ -2590,7 +2600,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepResourceManagedRetryAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -2674,7 +2684,7 @@ public sealed partial class TourSession : IAsyncDisposable
                 "No pending URL captured — the prior step did not record a 202 response.");
         }
 
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         string? capturedBase = null;
         var signing = BuildSigningHandler(tokenFactory, capture, (_, b) => capturedBase = b);
         // This HttpClient is constructed directly (not via AAuthClientBuilder), so it
@@ -2688,12 +2698,6 @@ public sealed partial class TourSession : IAsyncDisposable
             // Generous budget: in deferred mode the user has to flip to
             // another tab, read the consent screen, and click Approve.
             MaxTotalWait = TimeSpan.FromMinutes(2),
-            DefaultPollInterval = TimeSpan.FromMilliseconds(500),
-            MinPollInterval = TimeSpan.Zero,
-            // Signal willingness to long-poll for up to 30s per request
-            // (RFC 7240 §4.3). The PS can hold the connection open rather
-            // than immediately returning 202.
-            PreferWaitSeconds = 30,
         };
         var poller = new DeferredPoller(client, pollerOptions)
         {
@@ -2704,7 +2708,7 @@ public sealed partial class TourSession : IAsyncDisposable
             OnPoll = _ =>
             {
                 PollCount++;
-                if (capture.Last?.ResponseHeaders is { } responseHeaders && IsFederatedMode)
+                if (capture.Last?.RawResponseHeaders is { } responseHeaders && IsFederatedMode)
                 {
                     foreach (var line in responseHeaders.Split('\n'))
                     {
@@ -2884,7 +2888,7 @@ public sealed partial class TourSession : IAsyncDisposable
                 "the pending entry as denied and the next poll receives " +
                 "`403 Forbidden` with `error: \"denied\"`. The agent's SDK " +
                 "raises `AAuthInteractionDeniedException` so callers can distinguish " +
-                "denial from an unknown / expired pending id (which would be `404`). " +
+                "denial from an expired pending id (`408 expired`) or an unknown/consumed code (`410 invalid_code`). " +
                 "The tour is now in a terminal state — click **Reset** to start over.",
             RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
             RequestHeaders = last.RequestHeaders,
@@ -2985,7 +2989,7 @@ public sealed partial class TourSession : IAsyncDisposable
 
     private async Task StepCallChainDiscoverConciergeAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var client = new SampleHttpClient(capture);
         var url = $"{CallChainTargetUrl}/.well-known/aauth-resource.json";
         await client.GetAsync(url, ct);
@@ -3012,7 +3016,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepCallChainSignedGetAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -3066,7 +3070,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepCallChainExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -3087,13 +3091,7 @@ public sealed partial class TourSession : IAsyncDisposable
         {
             _callChainPending = true;
 
-            var location = resp.Headers.Location?.ToString();
-            if (location is not null)
-            {
-                _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                    ? location
-                    : $"{_options.PersonServerUrl!.TrimEnd('/')}{location}";
-            }
+            _pendingUrl = ResolvePendingLocation(resp, _tokenEndpoint!);
 
             if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
             {
@@ -3142,7 +3140,7 @@ public sealed partial class TourSession : IAsyncDisposable
             return;
         }
 
-        var body = JsonNode.Parse(ex.ResponseBody);
+        var body = JsonNode.Parse(ex.RawResponseBody);
         _authToken = (string?)body?["auth_token"];
 
         Steps.Add(new StepRecord
@@ -3182,7 +3180,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepCallChainRetryHop2Async(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -3197,13 +3195,7 @@ public sealed partial class TourSession : IAsyncDisposable
         {
             _userApproved = false; // hop-2 approval still required
 
-            var location = resp.Headers.Location?.ToString();
-            if (location is not null)
-            {
-                _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                    ? location
-                    : $"{CallChainTargetUrl}{location}";
-            }
+            _pendingUrl = ResolvePendingLocation(resp, CallChainTargetUrl);
 
             if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
             {
@@ -3313,7 +3305,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepCallChainRetryAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -3448,7 +3440,7 @@ public sealed partial class TourSession : IAsyncDisposable
 
     private async Task StepFederatedDiscoverResourceAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var client = new SampleHttpClient(capture);
         var url = $"{ResourceBaseUrl}/.well-known/aauth-resource.json";
         await client.GetAsync(url, ct);
@@ -3476,7 +3468,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepFederatedSignedGetAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -3537,7 +3529,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepFederatedExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         // The exchange is signed with the AGENT token; the PS authenticates the
         // agent, then federates to the AS (aud ≠ self) and relays the result.
         var signing = BuildSigningHandler(
@@ -3561,13 +3553,7 @@ public sealed partial class TourSession : IAsyncDisposable
         {
             _federatedPending = true;
 
-            var location = resp.Headers.Location?.ToString();
-            if (location is not null)
-            {
-                _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                    ? location
-                    : $"{_options.PersonServerUrl!.TrimEnd('/')}{location}";
-            }
+            _pendingUrl = ResolvePendingLocation(resp, _tokenEndpoint!);
 
             if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
             {
@@ -3624,7 +3610,7 @@ public sealed partial class TourSession : IAsyncDisposable
             return;
         }
 
-        var body = JsonNode.Parse(ex.ResponseBody);
+        var body = JsonNode.Parse(ex.RawResponseBody);
         _authToken = (string?)body?["auth_token"];
 
         Steps.Add(new StepRecord
@@ -3692,7 +3678,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepFederatedRetryAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -3866,7 +3852,7 @@ public sealed partial class TourSession : IAsyncDisposable
 
     private async Task StepRichRequestsDiscoverResourceAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var client = new SampleHttpClient(capture);
         var url = $"{ResourceBaseUrl}/.well-known/aauth-resource.json";
         await client.GetAsync(url, ct);
@@ -3897,7 +3883,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepRichRequestsSearchSignedGetAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -3939,7 +3925,7 @@ public sealed partial class TourSession : IAsyncDisposable
             "content-addressed **class R3 document**.", CodeSnippets.R3AccountRequest);
 
         // The 401 body carries the class R3 document reference (r3_uri/r3_s256).
-        var body = JsonNode.Parse(ex.ResponseBody);
+        var body = JsonNode.Parse(ex.RawResponseBody);
         _r3Uri = (string?)body?["r3_uri"];
         _r3S256 = (string?)body?["r3_s256"];
     }
@@ -3975,7 +3961,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepRichRequestsExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         // Signed with the AGENT token; the PS authenticates the agent, then
         // federates to the R3 AS (aud ≠ self) and relays the minted auth token.
         var signing = BuildSigningHandler(
@@ -4055,7 +4041,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepRichRequestsSearchRetryAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4089,7 +4075,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepRichRequestsConfirmSignedPostAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         // Present the SAME class auth token from step 5 (confirmReservation is in
         // its r3_per_call, not r3_granted), signing the concrete reservation body.
         var signing = BuildSigningHandler(
@@ -4110,7 +4096,7 @@ public sealed partial class TourSession : IAsyncDisposable
             _presentedToken = _authToken;
         }
 
-        var body = JsonNode.Parse(ex.ResponseBody);
+        var body = JsonNode.Parse(ex.RawResponseBody);
         _r3ProposalUri = (string?)body?["r3_uri"];
         _r3ProposalS256 = (string?)body?["r3_s256"];
 
@@ -4172,7 +4158,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepRichRequestsProposalExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4188,13 +4174,7 @@ public sealed partial class TourSession : IAsyncDisposable
         // The R3 AS sets RequireProposalConsent=true, so the per-call proposal
         // ALWAYS requires human approval: the AS returns 202 + a consent screen,
         // relayed by the PS as its own 202 + Location (pending URL) + interaction.
-        var location = resp.Headers.Location?.ToString();
-        if (location is not null)
-        {
-            _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                ? location
-                : $"{_options.PersonServerUrl!.TrimEnd('/')}{location}";
-        }
+        _pendingUrl = ResolvePendingLocation(resp, _tokenEndpoint!);
 
         if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
         {
@@ -4280,7 +4260,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepRichRequestsConfirmRetryAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         // _authToken is now the per-call token minted by the R3 AS on approval
         // (confirmReservation moved into r3_granted). Resend the SAME parameters.
         var signing = BuildSigningHandler(
@@ -4361,7 +4341,7 @@ public sealed partial class TourSession : IAsyncDisposable
 
     private async Task StepMissionDiscoverPersonAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var client = new SampleHttpClient(capture);
         var url = $"{_options.PersonServerUrl!.TrimEnd('/')}/.well-known/aauth-person.json";
         await client.GetAsync(url, ct);
@@ -4401,7 +4381,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepMissionProposeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4515,7 +4495,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task PresentMissionPersonTokenAsync(string url, string title, string narrative, string snippet, CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _personToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4548,7 +4528,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepMissionExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4560,7 +4540,7 @@ public sealed partial class TourSession : IAsyncDisposable
         }, ct);
 
         var ex = capture.Last!;
-        var body = JsonNode.Parse(ex.ResponseBody);
+        var body = JsonNode.Parse(ex.RawResponseBody);
         _authToken = (string?)body?["auth_token"];
 
         Steps.Add(new StepRecord
@@ -4596,7 +4576,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepMissionReplayAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4639,7 +4619,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepMissionElevatedExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4686,7 +4666,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private Task StepMissionElevatedPollAsync(CancellationToken ct) =>
         RunPendingPollAsync(ct, () => _agentToken!, Actor.Agent, Actor.PersonServer, (last, capturedBase) =>
         {
-            var body = JsonNode.Parse(last.ResponseBody);
+            var body = JsonNode.Parse(last.RawResponseBody);
             _authToken = (string?)body?["auth_token"];
 
             Steps.Add(new StepRecord
@@ -4718,7 +4698,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepMissionElevatedReplayAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4775,7 +4755,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private async Task StepMissionPermissionPromptAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4821,7 +4801,7 @@ public sealed partial class TourSession : IAsyncDisposable
     private Task StepMissionPollPermissionAsync(CancellationToken ct) =>
         RunPendingPollAsync(ct, () => _agentToken!, Actor.Agent, Actor.PersonServer, (last, capturedBase) =>
         {
-            var body = JsonNode.Parse(last.ResponseBody) as JsonObject;
+            var body = JsonNode.Parse(last.RawResponseBody) as JsonObject;
             var permission = (string?)body?["permission"];
 
             Steps.Add(new StepRecord
@@ -4888,8 +4868,12 @@ public sealed partial class TourSession : IAsyncDisposable
 
     private async Task StepMissionChainClarificationExchangeAsync(CancellationToken ct)
     {
+        _pendingUrl = null;
+        _interactionUrl = null;
+        _interactionCode = null;
+
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4910,20 +4894,19 @@ public sealed partial class TourSession : IAsyncDisposable
             // question body — but NO interaction URL yet (that comes after we
             // answer). Capture the pending URL + id + question for the next steps.
             _userApproved = false;
-            var location = resp.Headers.Location?.ToString();
-            if (location is not null)
-            {
-                _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                    ? location
-                    : $"{_options.PersonServerUrl!.TrimEnd('/')}{location}";
-                _missionPendingId = location.TrimEnd('/').Split('/').LastOrDefault();
-            }
+            _pendingUrl = ResolvePendingLocation(resp, _tokenEndpoint!);
+            _missionPendingId = new Uri(_pendingUrl).AbsolutePath.TrimEnd('/').Split('/').LastOrDefault();
             try
             {
-                var body = JsonNode.Parse(ex.ResponseBody);
+                var body = JsonNode.Parse(ex.RawResponseBody);
                 _clarificationQuestion = (string?)body?["clarification"];
             }
             catch (JsonException) { /* leave the question null — raw body still shows */ }
+        }
+        else
+        {
+            throw new HttpRequestException(
+                $"Mission call-chain elevated exchange expected 202 clarification, got {(int)resp.StatusCode} {resp.ReasonPhrase}: {PrettyJson(ex.ResponseBody)}");
         }
 
         Steps.Add(new StepRecord
@@ -4960,7 +4943,7 @@ public sealed partial class TourSession : IAsyncDisposable
             "Booking the trip needs permission to reserve and pay.";
 
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4973,8 +4956,9 @@ public sealed partial class TourSession : IAsyncDisposable
 
         var ex = capture.Last!;
 
-        using var pending = await client.GetAsync(_pendingUrl!, ct);
-        await CaptureInteractionFromAsync(pending, _pendingUrl!, ct);
+        var pendingUrl = _pendingUrl!;
+        using var pending = (await PollUntilRequirementAsync(pendingUrl, ct)).Response;
+        await CaptureInteractionFromAsync(pending, pendingUrl, ct);
 
         Steps.Add(new StepRecord
         {
@@ -5008,7 +4992,7 @@ public sealed partial class TourSession : IAsyncDisposable
         await RefreshAgentTokenAsync(ct);
 
         // ── Hop A: a person token for the Concierge under the mission ─────
-        var personCapture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var personCapture = NewCapture();
         using (var personClient = new SampleHttpClient(BuildSigningHandler(() => _agentToken!, personCapture)))
         {
             using var personResp = await personClient.PostAsJsonAsync(
@@ -5017,11 +5001,11 @@ public sealed partial class TourSession : IAsyncDisposable
                     resource = ResourceIdentifier(MissionChainTargetUrl),
                     mission_s256 = _missionS256,
                 }, ct);
-            _personToken = (string?)JsonNode.Parse(personCapture.Last!.ResponseBody)?["person_token"];
+            _personToken = (string?)JsonNode.Parse(personCapture.Last!.RawResponseBody)?["person_token"];
         }
 
         // ── Hop B: present it at the Concierge's mission endpoint ─────────
-        var challengeCapture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var challengeCapture = NewCapture();
         using (var challengeClient = new SampleHttpClient(BuildSigningHandler(() => _personToken!, challengeCapture)))
         {
             using var challengeResp = await challengeClient.GetAsync(MissionChainTargetUrl, ct);
@@ -5033,7 +5017,7 @@ public sealed partial class TourSession : IAsyncDisposable
         // mission_s256 travels in the person token and resource_token, and
         // (Concierge, concierge) is in mission scope, so the PS mints the
         // auth_token SILENTLY — no prompt.
-        var exchangeCapture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var exchangeCapture = NewCapture();
         var exchangeSigning = BuildSigningHandler(() => _agentToken!, exchangeCapture);
         using (var exchangeClient = new SampleHttpClient(exchangeSigning))
         {
@@ -5042,7 +5026,7 @@ public sealed partial class TourSession : IAsyncDisposable
                 resource_token = _resourceToken,
                 presented_token = _presentedToken,
             }, ct);
-            var exchangeBody = JsonNode.Parse(exchangeCapture.Last!.ResponseBody);
+            var exchangeBody = JsonNode.Parse(exchangeCapture.Last!.RawResponseBody);
             _authToken = (string?)exchangeBody?["auth_token"];
         }
 
@@ -5050,7 +5034,7 @@ public sealed partial class TourSession : IAsyncDisposable
         // The Concierge validates it and chains to Trips with the auth token as
         // upstream_token, so the downstream grant carries the same mission_s256.
         string? capturedBase = null;
-        var retryCapture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var retryCapture = NewCapture();
         var retrySigning = BuildSigningHandler(
             () => _authToken!, retryCapture, (_, b) => capturedBase = b);
         using var retryClient = new SampleHttpClient(retrySigning);
@@ -5107,7 +5091,7 @@ public sealed partial class TourSession : IAsyncDisposable
         // The mission log is a DEMO-ONLY admin endpoint on the Mock Person
         // Server — an unauthenticated read of the auditable trail the mission
         // accrued. A real PS would gate this behind the user's own session.
-        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        var capture = NewCapture();
         using var client = new SampleHttpClient(capture);
         var url = $"{_options.PersonServerUrl!.TrimEnd('/')}/admin/mission-log/{_missionS256}";
         await client.GetAsync(url, ct);
@@ -5144,12 +5128,13 @@ public sealed partial class TourSession : IAsyncDisposable
     /// </summary>
     private async Task CaptureInteractionFromAsync(HttpResponseMessage resp, string baseUrl, CancellationToken ct)
     {
-        var location = resp.Headers.Location?.ToString();
-        if (location is not null)
+        if (resp.Headers.Location is not null)
         {
-            _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                ? location
-                : $"{_options.PersonServerUrl!.TrimEnd('/')}{location}";
+            _pendingUrl = ResolvePendingLocation(resp, baseUrl);
+        }
+        else if (string.IsNullOrEmpty(_pendingUrl))
+        {
+            throw new HttpRequestException("Deferred response did not include a pending Location.");
         }
 
         if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))

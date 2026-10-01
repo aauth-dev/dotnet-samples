@@ -7,6 +7,7 @@
         <p class="ps-lead">@Lead</p>
         <div class="ps-actions">
             <a class="ps-dashboard @LinkClass" href="@PersonServerConsent.DashboardUrl(PersonServer!, Interaction.Code)"
+               @onclick="OnOpen"
                target="aauth-ps-dashboard" rel="noopener">Open Person Server dashboard</a>
             @if (ShowWaiting)
             {
@@ -15,13 +16,15 @@
         </div>
         <p class="ps-direct">
             The dashboard lists every request waiting for you. Or
-            <a class="ps-direct-link" href="@Interaction.BuildUserUrl()" target="_blank" rel="noopener">open this request directly</a>.
+            <a class="ps-direct-link" href="@Interaction.BuildUserUrl()" target="_blank" rel="noopener"
+               @onclick="OnOpen">open this request directly</a>.
         </p>
     }
     else
     {
         <div class="ps-actions">
-            <a class="ps-external-link @LinkClass" href="@Interaction.BuildUserUrl()" target="_blank" rel="noopener">@ExternalLabel</a>
+            <a class="ps-external-link @LinkClass" href="@Interaction.BuildUserUrl()" target="_blank" rel="noopener"
+               @onclick="OnOpen">@ExternalLabel</a>
             @if (ShowWaiting)
             {
                 <span class="ps-waiting"><span class="ps-spinner" aria-hidden="true"></span>@WaitingText</span>
@@ -48,6 +51,9 @@
 
     /// <summary>Show the prompt's own waiting indicator; off when the host already shows polling.</summary>
     [Parameter] public bool ShowWaiting { get; set; } = true;
+
+    /// <summary>Called when a prompt link is opened so the host can start polling.</summary>
+    [Parameter] public EventCallback OnOpen { get; set; }
 
     private bool _hosted;
 

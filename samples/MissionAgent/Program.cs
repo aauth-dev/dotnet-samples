@@ -194,7 +194,7 @@ if (missionApprovedScopes.Count > 0)
 
 Section("2. Propose a mission");
 // The user approves a durable statement of intent plus the tools the agent may
-// use. The PS returns the signed approval blob and its s256 thumbprint, which
+// use. The PS returns the mission blob plus its s256 digest, which
 // the agent quotes on every later request to bind it to this mission. In
 // interactive mode the PS shows a browser consent screen here; in --auto mode it
 // resolves the approval itself.

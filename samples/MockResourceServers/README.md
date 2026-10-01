@@ -1,7 +1,7 @@
 # Mock Resource Servers
 
-Eight small ASP.NET Core resource servers demonstrate the four AAuth access
-modes and explicitly generic signing examples. They replace the former `WhoAmI`
+Eight small ASP.NET Core resource servers demonstrate the five draft-11 AAuth
+resource access modes and explicitly generic signing examples. They replace the former `WhoAmI`
 sample with focused templates,
 each a short `Program.cs` (well-known + one verification pipeline + a couple of
 endpoints).

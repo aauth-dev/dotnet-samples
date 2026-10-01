@@ -43,7 +43,6 @@ builder.Services.AddAAuthResource(o =>
 {
     o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
-    o.RevocationEndpoint = $"{resourceUrl}/revoke";
     o.SigningKeys[ResourceKid] = resourceKey;
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
     o.SignatureWindow = signatureWindowSeconds;
@@ -68,7 +67,6 @@ var store = app.Services.GetRequiredService<IOpaqueTokenStore>();
 // Well-known metadata + JWKS from the DI-registered resource metadata. Served
 // unsigned (no endpoint requirement metadata, so UseAAuth passes it through).
 app.MapAAuthWellKnown();
-app.MapAAuthRevocationEndpoint(configure: options => options.IsAcceptedIssuer = AAuthTrust.Any);
 
 // Resource-managed (two-party) access: the protected endpoints declare
 // .RequireAAuthSignature(); this single post-routing middleware verifies the

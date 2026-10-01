@@ -179,7 +179,7 @@ else
             _ephemeralKey = result.EphemeralKey;
             _ephemeralThumbprint = ((AAuthKey)_ephemeralKey).ComputeJwkThumbprint();
 
-            // Build the naming JWT for generic resource requests (Signature Keys draft-08 section 3.5): the
+            // Build the naming JWT for generic resource requests (Signature Keys draft-09 section 3.5): the
             // durable key signs it, embeds its own public key in the header, and
             // binds the ephemeral key via cnf.jwk.
             _namingJwt = await NamingJwtBuilder.BuildAsync(_enrollment.Key, _ephemeralKey);

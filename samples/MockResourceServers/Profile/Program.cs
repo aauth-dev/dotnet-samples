@@ -41,7 +41,6 @@ builder.Services.AddAAuthResource(o =>
 {
     o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
-    o.RevocationEndpoint = $"{resourceUrl}/revoke";
     o.SigningKeys[ResourceKid] = resourceKey;
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
     o.SignatureWindow = signatureWindowSeconds;
@@ -54,7 +53,6 @@ var app = builder.Build();
 
 // Well-known metadata + JWKS from the DI-registered resource metadata.
 app.MapAAuthWellKnown();
-app.MapAAuthRevocationEndpoint(configure: options => options.IsAcceptedIssuer = AAuth.Server.AAuthTrust.Any);
 
 // Each protected endpoint declares RequireGenericSignature admission.
 // The pipeline verifies HTTP proof and any JWT assertion without starting
