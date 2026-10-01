@@ -143,15 +143,10 @@ public class EnrolledBuilderTests
     }
 
     [Fact]
-    public void Enrolled_with_two_key_mode_requires_explicit_rotating_key_pipeline()
+    public void Enrolled_two_key_mode_surface_is_removed()
     {
-        var builder = AAuthClientBuilder.Enrolled(_key)
-            .RefreshingFrom(RefreshEndpoint, LocalKeyHandle)
-            .WithKeyStore(new InMemoryKeyStore(_key))
-            .WithRefreshMode(RefreshMode.TwoKey);
-
-        var error = Assert.Throws<InvalidOperationException>(() => builder.Build());
-        Assert.Contains("RefreshTwoKeyAsync", error.Message);
+        Assert.Null(typeof(EnrolledBuilder).GetMethod("WithRefreshMode"));
+        Assert.Null(Type.GetType("AAuth.Agent.RefreshMode, AAuth"));
     }
 
     [Fact]
@@ -166,9 +161,9 @@ public class EnrolledBuilderTests
     {
         private readonly AAuthKey _key;
         public InMemoryKeyStore(AAuthKey key) => _key = key;
-        public Task<IAAuthKey?> LoadAsync(string handle, System.Threading.CancellationToken ct = default)
-            => Task.FromResult<IAAuthKey?>(_key);
-        public Task StoreAsync(string handle, IAAuthKey key, System.Threading.CancellationToken ct = default)
+        public Task<IAAuthSigner?> LoadAsync(string handle, System.Threading.CancellationToken ct = default)
+            => Task.FromResult<IAAuthSigner?>(_key);
+        public Task StoreAsync(string handle, IAAuthSigner key, System.Threading.CancellationToken ct = default)
             => Task.CompletedTask;
         public Task DeleteAsync(string handle, System.Threading.CancellationToken ct = default)
             => Task.CompletedTask;

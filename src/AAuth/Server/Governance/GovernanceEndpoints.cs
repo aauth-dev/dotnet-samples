@@ -22,27 +22,92 @@ public static class GovernanceEndpoints
     /// <summary>HTTP status for a terminated mission (§Mission Status Errors).</summary>
     public const int MissionTerminatedStatus = StatusCodes.Status403Forbidden;
 
-    public static IResult? Authorize(HttpContext context, MissionClaim? reference, StoredMission? mission)
+    /// <summary>
+    /// Authorize a PS governance request: the carrier is a verified agent token
+    /// whose signed <c>ps</c> claim exactly names the mapped Person Server
+    /// (<paramref name="expectedPersonServer"/>, or the request origin when omitted).
+    /// This <c>ps</c> check is scoped only to governance endpoints; token issuance
+    /// and resource authorization use the person/auth token's PS instead.
+    /// when <paramref name="missionS256"/> is present, the mission exists, is this
+    /// agent's, and is active. A missing and a foreign mission are indistinguishable
+    /// (<c>mission_not_found</c>, §Mission Endpoint Errors).
+    /// </summary>
+    public static IResult? Authorize(HttpContext context, string? missionS256, StoredMission? mission, string? expectedPersonServer = null)
     {
+        expectedPersonServer = string.IsNullOrWhiteSpace(expectedPersonServer)
+            ? $"{context.Request.Scheme}://{context.Request.Host}"
+            : expectedPersonServer;
         var verified = context.GetAAuthVerification();
         if (verified is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true, Agent: not null })
         {
-            return AAuthProblemDetails.Create("invalid_carrier_token", statusCode: StatusCodes.Status403Forbidden);
+            return AAuthProblemDetails.Create("invalid_request", "Governance endpoints require an agent token.", statusCode: StatusCodes.Status403Forbidden);
         }
-        if (reference is null) return null;
-        if (mission is null || mission.Approver != reference.Approver || mission.Agent != verified.Agent)
+        if (!string.Equals(verified.AgentPersonServer, expectedPersonServer, StringComparison.Ordinal))
         {
-            return AAuthProblemDetails.Create("invalid_mission", statusCode: StatusCodes.Status403Forbidden);
+            return AAuthProblemDetails.Create("invalid_request",
+                "Governance endpoints require an agent token whose ps claim names this Person Server.",
+                statusCode: StatusCodes.Status403Forbidden);
         }
-        return mission.State == MissionState.Terminated ? MissionTerminated() : null;
+        if (missionS256 is null) return null;
+        if (mission is null || mission.S256 != missionS256 || mission.Agent != verified.Agent
+            || !string.Equals(mission.PersonServer, expectedPersonServer, StringComparison.Ordinal))
+        {
+            return AAuthProblemDetails.Create("mission_not_found", statusCode: StatusCodes.Status404NotFound);
+        }
+        if (mission.State == MissionState.Terminated) return MissionTerminated();
+        return mission.ExpiresAt is { } expiresAt && expiresAt <= DateTimeOffset.UtcNow
+            ? MissionTerminated(AAuthConstants.MissionTerminationReasons.Expired) : null;
+    }
+
+    internal static async Task<(StoredMission? Mission, IResult? Failure)> AuthorizeMissionAsync(
+        HttpContext context,
+        string? missionS256,
+        IMissionStore missions,
+        string expectedPersonServer,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(missions);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedPersonServer);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+
+        var verified = context.GetAAuthVerification();
+        if (verified is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true, Agent: not null })
+        {
+            return (null, AAuthProblemDetails.Create("invalid_request",
+                "Governance endpoints require an agent token.", statusCode: StatusCodes.Status403Forbidden));
+        }
+        if (!string.Equals(verified.AgentPersonServer, expectedPersonServer, StringComparison.Ordinal))
+        {
+            return (null, AAuthProblemDetails.Create("invalid_request",
+                "Governance endpoints require an agent token whose ps claim names this Person Server.",
+                statusCode: StatusCodes.Status403Forbidden));
+        }
+        if (missionS256 is null) return (null, null);
+
+        var evaluation = await MissionStatusEvaluator.EvaluateAsync(missions, expectedPersonServer,
+            missionS256, verified.Agent, timeProvider, cancellationToken).ConfigureAwait(false);
+        return evaluation.Kind switch
+        {
+            MissionStatusEvaluationKind.Active => (evaluation.Mission, null),
+            MissionStatusEvaluationKind.Terminated => (evaluation.Mission, MissionTerminated(evaluation.TerminationReason)),
+            _ => (null, AAuthProblemDetails.Create("mission_not_found", statusCode: StatusCodes.Status404NotFound)),
+        };
+    }
+
+    private static string? ReadMission(JsonObject body)
+    {
+        try { return MissionReference.Read(body); }
+        catch (TokenVerificationException ex) { throw new FormatException(ex.Message, ex); }
     }
 
     /// <summary>
     /// Parse a permission request body (§Permission Request) into a
     /// <see cref="PermissionRequest"/>.
     /// </summary>
-    /// <exception cref="FormatException">The required <c>action</c> is missing.</exception>
-    public static PermissionRequest ParsePermission(JsonObject body, AAuth.Discovery.AAuthEgressPolicy? policy = null)
+    /// <exception cref="FormatException">The required <c>action</c> is missing, or <c>mission_s256</c> is malformed.</exception>
+    public static PermissionRequest ParsePermission(JsonObject body)
     {
         ArgumentNullException.ThrowIfNull(body);
         var action = (string?)body["action"]
@@ -50,27 +115,27 @@ public static class GovernanceEndpoints
         return new PermissionRequest(new MissionAction(action))
         {
             Description = (string?)body["description"],
-            Parameters = body["parameters"] as JsonObject,
-            Mission = MissionClaim.FromPayload(body, policy),
+            Parameters = ReadOptionalObject(body, "parameters"),
+            MissionS256 = ReadMission(body),
         };
     }
 
     /// <summary>
     /// Parse an audit request body (§Audit Request) into an <see cref="AuditRecord"/>.
     /// </summary>
-    /// <exception cref="FormatException">The required <c>mission</c> or <c>action</c> is missing.</exception>
-    public static AuditRecord ParseAudit(JsonObject body, AAuth.Discovery.AAuthEgressPolicy? policy = null)
+    /// <exception cref="FormatException">The required <c>mission_s256</c> or <c>action</c> is missing.</exception>
+    public static AuditRecord ParseAudit(JsonObject body)
     {
         ArgumentNullException.ThrowIfNull(body);
-        var mission = MissionClaim.FromPayload(body, policy)
-            ?? throw new FormatException("Audit request is missing the required 'mission'.");
+        var mission = ReadMission(body)
+            ?? throw new FormatException("Audit request is missing the required 'mission_s256'.");
         var action = (string?)body["action"]
             ?? throw new FormatException("Audit request is missing the required 'action'.");
         return new AuditRecord(mission, new MissionAction(action))
         {
             Description = (string?)body["description"],
-            Parameters = body["parameters"] as JsonObject,
-            Result = body["result"] as JsonObject,
+            Parameters = ReadOptionalObject(body, "parameters"),
+            Result = ReadOptionalObject(body, "result"),
         };
     }
 
@@ -79,17 +144,17 @@ public static class GovernanceEndpoints
     /// <see cref="InteractionRequest"/>.
     /// </summary>
     /// <exception cref="FormatException">The required <c>type</c> is missing or unknown.</exception>
-    public static InteractionRequest ParseInteraction(JsonObject body, AAuth.Discovery.AAuthEgressPolicy? policy = null)
+    public static InteractionRequest ParseInteraction(JsonObject body)
     {
         ArgumentNullException.ThrowIfNull(body);
         var typeValue = (string?)body["type"]
             ?? throw new FormatException("Interaction request is missing the required 'type'.");
         var type = typeValue switch
         {
-            "interaction" => InteractionType.Interaction,
-            "payment" => InteractionType.Payment,
-            "question" => InteractionType.Question,
-            "completion" => InteractionType.Completion,
+            AAuthConstants.Governance.InteractionTypes.Interaction => InteractionType.Interaction,
+            AAuthConstants.Governance.InteractionTypes.Payment => InteractionType.Payment,
+            AAuthConstants.Governance.InteractionTypes.Question => InteractionType.Question,
+            // §Interaction Endpoint: completion belongs at the mission endpoint.
             _ => throw new FormatException($"Interaction request has an unknown 'type': {typeValue}"),
         };
         return new InteractionRequest(type)
@@ -100,7 +165,7 @@ public static class GovernanceEndpoints
             Question = (string?)body["question"],
             Summary = (string?)body["summary"],
             MaxWait = (int?)body["max_wait"],
-            Mission = MissionClaim.FromPayload(body, policy),
+            MissionS256 = ReadMission(body),
         };
     }
 
@@ -108,8 +173,10 @@ public static class GovernanceEndpoints
     /// Parse a mission proposal body (§Mission Creation) into a
     /// <see cref="MissionProposal"/>.
     /// </summary>
-    /// <exception cref="FormatException">The required <c>description</c> is missing.</exception>
-    public static MissionProposal ParseMissionProposal(JsonObject body)
+    /// <param name="body">The proposal JSON body.</param>
+    /// <param name="egressPolicy">Validates each <c>resources</c> identifier; defaults to the production (HTTPS-only) policy.</param>
+    /// <exception cref="FormatException">The required <c>description</c> is missing, or a <c>resources</c> entry is not a valid server identifier.</exception>
+    public static MissionProposal ParseMissionProposal(JsonObject body, AAuth.Discovery.AAuthEgressPolicy? egressPolicy = null)
     {
         ArgumentNullException.ThrowIfNull(body);
         var description = (string?)body["description"]
@@ -117,28 +184,55 @@ public static class GovernanceEndpoints
         return new MissionProposal(description)
         {
             Tools = ParseTools(body["tools"] as JsonArray),
+            Resources = ParseResources(body["resources"] as JsonArray, egressPolicy),
         };
+    }
+
+    private static IReadOnlyList<string> ParseResources(JsonArray? resources, AAuth.Discovery.AAuthEgressPolicy? egressPolicy)
+    {
+        var result = new List<string>();
+        foreach (var node in resources ?? [])
+        {
+            if (node is not JsonValue value || !value.TryGetValue<string>(out var resource)
+                || !AAuthUrl.IsHttpsOrLoopback(resource, egressPolicy))
+                throw new FormatException("Mission proposal 'resources' must be HTTPS server identifiers.");
+            result.Add(resource);
+        }
+        return result;
     }
 
     /// <summary>
     /// The canonical <c>mission_terminated</c> response body (§Mission Status
-    /// Errors): <c>{ "error": "mission_terminated", "mission_status": "..." }</c>.
+    /// Errors): <c>{ "error": "mission_terminated", "mission_status": "terminated" }</c>,
+    /// plus <c>termination_reason</c> when <paramref name="terminationReason"/> is set.
     /// </summary>
-    public static JsonObject MissionTerminatedBody(string missionStatus = "terminated")
-        => new()
+    /// <param name="terminationReason">
+    /// OPTIONAL reason from §Mission Management: <c>completed</c>, <c>revoked</c>,
+    /// <c>expired</c>, <c>superseded</c> or <c>administrative</c>.
+    /// </param>
+    public static JsonObject MissionTerminatedBody(string? terminationReason = null)
+    {
+        var body = new JsonObject
         {
             ["error"] = AAuthMissionTerminatedException.ErrorCode,
-            ["mission_status"] = missionStatus,
+            ["mission_status"] = "terminated",
         };
+        if (terminationReason is not null) body["termination_reason"] = terminationReason;
+        return body;
+    }
 
     /// <summary>
     /// An ASP.NET Core <see cref="IResult"/> emitting the spec
     /// <c>403 mission_terminated</c> response (§Mission Status Errors).
     /// </summary>
-    public static IResult MissionTerminated(string missionStatus = "terminated")
-        => AAuthProblemDetails.Create(AAuthMissionTerminatedException.ErrorCode,
-            statusCode: MissionTerminatedStatus,
-            extensions: new Dictionary<string, object?> { ["mission_status"] = missionStatus });
+    /// <param name="terminationReason">OPTIONAL <c>termination_reason</c>; see <see cref="MissionTerminatedBody"/>.</param>
+    public static IResult MissionTerminated(string? terminationReason = null)
+    {
+        var extensions = new Dictionary<string, object?> { ["mission_status"] = "terminated" };
+        if (terminationReason is not null) extensions["termination_reason"] = terminationReason;
+        return AAuthProblemDetails.Create(AAuthMissionTerminatedException.ErrorCode,
+            statusCode: MissionTerminatedStatus, extensions: extensions);
+    }
 
     private static IReadOnlyList<MissionTool> ParseTools(JsonArray? tools)
     {
@@ -161,5 +255,15 @@ public static class GovernanceEndpoints
             result.Add(new MissionTool(name, (string?)tool["description"]));
         }
         return result;
+    }
+
+    private static JsonObject? ReadOptionalObject(JsonObject body, string propertyName)
+    {
+        if (!body.TryGetPropertyValue(propertyName, out var node))
+        {
+            return null;
+        }
+        return node as JsonObject
+            ?? throw new FormatException($"'{propertyName}' must be a JSON object when present.");
     }
 }

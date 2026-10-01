@@ -1,4 +1,5 @@
 using AAuth.Crypto;
+using AAuth.Server;
 using AAuth.Server.Verification;
 
 // ---------------------------------------------------------------------------
@@ -37,6 +38,7 @@ var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:Signatu
 // AS as the auth-token issuer.
 var accessServerUrl = builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5500";
 var trustedAccessServers = new HashSet<string> { accessServerUrl };
+var trustedPersonServers = builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>() ?? ["http://localhost:5100"];
 
 // One DI call: verifier, discovery clients (pooled handler), JTI store, and the
 // published metadata — no manual HttpClient/discovery wiring.
@@ -44,6 +46,7 @@ builder.Services.AddAAuthResource(o =>
 {
     o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
+    o.AccessServer = accessServerUrl;
     o.RevocationEndpoint = $"{resourceUrl}/revoke";
     o.SigningKeys[ResourceKid] = resourceKey;
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
@@ -63,23 +66,20 @@ var app = builder.Build();
 
 // Well-known metadata + JWKS from the DI-registered resource metadata.
 app.MapAAuthWellKnown();
-AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
-    app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options =>
-    {
-        options.AllowTokenIssuer = true;
-        var personServers = builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>() ?? ["http://localhost:5100"];
-        options.IsTrustedPersonServer = (caller, token) => personServers.Contains(caller, StringComparer.Ordinal)
-            && token.Issuer == accessServerUrl;
-    });
+// Revocations are keyed by (verified caller, jti): the AS revokes the auth tokens
+// it issued, a PS the person tokens it issued. Other callers get unsupported_iss.
+app.MapAAuthRevocationEndpoint(configure: options =>
+    options.IsAcceptedIssuer = caller => caller == accessServerUrl || trustedPersonServers.Contains(caller, StringComparer.Ordinal));
 
-// One declarative pipeline. Four-party: the resource token's `aud` is the AS
-// (PersonServerAudience), routing the PS to federate; the AS is the trusted
-// auth-token issuer (iss = AS, dwk = aauth-access.json).
+// One declarative pipeline. Four-party: the resource token's `aud` is the AS,
+// routing the PS to federate; the AS is the trusted auth-token issuer
+// (iss = AS, dwk = aauth-access.json) and the PS the trusted person-token issuer.
 app.UseRouting();
 app.UseAAuth(o =>
 {
-    o.TrustedAuthTokenIssuers = trustedAccessServers;
-    o.PersonServerAudience = accessServerUrl;
+    o.Trust.AuthTokenIssuers.Allowed = trustedAccessServers;
+    o.Trust.PersonServers.Allowed = trustedPersonServers.ToHashSet();
+    o.AccessServer = accessServerUrl;
 });
 
 app.UseAuthentication();
@@ -102,20 +102,18 @@ app.MapGet("/", () => Results.Ok(new
 app.MapGet("/wallet", (HttpContext ctx) =>
 {
     var result = ctx.GetAAuthVerification()!;
-    var parsed = ctx.GetAAuthParsedKey()!;
 
     return Results.Ok(new
     {
         accessMode = "four-party",
         scheme = "jwt",
         access = "read",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         // In four-party the auth-token issuer is the Access Server, not the PS.
         iss = result.Issuer,
-        userKey = result.Issuer is null ? null : $"{result.Issuer}|{result.Subject}",
-        act = parsed.Payload?["act"],
+        userKey = result.PersonServer is null ? null : $"{result.PersonServer}|{result.Subject}",
     });
 }).RequireAAuth(scope: ScopeRead);
 
@@ -125,24 +123,22 @@ app.MapGet("/wallet", (HttpContext ctx) =>
 app.MapGet("/wallet/charge", (HttpContext ctx) =>
 {
     var result = ctx.GetAAuthVerification()!;
-    var parsed = ctx.GetAAuthParsedKey()!;
 
     return Results.Ok(new
     {
         accessMode = "four-party",
         scheme = "jwt",
         access = "charge",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         iss = result.Issuer,
-        act = parsed.Payload?["act"],
     });
 }).RequireAAuth(scope: ScopeCharge);
 
 app.MapGet("/wallet/review", (HttpContext context) => Results.Ok(new
 {
-    access = "review", agent = context.GetAAuthVerification()!.Agent,
+    access = "review", ps = context.GetAAuthVerification()!.PersonServer,
     iss = context.GetAAuthVerification()!.Issuer, scope = "wallet.review",
     review = "Wallet is available for the approved travel review.",
 })).RequireAAuth(scope: "wallet.review");

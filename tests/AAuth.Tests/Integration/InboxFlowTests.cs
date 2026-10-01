@@ -19,11 +19,10 @@ namespace AAuth.Tests.Integration;
 /// <summary>
 /// End-to-end resource-managed (two-party) flow against the shipped
 /// <c>samples/MockResourceServers/Inbox</c> server, hosted in-process via
-/// <see cref="WebApplicationFactory{TEntryPoint}"/>. Exercises both spec entry
-/// points (§AAuth-Access Response Header, §Resource-Managed Authorization,
-/// §Authorization Endpoint Request): the reactive <c>GET /messages</c> consent
-/// handshake and the proactive <c>POST /authorize</c> path, each ending with the
-/// agent replaying the opaque token bound to its signature.
+/// <see cref="WebApplicationFactory{TEntryPoint}"/>. Exercises the reactive
+/// <c>GET /messages</c> consent handshake (§AAuth-Access Response Header,
+/// §Resource-Managed Authorization) ending with the agent replaying the opaque
+/// token bound to its signature.
 /// </summary>
 public class InboxFlowTests : IAsyncLifetime
 {
@@ -60,23 +59,23 @@ public class InboxFlowTests : IAsyncLifetime
 
     // Build an agent that drives the consent handshake, approving at the Inbox's
     // own consent page when interaction is required.
-    private HttpClient BuildAgent()
+    private async Task<HttpClient> BuildAgentAsync()
     {
         var approver = _inbox!.CreateClient(); // plain browser-style client
         return new AAuthClientBuilder(_agentKey)
-            .UseJwt(new AgentTokenBuilder
+            .UseJwt(await new AgentTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
                 Issuer = "https://ap.test", Subject = "aauth:inbox@ap.test", Key = _issuerKey,
                 ConfirmationKey = _agentKey, KeyId = "ap-key",
-            }.Build())
+            }.BuildAsync())
             .WithResourceManagedAccess()
             .WithInteractionHandling(opts =>
             {
-                opts.OnInteractionRequired = async (url, code, ct) =>
+                opts.OnInteractionRequired = async (interaction, ct) =>
                 {
                     using var resp = await TestConsentBrowser.DecideAsync(approver,
-                        "/consent?code=" + code, "/consent/approve");
+                        "/consent?code=" + interaction.Code, "/consent/approve");
                     resp.EnsureSuccessStatusCode();
                 };
                 opts.DefaultPollInterval = TimeSpan.FromMilliseconds(50);
@@ -89,7 +88,7 @@ public class InboxFlowTests : IAsyncLifetime
     [Fact]
     public async Task Reactive_Messages_ConsentThenReplay()
     {
-        using var agent = BuildAgent();
+        using var agent = await BuildAgentAsync();
 
         // 1. GET /messages → 202 interaction → approve → poll → 200 (complete),
         //    the agent captures the issued AAuth-Access.
@@ -105,44 +104,14 @@ public class InboxFlowTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Proactive_Authorize_ConsentThenReplay()
-    {
-        using var agent = BuildAgent();
-
-        // 1. POST /authorize { scope } → 202 interaction → approve → poll → 200.
-        var auth = await agent.PostAsJsonAsync($"{Base}/authorize", new { scope = "inbox.read" });
-        Assert.Equal(HttpStatusCode.OK, auth.StatusCode);
-
-        // 2. GET /messages → replays the captured token → 200 + messages.
-        var messages = await agent.GetAsync($"{Base}/messages");
-        Assert.Equal(HttpStatusCode.OK, messages.StatusCode);
-        var body = await messages.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("inbox.read", (string?)body!["scope"]);
-    }
-
-    [Fact]
-    public async Task Authorize_NonJsonContentType_Returns415()
-    {
-        using var agent = BuildAgent();
-
-        // A signed POST that passes verification but carries a non-JSON body must
-        // fail cleanly (415), not surface ReadFromJsonAsync's InvalidOperationException
-        // as a 500.
-        using var content = new StringContent("scope=inbox.read", System.Text.Encoding.UTF8, "text/plain");
-        var resp = await agent.PostAsync($"{Base}/authorize", content);
-
-        Assert.Equal(HttpStatusCode.UnsupportedMediaType, resp.StatusCode);
-    }
-
-    [Fact]
-    public async Task WellKnown_AdvertisesAccessModeAndAuthorizationEndpoint()
+    public async Task WellKnown_AdvertisesSessionTokenWithoutAuthorizationEndpoint()
     {
         using var client = _inbox!.CreateClient();
 
         var doc = await client.GetFromJsonAsync<JsonObject>("/.well-known/aauth-resource.json");
 
-        Assert.Equal("aauth-access-token", (string?)doc!["access_mode"]);
-        Assert.Equal($"{Base}/authorize", (string?)doc["authorization_endpoint"]);
+        Assert.Equal("session-token", (string?)doc!["access_mode"]);
+        Assert.False(doc.ContainsKey("authorization_endpoint"));
     }
 
     private sealed class DiscoveryHandler(IAAuthKey key) : HttpMessageHandler

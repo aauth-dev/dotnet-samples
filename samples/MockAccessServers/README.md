@@ -9,13 +9,13 @@ Server); the PS federates to the AS, which evaluates policy and mints the
 > Server can be built on the SDK host helpers; they are not supported runtime
 > components.
 
-This suite runs **two single-purpose access servers** (one per concept, mirroring
-[MockResourceServers/](../MockResourceServers/)):
+This suite runs **two sample access servers** (scope-based Wallet plus R3 resources,
+mirroring [MockResourceServers/](../MockResourceServers/)):
 
 | Server | Port | Authorizes | Model |
 |--------|------|-----------|-------|
-| [**Federated**](Federated/) | 5500 | Wallet | Scope- and role-based policy (stub or Keycloak); the classic four-party payment gate |
-| [**R3**](R3/) | 5501 | Bookings | Rich Resource Requests — fetches + hash-verifies the resource's R3 document, splits `r3_granted` vs `r3_conditional` **by its own policy**, and mints R3 auth tokens |
+| [**Federated authorization**](Federated/) | 5500 | Wallet | Scope- and role-based policy (stub or Keycloak); the classic four-party payment gate |
+| [**R3**](R3/) | 5501 | Bookings, Travel Catalog | Rich Resource Requests — fetches + hash-verifies the resource's R3 document, validates operations against the sample resources' authoritative OpenAPI definitions, splits `r3_granted` vs `r3_per_call` **by its own policy**, and mints R3 auth tokens |
 
 ## Federated (:5500)
 
@@ -24,7 +24,7 @@ signature, verifies the agent and resource tokens, evaluates a pluggable
 `IAccessPolicy` (`stub` by default, or `keycloak`), and mints the auth token. The
 whole pipeline ships as the SDK helper `MapAAuthAccessServer`. See
 [Federated/README.md](Federated/README.md) and the
-[Federated Access workflow](../../docs/workflows/federated-access.md).
+[Federated authorization workflow](../../docs/workflows/federated-access.md).
 
 ## R3 (:5501)
 
@@ -36,10 +36,13 @@ On `POST /token` (via `MapR3AccessTokenEndpoint`) it:
 2. Verifies the agent and resource tokens.
 3. Fetches the resource's R3 document **AS-signed**, and rejects it unless the bytes
    hash to the token's `r3_s256`.
-4. Splits the document's operations into `r3_granted` and `r3_conditional` **by its
-   own policy** (`R3AccessServer:ConditionalOperations`, per r3 §Auth Token
+4. Validates the document's operations against the authoritative OpenAPI
+   definitions for the sample resources it guards (Bookings plus the merged
+   Travel Catalog definition).
+5. Splits the document's operations into `r3_granted` and `r3_per_call` **by its
+   own policy** (`R3AccessServer:PerCallOperations`, per r3 §Auth Token
    Extensions — the AS decides, not the resource).
-5. Audits issuance atomically, then mints the R3 auth token.
+6. Audits issuance atomically, then mints the R3 auth token.
 
 ## Running
 

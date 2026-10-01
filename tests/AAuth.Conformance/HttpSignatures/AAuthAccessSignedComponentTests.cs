@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Headers;
 using AAuth.HttpSig;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.HttpSignatures;
@@ -36,7 +37,7 @@ public class AAuthAccessSignedComponentTests
         AAuthKey key, DateTimeOffset clock, string? opaqueToken)
     {
         var capture = new CaptureHandler();
-        var pipeline = new AAuthSigningHandler(key, () => "a.b.c", () => clock) { InnerHandler = capture };
+        var pipeline = new AAuthSigningHandler(key, () => "a.b.c", new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(pipeline);
         var request = new HttpRequestMessage(HttpMethod.Get, "https://r.example/path");
         if (opaqueToken is not null)
@@ -69,7 +70,7 @@ public class AAuthAccessSignedComponentTests
 
         var req = await Sign(key, clock, "opaque-token-value");
 
-        var verifier = new AAuthVerifier { Clock = () => clock };
+        var verifier = new AAuthVerifier { TimeProvider = new FakeTimeProvider(clock) };
         verifier.Verify("GET", "r.example", "/path",
             req.Headers.GetValues("Signature-Key").Single(),
             req.Headers.GetValues("Signature-Input").Single(),
@@ -87,7 +88,7 @@ public class AAuthAccessSignedComponentTests
         // Sign WITHOUT Authorization so `authorization` is not covered...
         var req = await Sign(key, clock, opaqueToken: null);
 
-        var verifier = new AAuthVerifier { Clock = () => clock };
+        var verifier = new AAuthVerifier { TimeProvider = new FakeTimeProvider(clock) };
         // ...but present an Authorization: AAuth credential at verification time.
         Assert.Throws<AAuthVerificationException>(() =>
             verifier.Verify("GET", "r.example", "/path",

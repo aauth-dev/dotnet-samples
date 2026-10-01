@@ -8,6 +8,8 @@ using AAuth.Discovery;
 using AAuth.Tokens;
 using AAuth.Errors;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace AAuth.HttpSig;
 
@@ -21,20 +23,25 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
     private readonly MetadataClient? _metadataClient;
     private readonly TokenVerifier _tokenVerifier;
     private readonly IReadOnlyList<ISignatureTokenVerifier> _tokenVerifiers;
+    private readonly IServiceProvider? _services;
+    private readonly string? _expectedDwk;
 
     /// <summary>Create the resolver.</summary>
     /// <param name="jwksClient">Required for the <c>jwks_uri</c> scheme. The <c>jkt-jwt</c> scheme is self-anchored (draft-05 §3.4) and needs no external client.</param>
     public DefaultSignatureKeyResolver(JwksClient? jwksClient = null, MetadataClient? metadataClient = null,
-        TokenVerifier? tokenVerifier = null, IEnumerable<ISignatureTokenVerifier>? tokenVerifiers = null)
+        TokenVerifier? tokenVerifier = null, IEnumerable<ISignatureTokenVerifier>? tokenVerifiers = null,
+        IServiceProvider? services = null, string? expectedDwk = null)
     {
         _jwksClient = jwksClient;
         _metadataClient = metadataClient;
         _tokenVerifier = tokenVerifier ?? new TokenVerifier { EgressPolicy = metadataClient?.Policy ?? AAuthEgressPolicy.Production };
         _tokenVerifiers = tokenVerifiers?.ToArray() ?? [];
+        _services = services;
+        _expectedDwk = expectedDwk;
     }
 
-    internal DefaultSignatureKeyResolver WithValidation(JwksClient? jwks, MetadataClient? metadata, TokenVerifier verifier) =>
-        new(jwks ?? _jwksClient, metadata ?? _metadataClient, verifier, _tokenVerifiers);
+    internal DefaultSignatureKeyResolver WithValidation(JwksClient? jwks, MetadataClient? metadata, TokenVerifier verifier, string? expectedDwk) =>
+        new(jwks ?? _jwksClient, metadata ?? _metadataClient, verifier, _tokenVerifiers, _services, expectedDwk);
 
     public async Task<SignatureKeyResolution> ResolveAsync(
         SignatureKeyParser.ParsedSignatureKeyInfo info, CancellationToken ct = default)
@@ -45,7 +52,7 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
             return await ResolveAssertionAsync(info, ct).ConfigureAwait(false);
         if (info.Scheme == "jkt-jwt")
         {
-            var naming = NamingTokenVerifier.Verify(info.Jwt!, _tokenVerifier.Clock(), _tokenVerifier.ClockSkew);
+            var naming = NamingTokenVerifier.Verify(info.Jwt!, _tokenVerifier.TimeProvider.GetUtcNow(), _tokenVerifier.ClockSkew);
             return new() { PublicKey = naming.ConfirmationKey, Info = WithKey(info, naming.ConfirmationKey, naming.DurableKey.ComputeJwkThumbprint()),
                 DurableThumbprint = naming.DurableKey.ComputeJwkThumbprint(), KeyId = naming.ConfirmationKey.ComputeJwkThumbprint() };
         }
@@ -65,22 +72,54 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
     {
         var typ = SignatureKeyParser.Text(info.Header, "typ");
         var companion = _tokenVerifiers.SingleOrDefault(verifier => verifier.Scheme == info.Scheme && verifier.TokenType == typ);
-        var builtin = info.Scheme == "jwt" && typ is AgentTokenBuilder.TokenType or AuthTokenBuilder.TokenType;
+        var builtin = info.Scheme == AAuthConstants.Schemes.Jwt
+            && typ is AgentTokenBuilder.TokenType or AuthTokenBuilder.TokenType or PersonTokenBuilder.TokenType;
         if (!builtin && companion is null)
             throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Unexpected JWT typ for this signing scheme.");
-        TokenVerifier.ValidateStructure(info.Header!, info.Payload!, typ, _tokenVerifier.EgressPolicy, _tokenVerifier.MaxActDepth);
-        NamingTokenVerifier.ValidateTime(info.Payload!, _tokenVerifier.Clock(), _tokenVerifier.ClockSkew, requireIssuedAt: builtin);
-        var issuer = SignatureKeyParser.Text(info.Payload, "iss")
-            ?? throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires iss.");
-        var dwk = SignatureKeyParser.Text(info.Payload, "dwk")
-            ?? throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires dwk.");
-        var kid = SignatureKeyParser.Text(info.Header, "kid")
-            ?? throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires kid.");
+        var issuer = SignatureKeyParser.Text(info.Payload, "iss");
+        var dwk = SignatureKeyParser.Text(info.Payload, "dwk");
+        var kid = SignatureKeyParser.Text(info.Header, "kid");
+        var expectedDwk = typ == AuthTokenBuilder.TokenType ? _expectedDwk : null;
+        var requiresMetadata = builtin || info.Scheme == AAuthConstants.Schemes.SelfJwt || issuer is not null && dwk is not null;
+        try
+        {
+            if (builtin) TokenVerifier.ValidateStructure(info.Header!, info.Payload!, typ, _tokenVerifier.EgressPolicy);
+            else TokenVerifier.ValidateAssertionStructure(info.Header!, info.Payload!, typ, _tokenVerifier.EgressPolicy,
+                requiresMetadata, requireConfirmationKey: info.Scheme != AAuthConstants.Schemes.SelfJwt);
+        }
+        catch (TokenVerificationException exception)
+        {
+            throw new AAuthVerificationException(exception.Code, exception.Message, exception);
+        }
+        NamingTokenVerifier.ValidateTime(info.Payload!, _tokenVerifier.TimeProvider.GetUtcNow(), expirationSkew: TimeSpan.Zero,
+            requireIssuedAt: builtin, issuedAtWindow: _tokenVerifier.ClockSkew);
         if (builtin && (typ == AgentTokenBuilder.TokenType && dwk != AgentTokenBuilder.AgentDwk
+            || typ == PersonTokenBuilder.TokenType && dwk != PersonTokenBuilder.PersonDwk
             || typ == AuthTokenBuilder.TokenType && dwk is not (AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk)))
             throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Unexpected JWT dwk.");
-        var jwksUrl = await DiscoverAsync(issuer, dwk, ct).ConfigureAwait(false);
-        var issuerKey = await ResolveDirectAsync(jwksUrl, kid, ct, issuer).ConfigureAwait(false);
+
+        IAAuthKey issuerKey;
+        string? jwksUrl = null;
+        if (requiresMetadata)
+        {
+            if (issuer is null) throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires iss.");
+            if (dwk is null) throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires dwk.");
+            if (expectedDwk is not null && dwk != expectedDwk)
+                throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Unexpected JWT dwk.");
+            if (kid is null) throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires kid.");
+            jwksUrl = await DiscoverAsync(issuer, dwk, ct).ConfigureAwait(false);
+            issuerKey = await ResolveDirectAsync(jwksUrl, kid, ct, issuer).ConfigureAwait(false);
+        }
+        else
+        {
+            if (companion is null || info.Scheme != AAuthConstants.Schemes.Jwt)
+                throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires issuer metadata.");
+            issuerKey = await companion.ResolveIssuerKeyAsync(CreateIssuerKeyContext(info, typ!, expectedDwk), ct).ConfigureAwait(false)
+                ?? throw new AAuthVerificationException(issuer is not null || kid is not null
+                    ? SignatureErrorCode.UnknownKey : SignatureErrorCode.InvalidJwt,
+                    "Companion JWT issuer key was not resolved.");
+        }
+
         TokenVerifier.VerifiedToken verified;
         try
         {
@@ -88,6 +127,7 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
         }
         catch (TokenVerificationException)
         {
+            if (jwksUrl is null || kid is null || issuer is null || _jwksClient is null) throw;
             var refreshed = await _jwksClient!.ForceRefreshKeyAsync(new Uri(jwksUrl), kid, issuer, ct).ConfigureAwait(false);
             if (refreshed is null) throw new AAuthVerificationException(SignatureErrorCode.UnknownKey, "Issuer key no longer exists.");
             if (refreshed.ComputeJwkThumbprint() == issuerKey.ComputeJwkThumbprint()) throw;
@@ -95,13 +135,57 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
             verified = await VerifyAsync(issuerKey).ConfigureAwait(false);
         }
         var key = info.Scheme == "self-jwt" ? issuerKey : SignatureKeyParser.Confirmation(verified.Payload);
+        WarnOnLongAgentToken(typ, verified);
         return new() { PublicKey = key, Info = WithKey(info, key), VerifiedToken = verified, IssuerKey = issuerKey,
             VerifiedIdentifier = verified.Issuer, KeyId = info.Scheme == "self-jwt" ? kid : key.ComputeJwkThumbprint() };
 
-        Task<TokenVerifier.VerifiedToken> VerifyAsync(IAAuthKey signingKey) => companion is not null
-            ? companion.VerifyAsync(info.Jwt!, signingKey, _tokenVerifier, ct)
-            : Task.FromResult(_tokenVerifier.Verify(info.Jwt!, signingKey, typ!, dwk));
+        Task<TokenVerifier.VerifiedToken> VerifyAsync(IAAuthKey signingKey)
+        {
+            if (companion is not null)
+            {
+                NamingTokenVerifier.VerifySignature(info.Jwt!, info.Header!, signingKey);
+                return companion.VerifyAsync(CreateVerificationContext(info, typ!, signingKey, expectedDwk), ct);
+            }
+            return Task.FromResult(_tokenVerifier.Verify(info.Jwt!, signingKey, typ!, dwk!));
+        }
     }
+
+    private void WarnOnLongAgentToken(string? typ, TokenVerifier.VerifiedToken verified)
+    {
+        if (typ != AgentTokenBuilder.TokenType
+            || verified.Payload["iat"] is not JsonValue iatNode
+            || !iatNode.TryGetValue<long>(out var iat)
+            || verified.Payload["exp"] is not JsonValue expNode
+            || !expNode.TryGetValue<long>(out var exp)
+            || exp - iat <= (long)AgentTokenBuilder.MaximumLifetime.TotalSeconds)
+        {
+            return;
+        }
+
+        _services?.GetService<ILoggerFactory>()
+            ?.CreateLogger("AAuth.Verification")
+            .LogWarning("Consumed agent token lifetime exceeds the recommended 24 hour maximum.");
+    }
+
+    private SignatureTokenIssuerKeyContext CreateIssuerKeyContext(SignatureKeyParser.ParsedSignatureKeyInfo info, string typ, string? expectedDwk) => new(
+        info.Jwt!, info.Header!, info.Payload!, info.Scheme, typ, _tokenVerifier)
+    {
+        Issuer = SignatureKeyParser.Text(info.Payload, "iss"),
+        Dwk = SignatureKeyParser.Text(info.Payload, "dwk"),
+        Kid = SignatureKeyParser.Text(info.Header, "kid"),
+        ExpectedDwk = expectedDwk,
+        Services = _services,
+    };
+
+    private SignatureTokenVerificationContext CreateVerificationContext(SignatureKeyParser.ParsedSignatureKeyInfo info,
+        string typ, IAAuthKey issuerKey, string? expectedDwk) => new(info.Jwt!, info.Header!, info.Payload!, info.Scheme, typ, issuerKey, _tokenVerifier)
+    {
+        Issuer = SignatureKeyParser.Text(info.Payload, "iss"),
+        Dwk = SignatureKeyParser.Text(info.Payload, "dwk"),
+        Kid = SignatureKeyParser.Text(info.Header, "kid"),
+        ExpectedDwk = expectedDwk,
+        Services = _services,
+    };
 
     private Task<IAAuthKey> ResolveHwkAsync(
         SignatureKeyParser.ParsedSignatureKeyInfo info, CancellationToken ct)

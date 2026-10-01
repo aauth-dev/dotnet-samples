@@ -11,21 +11,21 @@ Every conveyed key requires a fully specified `alg`: Ed25519 or ES256.
 |------|--------|--------------------:|-----------------|
 | Anonymous | (none) | No Signature-Key header | Nothing |
 | Pseudonymous | `sig=hwk` | `sig=hwk;kty="OKP";crv="Ed25519";x="<key>";alg="Ed25519"` | Public-key possession; locally computed thumbprint |
-| Key Rotation | `sig=jkt-jwt` | `sig=jkt-jwt;jwt="<jkt-s256+jwt>"` | A durable key's thumbprint (stable pseudonym) delegating to a rotatable ephemeral key via a self-issued naming JWT |
+| Key Rotation / AP Refresh | `sig=jkt-jwt` | `sig=jkt-jwt;jwt="<jkt-s256+jwt>"` | AP key-refresh ceremony or explicit generic Signature-Key demo; not an AAuth resource-request credential |
 | Server Identity | `sig=jwks_uri` | `sig=jwks_uri;id="<issuer>";dwk="<metadata-name>";kid="<key-id>"` | Metadata-verified signer identifier |
 | Direct Key URL | `sig=jwks` | `sig=jwks;url="<jwks-url>";kid="<key-id>"` | Exact JWKS URL identifies signer |
 | Self-Issued Assertion | `sig=self-jwt` | `sig=self-jwt;jwt="<assertion>"` | Same discovered key verifies JWT and HTTP; no cnf |
-| Agent Token | `sig=jwt` | `sig=jwt;jwt="<compact-jws>"` | Agent identity, PS URL, bound signing key |
+| JWT Tokens | `sig=jwt` | `sig=jwt;jwt="<compact-jws>"` | Agent/person/authorization/subscription claims, bound signing key |
 
 ## When to Use Each
 
 | Mode | Use Case | Requires |
 |------|----------|----------|
 | Anonymous | Public endpoints, no access control | Nothing |
-| Pseudonymous (`hwk`) | Accountable access, rate-limiting by key | Just a keypair |
-| Key Rotation (`jkt-jwt`) | Pseudonymous access where the request-signing key must rotate without re-enrolment | A durable key + an ephemeral key (and the ability to mint naming JWTs) |
-| Server Identity (`jwks_uri`) | Server signing with role metadata discovery | Signer identifier, metadata name and published kid |
-| JWT (`jwt`) | All four AAuth resource access modes; agent/auth/subscribe token purpose depends on the endpoint | Token issuer and matching cnf key; PS only for PS-asserted/federated flows |
+| Pseudonymous (`hwk`) | Generic Signature-Key endpoints that deliberately accept bare key possession | Just a keypair |
+| Key Rotation (`jkt-jwt`) | AP key-refresh ceremony or a generic Signature-Key endpoint that deliberately accepts self-anchored delegation | A durable key + an ephemeral key (and the ability to mint naming JWTs) |
+| Server Identity (`jwks_uri`) | PS/AS/AP/resource server signing with role metadata discovery | Signer identifier, metadata name and published kid |
+| JWT (`jwt`) | All five AAuth resource access modes; agent/person/auth/subscribe token purpose depends on the endpoint | Token issuer and matching cnf key; PS only for PS authorization/federated flows |
 
 ### Role and trust
 
@@ -35,9 +35,14 @@ identifier and role metadata. A generic deployment can enable other schemes.
 hardware provenance or an external issuer identity. AP refresh binds the verified
 durable key to enrollment. Platform attestation remains an application policy.
 
-`self-jwt` requires an explicitly registered `ISignatureTokenVerifier` for the
-expected token type. It forbids `cnf`; the discovered issuer key verifies both
-signatures. Unknown token types are rejected, not reported as issuer-verified.
+`jwt` and `self-jwt` companion token types require an explicitly registered
+`ISignatureTokenVerifier`. A companion `jwt` can provide an application-specific
+issuer key when `iss` or `dwk` is absent; when both are present the SDK uses
+normal metadata/JWKS discovery before invoking the companion claim verifier.
+`self-jwt` still requires `iss`, `dwk` and `kid` and forbids `cnf`; the
+discovered issuer key verifies both signatures. Unknown token types are
+rejected, not reported as issuer-verified. All JWT carriers reject unsupported
+JOSE `crit`, and `exp` has zero tolerance.
 
 `SelfIssuing(...).As(...)` provisions an agent token using the `jwt` carrier.
 It does not select `self-jwt`. Enrollment/refresh describes how a credential is
@@ -73,6 +78,8 @@ using var direct = new AAuthClientBuilder(key).UseJwt(preAcquiredToken).Build();
 <summary>Manual Setup (ISignatureKeyProvider)</summary>
 
 ```csharp
+using AAuth.HttpSig;
+
 ISignatureKeyProvider provider = mode switch
 {
     "hwk"      => new HwkSignatureKeyProvider(key),
@@ -91,14 +98,14 @@ var handler = new AAuthSigningHandler(signingKey, provider);
 
 ## Capability Matrix
 
-| Capability | Anonymous | Pseudonymous | Agent Identity | Agent Token |
+| Capability | Anonymous | Pseudonymous | Server Identity | JWT Carrier |
 |-----------|:---------:|:------------:|:--------------:|:-----------:|
 | Proof of key possession | — | ✓ | ✓ | ✓ |
-| Agent identifier disclosed | — | — | ✓ | ✓ |
+| Signer identifier disclosed | — | — | ✓ | ✓ |
 | Per-request signature freshness | — | ✓ | ✓ | ✓ |
 | Optional signature replay cache | — | ✓ | ✓ | ✓ |
 | Remote key discovery (JWKS) | — | — | ✓ | ✓ (cached) |
-| Person Server binding | — | — | — | ✓ |
+| AAuth token context | — | — | — | ✓ |
 
 Every signed request is subject to signature freshness checks, regardless of its
 signing scheme. An optional replay cache rejects repeated verified signatures
@@ -120,13 +127,14 @@ The access mode determines which signing modes are valid:
 
 | Access Mode | Valid Signing Modes | Why |
 |-------------|--------------------:|-----|
-| **Identity-Based** | `jwt` | The resource authorizes the verified agent identity. |
+| **Agent identity** | `jwt` | The resource authorizes the verified agent identity. |
 | **Resource-Managed** (two-party) | `jwt` | The agent token authenticates; the resource manages its opaque authorization token. |
-| **PS-Asserted** (three-party) | `jwt` only | The resource issues a `resource_token` with `aud=PS`. The PS must verify the agent's identity via the agent token (`aa-agent+jwt`), which requires `scheme=jwt` in `Signature-Key`. |
-| **Federated** (four-party) | `jwt` only | Same as PS-Asserted — the PS federates with the AS, but the agent-side requirement is identical: present the agent token via `scheme=jwt`. |
+| **Person Identity** | `jwt` only | The resource requires a PS-issued `aa-person+jwt` before minting a resource token. |
+| **PS Authorization** (three-party) | `jwt` only | The resource issues a `resource_token` only after seeing a person/auth token. The PS must verify the agent's identity via the agent token (`aa-agent+jwt`), and the resource/auth/person carriers all use `sig=jwt` in `Signature-Key`. |
+| **Federated authorization** (four-party) | `jwt` only | Same agent-side requirement as PS authorization; the PS federates with the AS after receiving the bound `resource_token` + `presented_token` pair. |
 
 The Profile sample's `/pseudonymous`, `/identified` and `/anchored` routes are
-generic signing demonstrations. They do not implement the AAuth identity-based
+generic signing demonstrations. They do not implement the AAuth agent identity
 access mode, which requires an agent token.
 
 ## Anatomy of a Signed Request
@@ -145,8 +153,20 @@ The `AAuthSigningHandler` handles construction automatically.
 
 Every signed request always covers the four base AAuth components shown above
 (`@method`, `@authority`, `@path`, `signature-key`), plus `authorization` when
-that header is present. A resource MAY require **additional** covered components
-(for example `content-digest` for request-body integrity, or `content-type`).
+that header is present.
+
+A request with a body also covers `content-type` and `content-digest`. The spec
+requires both on every body-bearing request to a PS or AS, and on revocation
+requests. The signing handler can't tell a PS or AS from a resource, so it
+covers them on every request with a body and computes `Content-Digest` itself.
+The caller must set `Content-Type`; a body without `Content-Type` fails locally
+before any signature is sent. PS and AS endpoints (`MapAAuthPersonServer`, `MapAAuthAccessServer`,
+`MapAAuthGovernance`, `MapR3AccessTokenEndpoint`) answer an uncovered body with
+`401` `invalid_input` before any policy or consent hook runs. Other hosts can opt
+in with `AAuthVerificationOptions.RequireBodyCoverage`.
+
+A resource MAY require further covered components through its
+`additional_signature_components` metadata.
 The agent discovers these in one of two ways:
 
 1. **From resource metadata.** If you know a resource publishes
@@ -154,20 +174,18 @@ The agent discovers these in one of two ways:
    already covers them:
 
    ```csharp
+   using AAuth.Discovery;
+
+   ResourceMetadata resource = await metadata.FetchResourceMetadataAsync("https://resource.example");
+
    using var client = new AAuthClientBuilder(key)
        .WithTokenRefresh(refresher)
-       .WithChallengeHandling(ps, options =>
-       {
-           options.AdditionalSignatureComponents =
-               new Dictionary<string, IReadOnlyList<string>>
-               {
-                   ["https://resource.example"] = new[] { "content-digest" },
-               };
-       })
+       .WithChallengeHandling(ps, options => options.AddResourceMetadata(resource))
        .Build();
    ```
 
-   The dictionary is keyed by origin (`scheme://host:port`).
+   The helper keys the seed by origin (`scheme://host:port`) and uses the typed
+   `ResourceMetadata.AdditionalSignatureComponents` field.
 
 2. **From a `401` response.** When a resource rejects a request with
   `Signature-Error: error=invalid_input, required_input=("content-digest")`, the
@@ -183,6 +201,12 @@ automatically** (`sha-256`) before signing, so callers do not need to set it
 themselves. Any required component AAuth cannot derive on its own must be
 present on the request; if such a component is absent, signing fails fast with
 an `InvalidOperationException` that names the resource origin.
+
+When many identical requests use the same signing key, method, authority and
+path in one second, the signer sends one immediately and waits until the next
+wall-clock second for the next identical tuple. It never future-dates
+`created`; cancellation while waiting prevents the request from being sent. Wait
+time is recorded in the `aauth.signing.created_wait` metric.
 
 See [Error Handling](../advanced/error-handling.md) for the
 `Signature-Error` codes and `SignatureError.ParseRequiredInput`.

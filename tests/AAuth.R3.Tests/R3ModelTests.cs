@@ -1,10 +1,13 @@
 using System.Text.Json;
 using AAuth.R3.Model;
+using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.R3.Tests;
 
 public class R3ModelTests
 {
+private static readonly string ValidS256 = Base64UrlEncoder.Encode(new byte[32]);
+
     [Theory]
     [InlineData("{\"tool\":\"create\"}")]
     [InlineData("{\"operationId\":\"create\"}")]
@@ -86,7 +89,6 @@ public class R3ModelTests
         const string irreversible = "Submitting the booking may create cancellation fees.";
         var doc = new R3Document
         {
-            Version = "v02",
             Vocabulary = Vocabulary.Mcp,
             Operations = [R3Operation.Mcp("book_trip")],
             Display = new R3Display
@@ -114,13 +116,12 @@ public class R3ModelTests
     {
         var proposal = new R3ProposalDocument
         {
-            Version = "v02",
             Vocabulary = Vocabulary.Mcp,
             Operations = [R3Operation.Mcp("book_trip")],
             Parameters = new Dictionary<string, R3Parameter>
             {
                 ["itinerary_id"] = R3Parameter.Inline(JsonSerializer.SerializeToNode("it-123")!),
-                ["policy"] = R3Parameter.Digest("digest-value", excerpt: "non refundable", mediaType: "text/markdown"),
+                ["policy"] = R3Parameter.Digest(ValidS256, excerpt: "non refundable", mediaType: "text/markdown"),
             },
             Display = new R3Display { Summary = "Book trip", Detail = "Approve concrete itinerary." },
         };
@@ -141,5 +142,19 @@ public class R3ModelTests
                 R3Operation.Mcp("hold_itinerary"),
             ],
         }).ToUtf8Bytes());
+    }
+
+    [Theory]
+    [InlineData("hash")]
+    [InlineData("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    [InlineData("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    public void ParameterDigest_RejectsMalformedS256(string s256)
+    {
+        Assert.Throws<InvalidOperationException>(() => R3Parameter.Digest(s256));
+        var parameter = new R3Parameter
+        {
+            Json = JsonSerializer.SerializeToNode(new { s256 })!,
+        };
+        Assert.Throws<InvalidOperationException>(() => parameter.Validate());
     }
 }

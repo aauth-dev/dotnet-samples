@@ -62,8 +62,6 @@ public sealed class R3VocabularySchemas
         {
             Vocabulary.Mcp => operation.Field == "tool" && NoQualifiers(operation),
             Vocabulary.OpenApi => operation.Field == "operationId" && NoQualifiers(operation),
-            Vocabulary.OpenApiGateway => operation.Field == "operationId" && operation.Service is not null &&
-                operation.Type is null && operation.Action is null && operation.Methods is null,
             Vocabulary.Grpc => operation.Field == "method" && NoQualifiers(operation) &&
                 Regex.IsMatch(operation.Id, @"\A(?:[A-Za-z_][A-Za-z0-9_]*\.)+[A-Za-z_][A-Za-z0-9_]*/[A-Za-z_][A-Za-z0-9_]*\z"),
             Vocabulary.GraphQl => operation.Field == "operation" && operation.Type is not null &&
@@ -88,7 +86,7 @@ public sealed class R3VocabularySchemas
     public void ValidateVocabulary(string vocabulary)
     {
         ValidateUri(vocabulary);
-        if (vocabulary is not (Vocabulary.Mcp or Vocabulary.OpenApi or Vocabulary.OpenApiGateway or
+        if (vocabulary is not (Vocabulary.Mcp or Vocabulary.OpenApi or
             Vocabulary.Grpc or Vocabulary.GraphQl or Vocabulary.AsyncApi or Vocabulary.Wsdl or Vocabulary.OData) &&
             !_custom.ContainsKey(vocabulary))
             throw new InvalidOperationException($"No R3 schema configured for '{vocabulary}'.");

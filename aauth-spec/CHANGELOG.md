@@ -15,7 +15,8 @@ under [`v02/`](v02/) (commit `feda56b`); references in the **`v08/`** entry poin
 into the draft-08 files under [`v08/`](v08/) (commit `dd2b852`); references in the
 **`v09/`** entry point into the draft-09 files under [`v09/`](v09/) (commit
 `90089f8`); references in the **`v10/`** entry point into the draft-10 files under
-[`v10/`](v10/) (commit `9dee49f`). Anchors in parentheses (e.g. `#sub-agents`)
+[`v10/`](v10/) (commit `9dee49f`); references in the **`v11/`** entry point
+into [`v11/`](v11/) (commit `178e9e6`). Anchors in parentheses (e.g. `#sub-agents`)
 are the spec's own kramdown anchors and are stable across line shifts.
 
 | Snapshot | Protocol | Bootstrap | R3 | Interop profile | Events | Source commit |
@@ -25,17 +26,33 @@ are the spec's own kramdown anchors and are stable across line shifts.
 | [`v08/`](v08/) | draft-08 | draft-01 (unchanged) | draft-00 (unchanged) | new | — | `dd2b852` (2026-06-25) |
 | [`v09/`](v09/) | draft-09 | draft-01 (unchanged) | draft-00 (revised) | unchanged | draft-00 (new) | `90089f8` (2026-07-05) |
 | [`v10/`](v10/) | draft-10 | draft-02 (revised) | draft-01 (revised) | unchanged | draft-00 (revised) | `9dee49f` (2026-08-06) |
+| [`v11/`](v11/) | draft-11 | draft-02 (revised) | draft-00 editor's copy (revised) | revised | draft-00 (revised) | `178e9e6` (2026-09-25) |
 
-> The SDK code targets `v10/` (draft-10) after the separately verified 2026-09-09
-> migration. The snapshot was vendored 2026-09-08 and remains byte-unchanged.
-> All four access modes and local four-party sub-agent scenarios are implemented;
-> optional exclusions and incomplete external authorization interop remain explicit.
+> [!NOTE]
+> `v11/` is the published draft-11 snapshot, vendored 2026-09-28. It replaces the
+> 2026-09-11 WIP capture of commit `55ae44c`, which remains in git history at
+> commit `e6d18a3`. It adds the Budgets companion and the upstream -10 to -11
+> upgrade guides. Vendoring included no SDK migration; the separate migration
+> below followed.
+
+> The SDK code targets `v11/` (draft-11) after the separately verified 2026-09-29
+> migration. The snapshot was vendored 2026-09-28 and remains byte-unchanged.
+> All five resource access modes, presented-token exchanges, `mission_s256` missions,
+> `{jti, exp}` revocation and R3/Events on the draft-11 wire are implemented;
+> optional exclusions (such as algorithm advertisement and Budgets) and
+> unverified external interop remain explicit.
 > See [SPEC-VERSION](SPEC-VERSION.md) and the
-> [migration evidence](../.agent/plans/2026-09-08-aauth-v10-spec-migration/implementation-log.md).
+> [migration evidence](../.agent/plans/2026-09-11-aauth-v11-spec-migration/implementation-log.md).
 > Historical per-snapshot entries below describe their original publication state.
 
 ## Contents
 
+- [`v11/` — AAuth draft-11 snapshot](#v11--aauth-draft-11-snapshot)
+  - [Protocol (draft-11)](#protocol-draft-11)
+  - [Companion documents](#companion-documents)
+  - [HTTP Signature Keys (draft-09)](#http-signature-keys-draft-09)
+  - [Upgrade guides](#upgrade-guides)
+  - [Author's verbatim changelog (draft-11)](#authors-verbatim-changelog-draft-11)
 - [`v10/` — AAuth draft-10 snapshot](#v10--aauth-draft-10-snapshot)
   - [Protocol (draft-10)](#protocol-draft-10)
     - [1. Fully specified algorithms and keys](#1-fully-specified-algorithms-and-keys)
@@ -84,6 +101,167 @@ are the spec's own kramdown anchors and are stable across line shifts.
   - [Bootstrap (draft-01, unchanged)](#bootstrap-draft-01-unchanged)
   - [Author's verbatim changelog (protocol)](#authors-verbatim-changelog-protocol)
 - [`v01/` — AAuth draft-01 snapshot (baseline)](#v01--aauth-draft-01-snapshot-baseline)
+
+---
+
+## `v11/` — AAuth draft-11 snapshot
+
+The latest upstream snapshot, vendored 2026-09-28 from tag
+`draft-hardt-oauth-aauth-protocol-11` (commit `178e9e6`, 2026-09-25). It bundles
+protocol **draft-11** with Bootstrap **draft-02**, the R3, Events and Budgets
+editor's copies at that tag, the revised Interoperability Demo Profile, HTTP
+Signature Keys **draft-09**, and the upstream -10 to -11 upgrade guides.
+
+> **The SDK targets draft-11** after the migration in
+> [`.agent/plans/2026-09-11-aauth-v11-spec-migration/`](../.agent/plans/2026-09-11-aauth-v11-spec-migration/),
+> completed 2026-09-29.
+
+This entry replaces the 2026-09-11 WIP entry for commit `55ae44c`. Between that
+capture and the tag, [AAuth PR #162](https://github.com/dickhardt/AAuth/pull/162)
+answered all 18 questions in the migration's
+[spec open questions](../.agent/plans/2026-09-11-aauth-v11-spec-migration/spec-open-questions.md),
+and later consistency and readability passes restructured the protocol text.
+
+### Protocol (draft-11)
+
+Published as IETF
+[draft-hardt-oauth-aauth-protocol-11](https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/11/)
+on 2026-09-25. The author's verbatim draft-11 changelog is reproduced below.
+
+#### 1. Person tokens and access modes
+
+- New `aa-person+jwt` identifies the person to one resource, bound to the agent's
+  key. The PS publishes a REQUIRED `person_token_endpoint`, and resources ask for a
+  person token with `requirement=person-token` (`#person-token-endpoint`).
+- Five resource access modes, including person identity access, backed by a new
+  Access Mode Value Registry. `aauth-access-token` becomes `session-token`.
+- A resource verifies a person token or auth token before issuing a resource
+  token; the authorization endpoint takes a person token (`#resource-token`).
+
+#### 2. Token exchange and resource-facing identity
+
+- PS and AS `token_endpoint` becomes `auth_token_endpoint`.
+- Resource tokens carry `ps`, `sub`, and `presented_jti`. The agent sends the
+  named token as REQUIRED `presented_token`; the PS forwards it to the AS, and both
+  verify the pair. Every `updated_request` also carries `presented_token`.
+- No resource-facing token carries an agent identifier, and `act` is removed.
+  Auth tokens carry `ps` and a directed `sub`. A resource token MAY carry
+  `login_hint`, and the person token request takes the auth token request's
+  optional parameters.
+
+#### 3. Missions
+
+- `mission_s256` replaces the `mission` object; `AAuth-Mission` and `approver`
+  are removed from tokens and headers.
+- The mission endpoint takes propose, update, and completion requests, and
+  `mission_terminated` reports a terminated mission (`#missions`).
+
+#### 4. Call chaining and sub-agents
+
+- Every hop routes to the PS named by the upstream token's `ps`; an intermediary
+  MUST be its own agent provider (`#call-chaining`).
+- `upstream_token` MAY be a person token. Downstream tokens expire no later than
+  the upstream token and carry its `mission_s256`. New `invalid_`, `expired_`, and
+  `revoked_upstream_token` errors.
+- A sub-agent's agent token `iss` MUST equal its parent's.
+
+#### 5. Revocation
+
+- The request is `{jti, exp}`, signed by the issuer with `content-digest` and
+  `content-type` covered, and each token type has one recipient.
+- Recipients cascade, record revoked tokens they have not seen, answer once the
+  cascade is terminal, and report downstream outcomes. There is no `404`; new
+  `rate_limited`, polling and hold-time rules (`#token-revocation`).
+- A revoked token is answered `revoked_jwt` or `revoked_<parameter>_token`.
+
+#### 6. Expiry, signatures, and discovery
+
+- `exp` has no skew tolerance, `iat` is REQUIRED, and agents refresh agent,
+  person, and auth tokens with five minutes left (`#re-authorization`).
+- A server signing in its own right uses `jwks_uri`. Requests with a body to a PS
+  or AS MUST cover `content-digest` and `content-type`. Every party MUST support
+  `Ed25519`.
+- Adds `accept_signature_algs`, the `aauth-resource` link relation,
+  `as_unreachable`, and `202` delivery of `requirement=auth-token`.
+- The agent identifier `local` part accepts uppercase letters.
+
+#### 7. Consent, roles, and structure
+
+- Resource-asserted and agent-asserted consent content MUST be visually
+  distinguished. Adds the Supervisor role, the PS conformance floor, and the
+  Minimal Person Server appendix. Supervision and mission-control companions are
+  marked TBD.
+- Removes Third-Party Login and `login_endpoint`.
+- Restructured for readability. Agent Identity is now Agents, with an Agent
+  Provider subsection; the Person Token section moved under the Person Token
+  Endpoint; rationale moved to the Design Rationale appendix.
+
+### Companion documents
+
+- **R3** remains unsubmitted, so its history is logged under `-00`. It adds
+  per-call proposals, operation access annotations, `per-call` access, and
+  approval to release results. Metered or billed execution is excluded from
+  release gating. It renames `r3_conditional` to `r3_per_call`, removes `version`,
+  and follows protocol draft-11 claims. The OpenAPI Gateway vocabulary from v10 is
+  removed, leaving seven standard vocabularies.
+- **AAuth Events** remains draft-00 but is revised. Event tokens carry `jti`,
+  deduplicated on `(iss, jti)`. Protected-subscription tickets bind to the
+  subscribe token's `cnf.jwk` thumbprint. Exhausted subscriptions are answered
+  `404`, not `429`. The payload is the POST body.
+- **Budgets** is a new, unsubmitted companion. Its history is logged as exploratory
+  editor's-copy changes.
+- **Bootstrap** draft-02 is revised against protocol draft-11. It adds guidance for
+  several self-hosted agents under one operator and for sub-agent tokens.
+- **Interoperability Demo Profile** covers person-token issuance, and Surfaces 4
+  and 5 carry `presented_token`.
+
+### HTTP Signature Keys (draft-09)
+
+Bumped **draft-08 → draft-09**
+([published 2026-09-13](https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/09/)).
+The protocol reference is unversioned; draft-09 is the published revision at the
+protocol tag. It adds the `revoked_jwt` and `clock_skew` error codes used by
+protocol draft-11. The other changes are editorial.
+
+### Upgrade guides
+
+[`v11/upgrade-10-to-11/`](v11/upgrade-10-to-11/) holds the author's per-role
+checklists from commit `180bc95` (2026-09-25), added after the tag. Each item has
+an ID, the -10 rule where it differs, and the governing -11 section.
+
+### Author's verbatim changelog (draft-11)
+
+Reproduced from the Document History section of
+[`v11/draft-hardt-oauth-aauth-protocol.md`](v11/draft-hardt-oauth-aauth-protocol.md#document-history):
+
+```text
+- draft-hardt-oauth-aauth-protocol-11
+  - Restructured for readability: sections follow the order an implementer meets them, each normative statement is made once, and rationale moved from Protocol Primitives to the Design Rationale appendix. Agent Identity is now Agents, with an Agent Provider subsection; Person Token moved under the Person Token Endpoint.
+  - A revocation request's signature MUST cover `content-digest` and `content-type` at every recipient. Issue #165.
+  - Token Revocation: a PS cascades an agent token revocation by agent identity; a recipient records revoked resource tokens it has not seen; added `rate_limited`; the polling `revoked` code covers any token a pending request depends on. Issues #178, #179, #180, #182, #185.
+  - Token Revocation: defined polling of a `202`, the `200` body, and how long a recipient holds the connection. Issues #181, #183, #184.
+  - A resource token MAY carry `login_hint`, which the agent passes to its PS. Issue #163.
+  - Adoption Matrix: the Agent column names the auth token in the PS authorization and federated authorization rows. Issue #161.
+  - The person token request takes the OPTIONAL parameters of the auth token request. Issues #175, #177.
+  - Call chaining accepts a person token as `upstream_token`; downstream tokens expire no later than the upstream token and carry its `mission_s256`. A sub-agent's agent token `iss` MUST equal its parent's.
+  - An intermediary MUST be its own agent provider.
+  - A revocation recipient answers once its cascade is terminal, and an AS reports the outcome to the PS in `downstream`. A person token revocation reaches call chains. Issue #173.
+  - The agent identifier `local` part accepts uppercase letters. Issue #164.
+  - Added the person token (`aa-person+jwt`), `person_token_endpoint`, and `requirement=person-token`. Issues #87, #97.
+  - Five resource access modes and the AAuth Access Mode Value Registry. Renamed `token_endpoint` to `auth_token_endpoint`; the resource-managed credential is the session token.
+  - A resource MUST verify a person token or auth token before issuing a resource token. No token a resource reads carries an agent identifier; `act` removed. Auth tokens carry `ps` and a directed `sub`.
+  - Added `presented_jti` and the `presented_token` parameter. Issues #95, #152.
+  - Missions: `mission_s256` replaces the `mission` object; `AAuth-Mission` and `approver` removed; the mission endpoint takes propose, update, and completion; added `mission_terminated`.
+  - Call chaining routes on the auth token's `ps` claim.
+  - Token Revocation reworked: the request is `jti` and `exp`, each token type has one recipient, and a revoked token is answered `revoked_jwt` or `revoked_<parameter>_token`. Issues #146, #154.
+  - Expiry: `exp` has no tolerance, `iat` is REQUIRED, and the agent refreshes with five minutes left.
+  - A server signing in its own right uses the `jwks_uri` scheme. Requests with a body to a PS or AS MUST cover `content-digest` and `content-type`. Added `accept_signature_algs`. Issue #94.
+  - Consent Presentation: resource-asserted and agent-asserted content MUST be visually distinguished.
+  - Added the Supervisor role, the PS conformance floor, and the Minimal Person Server appendix. Removed Third-Party Login and `login_endpoint`. Issue #155.
+  - `requirement=auth-token` MAY be delivered as a `202` deferred response. Added `as_unreachable` and the `aauth-resource` link relation. Issue #92.
+  - Consistency pass: common JWT claims and verification stated once, typed error codes only for tokens passed as parameters, and every party MUST support `Ed25519`.
+
+```
 
 ---
 

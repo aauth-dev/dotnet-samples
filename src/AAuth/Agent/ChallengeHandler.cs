@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Errors;
@@ -55,30 +56,6 @@ public sealed class ChallengeHandler : DelegatingHandler
     private readonly ConcurrentDictionary<string, IReadOnlyList<string>> _learnedComponents
         = new(StringComparer.Ordinal);
 
-    /// <summary>Create the challenge handler.</summary>
-    /// <param name="exchange">Token exchange client (configured with the agent token).</param>
-    /// <param name="holder">Shared carrier-token holder used by the signer.</param>
-    /// <param name="personServer">PS issuer URL where resource tokens are exchanged.</param>
-    /// <param name="onInteractionRequired">
-    /// Optional callback invoked when the PS returns <c>202 + requirement=interaction</c>
-    /// during the embedded exchange. Hosts wire this to "display URL to user" UI.
-    /// When <see langword="null"/>, a deferred PS response surfaces as an exception.
-    /// </param>
-    /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
-    public ChallengeHandler(
-        TokenExchangeClient exchange,
-        AAuthTokenHolder holder,
-        TokenVerifier verifier,
-        MetadataClient metadata,
-        JwksClient jwks,
-        string personServer,
-        Func<Interaction, CancellationToken, Task>? onInteractionRequired = null,
-        DeferredPollerOptions? pollerOptions = null)
-        : this(exchange, holder, verifier, metadata, jwks, personServer, onInteractionRequired, pollerOptions,
-               upstreamTokenProvider: null)
-    {
-    }
-
     /// <summary>Create the challenge handler with call-chaining support.</summary>
     /// <param name="exchange">Token exchange client (configured with the agent token).</param>
     /// <param name="holder">Shared carrier-token holder used by the signer.</param>
@@ -100,9 +77,9 @@ public sealed class ChallengeHandler : DelegatingHandler
         MetadataClient metadata,
         JwksClient jwks,
         string? personServer,
-        Func<Interaction, CancellationToken, Task>? onInteractionRequired,
-        DeferredPollerOptions? pollerOptions,
-        Func<string?>? upstreamTokenProvider)
+        Func<Interaction, CancellationToken, Task>? onInteractionRequired = null,
+        DeferredPollerOptions? pollerOptions = null,
+        Func<string?>? upstreamTokenProvider = null)
     {
         ArgumentNullException.ThrowIfNull(exchange);
         ArgumentNullException.ThrowIfNull(holder);
@@ -181,8 +158,7 @@ public sealed class ChallengeHandler : DelegatingHandler
         const int maxAuthTokenChallenges = 3;
         var requestOrigin = request.RequestUri is { } requestUri ? GetOrigin(requestUri) : null;
         var requestedAccount = AAuthRequestOptions.GetAccount(request);
-        request.Headers.TryGetValues(AAuthMissionHeader.Name, out var requestedMissionValues);
-        var requestedMission = requestedMissionValues is null ? null : string.Join(",", requestedMissionValues);
+        var requestedMission = AAuthRequestOptions.GetMissionS256(request);
 
         if (!request.Options.TryGetValue(MissionForwardingHandler.UpstreamAuthorization, out var upstreamToken))
         {
@@ -192,91 +168,113 @@ public sealed class ChallengeHandler : DelegatingHandler
         var response = await SendWithAdaptiveSigningAsync(request, cancellationToken)
             .ConfigureAwait(false);
 
+        var reusedMissionToken = false;
+        // §Deferred Delivery: a resource MAY hold the invocation and deliver
+        // requirement=auth-token as a 202 with a pending Location. The agent then
+        // polls that URL with signed GETs and never resends the original request.
+        Uri? pendingLocation = null;
+        System.Net.Http.Headers.RetryConditionHeaderValue? pendingRetryAfter = null;
         for (var attempt = 0; attempt < maxAuthTokenChallenges; attempt++)
         {
-            if (response.StatusCode != HttpStatusCode.Unauthorized)
+            var deferred = response.StatusCode == HttpStatusCode.Accepted;
+            if (response.StatusCode != HttpStatusCode.Unauthorized && !deferred)
             {
                 return response;
             }
 
-            var requirement = TryFindAuthTokenRequirement(response);
+            var requirement = TryFindRequirement(response);
             if (requirement is null)
             {
                 return response;
             }
+            if (deferred)
+            {
+                if (requirement.Requirement != AAuthRequirementHeader.AuthTokenRequirement
+                    || request.RequestUri is null)
+                    return response;
+                if (response.Headers.Location is { } location)
+                {
+                    var basis = pendingLocation ?? request.RequestUri;
+                    pendingLocation = _exchange.EgressPolicy.ValidatePendingLocation(basis,
+                        location.IsAbsoluteUri ? location : new Uri(basis, location));
+                }
+                else if (pendingLocation is null)
+                {
+                    return response;
+                }
+                pendingRetryAfter = response.Headers.RetryAfter;
+            }
 
-            // Got an auth-token challenge. Exchange and retry.
-            using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.ChallengeExchange");
-
-            var resourceSegments = requirement.ResourceToken!.Split('.');
-            if (resourceSegments.Length != 3)
-                throw new TokenVerificationException("Resource token must be a compact JWS.");
-            var resourcePayload = TokenVerifier.DecodeJsonSegment(resourceSegments[1], "payload");
-            if (requestOrigin is null || (string?)resourcePayload["iss"] != requestOrigin)
-                throw new TokenVerificationException("Resource token issuer does not match the original request origin.");
-
-            var targetServer = upstreamToken is not null
+            // An intermediary routes every hop to the PS its upstream token names:
+            // a person token's iss, or an auth token's ps (§Call Chaining).
+            var personServer = upstreamToken is not null
                 ? CallChainingRouter.ResolveDownstreamServer(upstreamToken, _exchange.EgressPolicy)
                 : PersonServerProvider?.Invoke() ?? _personServer
                     ?? throw new InvalidOperationException(
                         "No personServer configured and upstreamTokenProvider returned null.");
 
-            if (!request.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presented)
-                || !request.Options.TryGetValue(AAuthSigningHandler.SigningKeyContext, out var signingKey))
-                throw new TokenVerificationException("Resource challenge requires the original signed request context.");
-            var presentedSegments = presented.Split('.');
-            if (presentedSegments.Length != 3)
-                throw new TokenVerificationException("Presented token must be a compact JWS.");
-            var presentedHeader = TokenVerifier.DecodeJsonSegment(presentedSegments[0], "header");
-            var presentedPayload = TokenVerifier.DecodeJsonSegment(presentedSegments[1], "payload");
-            var agentId = (string?)presentedPayload[(string?)presentedHeader["typ"] == AgentTokenBuilder.TokenType ? "sub" : "agent"]
-                ?? throw new TokenVerificationException("Presented token is missing the agent identity.");
-            var audience = (string?)resourcePayload["aud"]
-                ?? throw new TokenVerificationException("Resource token is missing its audience.");
-            if (!Identifiers.ServerId.TryParse(audience, out _, out _, _exchange.EgressPolicy))
-                throw new TokenVerificationException("Resource token audience must identify a PS or AS.");
-            var verified = await _verifier.VerifyResourceTokenAsync(requirement.ResourceToken!,
-                audience, agentId, signingKey.ComputeJwkThumbprint(), _metadata, _jwks,
-                expectedApprover: targetServer, cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (!AccountBinding.Matches(requestedAccount, verified.Account))
-                throw new TokenVerificationException("Resource token account differs from the original request account.");
-            if (verified.Payload.ContainsKey("mission") && verified.Mission is null)
-                throw new TokenVerificationException("Resource token contains an invalid mission reference.");
-            if (requestedMission is not null
-                && (!AAuthMissionHeader.TryParseStructured(requestedMission, out var approver, out var hash, _exchange.EgressPolicy)
-                    || verified.Mission is not { } resourceMission
-                    || resourceMission.Approver != approver || resourceMission.S256 != hash))
-                throw new TokenVerificationException("Resource token must retain the original request mission.");
-            if (upstreamToken is not null)
+            string carrier;
+            if (requirement.Requirement == AAuthRequirementHeader.PersonTokenRequirement)
             {
-                var upstreamSegments = upstreamToken.Split('.');
-                if (upstreamSegments.Length != 3)
-                    throw new TokenVerificationException("Upstream token must be a compact JWS.");
-                var upstreamPayload = TokenVerifier.DecodeJsonSegment(upstreamSegments[1], "payload");
-                if (upstreamPayload["mission"] is { } mission
-                    && !System.Text.Json.Nodes.JsonNode.DeepEquals(mission, verified.Payload["mission"]))
-                    throw new TokenVerificationException("Resource challenge must retain the upstream mission.");
+                // §Person Token Required: obtain a person token for this resource
+                // and present it in place of the agent token.
+                using var personActivity = AAuthDiagnostics.Source.StartActivity("AAuth.PersonTokenChallenge");
+                var resource = request.Options.TryGetValue(AAuthRequestOptions.ResourceIdentifier, out var configured)
+                    ? configured : requestOrigin
+                        ?? throw new InvalidOperationException("A person-token challenge requires an absolute request URI.");
+                var reusable = reusedMissionToken ? null : ReusableMissionPersonToken(request, upstreamToken, personServer, resource, requestedMission);
+                request.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var refused);
+                carrier = await _holder.AcquireAsync(request, refused, ct => reusable is not null ? Task.FromResult(reusable)
+                    : _exchange.RequestPersonTokenAsync(personServer, resource,
+                        ExchangeOptions(request, upstreamToken, requestedMission, presentedToken: null), ct),
+                    cancellationToken).ConfigureAwait(false);
+                // A reused token the resource refused is not offered again.
+                reusedMissionToken = true;
             }
+            else
+            {
+                using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.ChallengeExchange");
+                var resourceSegments = requirement.ResourceToken!.Split('.');
+                if (resourceSegments.Length != 3)
+                    throw new TokenVerificationException("Resource token must be a compact JWS.");
+                var resourcePayload = TokenVerifier.DecodeJsonSegment(resourceSegments[1], "payload");
+                if (requestOrigin is null || (string?)resourcePayload["iss"] != requestOrigin)
+                    throw new TokenVerificationException("Resource token issuer does not match the original request origin.");
 
-            // The exchange to the PS is agent-signed by a dedicated agent-token channel
-            // (see AAuthClientBuilder) that is independent of this handler's carrier
-            // holder, so it stays agent-signed across successive step-up challenges.
-            var authToken = await _exchange
-                .ExchangeAsync(targetServer, requirement.ResourceToken!,
-                    new TokenExchangeRequest
-                    {
-                        Account = AAuthRequestOptions.GetAccount(request),
-                        OnInteractionRequired = _onInteractionRequired,
-                        PollerOptions = _pollerOptions,
-                        UpstreamToken = upstreamToken,
-                        Capabilities = Capabilities,
-                        Prompt = Prompt,
-                        OnClarificationRequired = OnClarificationRequired,
-                        MaxClarificationRounds = MaxClarificationRounds,
-                    },
-                    cancellationToken)
-                .ConfigureAwait(false);
-            _holder.UpdateFromExchange(authToken, request);
+                // §Resource Challenge Verification: the resource token must name the
+                // token the agent presented (presented_jti, sub), its PS, and its key.
+                if (!request.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presented)
+                    || !request.Options.TryGetValue(AAuthSigningHandler.SigningKeyContext, out var signingKey))
+                    throw new TokenVerificationException("Resource challenge requires the original signed request context.");
+                var presentedSegments = presented.Split('.');
+                if (presentedSegments.Length != 3)
+                    throw new TokenVerificationException("Presented token must be a compact JWS.");
+                var presentedHeader = TokenVerifier.DecodeJsonSegment(presentedSegments[0], "header");
+                var presentedPayload = TokenVerifier.DecodeJsonSegment(presentedSegments[1], "payload");
+                if ((string?)presentedHeader["typ"] is not (PersonTokenBuilder.TokenType or AuthTokenBuilder.TokenType))
+                    throw new TokenVerificationException("A resource token must follow a presented person token or auth token.");
+                var audience = (string?)resourcePayload["aud"]
+                    ?? throw new TokenVerificationException("Resource token is missing its audience.");
+                if (!Identifiers.ServerId.TryParse(audience, out _, out _, _exchange.EgressPolicy))
+                    throw new TokenVerificationException("Resource token audience must identify a PS or AS.");
+                var verified = await _verifier.VerifyResourceTokenAsync(requirement.ResourceToken!,
+                    audience, signingKey.ComputeJwkThumbprint(), _metadata, _jwks,
+                    expectedPersonServer: personServer, cancellationToken: cancellationToken).ConfigureAwait(false);
+                if (!AccountBinding.Matches(requestedAccount, verified.Account))
+                    throw new TokenVerificationException("Resource token account differs from the original request account.");
+                if (verified.Subject != (string?)presentedPayload["sub"]
+                    || (string?)verified.Payload["presented_jti"] != (string?)presentedPayload["jti"]
+                    || verified.MissionS256 != (string?)presentedPayload[MissionReference.ClaimName])
+                    throw new TokenVerificationException("Resource token does not match the presented token.");
+
+                // The exchange to the PS is agent-signed by a dedicated agent-token channel
+                // (see AAuthClientBuilder) that is independent of this handler's carrier
+                // holder, so it stays agent-signed across successive step-up challenges.
+                var exchangeOptions = ExchangeOptions(request, upstreamToken, requestedMission, presented, verified.Payload);
+                carrier = await _holder.AcquireAsync(request, presented,
+                    ct => _exchange.ExchangeAsync(personServer, requirement.ResourceToken!, exchangeOptions, ct),
+                    cancellationToken).ConfigureAwait(false);
+            }
 
             // Clone the original request to retry — HttpRequestMessage is
             // single-use, and the signing handler downstream will re-sign with
@@ -285,29 +283,114 @@ public sealed class ChallengeHandler : DelegatingHandler
             // verbatim; streaming bodies that are not re-readable will fail
             // here, which is a known limitation.
             response.Dispose();
-            var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
-            response = await SendWithAdaptiveSigningAsync(retry, cancellationToken).ConfigureAwait(false);
-            if (retry.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presentedToken))
-                request.Options.Set(AAuthRequestOptions.PresentedToken, presentedToken);
-            // Reassign the response's RequestMessage to the caller-owned
-            // original so diagnostics (EnsureSuccessStatusCode, loggers) keep
-            // working, then dispose the short-lived clone. This avoids both
-            // (a) retaining the cloned ByteArrayContent on the response until
-            // GC and (b) handing callers a response backed by a disposed
-            // request — the trade-off of the previous `using` placement.
-            response.RequestMessage = request;
-            retry.Dispose();
+            if (pendingLocation is null)
+            {
+                var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
+                response = await SendWithAdaptiveSigningAsync(retry, cancellationToken).ConfigureAwait(false);
+                if (retry.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presentedToken))
+                    request.Options.Set(AAuthRequestOptions.PresentedToken, presentedToken);
+                response.RequestMessage = request;
+                retry.Dispose();
+            }
+            else
+            {
+                using var pollClient = AAuth.Discovery.AAuthHttpTransport.AttachPolicy(
+                    new HttpClient(new ChallengePollHandler(this, request)),
+                    _exchange.EgressPolicy,
+                    AAuth.Discovery.AAuthTransportContract.EnforcesEgressPolicy);
+                var poller = new DeferredPoller(pollClient, PollerOptionsForAuthTokenDeferred());
+                response = await poller.ResumeAsync(pendingLocation, pendingRetryAfter, cancellationToken)
+                    .ConfigureAwait(false);
+                response.RequestMessage = request;
+            }
         }
 
         return response;
     }
 
-    // Pick the first recognised auth-token challenge from the response's
-    // AAuth-Requirement header(s). The header MAY appear more than once; parse
-    // each value independently. Concatenating with ',' and re-parsing would only
-    // work if AAuthRequirementHeader.Parse spoke full RFC 9651 dictionary grammar,
-    // which it deliberately doesn't.
-    private static AAuthRequirementHeader.ParsedRequirement? TryFindAuthTokenRequirement(
+    private static string? ResourceLoginHint(JsonObject resourcePayload)
+    {
+        if (!resourcePayload.TryGetPropertyValue("login_hint", out var node) || node is null)
+            return null;
+        if (node is JsonValue value && value.TryGetValue<string>(out var text))
+            return text;
+        throw new TokenVerificationException("Resource token 'login_hint' must be a string.");
+    }
+
+    private TokenExchangeRequest ExchangeOptions(HttpRequestMessage request, string? upstreamToken,
+        string? missionS256, string? presentedToken, JsonObject? resourcePayload = null) => new()
+    {
+        Account = AAuthRequestOptions.GetAccount(request),
+        PresentedToken = presentedToken,
+        MissionS256 = upstreamToken is null ? missionS256 : null,
+        OnInteractionRequired = request.Options.TryGetValue(AAuthRequestOptions.InteractionHandler, out var interaction)
+            ? interaction.OnInteractionRequiredAsync : _onInteractionRequired,
+        PollerOptions = _pollerOptions,
+        UpstreamToken = upstreamToken,
+        Capabilities = Capabilities,
+        Prompt = Prompt,
+        LoginHint = resourcePayload is null ? null : ResourceLoginHint(resourcePayload),
+        OnClarificationRequired = request.Options.TryGetValue(AAuthRequestOptions.ClarificationHandler, out var clarification)
+            ? clarification.OnClarificationRequiredAsync : OnClarificationRequired,
+        MaxClarificationRounds = MaxClarificationRounds,
+    };
+
+    private DeferredPollerOptions PollerOptionsForAuthTokenDeferred()
+    {
+        var source = _pollerOptions ?? new DeferredPollerOptions();
+        var callerStop = source.StopWhenAccepted;
+        return new DeferredPollerOptions
+        {
+            TimeProvider = source.TimeProvider,
+            DelayAsync = source.DelayAsync,
+            MaxTotalWait = source.MaxTotalWait,
+            DefaultPollInterval = source.DefaultPollInterval,
+            MinPollInterval = source.MinPollInterval,
+            PreferWaitSeconds = source.PreferWaitSeconds,
+            OnPoll = source.OnPoll,
+            StopWhenAccepted = response =>
+                callerStop?.Invoke(response) == true
+                || TryFindRequirement(response) is { Requirement: AAuthRequirementHeader.AuthTokenRequirement, ResourceToken: not null },
+        };
+    }
+
+    // A person token issued with the mission approval saves the /person call when it names this PS,
+    // resource and mission, binds the signing key, and is not about to expire (§Mission Approval).
+    private static string? ReusableMissionPersonToken(HttpRequestMessage request, string? upstreamToken,
+        string personServer, string resource, string? missionS256)
+    {
+        if (upstreamToken is not null || missionS256 is null
+            || !request.Options.TryGetValue(AAuthRequestOptions.MissionPersonTokens, out var tokens)
+            || !tokens.TryGetValue(resource, out var token)
+            || !request.Options.TryGetValue(AAuthSigningHandler.SigningKeyContext, out var signingKey))
+            return null;
+        try
+        {
+            var segments = token.Split('.');
+            if (segments.Length != 3
+                || (string?)TokenVerifier.DecodeJsonSegment(segments[0], "header")["typ"] != PersonTokenBuilder.TokenType)
+                return null;
+            var payload = TokenVerifier.DecodeJsonSegment(segments[1], "payload");
+            if ((string?)payload["iss"] != personServer || (string?)payload["aud"] != resource
+                || MissionReference.Read(payload) != missionS256
+                || payload["cnf"]?["jwk"] is not System.Text.Json.Nodes.JsonObject jwk
+                || AAuth.Crypto.KeyFactory.FromPublicJwk(jwk).ComputeJwkThumbprint() != signingKey.ComputeJwkThumbprint()
+                || payload["exp"] is not System.Text.Json.Nodes.JsonValue exp || !exp.TryGetValue<long>(out var expires)
+                || expires <= (DateTimeOffset.UtcNow + AAuthTokenHolder.CarrierRefreshMargin).ToUnixTimeSeconds())
+                return null;
+            return token;
+        }
+        catch (Exception exception) when (exception is TokenVerificationException or FormatException
+            or System.Text.Json.JsonException or AAuth.Crypto.JwkValidationException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    // Pick the first recognised person-token or auth-token challenge from the
+    // response's AAuth-Requirement header(s). The header MAY appear more than
+    // once; parse each value independently.
+    private static AAuthRequirementHeader.ParsedRequirement? TryFindRequirement(
         HttpResponseMessage response)
     {
         if (!response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values))
@@ -323,14 +406,16 @@ public sealed class ChallengeHandler : DelegatingHandler
                 var candidate = AAuthRequirementHeader.Parse(raw);
 
                 // §Agent Token Required: a bare requirement=agent-token asks for
-                // the agent's own identity token — no PS/AS, no resource token to
-                // exchange. The SDK already signs every request with the agent
-                // token via the shared holder, so the agent token is being
-                // presented; there is nothing to exchange. Skip it (and never let
-                // a stray resource-token param turn it into an exchange).
+                // the agent's own identity token, which the signer already
+                // presents; there is nothing to acquire.
                 if (candidate.Requirement == AAuthRequirementHeader.AgentTokenRequirement)
                 {
                     continue;
+                }
+
+                if (candidate.Requirement == AAuthRequirementHeader.PersonTokenRequirement)
+                {
+                    return candidate;
                 }
 
                 if (candidate.Requirement == AAuthRequirementHeader.AuthTokenRequirement
@@ -479,6 +564,34 @@ public sealed class ChallengeHandler : DelegatingHandler
                 UriComponents.Scheme | UriComponents.Host | UriComponents.Port,
                 UriFormat.UriEscaped)
             .ToLowerInvariant();
+
+    // A signed GET of the pending URL carrying the original request's options
+    // (account, mission, resource) so the signer presents the matching token.
+    // Body components the original request covered do not apply to a GET.
+    private static HttpRequestMessage PollRequest(HttpRequestMessage source, Uri location)
+    {
+        var poll = new HttpRequestMessage(HttpMethod.Get, location);
+        foreach (var option in source.Options)
+            if (option.Key != AAuthSigningHandler.AdditionalComponentsKey.Key)
+                ((IDictionary<string, object?>)poll.Options)[option.Key] = option.Value;
+        return poll;
+    }
+
+    private sealed class ChallengePollHandler(ChallengeHandler owner, HttpRequestMessage source) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            foreach (var option in source.Options)
+                if (option.Key != AAuthSigningHandler.AdditionalComponentsKey.Key)
+                    ((IDictionary<string, object?>)request.Options)[option.Key] = option.Value;
+            var response = await owner.SendWithAdaptiveSigningAsync(request, cancellationToken).ConfigureAwait(false);
+            if (request.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presentedToken))
+                source.Options.Set(AAuthRequestOptions.PresentedToken, presentedToken);
+            if (request.Options.TryGetValue(AAuthSigningHandler.SigningKeyContext, out var signingKey))
+                source.Options.Set(AAuthSigningHandler.SigningKeyContext, signingKey);
+            return response;
+        }
+    }
 
     private static async Task<HttpRequestMessage> CloneAsync(
         HttpRequestMessage source, CancellationToken cancellationToken)

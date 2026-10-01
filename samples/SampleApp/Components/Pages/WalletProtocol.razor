@@ -1,5 +1,6 @@
 @page "/wallet-protocol"
 @rendermode InteractiveServer
+@inject SampleAgents Agents
 
 <PageTitle>Wallet Protocol</PageTitle>
-<AAuth.Samples.Capabilities.WalletWalkthrough />
+<AAuth.Samples.Capabilities.WalletWalkthrough PersonServer="@Agents.PersonServer" />

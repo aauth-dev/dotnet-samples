@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json.Nodes;
@@ -13,17 +12,21 @@ using Xunit;
 namespace AAuth.Conformance.AuthTokens;
 
 /// <summary>
-/// Tests for AuthTokenResponseValidator per §Auth Token Delivery steps 1–7.
+/// Tests for AuthTokenResponseValidator per §Auth Token Delivery: the PS checks
+/// an AS-issued auth token names the resource, this PS (<c>ps</c>), the resource
+/// token's <c>sub</c>, the agent's key, and does not outlive the presented token.
 /// </summary>
 public class AuthTokenDeliveryTests
 {
     private const string AsIssuer = "http://localhost:5300";
+    private const string PsIssuer = "http://localhost:5100";
     private const string ResourceAudience = "http://localhost:5200";
-    private const string AgentId = "aauth:agent@example";
+    private const string Subject = "user-123";
     private const string AsKid = "as-1";
 
     private readonly AAuthKey _asKey = AAuthKey.Generate();
     private readonly AAuthKey _agentKey = AAuthKey.Generate();
+    private readonly DateTimeOffset _presentedExpiresAt = DateTimeOffset.UtcNow.AddHours(2);
 
     [Theory]
     [InlineData("personal", "personal", true)]
@@ -33,67 +36,51 @@ public class AuthTokenDeliveryTests
     [InlineData("Personal", "personal", false)]
     public async Task AccountDelivery_MatchesExactResourceExpectation(string? actual, string? expected, bool accepted)
     {
-        var result = await CreateValidator().ValidateAsync(BuildAuthToken(account: actual),
-            AsIssuer, ResourceAudience, AgentId, _agentKey, expectedAccount: expected);
+        var result = await Validate(await BuildAuthTokenAsync(account: actual), expectedAccount: expected);
         Assert.Equal(accepted, result.IsValid);
         if (!accepted) Assert.Contains("account_mismatch", result.Error);
     }
 
-    [Theory]
-    [InlineData("sub")]
-    [InlineData("email")]
-    [InlineData("tenant")]
-    public void IssuerCannotEmbedPersonInActorChain(string personField)
-    {
-        var act = new JsonObject { ["agent"] = "aauth:parent@example", [personField] = "person" };
-        Assert.Throws<InvalidOperationException>(() => BuildAuthToken(act: act));
-        Assert.Throws<ArgumentException>(() => ActChainBuilder.BuildNestedAct("aauth:parent@example", act));
-    }
-
-    [Fact]
-    public async Task CorrectNestedChainCannotHideWrongImmediateActor()
-    {
-        var nested = new JsonObject { ["agent"] = "aauth:original@example" };
-        var token = BuildAuthToken(act: ActChainBuilder.BuildNestedAct("aauth:attacker@example", nested));
-        var result = await CreateValidator().ValidateAsync(token, AsIssuer, ResourceAudience, AgentId, _agentKey,
-            ActChainBuilder.BuildNestedAct("aauth:parent@example", nested));
-        Assert.False(result.IsValid);
-        Assert.Contains("act_chain_mismatch", result.Error);
-    }
-
-    [Fact]
-    public async Task UnrequestedActorChainIsRejected()
-    {
-        var token = BuildAuthToken(act: ActChainBuilder.BuildNestedAct("aauth:unexpected@example"));
-        var result = await CreateValidator().ValidateAsync(token, AsIssuer, ResourceAudience, AgentId, _agentKey);
-        Assert.False(result.IsValid);
-    }
-
-    private string BuildAuthToken(
+    private async Task<string> BuildAuthTokenAsync(
         string? issuer = null,
         string? audience = null,
-        string? agent = null,
+        string? subject = null,
+        string? personServer = null,
         IAAuthKey? agentConfirmationKey = null,
         string? scope = null,
-        JsonObject? act = null,
-        string? account = null)
+        string? account = null,
+        string? dwk = null)
     {
-        return new AuthTokenBuilder
+        var effectiveIssuer = issuer ?? AsIssuer;
+        var effectivePersonServer = personServer ?? PsIssuer;
+        var effectiveDwk = dwk ?? AuthTokenBuilder.AccessDwk;
+        var builderDwk = effectiveDwk is AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk
+            ? effectiveDwk
+            : AuthTokenBuilder.AccessDwk;
+        var builderPersonServer = builderDwk == AuthTokenBuilder.PersonDwk ? effectiveIssuer : effectivePersonServer;
+        var token = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
-            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = issuer ?? AsIssuer,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            Issuer = effectiveIssuer,
             Audience = audience ?? ResourceAudience,
-            Agent = agent ?? AgentId,
+            PersonServer = builderPersonServer,
             AgentConfirmationKey = agentConfirmationKey ?? _agentKey,
             Key = _asKey,
             KeyId = AsKid,
             Scope = scope ?? "data.read",
-            Subject = "user-123",
+            Subject = subject ?? Subject,
             Account = account,
-            Act = act,
-            Dwk = AuthTokenBuilder.AccessDwk,
-        }.Build();
+            Dwk = builderDwk,
+        }.BuildAsync();
+        if (effectiveDwk == builderDwk && effectivePersonServer == builderPersonServer)
+            return token;
+        var payload = (JsonObject)JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(token.Split('.')[1]))!;
+        payload["dwk"] = effectiveDwk;
+        payload["ps"] = effectivePersonServer;
+        return await JwtWriter.SignCompactAsync(
+            new JsonObject { ["alg"] = "Ed25519", ["typ"] = AuthTokenBuilder.TokenType, ["kid"] = AsKid },
+            payload, _asKey);
     }
 
     private AuthTokenResponseValidator CreateValidator()
@@ -105,196 +92,135 @@ public class AuthTokenDeliveryTests
         return new AuthTokenResponseValidator(metadata, jwks);
     }
 
+    private Task<AuthTokenDeliveryResult> Validate(string token, string issuer = AsIssuer, string audience = ResourceAudience,
+        string subject = Subject, IAAuthKey? agentKey = null, DateTimeOffset? presentedExpiresAt = null,
+        string? requestedScope = null, string? expectedAccount = null)
+        => CreateValidator().ValidateAsync(token, issuer, audience, subject, PsIssuer, agentKey ?? _agentKey,
+            presentedExpiresAt ?? _presentedExpiresAt, requestedScope, expectedAccount: expectedAccount);
+
     [Fact(DisplayName = "§Auth Token Delivery — valid token accepted")]
     public async Task ValidToken_Accepted()
     {
-        var token = BuildAuthToken();
-        var validator = CreateValidator();
+        var result = await Validate(await BuildAuthTokenAsync());
 
-        var result = await validator.ValidateAsync(
-            token, AsIssuer, ResourceAudience, AgentId, _agentKey);
-
-        Assert.True(result.IsValid);
+        Assert.True(result.IsValid, result.Error);
         Assert.Null(result.Error);
         Assert.NotNull(result.Verified);
     }
 
-    [Fact(DisplayName = "§Auth Token Delivery — step 2: issuer mismatch rejected")]
+    [Fact(DisplayName = "§Auth Token Delivery — AS response with person-role dwk is rejected")]
+    public async Task RejectsAsResponseWithPersonDwk()
+    {
+        var result = await Validate(await BuildAuthTokenAsync(dwk: AuthTokenBuilder.PersonDwk));
+
+        Assert.False(result.IsValid);
+        Assert.Contains("dwk", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact(DisplayName = "§Auth Token Delivery — issuer mismatch rejected")]
     public async Task IssuerMismatch_Rejected()
     {
-        var token = BuildAuthToken();
-        var validator = CreateValidator();
-
-        var result = await validator.ValidateAsync(
-            token, "http://localhost:9999", ResourceAudience, AgentId, _agentKey);
+        var result = await Validate(await BuildAuthTokenAsync(), issuer: "http://localhost:9999");
 
         Assert.False(result.IsValid);
         Assert.Contains("issuer_mismatch", result.Error);
     }
 
-    [Fact(DisplayName = "§Auth Token Delivery — step 3: audience mismatch rejected")]
+    [Fact(DisplayName = "§Auth Token Delivery — audience mismatch rejected")]
     public async Task AudienceMismatch_Rejected()
     {
-        var token = BuildAuthToken();
-        var validator = CreateValidator();
-
-        var result = await validator.ValidateAsync(
-            token, AsIssuer, "http://localhost:9999", AgentId, _agentKey);
+        var result = await Validate(await BuildAuthTokenAsync(), audience: "http://localhost:9999");
 
         Assert.False(result.IsValid);
         Assert.Contains("aud", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(DisplayName = "§Auth Token Delivery — step 4: agent mismatch rejected")]
-    public async Task AgentMismatch_Rejected()
+    [Theory(DisplayName = "§Auth Token Delivery — a token naming another person or PS is rejected")]
+    [InlineData("sub")]
+    [InlineData("ps")]
+    public async Task PersonMismatch_Rejected(string field)
     {
-        var token = BuildAuthToken();
-        var validator = CreateValidator();
+        var token = field == "sub"
+            ? await BuildAuthTokenAsync(subject: "someone-else")
+            : await BuildAuthTokenAsync(personServer: "http://localhost:9999");
 
-        var result = await validator.ValidateAsync(
-            token, AsIssuer, ResourceAudience, "aauth:wrong@example", _agentKey);
+        var result = await Validate(token);
 
         Assert.False(result.IsValid);
-        Assert.Contains("agent", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("person_mismatch", result.Error);
     }
 
-    [Fact(DisplayName = "§Auth Token Delivery — step 5: cnf.jwk mismatch rejected")]
+    [Fact(DisplayName = "§Auth Token Delivery — cnf.jwk mismatch rejected")]
     public async Task ConfirmationKeyMismatch_Rejected()
     {
-        var token = BuildAuthToken();
-        var validator = CreateValidator();
-        var wrongKey = AAuthKey.Generate();
-
-        var result = await validator.ValidateAsync(
-            token, AsIssuer, ResourceAudience, AgentId, wrongKey);
+        var result = await Validate(await BuildAuthTokenAsync(), agentKey: AAuthKey.Generate());
 
         Assert.False(result.IsValid);
         Assert.Contains("cnf.jwk", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(DisplayName = "§Auth Token Delivery — step 6: act chain matches upstream context")]
-    public async Task ActChainMatchesUpstreamContext()
+    [Fact(DisplayName = "§Auth Token Delivery — a token outliving the presented token is rejected")]
+    public async Task OutlivesPresentedToken_Rejected()
     {
-        // Simulate call chaining: the downstream act nests the upstream delegation
-        // context under act.act; act.agent names the immediate upstream (delegator).
-        var upstreamAct = new JsonObject { ["agent"] = "aauth:original@example" };
-        var token = BuildAuthToken(
-            act: ActChainBuilder.BuildNestedAct("aauth:intermediary@example", upstreamAct));
-        var validator = CreateValidator();
-
-        // PS passes the expected upstream context (what it used to construct the act)
-        var result = await validator.ValidateAsync(
-            token, AsIssuer, ResourceAudience, AgentId, _agentKey,
-            expectedActContext: ActChainBuilder.BuildNestedAct("aauth:intermediary@example", upstreamAct));
-
-        Assert.True(result.IsValid);
-    }
-
-    [Fact(DisplayName = "§Auth Token Delivery — step 6: act chain mismatch rejected")]
-    public async Task ActChainMismatch_Rejected()
-    {
-        var upstreamAct = new JsonObject { ["agent"] = "aauth:original@example" };
-        var token = BuildAuthToken(
-            act: ActChainBuilder.BuildNestedAct("aauth:intermediary@example", upstreamAct));
-        var validator = CreateValidator();
-
-        // PS expects a different chain
-        var wrongContext = new JsonObject { ["agent"] = "aauth:attacker@example" };
-        var result = await validator.ValidateAsync(
-            token, AsIssuer, ResourceAudience, AgentId, _agentKey,
-            expectedActContext: wrongContext);
+        var result = await Validate(await BuildAuthTokenAsync(), presentedExpiresAt: DateTimeOffset.UtcNow.AddMinutes(5));
 
         Assert.False(result.IsValid);
-        Assert.Contains("act_chain_mismatch", result.Error);
+        Assert.Contains("lifetime_mismatch", result.Error);
     }
 
-    [Fact(DisplayName = "§Auth Token Delivery — step 7: scope escalation rejected")]
+    [Fact(DisplayName = "§Auth Token Delivery — scope escalation rejected")]
     public async Task ScopeEscalation_Rejected()
     {
-        var token = BuildAuthToken(scope: "data.read data.write");
-        var validator = CreateValidator();
-
-        // Resource token only requested data.read
-        var result = await validator.ValidateAsync(
-            token, AsIssuer, ResourceAudience, AgentId, _agentKey,
-            requestedScope: "data.read");
+        var result = await Validate(await BuildAuthTokenAsync(scope: "data.read data.write"), requestedScope: "data.read");
 
         Assert.False(result.IsValid);
         Assert.Contains("scope", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(DisplayName = "§Auth Token Delivery — step 7: scope narrowing accepted")]
+    [Fact(DisplayName = "§Auth Token Delivery — scope narrowing accepted")]
     public async Task ScopeNarrowing_Accepted()
     {
-        var token = BuildAuthToken(scope: "data.read");
-        var validator = CreateValidator();
+        var result = await Validate(await BuildAuthTokenAsync(scope: "data.read"), requestedScope: "data.read data.write");
 
-        // Token scope is subset of requested — valid
-        var result = await validator.ValidateAsync(
-            token, AsIssuer, ResourceAudience, AgentId, _agentKey,
-            requestedScope: "data.read data.write");
-
-        Assert.True(result.IsValid);
+        Assert.True(result.IsValid, result.Error);
     }
 
     /// <summary>
     /// Mock HTTP handler that serves AS metadata + JWKS.
     /// </summary>
-    private sealed class MockAsHandler : HttpMessageHandler
+    private sealed class MockAsHandler(AAuthKey key, string kid, string issuer) : HttpMessageHandler
     {
-        private readonly AAuthKey _key;
-        private readonly string _kid;
-        private readonly string _issuer;
-
-        public MockAsHandler(AAuthKey key, string kid, string issuer)
-        {
-            _key = key;
-            _kid = kid;
-            _issuer = issuer;
-        }
-
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? "";
 
-            if (path.EndsWith("aauth-access.json"))
+            if (path.EndsWith("aauth-access.json") || path.EndsWith("aauth-person.json"))
             {
-                var meta = new JsonObject
+                return JsonResponse(new JsonObject
                 {
-                    ["issuer"] = _issuer,
-                    ["jwks_uri"] = $"{_issuer}/.well-known/jwks.json",
-                    ["token_endpoint"] = $"{_issuer}/token",
-                };
-                return JsonResponse(meta);
+                    ["issuer"] = issuer,
+                    ["jwks_uri"] = $"{issuer}/.well-known/jwks.json",
+                    ["auth_token_endpoint"] = $"{issuer}/token",
+                });
             }
 
             if (path.EndsWith("jwks.json"))
             {
-                var jwk = _key.ToPublicJwk();
-                jwk["kid"] = _kid;
+                var jwk = key.ToPublicJwk();
+                jwk["kid"] = kid;
                 jwk["use"] = "sig";
                 jwk["alg"] = AAuthKey.Ed25519Algorithm;
-                var jwks = new JsonObject
-                {
-                    ["keys"] = new JsonArray { jwk },
-                };
-                return JsonResponse(jwks);
+                return JsonResponse(new JsonObject { ["keys"] = new JsonArray { jwk } });
             }
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
 
-        private static Task<HttpResponseMessage> JsonResponse(JsonObject json)
-        {
-            var response = new HttpResponseMessage(HttpStatusCode.OK)
+        private static Task<HttpResponseMessage> JsonResponse(JsonObject json) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(
-                    json.ToJsonString(),
-                    System.Text.Encoding.UTF8,
-                    "application/json"),
-            };
-            return Task.FromResult(response);
-        }
+                Content = new StringContent(json.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+            });
     }
 }

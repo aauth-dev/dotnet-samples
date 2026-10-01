@@ -11,6 +11,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Person;
+using AAuth.Server;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -28,10 +29,10 @@ public class IssuanceBoundsTests
     {
         await using var fixture = await IssuerFixture.CreateAsync(true, false, injectClaim: true);
         using var client = fixture.Client(120);
-        using var response = await client.PostAsJsonAsync("/token", fixture.Request(120));
+        using var response = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(120));
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("policy_error", (string?)body!["error"]);
+        Assert.Equal("server_error", (string?)body!["error"]);
         Assert.Null(body["auth_token"]);
     }
 
@@ -53,7 +54,7 @@ public class IssuanceBoundsTests
         await using var fixture = await IssuerFixture.CreateAsync(access, deferred);
         var started = fixture.Clock.Now;
         using var client = fixture.Client(parentSeconds);
-        using var initial = await client.PostAsJsonAsync("/token", fixture.Request(parentSeconds, childSeconds));
+        using var initial = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(parentSeconds, childSeconds));
         HttpResponseMessage response = initial;
         if (deferred)
         {
@@ -65,10 +66,10 @@ public class IssuanceBoundsTests
         using (response)
         {
             var payload = await fixture.AssertTokenAsync(response, started.AddSeconds(120));
-            Assert.Equal(childSeconds > 0 ? IssuerFixture.ChildId : IssuerFixture.ParentId, (string?)payload["agent"]);
+            Assert.Null(payload["agent"]);
+            Assert.Null(payload["act"]);
             var boundKey = AAuthKey.FromJwk((JsonObject)payload["cnf"]!["jwk"]!);
             Assert.Equal((childSeconds > 0 ? fixture.ChildKey : fixture.ParentKey).ComputeJwkThumbprint(), boundKey.ComputeJwkThumbprint());
-            if (childSeconds > 0) Assert.Equal(IssuerFixture.ParentId, (string?)payload["act"]?["agent"]);
         }
     }
 
@@ -83,7 +84,7 @@ public class IssuanceBoundsTests
     {
         await using var fixture = await IssuerFixture.CreateAsync(access, true);
         using var client = fixture.Client(parentSeconds);
-        using var pending = await client.PostAsJsonAsync("/token", fixture.Request(parentSeconds, childSeconds));
+        using var pending = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(parentSeconds, childSeconds));
         Assert.Equal(HttpStatusCode.Accepted, pending.StatusCode);
         fixture.Approve(pending);
         fixture.Clock.Now = fixture.Clock.Now.AddSeconds(120);
@@ -103,9 +104,10 @@ public class IssuanceBoundsTests
     {
         await using var fixture = await IssuerFixture.CreateAsync(access, false);
         using var client = fixture.Client(parentSeconds);
-        using var response = await client.PostAsJsonAsync("/token", fixture.Request(parentSeconds, childSeconds));
+        using var response = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(parentSeconds, childSeconds));
         Assert.False(response.IsSuccessStatusCode);
-        Assert.Null((await response.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]);
+        // A rejection may come from the signature layer (401 with no body) or the token endpoint.
+        Assert.DoesNotContain("auth_token", await response.Content.ReadAsStringAsync());
     }
 
     [Theory]
@@ -118,7 +120,7 @@ public class IssuanceBoundsTests
         await using var fixture = await IssuerFixture.CreateAsync(access, deferred);
         var ceiling = fixture.Clock.Now.AddSeconds(60);
         using var client = fixture.Client(300);
-        using var initial = await client.PostAsJsonAsync("/token", fixture.Request(300, 120, upstream: true));
+        using var initial = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(300, 120, upstream: true));
         HttpResponseMessage response = initial;
         if (deferred)
         {
@@ -130,8 +132,9 @@ public class IssuanceBoundsTests
         using (response)
         {
             var payload = await fixture.AssertTokenAsync(response, ceiling);
-            Assert.Equal(IssuerFixture.ParentId, (string?)payload["act"]?["agent"]);
-            Assert.Equal("aauth:upstream@ap.test", (string?)payload["act"]?["act"]?["agent"]);
+            // The downstream token names the resource token's person, never the upstream sub.
+            Assert.Equal("user", (string?)payload["sub"]);
+            Assert.Null(payload["act"]);
         }
     }
 
@@ -143,12 +146,12 @@ public class IssuanceBoundsTests
         await using var fixture = await IssuerFixture.CreateAsync(true, true, claims: true);
         var ceiling = fixture.Clock.Now.AddSeconds(120);
         using var client = fixture.Client(120);
-        using var pending = await client.PostAsJsonAsync("/token", fixture.Request(120));
+        using var pending = await client.PostAsJsonAsync("/token", await fixture.RequestAsync(120));
         Assert.Equal(HttpStatusCode.Accepted, pending.StatusCode);
         fixture.Clock.Now = fixture.Clock.Now.AddSeconds(expired ? 120 : 30);
         using var response = await client.PostAsJsonAsync(pending.Headers.Location, new JsonObject
         {
-            ["sub"] = "user", ["email"] = "user@example.test", ["tenant"] = "org",
+            ["email"] = "user@example.test", ["tenant"] = "org",
             ["roles"] = new JsonArray("reader"), ["groups"] = new JsonArray("team"),
         });
         if (expired) { await AssertExpiredAsync(response); return; }
@@ -183,6 +186,8 @@ public class IssuanceBoundsTests
         public required AAuthKey PsKey { get; init; }
         public required AAuthKey ApKey { get; init; }
         public required AAuthKey ResourceKey { get; init; }
+        public required IJtiStore Inventory { get; init; }
+        public required IPersonResourceEnrollmentStore Enrollments { get; init; }
         public AAuthKey ParentKey { get; } = AAuthKey.Generate();
         public AAuthKey ChildKey { get; } = AAuthKey.Generate();
 
@@ -193,6 +198,8 @@ public class IssuanceBoundsTests
             var psKey = access ? AAuthKey.Generate() : issuerKey;
             var apKey = AAuthKey.Generate();
             var resourceKey = AAuthKey.Generate();
+            var inventory = new InMemoryJtiStore(clock);
+            var enrollments = new InMemoryPersonResourceEnrollmentStore();
             var discovery = new DiscoveryHandler(new Dictionary<string, IAAuthKey>
             {
                 [Ps] = psKey, [As] = issuerKey, [Ap] = apKey, [Resource] = resourceKey,
@@ -200,81 +207,117 @@ public class IssuanceBoundsTests
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseTestServer();
             builder.Services.AddSingleton(new AAuthVerifier());
-            builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = clock.GetUtcNow });
+            builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = clock });
             builder.Services.AddSingleton(new MetadataClient(new InProcessHttpClient(discovery)));
             builder.Services.AddSingleton(new JwksClient(new InProcessHttpClient(discovery)));
             builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+            builder.Services.AddSingleton<IPersonResourceEnrollmentStore>(enrollments);
             builder.Services.AddSingleton<IAccessPendingStore, InMemoryAccessPendingStore>();
             builder.Services.AddSingleton<IIdentityClaimsAsserter>(new Asserter(deferred));
             builder.Services.AddSingleton<IAccessPolicy>(new Policy(deferred, claims, injectClaim));
             builder.Services.AddSingleton(provider => new UpstreamTokenValidator(
                 provider.GetRequiredService<MetadataClient>(), provider.GetRequiredService<JwksClient>(),
                 provider.GetRequiredService<TokenVerifier>()));
-            var app = builder.Build();
             if (access)
-                app.MapAAuthAccessServer(new AAuthAccessServerOptions
+                builder.Services.AddAAuthAccessServer(configure: o =>
                 {
-                    EgressPolicy = TestEgress.Policy,
-                    Issuer = As, SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = issuerKey },
-                    TrustedPersonServers = [Ps], TimeProvider = clock,
+                    o.EgressPolicy = TestEgress.Policy;
+                    o.Issuer = As;
+                    o.SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey };
+                    o.Trust.PersonServers.Allowed = new HashSet<string> { Ps };
+                    o.TimeProvider = clock;
                 });
             else
-                app.MapAAuthPersonServer(new AAuthPersonServerOptions
+                builder.Services.AddAAuthPersonServer(configure: o =>
                 {
-                    EgressPolicy = TestEgress.Policy,
-                    Issuer = Ps, SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = issuerKey },
-                    TrustedAccessServers = [], TimeProvider = clock,
-                });
+                    o.EgressPolicy = TestEgress.Policy;
+                    o.Issuer = Ps;
+                    o.SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey };
+                    o.Trust.AccessServers.Allowed = new HashSet<string>();
+                    o.TimeProvider = clock;
+                }).UseTokenInventory(inventory);
+            var app = builder.Build();
+            if (access)
+                app.MapAAuthAccessServer();
+            else
+                app.MapAAuthPersonServer();
             await app.StartAsync();
             return new IssuerFixture { App = app, Access = access, Clock = clock, IssuerKey = issuerKey,
-                PsKey = psKey, ApKey = apKey, ResourceKey = resourceKey };
+                PsKey = psKey, ApKey = apKey, ResourceKey = resourceKey, Inventory = inventory, Enrollments = enrollments };
         }
 
-        private string AgentToken(int seconds, bool child = false) => new AgentTokenBuilder
+        private ValueTask<string> AgentTokenAsync(int seconds, bool child = false) => new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = Ap, Subject = child ? ChildId : ParentId, Key = ApKey, KeyId = "key",
             ConfirmationKey = child ? ChildKey : ParentKey, ParentAgent = child ? ParentId : null,
             PersonServer = Ps, IssuedAt = Clock.Now.AddSeconds(seconds - 3600), Lifetime = TimeSpan.FromHours(1),
-        }.Build();
+        }.BuildAsync();
 
         public HttpClient Client(int parentSeconds)
         {
             var client = Access
                 ? new AAuthClientBuilder(PsKey).UseJwksUri(Ps, AAuthConstants.DwkFiles.Person, "key")
                     .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(App.GetTestServer().CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly).Build()
-                : new InProcessHttpClient(new AAuthSigningHandler(ParentKey, () => AgentToken(parentSeconds))
+                // The sync token factory mints a fresh carrier per request (the tests rely on it); local signing completes synchronously.
+                : new InProcessHttpClient(new AAuthSigningHandler(ParentKey, () => AgentTokenAsync(parentSeconds).AsTask().GetAwaiter().GetResult())
                     { InnerHandler = App.GetTestServer().CreateHandler() });
             client.BaseAddress = new Uri(Access ? As : Ps);
             return client;
         }
 
-        public JsonObject Request(int parentSeconds, int childSeconds = 0, bool upstream = false)
+        public async Task<JsonObject> RequestAsync(int parentSeconds, int childSeconds = 0, bool upstream = false)
         {
-            var mission = Access && upstream ? new MissionClaim(Ps, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") : null;
+            var mission = Access && upstream ? "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" : null;
+            var agentKey = childSeconds != 0 ? ChildKey : ParentKey;
+            // The presented person token outlives every ceiling these tests assert.
+            var personToken = await new PersonTokenBuilder
+            {
+                EgressPolicy = TestEgress.Policy,
+                Issuer = Ps, Audience = Resource, Subject = "user", ConfirmationKey = agentKey,
+                AgentTokenExpiresAt = Clock.Now.AddHours(1), TimeProvider = Clock, MissionS256 = mission,
+                Key = PsKey, KeyId = "key",
+            }.BuildAsync();
+            if (!Access)
+            {
+                await Enrollments.RecordAsync(new PersonResourceEnrollment(
+                    Ps, new AAuthPersonKey("user"), Resource, "user", "test", Clock.Now));
+            }
             var body = new JsonObject
             {
-                ["agent_token"] = AgentToken(parentSeconds),
-                ["resource_token"] = new ResourceTokenBuilder
+                ["agent_token"] = await AgentTokenAsync(parentSeconds),
+                ["resource_token"] = await new ResourceTokenBuilder
                 {
                     ScopeDescriptions = TestScopeDefinitions.Resource,
                     EgressPolicy = TestEgress.Policy,
-                    Issuer = Resource, Audience = Access ? As : Ps, Agent = childSeconds != 0 ? ChildId : ParentId,
-                    AgentJkt = (childSeconds != 0 ? ChildKey : ParentKey).ComputeJwkThumbprint(),
+                    Issuer = Resource, Audience = Access ? As : Ps, PersonServer = Ps, Subject = "user",
+                    PresentedJti = (string)JsonNode.Parse(Base64UrlEncoder.DecodeBytes(personToken.Split('.')[1]))!["jti"]!,
+                    AgentJkt = agentKey.ComputeJwkThumbprint(),
                     Key = ResourceKey, KeyId = "key", Scope = "read",
-                    Mission = mission,
-                }.Build(),
+                    MissionS256 = mission, IssuedAt = Clock.Now,
+                }.BuildAsync(),
+                ["presented_token"] = personToken,
             };
-            if (childSeconds != 0) body["subagent_token"] = AgentToken(childSeconds, child: true);
-            if (upstream) body["upstream_token"] = new AuthTokenBuilder
+            if (childSeconds != 0) body["subagent_token"] = await AgentTokenAsync(childSeconds, child: true);
+            if (upstream)
+            {
+                var upstreamToken = await new AuthTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
-                Issuer = Access ? As : Ps, Audience = Ap, Agent = "aauth:upstream@ap.test",
+                Issuer = Access ? As : Ps, Audience = Ap, PersonServer = Ps, Subject = "upstream-person",
                 AgentConfirmationKey = ParentKey, Key = IssuerKey, KeyId = "key", Scope = "read",
                 AgentTokenExpiresAt = Clock.Now.AddSeconds(60), TimeProvider = Clock,
                 Dwk = Access ? AuthTokenBuilder.AccessDwk : AuthTokenBuilder.PersonDwk,
-                Mission = mission,
-            }.Build();
+                MissionS256 = mission,
+            }.BuildAsync();
+                if (!Access) await UpstreamProvenanceTestSupport.RecordAsync(Inventory, upstreamToken, Ps);
+                if (!Access)
+                {
+                    await Enrollments.RecordAsync(new PersonResourceEnrollment(
+                        Ps, new AAuthPersonKey("upstream-person"), Ap, "upstream-person", "test", Clock.Now));
+                }
+                body["upstream_token"] = upstreamToken;
+            }
             return body;
         }
 
@@ -282,7 +325,7 @@ public class IssuanceBoundsTests
         {
             var id = pending.Headers.Location!.OriginalString.Split('/')[^1];
             if (Access) App.Services.GetRequiredService<IAccessPendingStore>().MarkAllowed(id);
-            else App.Services.GetRequiredService<IPersonPendingStore>().MarkAllowed(id, "user");
+            else App.Services.GetRequiredService<IPersonPendingStore>().MarkAllowed(id, new AAuthPersonKey("user"), "user");
         }
 
         public async Task<JsonObject> AssertTokenAsync(HttpResponseMessage response, DateTimeOffset expectedExpiry)
@@ -307,14 +350,14 @@ public class IssuanceBoundsTests
     private sealed class Asserter(bool deferred) : IIdentityClaimsAsserter
     {
         public Task<IdentityAssertion> AssertAsync(IdentityAssertionRequest request, CancellationToken cancellationToken = default)
-            => Task.FromResult(deferred ? IdentityAssertion.NeedsConsent() : IdentityAssertion.Assert("user"));
+            => Task.FromResult(deferred ? IdentityAssertion.NeedsConsent() : IdentityAssertion.Assert(new AAuthPersonKey("user"), "user"));
     }
 
     private sealed class Policy(bool deferred, bool claims, bool injectClaim) : IAccessPolicy
     {
         public Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken cancellationToken = default)
-            => Task.FromResult(injectClaim ? AccessDecision.Allow("user", additionalClaims: new Dictionary<string, JsonNode?> { ["act"] = "injected" })
-                : request.Claims is not null || !deferred ? AccessDecision.Allow("user")
+            => Task.FromResult(injectClaim ? AccessDecision.Allow(additionalClaims: new Dictionary<string, JsonNode?> { ["act"] = "injected" })
+                : request.Claims is not null || !deferred ? AccessDecision.Allow()
                 : claims ? AccessDecision.NeedsClaims(["email", "tenant", "roles", "groups"]) : AccessDecision.NeedsInteraction());
     }
 

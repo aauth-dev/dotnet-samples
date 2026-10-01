@@ -14,7 +14,7 @@ namespace AAuth.Samples.Events;
 
 public static class SampleAgentEnrollment
 {
-    public static void MapSampleAgentEnrollment(this IEndpointRouteBuilder routes, string issuer, IAAuthKey key,
+    public static void MapSampleAgentEnrollment(this IEndpointRouteBuilder routes, string issuer, IAAuthSigner key,
         string keyId, AAuthEgressPolicy policy, SampleAgentRegistry registry)
     {
         policy.ValidateIdentifier(issuer);
@@ -41,8 +41,8 @@ public static class SampleAgentEnrollment
                 var record = registry.Enrol(issuer, (string?)body["agent_id"], publicKey, personServer);
                 if (record is null) return AAuthProblemDetails.Create("invalid_request",
                     "Identity is provider-assigned; key replacement and Person Server changes require authorized reprovisioning.", statusCode: 409);
-                var token = new AgentTokenBuilder { Issuer = issuer, Subject = record.AgentId, Key = key, KeyId = keyId,
-                    ConfirmationKey = record.PublicKey, PersonServer = record.PersonServer, EgressPolicy = policy }.Build();
+                var token = await new AgentTokenBuilder { Issuer = issuer, Subject = record.AgentId, Key = key, KeyId = keyId,
+                    ConfirmationKey = record.PublicKey, PersonServer = record.PersonServer, EgressPolicy = policy }.BuildAsync(context.RequestAborted);
                 return Results.Json(new { agent_id = record.AgentId, agent_token = token, key_id = record.KeyId,
                     jwks_uri = issuer + "/agents/" + Uri.EscapeDataString(record.AgentId) + "/jwks.json", expires_in = 3600 });
             }

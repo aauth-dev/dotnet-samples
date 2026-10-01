@@ -295,8 +295,8 @@ public class AAuthHttpClientExtensionsTests
 
         services.AddAAuthClient("agent", options =>
         {
-            options.Key = key;
-            options.SigningMode = new HwkSignatureKeyProvider(key);
+            options.Signer = key;
+            options.SignatureKeyProvider = new HwkSignatureKeyProvider(key);
         });
 
         var provider = services.BuildServiceProvider();
@@ -307,26 +307,25 @@ public class AAuthHttpClientExtensionsTests
     }
 
     [Fact]
-    public void AddAAuthClient_WithoutKey_Throws()
+    public void AddAAuthClient_WithoutKey_FailsValidation()
     {
         var services = new ServiceCollection();
+        services.AddAAuthClient("agent", options =>
+            options.SignatureKeyProvider = new HwkSignatureKeyProvider(AAuthKey.Generate()));
+        using var provider = services.BuildServiceProvider();
 
-        Assert.Throws<InvalidOperationException>(() =>
-            services.AddAAuthClient("agent", options =>
-            {
-                options.SigningMode = new HwkSignatureKeyProvider(AAuthKey.Generate());
-            }));
+        Assert.Throws<Microsoft.Extensions.Options.OptionsValidationException>(() =>
+            provider.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<AAuthClientOptions>>().Get("agent"));
     }
 
     [Fact]
-    public void AddAAuthClient_WithoutMode_Throws()
+    public void AddAAuthClient_WithoutScheme_FailsValidation()
     {
         var services = new ServiceCollection();
+        services.AddAAuthClient("agent", options => options.Signer = AAuthKey.Generate());
+        using var provider = services.BuildServiceProvider();
 
-        Assert.Throws<InvalidOperationException>(() =>
-            services.AddAAuthClient("agent", options =>
-            {
-                options.Key = AAuthKey.Generate();
-            }));
+        Assert.Throws<Microsoft.Extensions.Options.OptionsValidationException>(() =>
+            provider.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<AAuthClientOptions>>().Get("agent"));
     }
 }

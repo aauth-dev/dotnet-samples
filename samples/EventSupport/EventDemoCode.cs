@@ -13,12 +13,13 @@ public static class EventDemoCode
             var documentUrl = resourceMetadata["r3_vocabularies"]!["urn:aauth:vocabulary:asyncapi"]!.GetValue<string>();
             var channels = await http.GetFromJsonAsync<JsonObject>(
                 new Uri(new Uri(resource), documentUrl), cancellationToken);
-            var eventEndpoint = await protocol.ResolveEventEndpointAsync(provider, cancellationToken);
+            _ = await protocol.ResolveEventEndpointAsync(provider, cancellationToken);
             return channels!;
         }
         """;
     public const string SubscriptionUrl = """
-        public static async Task<(string Agent, string AgentToken, string SubscriptionUrl)> ObtainSubscriptionUrlAsync(AAuthKey key,
+        public static async Task<(string Agent, string AgentToken, string SubscriptionUrl)> ObtainSubscriptionUrlAsync(
+            IAAuthAgentFactory agents, AAuthKey key,
             string provider, string person, string resource, string account, bool protectedChannel,
             string publicSubscriptionUrl, AAuthEgressPolicy policy,
             Func<Interaction, CancellationToken, Task> showConsent, CancellationToken cancellationToken)
@@ -27,13 +28,14 @@ public static class EventDemoCode
                 .WithKey(key).WithKeyStore(new InMemoryKeyStore()).WithPersonServer(person)
                 .WithEgressPolicy(policy).EnrolAsync(cancellationToken);
             if (!protectedChannel) return (enrolled.AgentId!, enrolled.AgentToken!, publicSubscriptionUrl);
-            using var agent = new AAuthClientBuilder(key).UseJwt(enrolled.AgentToken!)
+            // One agent for the enrolled identity, created once and reused for the session.
+            using var agent = agents.Create("event-agent", key, builder => builder.UseJwt(enrolled.AgentToken!)
                 .WithEgressPolicy(policy).WithChallengeHandling(person,
-                    options => options.OnInteractionRequired = showConsent).Build();
+                    options => options.OnInteractionRequired = showConsent));
             using var request = new HttpRequestMessage(HttpMethod.Get,
                 resource + "/search_availability?account=" + Uri.EscapeDataString(account));
             request.Options.Set(AAuthRequestOptions.Account, account);
-            using var response = await agent.SendAsync(request, cancellationToken);
+            using var response = await agent.HttpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
             var result = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken);
             return (enrolled.AgentId!, enrolled.AgentToken!, result!["notifications"]!["subscribe_url"]!.GetValue<string>());
@@ -41,7 +43,7 @@ public static class EventDemoCode
         """;
     public const string SubscribeToken = """
         public static async Task<JsonObject> AcquireSubscribeTokenAsync(EventsProtocol protocol,
-            IAgentEventStore store, IAAuthKey key, string agentToken, string agent,
+            IAgentEventStore store, IAAuthSigner key, string agentToken, string agent,
             string provider, string resource, string context, CancellationToken cancellationToken)
         {
             var body = System.Text.Encoding.UTF8.GetBytes(new JsonObject
@@ -57,7 +59,7 @@ public static class EventDemoCode
         """;
     public const string Registration = """
         public static async Task RegisterSubscriptionAsync(EventsProtocol protocol,
-            Uri subscriptionUrl, IAAuthKey key, string subscribeToken, CancellationToken cancellationToken)
+            Uri subscriptionUrl, IAAuthSigner key, string subscribeToken, CancellationToken cancellationToken)
         {
             using var response = await protocol.SendAsync(HttpMethod.Post, subscriptionUrl,
                 key, subscribeToken, selfIssued: false,
@@ -68,7 +70,7 @@ public static class EventDemoCode
         """;
     public const string Delivery = """
         public static async Task TriggerSampleEventAsync(EventsProtocol protocol, string resource,
-            string eid, IAAuthKey agentKey, string agentToken, string? account, CancellationToken cancellationToken)
+            string eid, IAAuthSigner agentKey, string agentToken, string? account, CancellationToken cancellationToken)
         {
             using var response = await protocol.SendAsync(HttpMethod.Post,
                 new Uri(resource + "/local/events/" + eid + "/notify"
@@ -78,14 +80,14 @@ public static class EventDemoCode
         }
 
         public static async Task DeliverResourceEventAsync(EventsProtocol protocol, string resource,
-            string provider, string agent, string eid, IAAuthKey resourceKey, string resourceKid,
+            string provider, string agent, string eid, IAAuthSigner resourceKey, string resourceKid,
             byte[] payload, CancellationToken cancellationToken)
         {
-            var token = new EventTokenBuilder
+            var token = await new EventTokenBuilder
             {
                 Issuer = resource, Audience = agent, Eid = eid, Key = resourceKey,
                 KeyId = resourceKid, Verifier = protocol.TokenVerifier,
-            }.Build();
+            }.BuildAsync(cancellationToken);
             var endpoint = await protocol.ResolveEventEndpointAsync(provider, cancellationToken);
             using var response = await protocol.SendAsync(HttpMethod.Post, endpoint,
                 resourceKey, token, selfIssued: true, body: payload, cancellationToken: cancellationToken);
@@ -94,7 +96,7 @@ public static class EventDemoCode
         """;
     public const string Receipt = """
         public static async Task VerifyInboxAsync(EventsProtocol protocol, IAgentEventStore store,
-            string provider, string agent, string eid, IAAuthKey key, string agentToken,
+            string provider, string agent, string eid, IAAuthSigner key, string agentToken,
             CancellationToken cancellationToken)
         {
             using var response = await protocol.SendAsync(HttpMethod.Get,
@@ -115,11 +117,11 @@ public static class EventDemoCode
         """;
 
     public const string Example = """
-        builder.Services.AddAAuthEvents();
+        builder.Services.AddAAuthEvents(options => options.EgressPolicy = egressPolicy);
+        // AP endpoint requires a durable transactional quota/outbox store.
+        builder.Services.AddSingleton(providerStore);
         var app = builder.Build();
-        using var http = AAuthHttpTransport.CreateClient(egressPolicy);
-        var protocol = new EventsProtocol(http,
-            app.Services.GetServices<ISignatureTokenVerifier>());
+        var protocol = app.Services.GetRequiredService<EventsProtocol>();
 
         // Public registration uses an AsyncAPI channel URL; protected
         // registration uses the ticket from an authorized Bookings response.
@@ -128,18 +130,18 @@ public static class EventDemoCode
             body: subscriptionParameters);
 
         // Resource signs both JWT and HTTP with the same discoverable key.
-        var eventToken = new EventTokenBuilder
+        var eventToken = await new EventTokenBuilder
         {
             Issuer = resource, Audience = agent, Eid = subscription.Eid,
             Key = resourceKey, KeyId = resourceKid,
             Verifier = protocol.TokenVerifier
-        }.Build();
+        }.BuildAsync();
         var endpoint = await protocol.ResolveEventEndpointAsync(subscription.Provider);
         using var delivery = await protocol.SendAsync(HttpMethod.Post,
             endpoint, resourceKey, eventToken, selfIssued: true, body: payloadBytes);
 
-        // AP endpoint requires a durable transactional quota/outbox store.
-        app.MapAAuthEventEndpoint("/events", protocol, providerStore);
+        // The AP event endpoint resolves the protocol and store from DI.
+        app.MapAAuthEventEndpoint("/events");
 
         // Agent verifies the issuer JWT and context before persisting receipt.
         var receiver = new EventReceiver(protocol, agentStore, agent);

@@ -16,16 +16,13 @@ using AAuth.Server.Verification;
 // Inbox hands back models an existing OAuth access token, bound to the agent's
 // signature so it is useless as a standalone bearer token.
 //
-// Two spec-defined entry points, sharing one decision path:
+// Resource-managed entry point:
 //
 //   REACTIVE   GET /messages
 //     first call (no token) -> 202 + AAuth-Requirement: requirement=interaction
 //                              (url = /consent, code) + Location = /pending/{code}
 //     user approves at /consent, agent polls /pending/{code} -> 200 + AAuth-Access
 //     later calls send Authorization: AAuth <token68> (signed) -> 200 + messages
-//
-//   PROACTIVE  POST /authorize  { "scope": "inbox.read" }   (§Authorization
-//     Endpoint Request) -> same 202/interaction path, then AAuth-Access.
 //
 // The Inbox owns its own consent surface (/consent) — no PS/AS is involved.
 // ---------------------------------------------------------------------------
@@ -41,19 +38,16 @@ var resourceUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:500
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 
 // One DI call: verifier, discovery clients (pooled handler), JTI store, and the
-// published metadata (access_mode + authorization_endpoint) — no manual
-// HttpClient/discovery wiring.
+// published metadata (access_mode) — no manual HttpClient/discovery wiring.
 builder.Services.AddAAuthResource(o =>
 {
     o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
-    o.RevocationEndpoint = $"{resourceUrl}/revoke";
     o.SigningKeys[ResourceKid] = resourceKey;
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
     o.SignatureWindow = signatureWindowSeconds;
     o.Name = "Aria Inbox";
-    o.AccessMode = AAuthConstants.AccessModes.AAuthAccessToken;
-    o.AuthorizationEndpoint = $"{resourceUrl}/authorize";
+    o.AccessMode = AAuthConstants.AccessModes.SessionToken;
 });
 
 // Resource-managed interaction module: registers the opaque-token store, the
@@ -73,7 +67,6 @@ var store = app.Services.GetRequiredService<IOpaqueTokenStore>();
 // Well-known metadata + JWKS from the DI-registered resource metadata. Served
 // unsigned (no endpoint requirement metadata, so UseAAuth passes it through).
 app.MapAAuthWellKnown();
-app.MapAAuthRevocationEndpoint(app.Services.GetRequiredService<IJtiStore>(), options => options.AllowTokenIssuer = true);
 
 // Resource-managed (two-party) access: the protected endpoints declare
 // .RequireAAuthSignature(); this single post-routing middleware verifies the
@@ -85,7 +78,7 @@ app.UseRouting();
 // intentionally open. This silences the startup open-trust warning, which would
 // otherwise false-positive here: the SDK can't tell at startup that no auth-token
 // endpoint exists. (AAuthTrust lives in AAuth.Server, already imported above.)
-app.UseAAuth(o => o.IsTrustedAuthTokenIssuer = AAuthTrust.Any);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Predicate = AAuthTrust.Any);
 
 // Sample inbox contents (illustrative; not spec-defined).
 string[] sampleMessages =
@@ -99,11 +92,10 @@ string[] sampleMessages =
 app.MapGet("/", () => Results.Ok(new
 {
     resource = "Aria Inbox",
-    accessMode = "aauth-access-token",
+    accessMode = "session-token",
     flows = new[]
     {
         new { path = "/messages", entry = "reactive", note = "202 → consent → AAuth-Access → replay" },
-        new { path = "/authorize", entry = "proactive", note = "POST { scope } → same consent path" },
     },
 }));
 
@@ -122,19 +114,6 @@ app.MapGet("/messages", async (HttpContext ctx) =>
     }
 
     return ctx.RequireAAuthInteraction("inbox.read");
-}).RequireAAuthSignature();
-
-// POST /authorize — proactive entry point (§Authorization Endpoint Request).
-// Same decision path as /messages.
-app.MapAAuthAuthorizationEndpoint("/authorize", async (ctx, request) =>
-{
-    var info = await ctx.ResolveAAuthAccessAsync(store, ctx.RequestAborted);
-    if (info is not null)
-    {
-        return Results.Ok(new { authorized = true, scope = info.Scope });
-    }
-
-    return ctx.RequireAAuthInteraction(request.Scope);
 }).RequireAAuthSignature();
 
 // The deferred-response poll target (§Resource-Managed Authorization): 202 while
@@ -200,11 +179,11 @@ app.MapPost("/consent/approve", async (HttpContext ctx, IInteractionPendingStore
     var decision = await browserConsent.DecideAsync(ctx);
     if (decision.Error is not null) return decision.Error;
     var entry = pending.Get(decision.Decision!.Id);
-    if (entry is null) return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+    if (entry is null) return AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
     return await decision.Decision.ApplyAsync(ctx, () =>
     {
         if (entry.Approved || entry.Denied || entry.Expiry <= DateTimeOffset.UtcNow)
-            return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+            return AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
         entry.Approved = true;
         return Results.Content(
             "<!doctype html><meta charset=utf-8><title>Connected</title>"
@@ -223,11 +202,11 @@ app.MapPost("/consent/deny", async (HttpContext ctx, IInteractionPendingStore pe
     var decision = await browserConsent.DecideAsync(ctx);
     if (decision.Error is not null) return decision.Error;
     var entry = pending.Get(decision.Decision!.Id);
-    if (entry is null) return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+    if (entry is null) return AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
     return await decision.Decision.ApplyAsync(ctx, () =>
     {
         if (entry.Approved || entry.Denied || entry.Expiry <= DateTimeOffset.UtcNow)
-            return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+            return AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
         entry.Denied = true;
         return Results.Content("<!doctype html><title>Denied</title><h1>Denied</h1>", "text/html");
     });

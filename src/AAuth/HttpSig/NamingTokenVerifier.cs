@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
 using AAuth.Errors;
+using AAuth.Tokens;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.HttpSig;
@@ -15,6 +16,9 @@ public static class NamingTokenVerifier
         var info = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatJktJwt(jwt));
         var header = info.Header!;
         var payload = info.Payload!;
+        try { TokenVerifier.ValidateJoseProtectedHeader(header); }
+        catch (TokenVerificationException exception)
+        { throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, exception.Message, exception); }
         if (SignatureKeyParser.Text(header, "typ") != AAuthConstants.TokenTypes.JktS256Jwt)
             throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Unexpected naming JWT typ.");
         if (header["jwk"] is not JsonObject durableJwk)
@@ -24,12 +28,14 @@ public static class NamingTokenVerifier
         if (SignatureKeyParser.Text(payload, "iss") != issuer)
             throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Naming JWT issuer does not match durable key thumbprint.");
         VerifySignature(jwt, header, durable);
-        var expires = ValidateTime(payload, now, clockSkew, requireIssuedAt: true);
+        var expires = ValidateTime(payload, now, expirationSkew: TimeSpan.Zero,
+            requireIssuedAt: true, issuedAtWindow: clockSkew);
         var confirmation = SignatureKeyParser.Confirmation(payload);
         return new(durable, confirmation, issuer, expires);
     }
 
-    internal static DateTimeOffset ValidateTime(JsonObject payload, DateTimeOffset now, TimeSpan skew, bool requireIssuedAt)
+    internal static DateTimeOffset ValidateTime(JsonObject payload, DateTimeOffset now, TimeSpan expirationSkew, bool requireIssuedAt,
+        TimeSpan? issuedAtWindow = null)
     {
         if (payload["exp"] is not JsonValue expiration || !expiration.TryGetValue<long>(out var expires))
             throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires integer exp.");
@@ -37,14 +43,16 @@ public static class NamingTokenVerifier
         try { expiresAt = DateTimeOffset.FromUnixTimeSeconds(expires); }
         catch (ArgumentOutOfRangeException exception)
         { throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT exp out of range.", exception); }
-        if (expiresAt <= now - skew)
+        if (expiresAt <= now - expirationSkew)
             throw new AAuthVerificationException(SignatureErrorCode.ExpiredJwt, "JWT has expired.");
         if (payload.ContainsKey("iat") || requireIssuedAt)
         {
             if (payload["iat"] is not JsonValue issuance || !issuance.TryGetValue<long>(out var issued)
                 || issued < DateTimeOffset.MinValue.ToUnixTimeSeconds() || issued > DateTimeOffset.MaxValue.ToUnixTimeSeconds()
-                || issued > (now + skew).ToUnixTimeSeconds() || issued >= expires)
-                throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires a valid, nonfuture iat before exp.");
+                || issued >= expires)
+                throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires a valid iat before exp.");
+            if (issued > (now + (issuedAtWindow ?? TimeSpan.Zero)).ToUnixTimeSeconds())
+                throw new AAuthVerificationException(SignatureErrorCode.ClockSkew, "JWT iat is ahead of the verifier clock.");
         }
         return expiresAt;
     }

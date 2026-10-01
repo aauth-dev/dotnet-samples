@@ -7,17 +7,25 @@ policy. Isolated demo consent is local-only; do not expose this stack publicly.
 Calendar, Inbox, Wallet, Trips, Bookings and Concierge pages execute real signed
 requests. Profile pages explicitly demonstrate generic HWK, direct JWKS and
 naming-JWT signatures; they are not alternative AAuth resource carriers.
+Interactive pages use the configured `AAuth:Agents:aria` handler. When a
+deferred response carries an interaction, the SDK is already polling; the page
+shows one waiting banner and opens the Person Server dashboard or external
+consent page in a separate tab. SampleApp's polling budget is two minutes by
+default. The Call Chain page resets demo consent so hop 1 (Agent → Concierge)
+and hop 2 (Concierge → Calendar) both appear; hop 2 is a Concierge relay whose
+decision is made at the PS dashboard, but the Concierge's code is not highlighted
+there.
 
 - [Wallet Protocol](../../docs/workflows/wallet-protocol.md): `/wallet-protocol`,
-  with AS clarification/cancel, direct-AS chaining and revocation/recovery
-- [Catalog Gateway](../../docs/workflows/catalog-gateway.md): `/catalog-gateway`,
-  service-qualified grants and sibling-service rejection
+  with AS clarification/cancel, chaining an AS-issued grant and revocation/recovery
+- [Travel Catalog](../../docs/workflows/catalog-gateway.md): `/catalog-gateway`,
+  one merged OpenAPI definition and sibling-operation rejection
 - [Document Release](../../docs/workflows/document-release.md): `/documents`,
   resource permission before PS consent, approval/download and denial
 - [Events](../../docs/workflows/events.md): `/events`, public/protected account
   subscriptions and verified durable receipts
 - [R3](../../docs/workflows/rich-resource-requests.md): `/bookings`, account
-  selection and exact-parameter conditional approval
+  selection and exact-parameter per-call approval
 - [Shared setup](../README.md): service URLs, explicit egress policy and consent
 - [Playwright specs](playwright-tests/): executed through [the shared configuration](../../tests/e2e/playwright.config.ts)
 

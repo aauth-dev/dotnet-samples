@@ -12,7 +12,10 @@ namespace GuidedTour;
 /// immediately. <see cref="Deferred"/> renders the 11-step user-consent
 /// path: exchange returns 202, the agent surfaces an interaction URL to its
 /// user, the user approves, and the agent polls until the PS mints the
-/// auth token.
+/// auth token. <see cref="Events"/>, <see cref="WalletProtocol"/>,
+/// <see cref="Documents"/> and <see cref="Catalog"/> are the capability flows;
+/// their step plans adapt to each deferred response (see
+/// <c>TourSession.Capabilities.cs</c>).
 /// </summary>
 public enum TourMode
 {
@@ -27,6 +30,10 @@ public enum TourMode
     Mission,
     MissionCallChain,
     SubAgent,
+    Events,
+    WalletProtocol,
+    Documents,
+    Catalog,
 }
 
 /// <summary>
@@ -88,6 +95,12 @@ public sealed class TourOptions
     /// <summary>Base URL of the Aria <b>Bookings</b> resource server (Rich Resource Requests, four-party R3).</summary>
     public string BookingsUrl { get; set; } = "http://localhost:5005";
 
+    /// <summary>Base URL of the <b>Travel Catalog</b> resource server (merged R3 OpenAPI definition).</summary>
+    public string CatalogUrl { get; set; } = "http://localhost:5006";
+
+    /// <summary>Base URL of the <b>Documents</b> resource server (resource permission before PS consent).</summary>
+    public string DocumentsUrl { get; set; } = "http://localhost:5007";
+
     /// <summary>
     /// Optional MockPersonServer URL. When set, the tour walks one of the
     /// three-party flows (selected by <see cref="Mode"/>); when null/empty
@@ -127,7 +140,7 @@ public sealed class TourOptions
     /// When set (with a Person Server), the RichRequests tour mode becomes selectable:
     /// the agent calls Bookings (whose resource token has <c>aud</c> = this AS), the
     /// Person Server federates to the R3 AS, and the AS mints an R3 <c>aa-auth+jwt</c>
-    /// carrying <c>r3_granted</c>/<c>r3_conditional</c>.
+    /// carrying <c>r3_granted</c>/<c>r3_per_call</c>.
     /// </summary>
     public string? R3AccessServerUrl { get; set; }
 
@@ -139,5 +152,11 @@ public sealed class TourOptions
     /// regardless of this setting.
     /// </summary>
     public TourMode Mode { get; set; } = TourMode.Bootstrap;
-}
 
+    /// <summary>
+    /// Local-only educational override that shows raw protocol tokens, headers
+    /// and decoded JWT payloads in the tour inspector. Keep disabled for shared
+    /// or non-local demos.
+    /// </summary>
+    public bool ShowSensitiveProtocolArtifacts { get; set; }
+}

@@ -1,9 +1,7 @@
 @page "/wallet-protocol"
-@rendermode InteractiveServer
-@inject IConfiguration Configuration
+@inject NavigationManager Navigation
 
-<PageTitle>Wallet Protocol Tour</PageTitle>
-<CapabilityTourChrome CurrentValue="/wallet-protocol" ResourceLabel="Wallet"
-	ResourceUrl="@(Configuration["AAuth:Wallet"] ?? "http://localhost:5003")"
-	ShowAccessServer="true" ShowConcierge="true" />
-<AAuth.Samples.Capabilities.WalletWalkthrough GuidedTour="true" />
+@* Flow WalletProtocol now runs inside the standard tour; keep the old route as a redirect. *@
+@code {
+    protected override void OnInitialized() => Navigation.NavigateTo("/tour?flow=WalletProtocol", replace: true);
+}

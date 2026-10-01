@@ -1,7 +1,9 @@
 import type { Page, BrowserContext } from '@playwright/test';
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
-import { approveInPopup } from '../../../tests/e2e/helpers/consent';
+import { approveInPopup, directedSubject } from '../../../tests/e2e/helpers/consent';
+import { Urls } from '../../../tests/e2e/helpers/agents';
+import { CONSENT_ACTION } from '../../../tests/e2e/helpers/dashboard';
 
 /**
  * Mission Call Chain (SampleApp) — one human-approved mission governs three
@@ -13,8 +15,8 @@ import { approveInPopup } from '../../../tests/e2e/helpers/consent';
  *                                then the user approves the prompt.
  *   3. Mission-forwarded chain — SILENT: the same mission is carried
  *                                (WithMission) to the Concierge's mission-aware
- *                                "/mission" endpoint, which forwards the
- *                                AAuth-Mission header to the Trips "/trips"
+ *                                "/mission" endpoint, whose upstream auth token
+ *                                carries the mission_s256 to the Trips "/trips"
  *                                hop. Both hops are seeded in-scope, so no prompt.
  *
  * The page then fetches the PS-held mission log (§Mission Log) and renders it.
@@ -25,7 +27,7 @@ test.describe('Mission Call Chain (SampleApp)', () => {
 
   /** The PS consent link surfaced while a step is parked on user approval. */
   function approvalLink(page: Page) {
-    return page.locator('.alert-warning a[target="_blank"]');
+    return page.locator(`.alert-warning ${CONSENT_ACTION}`);
   }
 
   /** A step-outcome card by its 1-based number (cards render in order). */
@@ -104,10 +106,17 @@ test.describe('Mission Call Chain (SampleApp)', () => {
     const chain = JSON.parse(chainJson) as Record<string, any>;
     expect(chain.downstream.accessMode).toBe('three-party');
     expect(chain.downstream.scope).toEqual(['trips.read']);
-    // The downstream Trips hop saw the Concierge as the immediate actor.
-    expect(chain.downstream.agent).toBe('aauth:concierge@localhost');
-    // The mission was forwarded: the downstream auth token carries the mission.
-    expect(chain.downstream.mission).toBeTruthy();
+    // The downstream Trips grant names the same person's PS; no agent/act claims.
+    expect(chain.downstream.ps).toBe(Urls.personServer);
+    expect(chain.downstream.ps).toBe(chain.upstream.ps);
+    expect(chain.downstream.sub).toBe(directedSubject(Urls.trips));
+    expect(chain.downstream).not.toHaveProperty('agent');
+    expect(chain.downstream).not.toHaveProperty('act');
+    // The mission was forwarded: both hops carry the same mission_s256, which is
+    // the mission approved in step 1.
+    const missionS256 = JSON.parse(await stepCard(page, 1).locator('pre code').innerText()).s256;
+    expect(chain.upstream.mission_s256).toBe(missionS256);
+    expect(chain.downstream.mission_s256).toBe(missionS256);
 
     // The PS-held mission log/trail is surfaced and records the governed steps.
     await expect(page.locator('[data-test="mission-log"]')).toBeVisible({ timeout: 30_000 });

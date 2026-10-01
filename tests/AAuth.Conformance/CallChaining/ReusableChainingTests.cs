@@ -20,7 +20,7 @@ namespace AAuth.Conformance.CallChaining;
 public class ReusableChainingTests
 {
     [Theory]
-    [InlineData("agent")]
+    [InlineData("key")]
     [InlineData("subject")]
     [InlineData("scope")]
     [InlineData("mission")]
@@ -34,12 +34,14 @@ public class ReusableChainingTests
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         const string agentId = "aauth:intermediary@ap.test";
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = egress, Issuer = origin, Subject = agentId, Key = issuerKey, KeyId = "key",
             ConfirmationKey = agentKey, PersonServer = origin,
-        }.Build();
+        }.BuildAsync();
         var asserter = new Asserter();
+        var inventory = new InMemoryJtiStore();
+        var enrollments = new InMemoryPersonResourceEnrollmentStore();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseKestrel().UseUrls(origin);
         builder.Services.AddSingleton(new MetadataClient(policy: egress));
@@ -49,60 +51,103 @@ public class ReusableChainingTests
         builder.Services.AddSingleton<UpstreamTokenValidator>();
         builder.Services.AddSingleton<IIdentityClaimsAsserter>(asserter);
         builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+        builder.Services.AddSingleton<IPersonResourceEnrollmentStore>(enrollments);
         builder.Services.AddAAuthGovernance();
         builder.Services.AddSingleton<IMissionTokenConsent, Consent>();
-        await using var app = builder.Build();
-        app.MapAAuthPersonServer(new AAuthPersonServerOptions
+        builder.Services.AddAAuthPersonServer(configure: o =>
         {
-            Issuer = origin, EgressPolicy = egress, SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = issuerKey },
-            UnsignedPathPrefixes = ["/data"],
-        });
+            o.Issuer = origin;
+            o.EgressPolicy = egress;
+            o.SigningKeys = new AAuthSigningKeySet { ["key"] = issuerKey };
+            o.UnsignedPathPrefixes = ["/data"];
+        }).UseTokenInventory(inventory);
+        await using var app = builder.Build();
+        app.MapAAuthPersonServer();
         foreach (var dwk in new[] { AAuthConstants.DwkFiles.Agent, AAuthConstants.DwkFiles.Resource })
             app.MapGet("/.well-known/" + dwk, () => Results.Json(new { issuer = origin, jwks_uri = origin + "/.well-known/jwks.json" }));
+        const string mission = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         var challenges = 0;
-        app.MapGet("/data", (HttpContext context) =>
+        app.MapGet("/data", async (HttpContext context) =>
         {
             var parsed = SignatureKeyParser.Parse(context.Request.Headers["Signature-Key"]!);
-            if ((string?)parsed.Header?["typ"] == AuthTokenBuilder.TokenType)
+            var typ = (string?)parsed.Header?["typ"];
+            if (typ == AuthTokenBuilder.TokenType)
                 return Results.Text(parsed.Jwt!);
-            challenges++;
-            var resource = new ResourceTokenBuilder
+            if (typ != PersonTokenBuilder.TokenType)
             {
-                EgressPolicy = egress, Issuer = origin, Audience = origin, Agent = agentId,
+                context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatPersonToken();
+                return Results.StatusCode(401);
+            }
+            // §Resource Token Structure: name the presented person token.
+            challenges++;
+            var person = parsed.Payload!;
+            var resource = await new ResourceTokenBuilder
+            {
+                EgressPolicy = egress, Issuer = origin, Audience = origin,
+                PersonServer = (string)person["iss"]!, Subject = (string)person["sub"]!, PresentedJti = (string)person["jti"]!,
+                MissionS256 = (string?)person["mission_s256"],
                 AgentJkt = agentKey.ComputeJwkThumbprint(), Key = issuerKey, KeyId = "key",
                 Scope = "read", ScopeDescriptions = TestScopeDefinitions.Resource,
-                Mission = context.Request.Headers.ContainsKey(AAuthMissionHeader.Name)
-                    ? new MissionClaim(origin, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") : null,
-            }.Build();
+            }.BuildAsync();
             context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatAuthToken(resource);
             return Results.StatusCode(401);
         });
         await app.StartAsync();
         await app.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
-            "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk", origin, "aauth:caller-a@origin.test", ReadOnlyMemory<byte>.Empty));
-        string Upstream(bool second) => new AuthTokenBuilder
+            mission, origin, "aauth:caller-a@origin.test", ReadOnlyMemory<byte>.Empty));
+        var callerKey = AAuthKey.Generate();
+        async ValueTask<string> UpstreamAsync(bool second)
         {
-            EgressPolicy = egress, Issuer = origin, Audience = origin, Key = issuerKey, KeyId = "key",
-            Agent = second && changed == "agent" ? "aauth:caller-b@origin.test" : "aauth:caller-a@origin.test",
+            var token = await new AuthTokenBuilder
+        {
+            EgressPolicy = egress, Issuer = origin, Audience = origin, PersonServer = origin, Key = issuerKey, KeyId = "key",
             Subject = second && changed == "subject" ? "person-b" : "person-a",
             Scope = second && changed == "scope" ? "limited" : "read",
-            Mission = second && changed == "mission" ? new MissionClaim(origin, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") : null,
-            AgentConfirmationKey = agentKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
-        }.Build();
-        var current = Upstream(false);
+            MissionS256 = second && changed == "mission" ? mission : null,
+            AgentConfirmationKey = second && changed == "key" ? AAuthKey.Generate() : callerKey,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
+            }.BuildAsync();
+            await RecordUpstreamProvenanceAsync(inventory, token, origin);
+            var subject = second && changed == "subject" ? "person-b" : "person-a";
+            await enrollments.RecordAsync(new PersonResourceEnrollment(
+                origin, new AAuthPersonKey("chain-" + subject), origin, subject, "test", DateTimeOffset.UtcNow));
+            return token;
+        }
+        var current = await UpstreamAsync(false);
         using var client = new AAuthClientBuilder(agentKey).UseJwt(agentToken).WithCallChaining(() => current)
             .WithEgressPolicy(egress).Build();
         var first = await client.GetStringAsync(origin + "/data");
         Assert.Equal(first, await client.GetStringAsync(origin + "/data"));
         Assert.Equal(1, challenges);
-        current = Upstream(true);
+        Assert.Equal(2, asserter.Calls);
+        current = await UpstreamAsync(true);
         var second = await client.GetStringAsync(origin + "/data");
         Assert.Equal(2, challenges);
         Assert.NotEqual(first, second);
         var payload = TokenVerifier.DecodeJsonSegment(second.Split('.')[1], "payload");
-        Assert.Equal(changed == "agent" ? "aauth:caller-b@origin.test" : "aauth:caller-a@origin.test", (string?)payload["act"]?["agent"]);
-        Assert.Equal(changed == "mission", payload["mission"] is not null);
-        Assert.Equal(2, asserter.Calls);
+        Assert.Null(payload["act"]);
+        Assert.Equal(changed == "subject" ? "downstream-person-b" : "downstream-person-a", (string?)payload["sub"]);
+        Assert.Equal(changed == "mission" ? mission : null, (string?)payload["mission_s256"]);
+        Assert.Equal(4, asserter.Calls);
+    }
+
+    private static async Task RecordUpstreamProvenanceAsync(IJtiStore inventory, string authToken, string issuer)
+    {
+        var payload = TokenVerifier.DecodeJsonSegment(authToken.Split('.')[1], "payload");
+        var token = new TokenKey(payload["iss"]!.GetValue<string>(), payload["jti"]!.GetValue<string>());
+        var expires = DateTimeOffset.FromUnixTimeSeconds(payload["exp"]!.GetValue<long>());
+        var callerToken = new TokenKey(issuer, "caller-agent");
+        var binding = AgentPersonBinding.Key(issuer, issuer, "aauth:caller@origin.test", generation: 1);
+        var bindingExpires = new DateTimeOffset(9000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        await inventory.RegisterAsync(callerToken, bindingExpires);
+        await inventory.RegisterAsync(binding, bindingExpires);
+        var caller = new UpstreamCallerRecord(issuer, "aauth:caller@origin.test", callerToken, binding);
+        await inventory.RegisterGrantAsync([callerToken, binding], new TokenGrant(
+            token, payload["aud"]!.GetValue<string>(), expires)
+        {
+            Provenance = new AAuthTokenProvenance(AAuthConstants.TokenTypes.AuthToken,
+                payload["aud"]!.GetValue<string>(), payload["sub"]!.GetValue<string>(), issuer, caller),
+        });
     }
 
     private sealed class Asserter : IIdentityClaimsAsserter
@@ -111,7 +156,7 @@ public class ReusableChainingTests
         public Task<IdentityAssertion> AssertAsync(IdentityAssertionRequest request, CancellationToken cancellationToken = default)
         {
             Calls++;
-            return Task.FromResult(IdentityAssertion.Assert("downstream-" + request.UpstreamAuthorization?.Subject));
+            return Task.FromResult(IdentityAssertion.Assert(request.PersonKey ?? new AAuthPersonKey("chain-person"), "downstream-" + request.UpstreamAuthorization?.Subject));
         }
     }
 

@@ -14,6 +14,9 @@ public sealed record R3TokenIssuanceAuditRecord(
     string AgentId,
     string ResourceIssuer,
     string AccessServerIssuer,
+    string PersonServer,
+    string Subject,
+    string AgentJkt,
     DateTimeOffset IssuedAt,
     R3TokenIssuanceKind IssuanceKind)
 {

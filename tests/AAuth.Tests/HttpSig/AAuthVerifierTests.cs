@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.HttpSig;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.HttpSig;
@@ -27,7 +28,7 @@ public class AAuthVerifierTests
         AAuthKey key, string jwt, DateTimeOffset clock, HttpMethod method, string url)
     {
         var capture = new CaptureHandler();
-        var signing = new AAuthSigningHandler(key, () => jwt, () => clock) { InnerHandler = capture };
+        var signing = new AAuthSigningHandler(key, () => jwt, new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(signing);
         await client.SendAsync(new HttpRequestMessage(method, url));
         return capture.Captured!;
@@ -40,7 +41,7 @@ public class AAuthVerifierTests
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var req = await SignedRequest(key, "abc.def.ghi", clock, HttpMethod.Get, "https://resource.example/api");
 
-        var verifier = new AAuthVerifier { Clock = () => clock };
+        var verifier = new AAuthVerifier { TimeProvider = new FakeTimeProvider(clock) };
         verifier.Verify(
             method: "GET",
             authority: "resource.example",
@@ -59,7 +60,7 @@ public class AAuthVerifierTests
         var req = await SignedRequest(key, "abc.def.ghi", signed, HttpMethod.Get, "https://r.example/");
 
         // Clock advanced past the freshness window (default 60s).
-        var verifier = new AAuthVerifier { Clock = () => signed.AddMinutes(5) };
+        var verifier = new AAuthVerifier { TimeProvider = new FakeTimeProvider(signed.AddMinutes(5)) };
         Assert.Throws<AAuthVerificationException>(() =>
             verifier.Verify("GET", "r.example", "/", req.Headers.GetValues("Signature-Key").Single(),
                 req.Headers.GetValues("Signature-Input").Single(),
@@ -74,7 +75,7 @@ public class AAuthVerifierTests
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var req = await SignedRequest(key, "abc.def.ghi", clock, HttpMethod.Get, "https://r.example/legit");
 
-        var verifier = new AAuthVerifier { Clock = () => clock };
+        var verifier = new AAuthVerifier { TimeProvider = new FakeTimeProvider(clock) };
         Assert.Throws<AAuthVerificationException>(() =>
             verifier.Verify("GET", "r.example", "/tampered",
                 req.Headers.GetValues("Signature-Key").Single(),

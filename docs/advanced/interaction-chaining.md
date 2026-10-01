@@ -15,11 +15,13 @@ and the host's `ResourceInteractionSessions` configuration contract.
 
 ## Spec Requirement (§Interaction Chaining)
 
-The intermediary returns its own pending `Location` while forwarding the
-downstream interaction URL/code. The browser approves at that downstream server.
-The sample aborts the downstream exchange on interaction and re-drives it when
-the original caller polls, rather than retaining a downstream poll connection.
-See [Interaction Chaining](../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#interaction-chaining).
+The intermediary returns its own pending `Location`, its own interaction URL,
+and its own interaction code. The user visits the intermediary interaction URL,
+which validates the intermediary code and redirects the browser to the
+downstream PS/AS interaction. The sample aborts the downstream exchange on
+interaction and re-drives it when the original caller polls, rather than
+retaining a downstream poll connection.
+See [Interaction Chaining](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#interaction-chaining).
 
 ## Flow Diagram
 
@@ -33,9 +35,11 @@ sequenceDiagram
     A->>C: request (auth token)
     C->>PS: exchange for downstream auth token
     PS-->>C: 202 + requirement=interaction
-    C-->>A: 202 + own Location, downstream interaction URL/code
+    C-->>A: 202 + own Location, own interaction URL/code
 
-    A->>U: open interaction URL in browser
+    A->>U: open Concierge interaction URL in browser
+    U->>C: present Concierge code
+    C-->>U: redirect to downstream PS interaction URL/code
     U->>PS: complete consent
 
     loop poll until resolved
@@ -89,9 +93,13 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
     }
     catch (AAuthInteractionChainedException ex)
     {
-        // Downstream needs consent. Park the upstream token + the downstream
-        // interaction details, then re-emit our OWN 202 to the caller.
-        var entry = pending.Add(upstream, ex.Interaction.Url, ex.Interaction.Code);
+        // Downstream needs consent. Park serializable operation state and the
+        // downstream interaction, then re-emit our OWN 202 to the caller.
+        var chained = AAuthChainedInteractions.Park(
+            conciergeUrl, "/pending", "/chain-interaction", ex,
+            "calendar.events", new JsonObject { ["path"] = "/events" },
+            DateTimeOffset.UtcNow.AddMinutes(10));
+        var entry = pending.Add(upstream, chained);
         return ReEmitChainedInteraction(ctx, entry);
     }
 });
@@ -104,20 +112,21 @@ double-write to the response.
 
 ### Re-emitting the chained 202
 
-`ReEmitChainedInteraction` writes the intermediary's own `202` carrying *its* poll URL and
-the downstream interaction's `url`/`code` (the user approves the downstream resource
-directly):
+`ReEmitChainedInteraction` writes the intermediary's own `202` carrying *its*
+poll URL and *its* interaction `url`/`code`. The downstream interaction is held
+server-side until the browser reaches the intermediary interaction URL:
 
 ```csharp
 IResult ReEmitChainedInteraction(HttpContext ctx, PendingStore.Entry entry)
+    => AAuthChainedInteractions.Accepted(ctx, entry.Interaction);
+
+app.MapGet("/chain-interaction/{id}", (string id, string? code, PendingStore pending) =>
 {
-    ctx.Response.Headers.Location = $"{ctx.Request.Scheme}://{ctx.Request.Host}/pending/{entry.Id}";
-    ctx.Response.Headers["Retry-After"] = "1";
-    ctx.Response.Headers.CacheControl = "no-store";
-    ctx.Response.Headers[AAuthRequirementHeader.Name] =
-        Interaction.Format(entry.InteractionUrl, entry.InteractionCode);
-    return Results.Json(new { status = "interaction_required" }, statusCode: 202);
-}
+    var entry = pending.Get(id);
+    if (entry is null || !AAuthInteractionCode.Matches(entry.Interaction.Code, code ?? ""))
+        return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
+    return AAuthChainedInteractions.RedirectToDownstream(entry.Interaction);
+});
 ```
 
 ### Resuming at the poll endpoint
@@ -132,7 +141,7 @@ app.MapMethods("/pending/{id}", ["GET", "DELETE"], async (HttpContext ctx, strin
     var entry = pending.Get(id);
     if (entry is null || ctx.Request.Path != $"{entry.PendingPrefix}/{entry.Id}"
         || !entry.Matches(ctx.Features.Get<UpstreamAuthTokenFeature>()?.Token))
-        return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: 404);
+        return AAuth.Server.AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
 
     return await entry.Lifecycle.ExecuteAsync(ctx, entry.ExpiresAt, TimeProvider.System, async () =>
     {
@@ -176,8 +185,8 @@ using var client = AAuthClientBuilder.SelfIssuing(agentKey)
     })
     .WithInteractionHandling(opts =>        // hop 2: intermediary's chained 202
     {
-        opts.OnInteractionRequired = (userUrl, code, _) =>
-            SurfaceToUser(userUrl);
+        opts.OnInteractionRequired = (interaction, _) =>
+            SurfaceToUser(interaction.BuildUserUrl());
     })
     .Build();
 
@@ -190,7 +199,10 @@ straight through unless `WithInteractionHandling` is also configured.
 ## Manual Pattern (Without Builder)
 
 For full control over the interaction-chaining flow using `CallChainingHandler` directly,
-apply the same throw-to-abort rule inside the `onInteractionRequired` callback:
+apply the same throw-to-abort rule inside the `onInteractionRequired` callback. The
+intermediary first requests a downstream person token with the caller's token as
+`upstream_token` (at the PS that token names), presents it downstream, and passes the
+resulting resource token **and** that person token (`presentedToken`) to the exchange:
 
 ```csharp
 app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
@@ -200,9 +212,17 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
 
     try
     {
+        // Person token for the downstream resource, requested under the upstream token.
+        var downstreamPersonToken = await exchangeClient.RequestPersonTokenAsync(
+            CallChainingRouter.ResolveDownstreamServer(upstream.Token, exchangeClient.EgressPolicy),
+            downstreamResource,
+            new TokenExchangeRequest { UpstreamToken = upstream.Token });
+
+        // ...present downstreamPersonToken downstream; its 401 carries resourceToken...
         var chainedToken = await chainHandler.ExchangeForDownstreamAsync(
             upstream.Token,
             resourceToken,
+            downstreamPersonToken,
             onInteractionRequired: (interaction, _) =>
                 // Abort before the blocking poll; the endpoint re-emits its own 202.
                 throw new AAuthInteractionChainedException(interaction),
@@ -220,7 +240,11 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
     }
     catch (AAuthInteractionChainedException ex)
     {
-        var entry = pending.Add(upstream.Token, ex.Interaction.Url, ex.Interaction.Code);
+        var chained = AAuthChainedInteractions.Park(
+            "https://intermediary.example", "/pending", "/chain-interaction", ex,
+            "downstream.read", new JsonObject { ["resource"] = downstreamUrl },
+            DateTimeOffset.UtcNow.AddMinutes(10));
+        var entry = pending.Add(upstream.Token, chained);
         return ReEmitChainedInteraction(ctx, entry);
     }
 });
@@ -232,23 +256,17 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
 
 The intermediary must manage pending requests:
 
-1. **Store**: When `onInteractionRequired` fires, store the request context and downstream interaction details.
+1. **Store**: When `onInteractionRequired` fires, store the operation name,
+   JSON state, and downstream interaction details behind an intermediary-owned
+   code (`AAuthChainedInteractions.Park` returns this serializable entry).
 2. **Poll endpoint**: Expose a `/pending/{id}` endpoint that the original agent polls.
 3. **Background completion**: When user consent completes, the downstream PS issues the token. The intermediary completes the original request.
 4. **Cleanup**: Expire stale pending requests.
 
-This is application-specific logic that the SDK intentionally does not automate, as different architectures (stateless, queue-backed, actor-based) require different implementations.
-
-## Future Enhancement: Automatic Propagation Middleware
-
-A future SDK version may provide an `InteractionPropagationMiddleware` that:
-
-- Automatically returns 202 to the caller when downstream interaction is needed
-- Manages a pending-request store (pluggable: in-memory, Redis, database)
-- Exposes a polling endpoint
-- Completes the original request when downstream interaction resolves
-
-This would further reduce boilerplate for common intermediary patterns. Track progress in the SDK roadmap.
+The SDK owns the wire mechanics for the chained `202`, code generation, and
+downstream redirect. Applications still own durable persistence and operation
+resume policy because different architectures (stateless, queue-backed,
+actor-based) need different stores.
 
 ## See Also
 

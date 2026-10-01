@@ -4,8 +4,9 @@ namespace AAuth.Identifiers;
 
 /// <summary>
 /// Validates and normalises an AAuth agent identifier per §Agent Identifiers.
-/// Format: <c>aauth:local@domain</c> where local is [a-z0-9\-_+.]{1,255}
-/// and domain is a valid server identifier domain.
+/// Format: <c>aauth:local@domain</c> where local is [A-Za-z0-9\-_.]{1,255}
+/// for top-level agents, or <c>parent+discriminator</c> for sub-agents. The
+/// domain is a valid server identifier domain. Comparison is exact and case-sensitive.
 /// </summary>
 public readonly struct AgentId : IEquatable<AgentId>
 {
@@ -24,17 +25,15 @@ public readonly struct AgentId : IEquatable<AgentId>
 
     /// <summary>
     /// Whether this identifier names a <b>sub-agent</b> — its local part contains
-    /// the reserved <c>+</c> delimiter (§Sub-Agents, §Agent Identifiers). This is a
-    /// naming convention for operational readability; the authoritative sub-agent
-    /// marker is the <c>parent_agent</c> claim in the agent token, not this check.
+    /// exactly one reserved <c>+</c> delimiter with non-empty parent and
+    /// discriminator (§Sub-Agents, §Agent Identifiers).
     /// </summary>
     public bool IsSubAgent => Local.Contains('+', StringComparison.Ordinal);
 
     /// <summary>
     /// For a sub-agent identifier, the parent's full agent identifier — the local
-    /// part up to the first <c>+</c>, with the same domain. <see langword="null"/>
-    /// for a top-level agent. Derived from the naming convention only; protocol
-    /// decisions use the <c>parent_agent</c> claim.
+    /// part up to the single <c>+</c>, with the same domain. <see langword="null"/>
+    /// for a top-level agent.
     /// </summary>
     public string? ParentAgent
     {
@@ -101,9 +100,27 @@ public readonly struct AgentId : IEquatable<AgentId>
             if (!IsValidLocalChar(c))
             {
                 error = $"Agent identifier local part contains invalid character '{c}' at position {i}. " +
-                        "Allowed: a-z, 0-9, hyphen, underscore, plus, period.";
+                        "Allowed: A-Z, a-z, 0-9, hyphen, underscore, plus, period.";
                 return false;
             }
+        }
+        var plusCount = 0;
+        var plusIndex = -1;
+        for (int i = 0; i < local.Length; i++)
+        {
+            if (local[i] != '+') continue;
+            plusCount++;
+            plusIndex = i;
+        }
+        if (plusCount > 1)
+        {
+            error = "Agent identifier local part may contain at most one '+' sub-agent delimiter.";
+            return false;
+        }
+        if (plusCount == 1 && (plusIndex == 0 || plusIndex == local.Length - 1))
+        {
+            error = "Sub-agent identifiers require non-empty parent and discriminator around '+'.";
+            return false;
         }
 
         // Domain part: must be a valid domain (matches server identifier domain rules).
@@ -136,7 +153,7 @@ public readonly struct AgentId : IEquatable<AgentId>
     }
 
     private static bool IsValidLocalChar(char c) =>
-        c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_' or '+' or '.';
+        c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_' or '+' or '.';
 
     /// <inheritdoc/>
     public bool Equals(AgentId other) => string.Equals(_value, other._value, StringComparison.Ordinal);

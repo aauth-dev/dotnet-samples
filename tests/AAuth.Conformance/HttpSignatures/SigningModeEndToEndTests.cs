@@ -7,6 +7,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Tokens;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.HttpSignatures;
@@ -31,10 +32,10 @@ public class SigningModeEndToEndTests
     private static readonly DateTimeOffset FixedClock = new(2026, 5, 22, 12, 0, 0, TimeSpan.Zero);
 
     private static async Task<HttpRequestMessage> SignRequest(
-        IAAuthKey key, ISignatureKeyProvider provider, string url = "https://r.example/resource")
+        IAAuthSigner key, ISignatureKeyProvider provider, string url = "https://r.example/resource")
     {
         var capture = new CaptureHandler();
-        var handler = new AAuthSigningHandler(key, provider, () => FixedClock)
+        var handler = new AAuthSigningHandler(key, provider, new FakeTimeProvider(FixedClock))
         {
             InnerHandler = capture
         };
@@ -45,7 +46,7 @@ public class SigningModeEndToEndTests
 
     private static AAuthVerifier CreateVerifier() => new()
     {
-        Clock = () => FixedClock,
+        TimeProvider = new FakeTimeProvider(FixedClock),
     };
 
     // ────────────────────────────────────────────────────────────────────────
@@ -57,7 +58,7 @@ public class SigningModeEndToEndTests
     {
         var signingKey = AAuthKey.Generate();
         var apKey = AAuthKey.Generate();
-        var token = new AgentTokenBuilder
+        var token = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -66,7 +67,7 @@ public class SigningModeEndToEndTests
             KeyId = "ap-key-1",
             PersonServer = "https://ps.example",
             ConfirmationKey = signingKey,
-        }.Build();
+        }.BuildAsync();
 
         var provider = new JwtSignatureKeyProvider(() => token);
         var request = await SignRequest(signingKey, provider);
@@ -175,7 +176,7 @@ public class SigningModeEndToEndTests
         // Build a self-issued naming JWT (draft-04 §3.4): durable key signs, its
         // public key is in the header, iss is its thumbprint URN, cnf.jwk is the
         // ephemeral public key.
-        var namingJwt = AAuth.Agent.NamingJwtBuilder.Build(durableKey, ephemeralKey);
+        var namingJwt = await AAuth.Agent.NamingJwtBuilder.BuildAsync(durableKey, ephemeralKey);
 
         var provider = new JktJwtSignatureKeyProvider(() => namingJwt);
         var request = await SignRequest(ephemeralKey, provider);
@@ -220,7 +221,7 @@ public class SigningModeEndToEndTests
     {
         var signingKey = AAuthKey.Generate();
         var apKey = AAuthKey.Generate();
-        var token = new AgentTokenBuilder
+        var token = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -229,7 +230,7 @@ public class SigningModeEndToEndTests
             KeyId = "ap-key-1",
             PersonServer = "https://ps.example",
             ConfirmationKey = signingKey,
-        }.Build();
+        }.BuildAsync();
         var header = SignatureKeyHeader.FormatJwt(token);
         var info = SignatureKeyParser.ParseAny(header);
 
@@ -259,7 +260,7 @@ public class SigningModeEndToEndTests
     {
         var durableKey = AAuthKey.Generate();
         var ephemeralKey = AAuthKey.Generate();
-        var namingJwt = AAuth.Agent.NamingJwtBuilder.Build(durableKey, ephemeralKey);
+        var namingJwt = await AAuth.Agent.NamingJwtBuilder.BuildAsync(durableKey, ephemeralKey);
 
         var header = SignatureKeyHeader.FormatJktJwt(namingJwt);
         var info = SignatureKeyParser.ParseAny(header);
@@ -295,7 +296,7 @@ public class SigningModeEndToEndTests
             ["jti"] = Guid.NewGuid().ToString("N"),
             ["cnf"] = new System.Text.Json.Nodes.JsonObject { ["jwk"] = ephemeralKey.ToPublicJwk() },
         };
-        var namingJwt = JwtWriter.SignCompact(jwtHeader, jwtPayload, attackerKey);
+        var namingJwt = await JwtWriter.SignCompactAsync(jwtHeader, jwtPayload, attackerKey);
         var header = SignatureKeyHeader.FormatJktJwt(namingJwt);
         var info = SignatureKeyParser.ParseAny(header);
 

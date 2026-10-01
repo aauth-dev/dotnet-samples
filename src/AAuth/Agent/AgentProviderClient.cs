@@ -200,7 +200,7 @@ public sealed class AgentProviderClient
         // Build the self-issued delegation JWT: signed by the durable key, which
         // embeds its own public key in the header and names the ephemeral key via
         // cnf.jwk. The issuer is the durable key's own thumbprint URI.
-        var namingJwt = NamingJwtBuilder.Build(durableKey, ephemeralKey);
+        var namingJwt = await NamingJwtBuilder.BuildAsync(durableKey, ephemeralKey, ct).ConfigureAwait(false);
 
         // Sign the refresh request with the ephemeral key under jkt-jwt scheme
         using var signingHandler = new HttpSig.AAuthSigningHandler(

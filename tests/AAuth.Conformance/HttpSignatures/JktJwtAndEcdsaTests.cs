@@ -160,7 +160,7 @@ public class JktJwtAndEcdsaTests
     // ── TokenVerifier ES256 Tests ──────────────────────────────────────────
 
     [Fact(DisplayName = "§TokenVerifier — verifies ES256 agent token")]
-    public void TokenVerifierAcceptsES256()
+    public async Task TokenVerifierAcceptsES256()
     {
         var apKey = EcdsaAAuthKey.Generate();
         var agentKey = AAuthKey.Generate(); // ephemeral still Ed25519
@@ -184,7 +184,7 @@ public class JktJwtAndEcdsaTests
             ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
         };
 
-        var jwt = SignJwt(header, payload, apKey);
+        var jwt = await SignJwtAsync(header, payload, apKey);
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var result = verifier.Verify(jwt, apKey, AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk);
@@ -192,7 +192,7 @@ public class JktJwtAndEcdsaTests
     }
 
     [Fact(DisplayName = "§TokenVerifier — rejects ES256 token verified with wrong key")]
-    public void TokenVerifierRejectsWrongES256Key()
+    public async Task TokenVerifierRejectsWrongES256Key()
     {
         var apKey = EcdsaAAuthKey.Generate();
         var wrongKey = EcdsaAAuthKey.Generate();
@@ -215,7 +215,7 @@ public class JktJwtAndEcdsaTests
             ["cnf"] = new JsonObject { ["jwk"] = apKey.ToPublicJwk() },
         };
 
-        var jwt = SignJwt(header, payload, apKey);
+        var jwt = await SignJwtAsync(header, payload, apKey);
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Contains("signature verification failed", Assert.Throws<TokenVerificationException>(() =>
             verifier.Verify(jwt, wrongKey, AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk)).Message);
@@ -256,7 +256,7 @@ public class JktJwtAndEcdsaTests
         var ephemeralKey = AAuthKey.Generate();
         var resolver = new DefaultSignatureKeyResolver();
 
-        var namingJwt = BuildNamingJwt(durableKey, ephemeralKey);
+        var namingJwt = await BuildNamingJwtAsync(durableKey, ephemeralKey);
         var info = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatJktJwt(namingJwt));
         Assert.Equal("jkt-jwt", info.Scheme);
         // The reported pseudonym is the durable key's thumbprint (§7.1).
@@ -278,7 +278,7 @@ public class JktJwtAndEcdsaTests
 
         // Header advertises durableKey, but the JWT is signed by forgedKey →
         // the §3.4 signature check (step 8) against the header jwk fails.
-        var namingJwt = BuildNamingJwt(durableKey, ephemeralKey, signer: forgedKey);
+        var namingJwt = await BuildNamingJwtAsync(durableKey, ephemeralKey, signer: forgedKey);
         var info = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatJktJwt(namingJwt));
 
         var ex = await Assert.ThrowsAsync<AAuthVerificationException>(() =>
@@ -296,7 +296,7 @@ public class JktJwtAndEcdsaTests
 
         // Header jwk = attacker's key, but iss claims the victim's thumbprint →
         // the §3.4 iss check (step 7) fails.
-        var namingJwt = BuildNamingJwt(attackerKey, ephemeralKey,
+        var namingJwt = await BuildNamingJwtAsync(attackerKey, ephemeralKey,
             issOverride: AAuthConstants.JktThumbprintUrnPrefix + victimKey.ComputeJwkThumbprint());
         var info = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatJktJwt(namingJwt));
 
@@ -313,7 +313,7 @@ public class JktJwtAndEcdsaTests
         var resolver = new DefaultSignatureKeyResolver();
 
         // Naming JWT that expired 10 minutes ago.
-        var namingJwt = BuildNamingJwt(durableKey, ephemeralKey, exp: DateTimeOffset.UtcNow.AddMinutes(-10));
+        var namingJwt = await BuildNamingJwtAsync(durableKey, ephemeralKey, exp: DateTimeOffset.UtcNow.AddMinutes(-10));
         var info = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatJktJwt(namingJwt));
 
         var error = await Assert.ThrowsAsync<AAuthVerificationException>(() => resolver.ResolveAsync(info));
@@ -322,10 +322,10 @@ public class JktJwtAndEcdsaTests
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private static string BuildNamingJwt(
-        IAAuthKey durableKey,
+    private static async Task<string> BuildNamingJwtAsync(
+        IAAuthSigner durableKey,
         IAAuthKey ephemeralKey,
-        IAAuthKey? signer = null,
+        IAAuthSigner? signer = null,
         string? issOverride = null,
         DateTimeOffset? exp = null)
     {
@@ -346,15 +346,15 @@ public class JktJwtAndEcdsaTests
             ["cnf"] = new JsonObject { ["jwk"] = ephemeralKey.ToPublicJwk() },
         };
 
-        return SignJwt(header, payload, signer ?? durableKey);
+        return await SignJwtAsync(header, payload, signer ?? durableKey);
     }
 
-    private static string SignJwt(JsonObject header, JsonObject payload, IAAuthKey key)
+    private static async Task<string> SignJwtAsync(JsonObject header, JsonObject payload, IAAuthSigner key)
     {
         var headerB64 = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(header.ToJsonString()));
         var payloadB64 = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(payload.ToJsonString()));
         var signingInput = $"{headerB64}.{payloadB64}";
-        var signature = key.Sign(Encoding.ASCII.GetBytes(signingInput));
+        var signature = await key.SignAsync(Encoding.ASCII.GetBytes(signingInput));
         return $"{headerB64}.{payloadB64}.{Base64UrlEncoder.Encode(signature)}";
     }
 

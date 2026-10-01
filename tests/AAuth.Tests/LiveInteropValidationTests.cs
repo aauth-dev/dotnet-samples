@@ -8,19 +8,13 @@ namespace AAuth.Tests;
 public sealed class LiveInteropValidationTests
 {
     [Fact]
-    public void SignatureChallengeRequiresExpectedStatusAndComponents()
+    public void SignatureChallengeRequiresUnauthorizedAndJwtScheme()
     {
-        const string challenge = "sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\")";
-
-        Assert.True(LiveInteropValidation.IsSignatureChallenge(HttpStatusCode.Unauthorized, [challenge]));
-        Assert.False(LiveInteropValidation.IsSignatureChallenge(HttpStatusCode.OK, [challenge]));
-        Assert.False(LiveInteropValidation.IsSignatureChallenge(HttpStatusCode.Unauthorized, ["sig=(\"@method\")"]));
-        Assert.False(LiveInteropValidation.IsSignatureChallenge(HttpStatusCode.Unauthorized,
-            ["note=\"@method @authority @path signature-key\""]));
-        Assert.False(LiveInteropValidation.IsSignatureChallenge(HttpStatusCode.Unauthorized,
-            ["sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\";flag)"]));
-        Assert.False(LiveInteropValidation.IsSignatureChallenge(HttpStatusCode.Unauthorized,
-            ["sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");flag"]));
+        Assert.True(LiveInteropValidation.IsSignatureChallenge(HttpStatusCode.Unauthorized, ["jwt"]));
+        Assert.True(LiveInteropValidation.IsSignatureChallenge(HttpStatusCode.Unauthorized, ["hwk, jwt"]));
+        Assert.False(LiveInteropValidation.IsSignatureChallenge(HttpStatusCode.OK, ["jwt"]));
+        Assert.False(LiveInteropValidation.IsSignatureChallenge(HttpStatusCode.Unauthorized, ["hwk"]));
+        Assert.False(LiveInteropValidation.IsSignatureChallenge(HttpStatusCode.Unauthorized, ["jkt-jwt"]));
     }
 
     [Theory]

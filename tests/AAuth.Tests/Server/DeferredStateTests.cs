@@ -1,10 +1,65 @@
 using AAuth.Server;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AAuth.Tests.Server;
 
 public class DeferredStateTests
 {
+    private static async Task<(int? Status, string? Error)> ExecuteAsync(IResult result)
+    {
+        var context = new DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider(),
+        };
+        context.Response.Body = new MemoryStream();
+        await result.ExecuteAsync(context);
+        context.Response.Body.Position = 0;
+        var text = await new StreamReader(context.Response.Body).ReadToEndAsync();
+        return ((result as IStatusCodeHttpResult)?.StatusCode ?? context.Response.StatusCode,
+            text.Length == 0 ? null : (string?)JsonNode.Parse(text)?["error"]);
+    }
+
+    [Theory]
+    [InlineData("not-a-guid")]
+    [InlineData("0123456789abcdef0123456789abcdef")]
+    public async Task MissingMalformedAndUnknown_Are410InvalidCode(string id)
+    {
+        var result = await ExecuteAsync(DeferredState.Missing(id));
+
+        Assert.Equal((410, "invalid_code"), result);
+    }
+
+    [Fact]
+    public async Task InvalidCode_Is410()
+    {
+        var state = new DeferredState { InvalidCode = true };
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+
+        var result = await ExecuteAsync(await state.ExecuteAsync(context, DateTimeOffset.UtcNow.AddMinutes(5), TimeProvider.System,
+            () => Task.FromResult<IResult>(Results.Ok())));
+
+        Assert.Equal((410, "invalid_code"), result);
+    }
+
+    [Fact]
+    public async Task ExpiredFirstPollIs408ThenReplayIs410InvalidCode()
+    {
+        var state = new DeferredState();
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+
+        var first = await ExecuteAsync(await state.ExecuteAsync(context, DateTimeOffset.UtcNow.AddSeconds(-1), TimeProvider.System,
+            () => Task.FromResult<IResult>(Results.Ok())));
+        var replay = await ExecuteAsync(await state.ExecuteAsync(context, DateTimeOffset.UtcNow.AddMinutes(5), TimeProvider.System,
+            () => Task.FromResult<IResult>(Results.Ok())));
+
+        Assert.Equal((408, "expired"), first);
+        Assert.Equal((410, "invalid_code"), replay);
+    }
+
     [Fact]
     public async Task TypedMissionBlobIsDeliveredOnce()
     {

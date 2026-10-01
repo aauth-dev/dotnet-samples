@@ -11,6 +11,7 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
+using AAuth.Person;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -43,13 +44,11 @@ public class MockPersonServerFederationTests
     {
         var agentKey = AAuthKey.Generate();
         using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read");
-        using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
 
         // Resource token audience is the ACCESS SERVER, not the PS → federate.
-        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: AsIssuer, scope: "wallet.read");
-
         using var response = await http.PostAsJsonAsync("/token",
-            new JsonObject { ["resource_token"] = resourceToken });
+            await TokenRequestAsync(http, agentKey, audience: AsIssuer, scope: "wallet.read"));
 
         Assert.True(response.IsSuccessStatusCode,
             $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
@@ -60,9 +59,10 @@ public class MockPersonServerFederationTests
         // The returned token was minted by the AS, not the PS: iss=AS, dwk=access.
         var payload = DecodePayload(authTokenJwt!);
         Assert.Equal(AsIssuer, (string?)payload["iss"]);
+        Assert.Equal(PsIssuer, (string?)payload["ps"]);
         Assert.Equal(ResourceUrl, (string?)payload["aud"]);
         Assert.Equal(AuthTokenBuilder.AccessDwk, (string?)payload["dwk"]);
-        Assert.Equal(AgentId, (string?)payload["agent"]);
+        Assert.Null(payload["agent"]);
     }
 
     [Fact]
@@ -70,18 +70,15 @@ public class MockPersonServerFederationTests
     {
         var agentKey = AAuthKey.Generate();
         using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read");
-        using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
 
         // aud is some other Access Server the PS has no federation trust with.
-        var resourceToken = BuildResourceToken(AgentId, agentKey,
-            audience: "https://untrusted-as.test", scope: "wallet.read");
-
         using var response = await http.PostAsJsonAsync("/token",
-            new JsonObject { ["resource_token"] = resourceToken });
+            await TokenRequestAsync(http, agentKey, audience: "https://untrusted-as.test", scope: "wallet.read"));
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("untrusted_access_server", (string?)body!["error"]);
+        Assert.Equal("invalid_resource_token", (string?)body!["error"]);
     }
 
     [Fact]
@@ -91,12 +88,10 @@ public class MockPersonServerFederationTests
         // PS is configured for federation.
         var agentKey = AAuthKey.Generate();
         using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read");
-        using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
-
-        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: PsIssuer, scope: "wallet.read");
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
 
         using var response = await http.PostAsJsonAsync("/token",
-            new JsonObject { ["resource_token"] = resourceToken });
+            await TokenRequestAsync(http, agentKey, audience: PsIssuer, scope: "wallet.read"));
 
         Assert.True(response.IsSuccessStatusCode,
             $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
@@ -110,6 +105,61 @@ public class MockPersonServerFederationTests
     }
 
     [Fact]
+    public async Task Token_CollapsesToLocalAccessPolicy_WhenResourceDeclaresCoHostedAs()
+    {
+        var agentKey = AAuthKey.Generate();
+        var policy = new CollapsePolicy();
+        using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read", collapsedPolicy: policy);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
+
+        using var response = await http.PostAsJsonAsync("/token",
+            await TokenRequestAsync(http, agentKey, audience: PsIssuer, scope: "wallet.read"));
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        var payload = DecodePayload((string)body!["auth_token"]!);
+        Assert.Equal(PsIssuer, (string?)payload["iss"]);
+        Assert.Equal(PsIssuer, (string?)payload["ps"]);
+        Assert.Equal(ResourceUrl, (string?)payload["aud"]);
+        Assert.Equal(AuthTokenBuilder.AccessDwk, (string?)payload["dwk"]);
+        Assert.Equal(1, policy.Calls);
+        Assert.Equal("collapse", (string?)payload["collapse_policy"]);
+    }
+
+    [Fact]
+    public async Task Token_CollapseDeclarationFailsClosed_WhenLinkedAsMissing()
+    {
+        var agentKey = AAuthKey.Generate();
+        using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read", declareCollapseWithoutAs: true);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
+
+        using var response = await http.PostAsJsonAsync("/token",
+            await TokenRequestAsync(http, agentKey, audience: PsIssuer, scope: "wallet.read"));
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("server_error", (string?)body!["error"]);
+        Assert.Contains("linked Access Server", (string?)body["detail"]);
+    }
+
+    [Fact]
+    public async Task Token_FederatedPaymentWithoutSettler_ReturnsDenied()
+    {
+        var agentKey = AAuthKey.Generate();
+        using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read", paymentRequired: true);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
+
+        using var response = await http.PostAsJsonAsync("/token",
+            await TokenRequestAsync(http, agentKey, audience: AsIssuer, scope: "wallet.read"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("denied", (string?)body!["error"]);
+        Assert.Equal("payment settlement is unavailable", (string?)body["detail"]);
+    }
+
+    [Fact]
     public async Task Token_RelaysAccessServerInteraction_ThenMintsAfterCompletion()
     {
         // When the AS returns 202 requirement=interaction (interactive login),
@@ -119,12 +169,10 @@ public class MockPersonServerFederationTests
         var agentKey = AAuthKey.Generate();
         var stubState = new InteractiveAsState();
         using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read", interactive: stubState);
-        using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
-
-        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: AsIssuer, scope: "wallet.read");
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
 
         using var post = await http.PostAsJsonAsync("/token",
-            new JsonObject { ["resource_token"] = resourceToken });
+            await TokenRequestAsync(http, agentKey, audience: AsIssuer, scope: "wallet.read"));
 
         // The PS relays the AS interaction as its own 202.
         Assert.Equal(HttpStatusCode.Accepted, post.StatusCode);
@@ -172,7 +220,9 @@ public class MockPersonServerFederationTests
     // Helpers
     // ----------------------------------------------------------------
     private static WebApplicationFactory<MockPersonServer.Entry> BuildFactory(
-        AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null)
+        AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null,
+        CollapsePolicy? collapsedPolicy = null, bool declareCollapseWithoutAs = false,
+        bool paymentRequired = false)
     {
         return new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
         {
@@ -184,22 +234,42 @@ public class MockPersonServerFederationTests
                 services.RemoveAll<MetadataClient>();
                 services.RemoveAll<JwksClient>();
                 services.AddSingleton(new MetadataClient(
-                    new InProcessHttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
+                    new InProcessHttpClient(new FederatedStub(agentKey, agentId, scope, interactive, paymentRequired))));
                 services.AddSingleton(new JwksClient(
-                    new InProcessHttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
+                    new InProcessHttpClient(new FederatedStub(agentKey, agentId, scope, interactive, paymentRequired))));
 
                 // Route the PS→AS federation transport at the same in-process AS.
-                services.AddHttpClient(AAuthFederationServiceCollectionExtensions.FederationHttpClientName)
-                    .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope, interactive));
+                services.AddHttpClient(AAuthPersonServerBuilder.FederationHttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope, interactive, paymentRequired));
                 services.Configure<AAuthFederationOptions>(options => options.TransportContract = AAuthTransportContract.InProcessOnly);
+                if (collapsedPolicy is not null || declareCollapseWithoutAs)
+                {
+                    const string localAsName = "LocalAccessServer";
+                    services.Configure<AAuthPersonServerOptions>(AAuthPersonServerBuilder.DefaultName, options =>
+                        options.CollapsedFederation.Add(new AAuthCollapsedFederationDeclaration
+                        {
+                            ResourceIssuer = ResourceUrl,
+                            AccessServerName = localAsName,
+                            ExpectedAccessServerIssuer = PsIssuer,
+                        }));
+                    if (collapsedPolicy is not null)
+                    {
+                        services.AddAAuthAccessServer(localAsName, options =>
+                        {
+                            options.EgressPolicy = TestEgress.Policy;
+                            options.Issuer = PsIssuer;
+                            options.SigningKeys = new AAuthSigningKeySet("collapse-as", AAuthKey.Generate());
+                        }).UsePolicy(collapsedPolicy);
+                    }
+                }
             });
         });
     }
 
-    private static HttpClient BuildSignedAgentClient(
+    private static async Task<HttpClient> BuildSignedAgentClientAsync(
         WebApplicationFactory<MockPersonServer.Entry> factory, AAuthKey agentKey, string agentId)
     {
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -207,7 +277,7 @@ public class MockPersonServerFederationTests
             KeyId = "demo",
             Key = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
         var signing = new AAuthSigningHandler(agentKey, () => agentToken)
         {
             InnerHandler = factory.Server.CreateHandler(),
@@ -215,19 +285,27 @@ public class MockPersonServerFederationTests
         return new InProcessHttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
     }
 
-    private static string BuildResourceToken(string agent, AAuthKey agentKey, string audience, string scope)
-        => new ResourceTokenBuilder
+    // §Person Token Endpoint, then a resource token naming that person token.
+    private static async Task<JsonObject> TokenRequestAsync(HttpClient http, AAuthKey agentKey, string audience, string scope)
+    {
+        var personToken = await PersonTokenFlow.RequestAsync(http, ResourceUrl);
+        var person = DecodePayload(personToken);
+        var resourceToken = await new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
             EgressPolicy = TestEgress.Policy,
             Issuer = ResourceUrl,
             Audience = audience,
-            Agent = agent,
+            PersonServer = (string)person["iss"]!,
+            Subject = (string)person["sub"]!,
+            PresentedJti = (string)person["jti"]!,
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = ResourceStub.Key,
             KeyId = ResourceStub.Kid,
             Scope = scope,
-        }.Build();
+        }.BuildAsync();
+        return PersonTokenFlow.Body(resourceToken, personToken);
+    }
 
     private static JsonObject DecodePayload(string jwt)
     {
@@ -249,6 +327,20 @@ public class MockPersonServerFederationTests
         public void Complete() => _completed = true;
     }
 
+    private sealed class CollapsePolicy : IAccessPolicy
+    {
+        public int Calls { get; private set; }
+
+        public Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult(AccessDecision.Allow(additionalClaims: new Dictionary<string, JsonNode?>
+            {
+                ["collapse_policy"] = "collapse",
+            }));
+        }
+    }
+
     /// <summary>
     /// In-process stub for BOTH the resource (wallet.test) and the Access
     /// Server (as.test): serves their well-known metadata + JWKS for discovery,
@@ -263,14 +355,20 @@ public class MockPersonServerFederationTests
         private readonly string _agentId;
         private readonly string _scope;
         private readonly InteractiveAsState? _interactive;
+        private readonly bool _paymentRequired;
         private DateTimeOffset _agentTokenExpiresAt;
+        private DateTimeOffset _presentedExpiresAt;
+        private DateTimeOffset _resourceExpiresAt;
+        private string _subject = "";
 
-        public FederatedStub(AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null)
+        public FederatedStub(AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null,
+            bool paymentRequired = false)
         {
             _agentKey = agentKey;
             _agentId = agentId;
             _scope = scope;
             _interactive = interactive;
+            _paymentRequired = paymentRequired;
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -284,6 +382,21 @@ public class MockPersonServerFederationTests
                 var body = await request.Content!.ReadFromJsonAsync<JsonObject>(cancellationToken: cancellationToken);
                 _agentTokenExpiresAt = new TokenVerifier { EgressPolicy = TestEgress.Policy }.Verify((string)body!["agent_token"]!, _agentKey,
                     AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk).ExpiresAt;
+                var presented = DecodePayload((string)body["presented_token"]!);
+                var resource = DecodePayload((string)body["resource_token"]!);
+                _subject = (string)presented["sub"]!;
+                _presentedExpiresAt = DateTimeOffset.FromUnixTimeSeconds((long)presented["exp"]!);
+                _resourceExpiresAt = DateTimeOffset.FromUnixTimeSeconds((long)resource["exp"]!);
+                if (_paymentRequired)
+                {
+                    var payment = new HttpResponseMessage(HttpStatusCode.PaymentRequired)
+                    {
+                        Content = JsonContent.Create(new { invoice = "wallet-demo" }),
+                    };
+                    payment.Headers.Location = new Uri($"{AsIssuer}/pending/pay");
+                    payment.Headers.TryAddWithoutValidation("WWW-Authenticate", "Payment method=\"stripe\"");
+                    return payment;
+                }
                 // Interactive AS: defer with a 202 requirement=interaction.
                 if (_interactive is not null)
                 {
@@ -303,7 +416,7 @@ public class MockPersonServerFederationTests
 
                 return Json(new JsonObject
                 {
-                    ["auth_token"] = MintAuthToken(),
+                    ["auth_token"] = await MintAuthTokenAsync(),
                     ["expires_in"] = _agentTokenExpiresAt.ToUnixTimeSeconds() - DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 });
             }
@@ -314,7 +427,7 @@ public class MockPersonServerFederationTests
                 {
                     return Json(new JsonObject
                     {
-                        ["auth_token"] = MintAuthToken(),
+                        ["auth_token"] = await MintAuthTokenAsync(),
                         ["expires_in"] = _agentTokenExpiresAt.ToUnixTimeSeconds() - DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                     });
                 }
@@ -347,7 +460,7 @@ public class MockPersonServerFederationTests
                 {
                     ["issuer"] = AsIssuer,
                     ["jwks_uri"] = $"{AsIssuer}/.well-known/jwks.json",
-                    ["token_endpoint"] = $"{AsIssuer}/token",
+                    ["auth_token_endpoint"] = $"{AsIssuer}/token",
                 }.ToJsonString(),
                 "as.test/.well-known/jwks.json" => Jwks(AsKey, AsKid),
                 _ => null,
@@ -361,20 +474,21 @@ public class MockPersonServerFederationTests
                 };
         }
 
-        private string MintAuthToken() => new AuthTokenBuilder
+        private ValueTask<string> MintAuthTokenAsync() => new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = _agentTokenExpiresAt,
+            AuthorizationExpiresAt = _presentedExpiresAt < _resourceExpiresAt ? _presentedExpiresAt : _resourceExpiresAt,
             Issuer = AsIssuer,
             Audience = ResourceUrl,
-            Agent = _agentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = AsKey,
             KeyId = AsKid,
             Dwk = AuthTokenBuilder.AccessDwk,
             Scope = _scope,
-            Subject = "pairwise-sub",
-        }.Build();
+            Subject = _subject,
+        }.BuildAsync();
 
         private static HttpResponseMessage Json(JsonObject body) =>
             new(HttpStatusCode.OK)

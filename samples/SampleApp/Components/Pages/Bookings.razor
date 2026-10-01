@@ -4,9 +4,10 @@
 @using AAuth.Crypto
 @using AAuth.Headers
 @using AAuth.HttpSig
+@implements IAAuthInteractionHandler
 @inject IJSRuntime JS
+@inject SampleAgents Agents
 @rendermode InteractiveServer
-@implements IDisposable
 
 <PageTitle>Rich Resource Requests — R3 (Bookings)</PageTitle>
 
@@ -30,7 +31,7 @@
     (<code>urn:aauth:vocabulary:openapi</code>) at <code>/openapi.json</code>; operations
     are <code>operationId</code>s. The resource token references the R3 document
     (<code>r3_uri</code> + <code>r3_s256</code>); the auth token the R3 AS mints carries
-    <code>r3_granted</code> (serve now) and <code>r3_conditional</code> (needs per-call
+    <code>r3_granted</code> (serve now) and <code>r3_per_call</code> (needs per-call
     approval) — no scopes.
 </p>
 
@@ -39,40 +40,28 @@
     in the tokens, not the client. The resource's <code>401</code> carries a resource
     token whose <code>aud</code> is the <strong>R3 Access Server</strong> (:5501); the
     Person Server federates to it, and the AS fetches + hash-verifies the R3 document,
-    splits granted vs conditional <em>by its own policy</em>, and mints the auth token.
+    splits granted vs per-call <em>by its own policy</em>, and mints the auth token.
 </p>
 
 <div class="row">
 <div class="col-md-6">
 <h5>Agent (Client) Code</h5>
-<pre><code class="language-csharp">// Ordinary four-party self-issued agent — the R3 detail
-// is carried in the tokens, not the client. A conditional
-// operation triggers a per-call proposal that needs your
-// approval, so wire OnInteractionRequired to surface the
-// R3 Access Server's consent link; the SDK then polls.
-using var client = AAuthClientBuilder.SelfIssuing(key).WithEgressPolicy(SampleEgress.Policy)
-    .As(issuer, agentId)
-    .WithKid(keyId)
-    .WithPersonServer(personServer)
-    .WithChallengeHandling(opts =&gt;
-    {
-        opts.OnInteractionRequired = (interaction, ct) =&gt;
-        {
-            var url = interaction.BuildUserUrl();
-            // Surface url to the user, then the SDK polls.
-            return Task.CompletedTask;
-        };
-    })
-    .Build();
+<pre><code class="language-csharp">// Ordinary four-party self-issued agent (Aria, registered with
+// AddAAuthAgent) — the R3 detail is carried in the tokens, not the
+// client. A per-call operation triggers a per-call proposal that needs
+// your approval: the page's consent handler surfaces the R3 Access
+// Server's consent link (interaction.BuildUserUrl()); the SDK then polls.
+var client = clients.CreateClient("aria");
 
 // The resource owns the account namespace; the request option
 // binds the local credential cache and token exchange to it.
 using var searchRequest = new HttpRequestMessage(HttpMethod.Get,
     $"{bookings}/search_availability?account={Uri.EscapeDataString(account)}");
 searchRequest.Options.Set(AAuthRequestOptions.Account, account);
+searchRequest.Options.Set(AAuthRequestOptions.InteractionHandler, consent);
 var search = await client.SendAsync(searchRequest);
 
-// Conditional operation — Bookings challenges with a per-call
+// Per-call operation — Bookings challenges with a per-call
 // proposal; the R3 AS asks you to approve it (202 + consent
 // link), then the same client resends the exact parameters
 // and the booking completes.
@@ -80,30 +69,34 @@ using var confirmRequest = new HttpRequestMessage(HttpMethod.Post,
     $"{bookings}/confirm_reservation?account={Uri.EscapeDataString(account)}")
     { Content = JsonContent.Create(reservation) };
 confirmRequest.Options.Set(AAuthRequestOptions.Account, account);
+confirmRequest.Options.Set(AAuthRequestOptions.InteractionHandler, consent);
 var confirm = await client.SendAsync(confirmRequest);</code></pre>
 </div>
 <div class="col-md-6">
 <h5>R3 Access Server Code</h5>
 <pre><code class="language-csharp">// A dedicated R3 AS. It fetches the resource's R3 document
 // (AS-signed), rejects it unless the bytes hash to r3_s256,
-// then splits operations into granted vs conditional by its
+// then splits operations into granted vs per-call by its
 // OWN policy (r3 §Auth Token Extensions — the AS decides).
-app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
+builder.Services.AddR3AccessTokenEndpoint(options =&gt;
 {
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = issuer,
-    SigningKeys = signingKeys,
-    TrustedPersonServers = trustedPersonServers,
-    // confirmReservation charges a deposit → conditional.
-    IsConditionalOperation = operation =&gt;
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Issuer = issuer;
+    options.SigningKeys = signingKeys;
+    options.Trust.PersonServers.Allowed = new HashSet&lt;string&gt;(trustedPersonServers);
+    // confirmReservation charges a deposit → per-call.
+    options.IsPerCallOperation = operation =&gt;
         operation.Matches(Vocabulary.OpenApi,
-            R3Operation.OpenApi("confirmReservation")),
+            R3Operation.OpenApi("confirmReservation"));
     // Require human approval for the per-call proposal:
     // 202 → consent screen → mint on approval.
-    RequireProposalConsent = true,
-    BrowserConsent = new BrowserConsentSessions("R3.Consent"),
-    AuditSink = new SqliteR3AuditSink(auditPath),
-});</code></pre>
+    options.RequireProposalConsent = true;
+    options.BrowserConsent = new BrowserConsentSessions("R3.Consent");
+    options.AuditSink = new SqliteR3AuditSink(auditPath);
+});
+
+// After builder.Build():
+app.MapR3AccessTokenEndpoint();</code></pre>
 </div>
 </div>
 
@@ -130,7 +123,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
         @(_loading ? "Working…" : "Search availability (r3_granted)")
     </button>
     <button class="btn btn-outline-primary" @onclick="ConfirmReservation" disabled="@_loading">
-        @(_loading ? "Working…" : "Confirm a reservation (r3_conditional)")
+        @(_loading ? "Working…" : "Confirm a reservation (r3_per_call)")
     </button>
     <button class="btn btn-outline-secondary" @onclick="CheckPreviousGrant" disabled="@(_loading || _lastAuthToken is null || _lastAccount == _account)">
         Check previous account grant
@@ -139,7 +132,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
 <p class="text-muted mt-1">
     <small>
         <strong>Search</strong> is authorized outright (<code>r3_granted</code>) and served
-        immediately. <strong>Confirm</strong> is <code>r3_conditional</code>: the resource
+        immediately. <strong>Confirm</strong> is <code>r3_per_call</code>: the resource
         replies <code>401</code> with a <strong>per-call proposal</strong> (the concrete
         venue / date / party size / deposit); the R3 Access Server then asks <em>you</em> to
         approve that specific reservation before the deposit is charged. Approve at the link
@@ -151,17 +144,15 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
 {
     <div class="mt-3 alert alert-warning">
         <h5>@(IsPersonConsent ? "Person Server Consent Required" : "Per-call Approval Required")</h5>
-        <ConsentProgress ConsentPath="@(IsPersonConsent ? "/interaction" : "/interaction/consent")" DecisionPath="@(IsPersonConsent ? "/interaction/approve" : "/interaction/consent")" />
+        <ConsentProgress Dashboard="IsPersonConsent" ConsentPath="@(IsPersonConsent ? "/interaction" : "/interaction/consent")" DecisionPath="@(IsPersonConsent ? "/interaction/approve" : "/interaction/consent")" />
         <p>
             @(IsPersonConsent ? "The Person Server is waiting for consent before federation." : "The R3 Access Server is waiting for approval of this specific reservation.")
         </p>
-        <p>
-            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">@(IsPersonConsent ? "Open Person Server consent page" : "Open per-call approval page")</a>
-        </p>
-        <p class="text-muted">
-            The SDK is polling in the background&hellip;
-            <span class="spinner-border spinner-border-sm" role="status"></span>
-        </p>
+        @if (_interaction is not null)
+        {
+            <PersonServerApprovalPrompt PersonServer="@Agents.PersonServer" Interaction="_interaction"
+                                        ExternalLabel="Open per-call approval page" />
+        }
     </div>
 }
 
@@ -187,8 +178,9 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
 
     private bool _loading;
     private bool _waitingForApproval;
-    private bool IsPersonConsent => _interactionUrl?.StartsWith(Config["AAuth:PersonServer"]!.TrimEnd('/') + "/", StringComparison.Ordinal) == true;
+    private bool IsPersonConsent => _interactionUrl?.StartsWith(Agents.PersonServer.TrimEnd('/') + "/", StringComparison.Ordinal) == true;
     private string? _interactionUrl;
+    private AAuth.Headers.Interaction? _interaction;
     private string? _response;
     private string? _error;
     private string? _statusCode;
@@ -197,7 +189,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     private string? _r3AccessServer;
     private string _account = "";
     private AccountChoice[] _accounts = [];
-    private HttpClient? _client;
+    private bool _startedOver;
     private string? _lastAuthToken;
     private string? _lastAccount;
     private sealed record AccountChoice(string Id, string Name);
@@ -209,12 +201,11 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
         _accounts = await discovery.GetFromJsonAsync<AccountChoice[]>(Config["AAuth:Bookings"]!.TrimEnd('/') + "/accounts") ?? [];
     }
 
-    public void Dispose() => _client?.Dispose();
-
     private HttpRequestMessage AccountRequest(HttpMethod method, string url, HttpContent? content = null)
     {
         var request = new HttpRequestMessage(method, url + (_account.Length == 0 ? "" : "?account=" + Uri.EscapeDataString(_account))) { Content = content };
         if (_account.Length != 0) request.Options.Set(AAuthRequestOptions.Account, _account);
+        request.Options.Set(AAuthRequestOptions.InteractionHandler, this);
         return request;
     }
 
@@ -260,6 +251,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
         var token = _lastAuthToken!;
         await RunAsync(async (_, bookings) =>
         {
+            // Deliberately presents one held auth token, so it signs with that token alone.
             using var previous = new AAuthClientBuilder(_identity.Key).UseJwt(token).WithEgressPolicy(SampleEgress.Policy).Build();
             using var request = AccountRequest(HttpMethod.Get, $"{bookings}/search_availability");
             return await previous.SendAsync(request);
@@ -277,30 +269,16 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
 
         try
         {
-            var personServer = Config["AAuth:PersonServer"]!;
             var bookings = Config["AAuth:Bookings"]!.TrimEnd('/');
 
-            var client = _client ??= AAuthClientBuilder.SelfIssuing(_identity.Key).WithEgressPolicy(SampleEgress.Policy)
-                .As(_identity.Issuer, _identity.AgentId)
-                .WithKid(_identity.KeyId)
-                .WithPersonServer(personServer)
-                .WithChallengeHandling(opts =>
-                {
-                    // A conditional operation's per-call proposal comes back as a 202
-                    // interaction (relayed by the PS from the R3 AS). Surface the consent
-                    // link and let the SDK poll until the user approves.
-                    opts.OnInteractionRequired = async (interaction, _) =>
-                    {
-                        _interactionUrl = interaction.BuildUserUrl();
-                        _waitingForApproval = true;
-                        await InvokeAsync(StateHasChanged);
-                    };
-                    opts.PollingTimeout = TimeSpan.FromMinutes(2);
-                    opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
-                })
-                .Build();
+            // Demo: each visit to this page starts without Aria's cached grants.
+            if (!_startedOver)
+            {
+                Agents.StartOver();
+                _startedOver = true;
+            }
 
-            var response = await call(client, bookings);
+            var response = await call(Agents.AriaClient, bookings);
             _waitingForApproval = false;
             if (response.IsSuccessStatusCode && response.RequestMessage?.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presentedToken) == true)
             {
@@ -332,5 +310,15 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
             _waitingForApproval = false;
             _loading = false;
         }
+    }
+
+    // A per-call proposal comes back as a 202 interaction (relayed by the PS from the
+    // R3 AS). Surface the consent link; the SDK polls until the user decides.
+    public async Task OnInteractionRequiredAsync(AAuth.Headers.Interaction interaction, CancellationToken cancellationToken)
+    {
+        _interactionUrl = interaction.BuildUserUrl();
+        _interaction = interaction;
+        _waitingForApproval = true;
+        await InvokeAsync(StateHasChanged);
     }
 }

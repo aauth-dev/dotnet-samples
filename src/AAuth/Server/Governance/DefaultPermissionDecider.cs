@@ -22,7 +22,7 @@ public sealed class DefaultPermissionDecider : IPermissionDecider
 
         if (context.Mission is not null)
         {
-            var mission = Mission.FromApprovalBytes(context.Mission.Blob.Span);
+            var mission = Mission.FromBlob(context.Mission.Blob.Span, context.Mission.PersonServer);
             foreach (var tool in mission.ApprovedTools)
             {
                 if (string.Equals(tool.Name, context.Request.Action.Name, System.StringComparison.Ordinal))

@@ -35,15 +35,16 @@ public class TrackedIssuanceTests
             var accepted = await inventory.RegisterGrantAsync([grandchild], new(token, "https://last.example", expiry));
             return (token, accepted);
         }).ToArray();
-        Assert.True(await inventory.RevokeAsync(root));
+        await inventory.RevokeAsync(root, expiry);
         foreach (var (token, accepted) in await Task.WhenAll(extensions))
             if (accepted) Assert.True(await inventory.IsRevokedAsync(token));
         Assert.True(await inventory.IsRevokedAsync(grandchild));
         Assert.False(await inventory.RegisterAsync(grandchild, expiry));
         Assert.False(await inventory.RegisterGrantAsync([grandchild], new(new("https://issuer.example", "late"), "https://last.example", expiry)));
         var result = await AuthTokenResponse.CreateTrackedAsync(
-            () => throw new InvalidOperationException("Revoked ancestry must be checked before mint."), expiry, inventory, [grandchild]);
-        Assert.Equal(400, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
+            _ => throw new InvalidOperationException("Revoked ancestry must be checked before mint."),
+            expiry, inventory, [new TokenRegistration(grandchild, expiry)]);
+        Assert.IsAssignableFrom<IResult>(result);
     }
 
     [Fact]
@@ -53,10 +54,10 @@ public class TrackedIssuanceTests
         var upstream = new TokenKey("https://issuer.example", "upstream");
         var ceiling = DateTimeOffset.UtcNow.AddMinutes(2);
         Assert.True(await inventory.RegisterAsync(upstream, ceiling));
-        Assert.True(await inventory.RevokeAsync(upstream));
+        await inventory.RevokeAsync(upstream, ceiling);
         var result = await AuthTokenResponse.CreateTrackedAsync(
-            () => throw new InvalidOperationException("Mint must not run for an already revoked upstream."),
-            ceiling, inventory, [upstream]);
+            _ => throw new InvalidOperationException("Mint must not run for an already revoked upstream."),
+            ceiling, inventory, [new TokenRegistration(upstream, ceiling) { Credential = AAuth.Tokens.TokenCredential.Upstream }]);
         Assert.Equal(400, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
     }
 }

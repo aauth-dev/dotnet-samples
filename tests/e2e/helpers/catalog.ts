@@ -5,7 +5,7 @@ import { expectRequestResponseArrows } from './sequence';
 import { expectReadableLinks, expectSyntaxHighlighted } from './visual-style';
 
 export function catalogTests() {
-  test.describe('Service-qualified catalog gateway', () => {
+  test.describe('Merged-definition catalog', () => {
     test.describe.configure({ timeout: 120_000 });
     for (const service of ['destinations', 'experiences']) {
       test(`${service} grant cannot read the sibling catalog and recovers with consent`, async ({ page }, testInfo) => {
@@ -44,17 +44,18 @@ export function catalogTests() {
           await expect.poll(async () => await page.getByRole('alert').count()
             ? await page.getByRole('alert').innerText() : await root.getAttribute('data-step'), { timeout: 30_000 }).toBe(String(step));
           if (step === 1) {
-            await expect(page.getByTestId('catalog-result')).toContainText('openapi-gateway');
-            await expect(page.getByTestId('catalog-result')).toContainText('destinations');
-            await expect(page.getByTestId('catalog-result')).toContainText('experiences');
+            await expect(page.getByTestId('catalog-result')).toContainText('urn:aauth:vocabulary:openapi');
+            await expect(page.getByTestId('catalog-result')).toContainText('listDestinations');
+            await expect(page.getByTestId('catalog-result')).toContainText('listExperiences');
           }
           if (step === 3) expect(JSON.parse(await page.getByTestId('catalog-result').innerText()).service).toBe(service);
           if (step === 4) await expect(page.getByTestId('catalog-result')).toContainText('operation_not_granted');
         }
         const result = JSON.parse(await page.getByTestId('catalog-result').innerText());
         expect(result.service).toBe(service === 'destinations' ? 'experiences' : 'destinations');
-        expect(result.grant.vocabulary).toBe('urn:aauth:vocabulary:openapi-gateway');
-        expect(result.grant.operations).toEqual([{ service: result.service, operationId: 'list' }]);
+        expect(result.operationId).toBe(service === 'destinations' ? 'listExperiences' : 'listDestinations');
+        expect(result.grant.vocabulary).toBe('urn:aauth:vocabulary:openapi');
+        expect(result.grant.operations).toEqual([{ operationId: result.operationId }]);
         await expect(root.locator('.catalog-exchange[data-status="403"]')).toHaveCount(1);
         await expect(root.getByRole('list', { name: 'Protocol steps' }).locator('li')).toHaveCount(5);
         const diagram = root.getByRole('region', { name: 'Sequence diagram' });
@@ -64,7 +65,7 @@ export function catalogTests() {
         for (const step of [1, 2, 3, 4, 5])
           expect(await diagram.locator(`[data-sequence-step="${step}"]`).count()).toBeGreaterThan(0);
         await expectRequestResponseArrows(diagram);
-        await expect(root.locator('.catalog-code')).toContainText('R3Operation.OpenApiGateway(service, "list")');
+        await expect(root.locator('.catalog-code')).toContainText('R3Operation.OpenApi(operationId)');
         for (const width of [1280, 390]) {
           await page.setViewportSize({ width, height: 844 });
           await root.scrollIntoViewIfNeeded();

@@ -9,9 +9,9 @@ namespace AAuth.Agent.Governance;
 /// (§Audit Request) after performing an action. The audit endpoint requires a
 /// mission — there is no audit outside a mission context.
 /// </summary>
-/// <param name="Mission">Mission binding (<c>approver</c> + <c>s256</c>). REQUIRED.</param>
+/// <param name="MissionS256">The mission (<c>mission_s256</c>). REQUIRED.</param>
 /// <param name="Action">The action that was performed. REQUIRED.</param>
-public sealed record AuditRecord(MissionClaim Mission, MissionAction Action)
+public sealed record AuditRecord(string MissionS256, MissionAction Action)
 {
     /// <summary>Markdown description of what was done and the outcome. Optional.</summary>
     public string? Description { get; init; }
@@ -25,12 +25,12 @@ public sealed record AuditRecord(MissionClaim Mission, MissionAction Action)
     /// <summary>Render the record as the JSON request body.</summary>
     internal JsonObject ToJsonObject()
     {
-        ArgumentNullException.ThrowIfNull(Mission);
+        ArgumentException.ThrowIfNullOrEmpty(MissionS256);
         ArgumentNullException.ThrowIfNull(Action);
         ArgumentException.ThrowIfNullOrEmpty(Action.Name);
         var body = new JsonObject
         {
-            ["mission"] = Mission.ToJsonObject(),
+            ["mission_s256"] = MissionS256,
             ["action"] = Action.Name,
         };
         if (!string.IsNullOrEmpty(Description))

@@ -17,7 +17,7 @@ namespace AAuth.Agent;
 /// </remarks>
 public sealed class SelfIssuedTokenRefresher : ITokenRefresher
 {
-    private readonly IAAuthKey _key;
+    private readonly IAAuthSigner _key;
     private readonly string _issuer;
     private readonly string _subject;
     private readonly string _keyId;
@@ -33,7 +33,7 @@ public sealed class SelfIssuedTokenRefresher : ITokenRefresher
     /// <param name="personServer">Optional Person Server URL to embed in the token.</param>
     /// <param name="lifetime">Optional token lifetime (defaults to <see cref="AgentTokenBuilder"/> default of 1 hour).</param>
     public SelfIssuedTokenRefresher(
-        IAAuthKey key,
+        IAAuthSigner key,
         string issuer,
         string subject,
         string kid,
@@ -68,19 +68,19 @@ public sealed class SelfIssuedTokenRefresher : ITokenRefresher
             Lifetime = _lifetime ?? TimeSpan.FromHours(1),
         };
 
-        return Task.FromResult(builder.Build());
+        return builder.BuildAsync(cancellationToken).AsTask();
     }
 
     /// <summary>Start building a self-issued refresher with required parameters.</summary>
     /// <param name="key">The agent's signing key.</param>
     /// <param name="issuer">Issuer URL (the service's own HTTPS URL).</param>
     /// <param name="subject">Agent identifier (e.g. <c>aauth:my-service@my-service.example</c>).</param>
-    public static RefresherBuilder Create(IAAuthKey key, string issuer, string subject) => new(key, issuer, subject);
+    public static RefresherBuilder Create(IAAuthSigner key, string issuer, string subject) => new(key, issuer, subject);
 
     /// <summary>Fluent builder for <see cref="SelfIssuedTokenRefresher"/>.</summary>
     public sealed class RefresherBuilder
     {
-        private readonly IAAuthKey _key;
+        private readonly IAAuthSigner _key;
         private readonly string _issuer;
         private readonly string _subject;
         private string? _keyId;
@@ -94,7 +94,7 @@ public sealed class SelfIssuedTokenRefresher : ITokenRefresher
             return this;
         }
 
-        internal RefresherBuilder(IAAuthKey key, string issuer, string subject)
+        internal RefresherBuilder(IAAuthSigner key, string issuer, string subject)
         {
             ArgumentNullException.ThrowIfNull(key);
             ArgumentException.ThrowIfNullOrEmpty(issuer);
@@ -111,7 +111,16 @@ public sealed class SelfIssuedTokenRefresher : ITokenRefresher
         public RefresherBuilder WithPersonServer(string personServer) { _personServer = personServer; return this; }
 
         /// <summary>Set a custom token lifetime. Defaults to 1 hour.</summary>
-        public RefresherBuilder WithLifetime(TimeSpan lifetime) { _lifetime = lifetime; return this; }
+        public RefresherBuilder WithLifetime(TimeSpan lifetime)
+        {
+            if (lifetime <= TimeSpan.Zero || lifetime > AgentTokenBuilder.MaximumLifetime)
+            {
+                throw new ArgumentOutOfRangeException(nameof(lifetime),
+                    "Agent token lifetime must be greater than zero and no more than 24 hours.");
+            }
+            _lifetime = lifetime;
+            return this;
+        }
 
         /// <summary>Build the refresher.</summary>
         public SelfIssuedTokenRefresher Build()

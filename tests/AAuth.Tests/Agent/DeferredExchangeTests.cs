@@ -17,7 +17,7 @@ public class DeferredExchangeTests
     public async Task TokenExchange_ApprovalNeedsNoInteractionCallback(string? requirement)
     {
         using var handler = new SequenceHandler(
-            _ => Json(HttpStatusCode.OK, "{\"issuer\":\"https://ps.example\",\"token_endpoint\":\"https://ps.example/token\"}"),
+            _ => Json(HttpStatusCode.OK, "{\"issuer\":\"https://ps.example\",\"auth_token_endpoint\":\"https://ps.example/token\"}"),
             _ => Pending(requirement),
             _ => Json(HttpStatusCode.Forbidden, "{\"error\":\"denied\"}"));
         using var http = new InProcessHttpClient(handler);
@@ -25,6 +25,7 @@ public class DeferredExchangeTests
         await Assert.ThrowsAsync<AAuthInteractionDeniedException>(() => client.ExchangeAsync(
             "https://ps.example", TestTokens.Resource, new TokenExchangeRequest
             {
+                PresentedToken = "presented",
                 PollerOptions = new DeferredPollerOptions { MinPollInterval = TimeSpan.Zero },
             }));
         Assert.Equal(new[] { "GET", "POST", "GET" }, handler.Methods);

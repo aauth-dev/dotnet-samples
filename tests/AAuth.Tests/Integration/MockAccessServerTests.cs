@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.HttpSig;
 using AAuth.Tokens;
 using AAuth.Access;
@@ -16,6 +17,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Integration;
@@ -32,9 +34,9 @@ public class MockAccessServerTests : IDisposable
 {
     private const string AsIssuer = "https://as.test";
     private const string PsIssuer = "https://ps.test";
-    private const string ApIssuer = "https://ap.test";
+    private const string ApIssuer = "https://ap.example";
     private const string ResourceUrl = "https://wallet.test";
-    private const string AgentId = "aauth:demo@ap.test";
+    private const string AgentId = "aauth:demo@ap.example";
 
     private const string PsKid = "ps-1";
     private const string ApKid = "ap-1";
@@ -84,15 +86,15 @@ public class MockAccessServerTests : IDisposable
     public async Task CollocatedRolesCannotActAsPersonServer(string role, bool sharedKey, bool spoofPersonRole)
     {
         var policy = new ClaimTrackingPolicy();
-        var discoveryTime = DateTimeOffset.UtcNow;
+        var discoveryTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
         using var factory = CreateFactory(builder => builder.ConfigureTestServices(services =>
         {
-            services.RemoveAll<IAccessPolicy>();
-            services.AddSingleton<IAccessPolicy>(policy);
+            services.RemoveAllKeyed<IAccessPolicy>(AAuthAccessServerBuilder.DefaultName);
+            services.AddKeyedSingleton<IAccessPolicy>(AAuthAccessServerBuilder.DefaultName, policy);
             services.RemoveAll<MetadataClient>();
             services.RemoveAll<JwksClient>();
             services.AddSingleton(new MetadataClient(new InProcessHttpClient(new StubDiscoveryHandler(sharedKey))));
-            services.AddSingleton(new JwksClient(new InProcessHttpClient(new StubDiscoveryHandler(sharedKey)), clock: () => discoveryTime));
+            services.AddSingleton(new JwksClient(new InProcessHttpClient(new StubDiscoveryHandler(sharedKey)), timeProvider: discoveryTime));
         }));
         var roleKey = sharedKey ? PsKey : role switch
         {
@@ -103,14 +105,14 @@ public class MockAccessServerTests : IDisposable
             .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(factory.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
         attacker.BaseAddress = new Uri(AsIssuer);
         var agentKey = AAuthKey.Generate();
-        var body = new JsonObject { ["agent_token"] = BuildAgentToken(agentKey), ["resource_token"] = BuildResourceToken(agentKey, AsIssuer) };
-        var expectedStatus = spoofPersonRole ? HttpStatusCode.Unauthorized : HttpStatusCode.Forbidden;
+        var body = new JsonObject { ["agent_token"] = await BuildAgentTokenAsync(agentKey), ["resource_token"] = await BuildResourceTokenAsync(agentKey, AsIssuer), ["presented_token"] = await BuildPersonTokenAsync(agentKey) };
+        var expectedStatus = HttpStatusCode.Unauthorized;
         using var tokenAttack = await attacker.PostAsJsonAsync("/token", body);
         Assert.Equal(expectedStatus, tokenAttack.StatusCode);
         Assert.Empty(policy.Requests);
         Assert.DoesNotContain("auth_token", await tokenAttack.Content.ReadAsStringAsync());
 
-        discoveryTime = discoveryTime.AddMinutes(1);
+        discoveryTime.Advance(TimeSpan.FromMinutes(1));
         using var person = BuildPsSignedClient(factory);
         using var parked = await person.PostAsJsonAsync("/token", body);
         Assert.Equal(HttpStatusCode.Accepted, parked.StatusCode);
@@ -120,17 +122,17 @@ public class MockAccessServerTests : IDisposable
         Assert.Equal(expectedStatus, pollAttack.StatusCode);
         using var claimsAttack = await attacker.PostAsJsonAsync(parked.Headers.Location, new JsonObject
         {
-            ["sub"] = "attacker", ["email"] = "attacker@example.test",
+            ["email"] = "attacker@example.test",
         });
         Assert.Equal(expectedStatus, claimsAttack.StatusCode);
         Assert.Single(policy.Requests);
         using var completion = await person.PostAsJsonAsync(parked.Headers.Location, new JsonObject
         {
-            ["sub"] = "legitimate", ["email"] = "legitimate@example.test",
+            ["email"] = "legitimate@example.test",
         });
         Assert.Equal(HttpStatusCode.OK, completion.StatusCode);
         Assert.Equal(2, policy.Requests.Count);
-        Assert.Equal("legitimate", (string?)policy.Requests[1].Claims?["sub"]);
+        Assert.Equal("legitimate@example.test", (string?)policy.Requests[1].Claims?["email"]);
     }
 
     private sealed class ClaimTrackingPolicy : IAccessPolicy
@@ -151,7 +153,7 @@ public class MockAccessServerTests : IDisposable
         using var response = await client.PostAsJsonAsync(AsIssuer + "/token", new { });
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Equal("error=unsupported_scheme", response.Headers.GetValues("Signature-Error").Single());
-        Assert.Equal("jwks_uri, jwt", response.Headers.GetValues("Accept-Signature-Scheme").Single());
+        Assert.Equal("jwks_uri", response.Headers.GetValues("Accept-Signature-Scheme").Single());
     }
 
     [Theory]
@@ -159,6 +161,7 @@ public class MockAccessServerTests : IDisposable
     [InlineData("mission")]
     [InlineData("account")]
     [InlineData("exp")]
+    [InlineData("sub")]
     public async Task Token_RejectsProtocolOwnedClaimRequests(string claim)
     {
         using var factory = CreateFactory(builder => builder.UseSetting("AccessServer:RequireClaims:0", claim));
@@ -166,12 +169,13 @@ public class MockAccessServerTests : IDisposable
         var key = AAuthKey.Generate();
         using var response = await client.PostAsJsonAsync("/token", new JsonObject
         {
-            ["agent_token"] = BuildAgentToken(key),
-            ["resource_token"] = BuildResourceToken(key, AsIssuer),
+            ["agent_token"] = await BuildAgentTokenAsync(key),
+            ["resource_token"] = await BuildResourceTokenAsync(key, AsIssuer),
+            ["presented_token"] = await BuildPersonTokenAsync(key),
         });
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("policy_error", (string?)body!["error"]);
+        Assert.Equal("server_error", (string?)body!["error"]);
         Assert.Null(body["auth_token"]);
     }
 
@@ -179,6 +183,7 @@ public class MockAccessServerTests : IDisposable
     [InlineData("act")]
     [InlineData("mission")]
     [InlineData("account")]
+    [InlineData("sub")]
     public async Task ClaimsPush_RejectsProtocolOwnedClaims(string claim)
     {
         using var factory = CreateFactory(builder => builder.UseSetting("AccessServer:RequireClaims:0", "email"));
@@ -186,13 +191,14 @@ public class MockAccessServerTests : IDisposable
         var key = AAuthKey.Generate();
         using var pending = await client.PostAsJsonAsync("/token", new JsonObject
         {
-            ["agent_token"] = BuildAgentToken(key),
-            ["resource_token"] = BuildResourceToken(key, AsIssuer),
+            ["agent_token"] = await BuildAgentTokenAsync(key),
+            ["resource_token"] = await BuildResourceTokenAsync(key, AsIssuer),
+            ["presented_token"] = await BuildPersonTokenAsync(key),
         });
         Assert.Equal(HttpStatusCode.Accepted, pending.StatusCode);
         using var response = await client.PostAsJsonAsync(pending.Headers.Location, new JsonObject
         {
-            ["sub"] = "user", ["email"] = "user@example.test", [claim] = "injected",
+            ["email"] = "user@example.test", [claim] = "injected",
         });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Null((await response.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]);
@@ -211,21 +217,23 @@ public class MockAccessServerTests : IDisposable
         Assert.NotNull(doc);
         Assert.Equal(AsIssuer, (string?)doc!["issuer"]);
         Assert.Equal($"{AsIssuer}/.well-known/jwks.json", (string?)doc["jwks_uri"]);
-        Assert.Equal($"{AsIssuer}/token", (string?)doc["token_endpoint"]);
+        Assert.Equal($"{AsIssuer}/token", (string?)doc["auth_token_endpoint"]);
+        Assert.False(doc.ContainsKey("token_endpoint"));
     }
 
     [Fact]
     public async Task Token_MintsAccessAuthToken_BoundToAgentKey()
     {
         var agentKey = AAuthKey.Generate();
-        var agentToken = BuildAgentToken(agentKey);
-        var resourceToken = BuildResourceToken(agentKey, audience: AsIssuer);
+        var agentToken = await BuildAgentTokenAsync(agentKey);
+        var resourceToken = await BuildResourceTokenAsync(agentKey, audience: AsIssuer);
 
         using var http = BuildPsSignedClient();
         var response = await http.PostAsJsonAsync("/token", new JsonObject
         {
             ["agent_token"] = agentToken,
             ["resource_token"] = resourceToken,
+            ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
 
         Assert.True(response.IsSuccessStatusCode,
@@ -247,7 +255,9 @@ public class MockAccessServerTests : IDisposable
         Assert.Equal(AuthTokenBuilder.AccessDwk, (string?)payload["dwk"]);
         Assert.Equal(AsIssuer, (string?)payload["iss"]);
         Assert.Equal(ResourceUrl, (string?)payload["aud"]);
-        Assert.Equal(AgentId, (string?)payload["agent"]);
+        Assert.Equal(PsIssuer, (string?)payload["ps"]);
+        Assert.Equal(PersonSubject, (string?)payload["sub"]);
+        Assert.Null(payload["agent"]);
         Assert.Equal("wallet.read", (string?)payload["scope"]);
 
         // cnf.jwk binds to the agent's key.
@@ -262,14 +272,15 @@ public class MockAccessServerTests : IDisposable
         // A resource token whose aud is the PS (three-party) must NOT be
         // accepted by the AS — the AS only mints when aud = its own issuer.
         var agentKey = AAuthKey.Generate();
-        var agentToken = BuildAgentToken(agentKey);
-        var resourceToken = BuildResourceToken(agentKey, audience: PsIssuer);
+        var agentToken = await BuildAgentTokenAsync(agentKey);
+        var resourceToken = await BuildResourceTokenAsync(agentKey, audience: PsIssuer);
 
         using var http = BuildPsSignedClient();
         var response = await http.PostAsJsonAsync("/token", new JsonObject
         {
             ["agent_token"] = agentToken,
             ["resource_token"] = resourceToken,
+            ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
 
         // §Token Endpoint Error Codes: a resource_token that fails verification
@@ -290,8 +301,8 @@ public class MockAccessServerTests : IDisposable
         // A request whose jwks_uri host is resolvable (signature verifies) but
         // not in the trusted-PS set is refused by the trust check (403).
         var agentKey = AAuthKey.Generate();
-        var agentToken = BuildAgentToken(agentKey);
-        var resourceToken = BuildResourceToken(agentKey, audience: AsIssuer);
+        var agentToken = await BuildAgentTokenAsync(agentKey);
+        var resourceToken = await BuildResourceTokenAsync(agentKey, audience: AsIssuer);
 
         using var http = new AAuthClientBuilder(PsKey)
             .UseJwksUri("https://other-ps.test", AAuthConstants.DwkFiles.Person, PsKid)
@@ -303,25 +314,27 @@ public class MockAccessServerTests : IDisposable
         {
             ["agent_token"] = agentToken,
             ["resource_token"] = resourceToken,
+            ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
     public async Task Token_GrantsElevatedScope_ForAdminAgent()
     {
         // The default stub policy grants wallet.charge to an admin agent
-        // (the demo convention: agent id starts with "aauth:demo@").
+        // (the demo convention: the exact agent id "aauth:demo@ap.example").
         var agentKey = AAuthKey.Generate();
-        var agentToken = BuildAgentToken(agentKey, AgentId);
-        var resourceToken = BuildResourceToken(agentKey, audience: AsIssuer, agent: AgentId, scope: "wallet.charge");
+        var agentToken = await BuildAgentTokenAsync(agentKey, AgentId);
+        var resourceToken = await BuildResourceTokenAsync(agentKey, audience: AsIssuer, agent: AgentId, scope: "wallet.charge");
 
         using var http = BuildPsSignedClient();
         var response = await http.PostAsJsonAsync("/token", new JsonObject
         {
             ["agent_token"] = agentToken,
             ["resource_token"] = resourceToken,
+            ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
 
         Assert.True(response.IsSuccessStatusCode,
@@ -338,16 +351,17 @@ public class MockAccessServerTests : IDisposable
     {
         // A non-admin agent requesting wallet.charge is denied by the stub
         // policy (no wallet.payer role) → 403 denied.
-        const string GuestId = "aauth:guest@ap.test";
+        const string GuestId = "aauth:guest@ap.example";
         var agentKey = AAuthKey.Generate();
-        var agentToken = BuildAgentToken(agentKey, GuestId);
-        var resourceToken = BuildResourceToken(agentKey, audience: AsIssuer, agent: GuestId, scope: "wallet.charge");
+        var agentToken = await BuildAgentTokenAsync(agentKey, GuestId);
+        var resourceToken = await BuildResourceTokenAsync(agentKey, audience: AsIssuer, agent: GuestId, scope: "wallet.charge");
 
         using var http = BuildPsSignedClient();
         var response = await http.PostAsJsonAsync("/token", new JsonObject
         {
             ["agent_token"] = agentToken,
             ["resource_token"] = resourceToken,
+            ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -371,8 +385,9 @@ public class MockAccessServerTests : IDisposable
         using var http = BuildPsSignedClient(factory);
         var token = await http.PostAsJsonAsync("/token", new JsonObject
         {
-            ["agent_token"] = BuildAgentToken(agentKey),
-            ["resource_token"] = BuildResourceToken(agentKey, audience: AsIssuer),
+            ["agent_token"] = await BuildAgentTokenAsync(agentKey),
+            ["resource_token"] = await BuildResourceTokenAsync(agentKey, audience: AsIssuer),
+            ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
 
         Assert.Equal(HttpStatusCode.Accepted, token.StatusCode);
@@ -382,7 +397,6 @@ public class MockAccessServerTests : IDisposable
 
         var push = await http.PostAsJsonAsync(pendingPath, new JsonObject
         {
-            ["sub"] = "directed-abc",
             ["email"] = "demo@person.example",
         });
 
@@ -392,7 +406,8 @@ public class MockAccessServerTests : IDisposable
         var payload = (JsonObject)JsonNode.Parse(
             Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(
                 ((string?)body!["auth_token"])!.Split('.')[1]))!;
-        Assert.Equal("directed-abc", (string?)payload["sub"]);
+        // §Claims Required: sub is the presented token's, never a pushed claim.
+        Assert.Equal(PersonSubject, (string?)payload["sub"]);
         Assert.Equal("demo@person.example", (string?)payload["email"]);
     }
 
@@ -408,8 +423,9 @@ public class MockAccessServerTests : IDisposable
         using var trusted = BuildPsSignedClient(factory);
         var token = await trusted.PostAsJsonAsync("/token", new JsonObject
         {
-            ["agent_token"] = BuildAgentToken(agentKey),
-            ["resource_token"] = BuildResourceToken(agentKey, audience: AsIssuer),
+            ["agent_token"] = await BuildAgentTokenAsync(agentKey),
+            ["resource_token"] = await BuildResourceTokenAsync(agentKey, audience: AsIssuer),
+            ["presented_token"] = await BuildPersonTokenAsync(agentKey),
         });
         Assert.Equal(HttpStatusCode.Accepted, token.StatusCode);
         var pendingPath = token.Headers.Location!.OriginalString;
@@ -422,13 +438,11 @@ public class MockAccessServerTests : IDisposable
 
         var push = await attacker.PostAsJsonAsync(pendingPath, new JsonObject
         {
-            ["sub"] = "attacker-sub",
             ["email"] = "evil@attacker.example",
         });
 
-        Assert.Equal(HttpStatusCode.Forbidden, push.StatusCode);
-        var body = await push.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("untrusted_person_server", (string?)body!["error"]);
+        Assert.Equal(HttpStatusCode.Unauthorized, push.StatusCode);
+        Assert.Equal("error=invalid_key", push.Headers.GetValues(SignatureError.HeaderName).Single());
     }
 
     [Fact]
@@ -440,7 +454,7 @@ public class MockAccessServerTests : IDisposable
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("invalid_request", (string?)body!["error"]);
-        Assert.Equal("missing agent_token", (string?)body["detail"]);
+        Assert.Equal("agent_token, resource_token and presented_token are required", (string?)body["detail"]);
     }
 
     // -- helpers ---------------------------------------------------------
@@ -465,7 +479,7 @@ public class MockAccessServerTests : IDisposable
         return http;
     }
 
-    private static string BuildAgentToken(AAuthKey agentKey) =>
+    private static ValueTask<string> BuildAgentTokenAsync(AAuthKey agentKey) =>
         new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
@@ -475,9 +489,9 @@ public class MockAccessServerTests : IDisposable
             Key = ApKey,                  // AP signs the token.
             ConfirmationKey = agentKey,   // bound to the agent's key (cnf.jwk).
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
-    private static string BuildAgentToken(AAuthKey agentKey, string agent) =>
+    private static ValueTask<string> BuildAgentTokenAsync(AAuthKey agentKey, string agent) =>
         new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
@@ -487,35 +501,44 @@ public class MockAccessServerTests : IDisposable
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
-    private static string BuildResourceToken(AAuthKey agentKey, string audience, string agent, string scope) =>
+    private const string PersonSubject = "person-1";
+    private const string PersonJti = "person-jti-1";
+
+    // The person token the PS presented to the resource (§PS-to-AS Token Request).
+    private static ValueTask<string> BuildPersonTokenAsync(AAuthKey agentKey) =>
+        new PersonTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            Issuer = PsIssuer,
+            Audience = ResourceUrl,
+            Subject = PersonSubject,
+            TokenId = PersonJti,
+            ConfirmationKey = agentKey,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            Key = PsKey,
+            KeyId = PsKid,
+        }.BuildAsync();
+
+    private static ValueTask<string> BuildResourceTokenAsync(AAuthKey agentKey, string audience, string agent, string scope) =>
         new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
             EgressPolicy = TestEgress.Policy,
             Issuer = ResourceUrl,
             Audience = audience,
-            Agent = agent,
+            PersonServer = PsIssuer,
+            Subject = PersonSubject,
+            PresentedJti = PersonJti,
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = ResourceKey,
             KeyId = ResourceKid,
             Scope = scope,
-        }.Build();
+        }.BuildAsync();
 
-    private static string BuildResourceToken(AAuthKey agentKey, string audience) =>
-        new ResourceTokenBuilder
-        {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            Issuer = ResourceUrl,
-            Audience = audience,
-            Agent = AgentId,
-            AgentJkt = agentKey.ComputeJwkThumbprint(),
-            Key = ResourceKey,
-            KeyId = ResourceKid,
-            Scope = "wallet.read",
-        }.Build();
+    private static ValueTask<string> BuildResourceTokenAsync(AAuthKey agentKey, string audience) =>
+        BuildResourceTokenAsync(agentKey, audience, AgentId, "wallet.read");
 
     /// <summary>
     /// Replace the AS's discovery clients so that, in-process, it can resolve:
@@ -550,8 +573,8 @@ public class MockAccessServerTests : IDisposable
                 "other-ps.test/.well-known/aauth-person.json" => Metadata("https://other-ps.test"),
                 "ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
                 "other-ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
-                "ap.test/.well-known/aauth-agent.json" => Metadata(ApIssuer),
-                "ap.test/.well-known/jwks.json" => Jwks(ApKey, ApKid),
+                "ap.example/.well-known/aauth-agent.json" => Metadata(ApIssuer),
+                "ap.example/.well-known/jwks.json" => Jwks(ApKey, ApKid),
                 "wallet.test/.well-known/aauth-resource.json" => Metadata(ResourceUrl),
                 "wallet.test/.well-known/jwks.json" => Jwks(ResourceKey, ResourceKid),
                 _ => null,

@@ -4,8 +4,10 @@
 
 Start the sample stack with `make demo`, then visit
 [SampleApp Events](http://localhost:5240/events) or
-[GuidedTour Events](http://localhost:5400/events). Both run the same six-step
-client against MockAgentProvider and Bookings:
+[GuidedTour Events](http://localhost:5400/tour?flow=Events) (flow 12). Both run the
+same six-phase client against MockAgentProvider and Bookings; the tour records
+each wire exchange as its own step (11 public, 19 protected) in the standard
+step list, sequence diagram and payload inspector:
 
 1. Discover resource metadata, AsyncAPI channels and AP `event_endpoint`.
 2. Enrol an agent. Select the public channel or obtain a protected subscription
@@ -23,30 +25,50 @@ notifications. Follow the printed consent URL for a protected subscription.
 
 The previous R3 reservation pages retain their original flow and link to the
 optional Events demonstration. The ticket issued from an authorized search or
-confirmation binds the authenticated agent, receive operation, selected account
-and current resource state. Its five-minute lifetime is separate from the
+confirmation binds the authenticated agent's key (its JWK thumbprint, not the
+agent identifier), receive operation, selected account and current resource
+state. The subscription records the same key thumbprint from the subscribe
+request's HTTP signing key. Its five-minute lifetime is separate from the
 subscription's one-hour lifetime and the subscribe token's five-minute validity.
 
 ## SDK Integration
 
 ```csharp
-services.AddAAuthEvents();
-using var http = AAuthHttpTransport.CreateClient(egressPolicy);
-var protocol = new EventsProtocol(http,
-    serviceProvider.GetServices<ISignatureTokenVerifier>());
+services.AddAAuthEvents(options => options.EgressPolicy = egressPolicy);
+// Durable host stores; the endpoints resolve them and the protocol per request.
+services.AddSingleton(durableProviderStore);
+services.AddSingleton(durableResourceStore);
 
-app.MapAAuthEventEndpoint("/events", protocol, durableProviderStore);
-app.MapAAuthSubscriptionEndpoint("/subscriptions/{ticket}", resource,
-    "receiveReservationAvailable", true, protocol, durableResourceStore,
-    validateSubscriptionParameters);
+app.MapAAuthEventEndpoint("/events");
+app.MapAAuthSubscriptionEndpoint("/subscriptions/{ticket}", channel =>
+{
+    channel.Resource = resource; // defaults to the registered AAuthResourceOptions.Issuer
+    channel.Operation = "receiveReservationAvailable";
+    channel.ProtectedChannel = true;
+    channel.ValidateParameters = validateSubscriptionParameters;
+});
 
+var protocol = app.Services.GetRequiredService<EventsProtocol>();
 var endpoint = await protocol.ResolveEventEndpointAsync(subscription.Provider);
 using var response = await protocol.SendAsync(HttpMethod.Post, endpoint,
     resourceKey, eventToken, selfIssued: true, body: payloadBytes);
+// Pass null or Array.Empty<byte>() when the event has no payload; the SDK then
+// sends no body and omits body-bound signature components.
 
 var receiver = new EventReceiver(protocol, durableAgentStore, agentIdentifier);
 var firstReceipt = await receiver.ReceiveAsync(eventToken, payloadBytes);
 ```
+
+`AddAAuthEvents` registers the Events token verifiers and one `EventsProtocol`
+built from `AAuthEventsOptions` (`EgressPolicy`, `TimeProvider`, and an optional
+`InnerHandler` plus the `TransportContract` it satisfies, for in-process tests).
+`MapAAuthEventEndpoint` needs a registered `IAgentProviderEventStore`;
+`MapAAuthSubscriptionEndpoint` needs an `IResourceEventStore`. Agent-side code that
+only sends and receives may construct its own `EventsProtocol`. When an AP maps
+exactly one `MapAAuthEventEndpoint`, `MapAAuthAgentWellKnown` derives
+`event_endpoint` from the AP issuer and that route. If an AP maps more than one
+Events endpoint, set `AAuthAgentMetadataOptions.EventEndpoint` explicitly.
+`LocalhostCallbackAllowed` is emitted in AP metadata only when set to `true`.
 
 Use `SubscribeTokenBuilder` and `EventTokenBuilder` for issuer-generated tokens.
 AP issuance must persist its subscription record before releasing the subscribe
@@ -58,11 +80,12 @@ without another AP call. The subscribing agent and stored account still bind
 the receipt; an explicitly different account is rejected.
 
 The AP returns 400 for malformed requests, 401 for failed verification, 403 for
-resource/agent binding failure, 404 for unknown/expired subscriptions, and 429
-for exhausted quota. Storage failure returns 503, never 202. A bounded accepted
-delivery includes `remaining_uses`; an unlimited accepted delivery has no body.
-An identical accepted-token retry returns its durable result without incrementing
-quota. Reusing the same token with changed payload bytes is rejected.
+resource/agent binding failure, and 404 for unknown, expired or exhausted
+subscriptions. `429 Too Many Requests` is not used by Events. Storage failure
+returns 503, never 202. A bounded accepted delivery includes `remaining_uses`;
+an unlimited accepted delivery has no body. An identical accepted-token retry
+returns its durable result without incrementing quota. Reusing the same token
+with changed payload bytes is rejected.
 
 ## Local Profile and Limits
 
@@ -92,14 +115,15 @@ removes the dedicated database. Protect database/key directories with OS access
 controls. UI circuits do not offer cross-circuit resume; persisted agent receipts
 and context remain available to a provider implementation.
 
-The event payload uses the delivery section's raw body, not a new wrapper.
+The event payload uses the delivery section's raw body, not a new wrapper. A
+no-payload event delivery carries no HTTP body, content type or content digest.
 Metadata, keys and outbound event endpoints use the shared SDK's admission,
 cache and connection-pinning policy. Development permits only explicitly listed
 sample loopback origins. External platform transports, renewal APIs, arbitrary
 business-effect exactly-once execution and general recurring-event semantics are
-not claimed. Unlimited AP accounting is implemented, while literal `(iss, eid)`
-agent deduplication means repeated notifications under one subscription are
-ignored. No required per-event `jti` was added.
+not claimed. Unlimited AP accounting is implemented. Event tokens carry a required
+`jti`, and the AP and agent deduplicate on `(iss, jti)`, so each notification
+under one subscription is a distinct event and only a resent copy is ignored.
 
 ## Verification
 

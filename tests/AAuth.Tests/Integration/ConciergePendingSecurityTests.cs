@@ -3,7 +3,10 @@ using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Headers;
+using AAuth.Server.CallChaining;
 using AAuth.Tokens;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -12,6 +15,31 @@ namespace AAuth.Tests.Integration;
 
 public class ConciergePendingSecurityTests
 {
+    [Fact]
+    public async Task ChainedInteractionPendingBody_UsesPendingStatus()
+    {
+        var context = new DefaultHttpContext();
+        context.RequestServices = new ServiceCollection().AddOptions().AddLogging().BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+        var entry = new ChainedInteractionEntry(
+            "pending-test",
+            "ABCDEFGH",
+            "https://concierge.example/chain-interaction/pending-test",
+            "/pending/pending-test",
+            new Interaction("https://ps.example/interaction", "DOWNSTREAM1"),
+            "test",
+            new JsonObject(),
+            DateTimeOffset.UtcNow.AddMinutes(10));
+
+        await AAuthChainedInteractions.Accepted(context, entry, TestEgress.Policy).ExecuteAsync(context);
+
+        context.Response.Body.Position = 0;
+        var body = await JsonNode.ParseAsync(context.Response.Body);
+        Assert.Equal(StatusCodes.Status202Accepted, context.Response.StatusCode);
+        Assert.Equal("pending", (string?)body?["status"]);
+        Assert.Equal("/pending/pending-test", context.Response.Headers.Location.ToString());
+    }
+
     [Theory]
     [InlineData("agent", "GET")]
     [InlineData("key", "GET")]
@@ -35,21 +63,24 @@ public class ConciergePendingSecurityTests
                 services.AddSingleton(new JwksClient(new InProcessHttpClient(new DiscoveryHandler(issuerKey))));
             });
         });
-        string Token(AAuthKey key, string agent) => new AuthTokenBuilder
+        ValueTask<string> TokenAsync(AAuthKey key, string agent) => new AuthTokenBuilder
         {
-            Issuer = person, Audience = resource, Agent = agent, AgentConfirmationKey = key,
+            Issuer = person, Audience = resource, PersonServer = person, Subject = agent, AgentConfirmationKey = key,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10), Key = issuerKey, KeyId = "ps-key", Scope = "concierge",
-        }.Build();
+        }.BuildAsync();
         const string agent = "aauth:owner@ap.example";
-        var original = Token(ownerKey, agent);
+        var original = await TokenAsync(ownerKey, agent);
         _ = factory.Server;
-        var pending = factory.Services.GetRequiredService<Concierge.PendingStore>().Add(original, person + "/interaction", "ABCDEFGH");
+        var chained = new ChainedInteractionEntry("pending-test", "ABCDEFGH", resource + "/chain-interaction/pending-test",
+            "/pending/pending-test", new Interaction(person + "/interaction", "DOWNSTREAM1"), "test", new JsonObject(),
+            DateTimeOffset.UtcNow.AddMinutes(10));
+        var pending = factory.Services.GetRequiredService<Concierge.PendingStore>().Add(original, chained);
         var foreignKey = variant == "key" ? AAuthKey.Generate() : ownerKey;
-        var foreign = Token(foreignKey, variant == "agent" ? "aauth:foreign@ap.example" : agent);
+        var foreign = await TokenAsync(foreignKey, variant == "agent" ? "aauth:foreign@ap.example" : agent);
         using var caller = new AAuthClientBuilder(foreignKey).UseJwt(foreign).WithEgressPolicy(TestEgress.Policy)
             .WithInnerHandler(factory.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
         using var rejected = await caller.SendAsync(new HttpRequestMessage(new HttpMethod(method), resource + "/pending/" + pending.Id));
-        Assert.Equal(HttpStatusCode.NotFound, rejected.StatusCode);
+        Assert.Equal(HttpStatusCode.Gone, rejected.StatusCode);
         Assert.False(pending.Lifecycle.Cancelled);
         using var owner = new AAuthClientBuilder(ownerKey).UseJwt(original).WithEgressPolicy(TestEgress.Policy)
             .WithInnerHandler(factory.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();

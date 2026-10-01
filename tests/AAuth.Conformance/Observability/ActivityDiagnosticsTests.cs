@@ -27,6 +27,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.Observability;
@@ -106,7 +107,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         await VerifyActivityTagsViaEndpoint(
             expectedScheme: "jwt",
             expectedLevel: "Authorized",
-            expectedAgent: AgentId,
+            expectedAgent: null,
             expectedScope: ResourceScope);
     }
 
@@ -155,7 +156,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
                     Content = JsonContent.Create(new JsonObject
                     {
                         ["issuer"] = "http://localhost:9999",
-                        ["token_endpoint"] = "http://localhost:9999/token",
+                        ["auth_token_endpoint"] = "http://localhost:9999/token",
                     }),
                 };
             }
@@ -169,7 +170,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         var metadata = new MetadataClient(httpClient);
         var exchangeClient = new TokenExchangeClient(httpClient, metadata);
 
-        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync("http://localhost:9999", TestTokens.Resource));
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync("http://localhost:9999", TestTokens.Resource, "presented.person.token"));
 
         Assert.Contains(_activities, a => a.OperationName == "AAuth.TokenExchange");
     }
@@ -184,8 +185,8 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         _activities.Clear();
 
         var callCount = 0;
-        var agentToken = BuildAgentToken();
-        var authToken = BuildAuthToken();
+        var agentToken = await BuildAgentTokenAsync();
+        var authToken = await BuildAuthTokenAsync();
 
         var stubHandler = new StubHandler(req =>
         {
@@ -197,7 +198,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
                     Content = JsonContent.Create(new JsonObject
                     {
                         ["issuer"] = "http://localhost:9998",
-                        ["token_endpoint"] = "http://localhost:9998/token",
+                        ["auth_token_endpoint"] = "http://localhost:9998/token",
                     }),
                 };
             }
@@ -256,7 +257,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
                     Content = JsonContent.Create(new JsonObject
                     {
                         ["issuer"] = "http://localhost:9997",
-                        ["token_endpoint"] = "http://localhost:9997/token",
+                        ["auth_token_endpoint"] = "http://localhost:9997/token",
                     }),
                 };
             }
@@ -291,6 +292,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             "http://localhost:9997", TestTokens.Resource,
             new TokenExchangeRequest
             {
+                PresentedToken = "presented.person.token",
                 OnInteractionRequired = (_, _) => Task.CompletedTask,
                 PollerOptions = new DeferredPollerOptions
                 {
@@ -305,9 +307,9 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private string BuildAgentToken()
+    private async Task<string> BuildAgentTokenAsync()
     {
-        return new AgentTokenBuilder
+        return await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -316,34 +318,34 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             KeyId = "ap-key-1",
             ConfirmationKey = _agentKey,
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
     }
 
-    private string BuildAuthToken()
+    private async Task<string> BuildAuthTokenAsync()
     {
-        return new AuthTokenBuilder
+        return await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
-            Agent = AgentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = _psKey,
             KeyId = "ps-key-1",
             Subject = "pairwise-sub",
             Scope = ResourceScope,
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
     }
 
     private async Task VerifyActivityTagsViaEndpoint(
-        string expectedScheme, string expectedLevel, string expectedAgent, string? expectedScope)
+        string expectedScheme, string expectedLevel, string? expectedAgent, string? expectedScope)
     {
         Dictionary<string, string?>? capturedTags = null;
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) });
         builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
         builder.Services.AddSingleton(sp =>
             new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
@@ -351,11 +353,11 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
 
         var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            ResourceIdentifier = ResourceId,
-            TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceIdentifier = ResourceId;
+            options.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { PsIssuer };
         });
         app.MapGet("/check-tags", (HttpContext ctx) =>
         {
@@ -376,11 +378,11 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             string token;
             if (expectedScope is not null)
             {
-                token = BuildAuthToken();
+                token = await BuildAuthTokenAsync();
             }
             else
             {
-                token = BuildAgentToken();
+                token = await BuildAgentTokenAsync();
             }
 
             var signed = await SignRequest(token, "/check-tags");
@@ -404,6 +406,8 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             Assert.Equal(expectedLevel, capturedTags[AAuthDiagnostics.TagLevel]);
             if (expectedAgent is not null)
                 Assert.Equal(expectedAgent, capturedTags[AAuthDiagnostics.TagAgent]);
+            else
+                Assert.Null(capturedTags.GetValueOrDefault(AAuthDiagnostics.TagAgent));
             if (expectedScope is not null)
                 Assert.Equal(expectedScope, capturedTags[AAuthDiagnostics.TagScope]);
         }
@@ -418,7 +422,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
     {
         var capture = new CaptureHandler();
         var provider = new JwtSignatureKeyProvider(() => token);
-        var handler = new AAuthSigningHandler(_agentKey, provider, () => FixedClock)
+        var handler = new AAuthSigningHandler(_agentKey, provider, new FakeTimeProvider(FixedClock))
         {
             InnerHandler = capture,
         };
@@ -445,7 +449,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         {
             issuer = PsIssuer,
             jwks_uri = $"{PsIssuer}/.well-known/ps-jwks.json",
-            token_endpoint = $"{PsIssuer}/token",
+            auth_token_endpoint = $"{PsIssuer}/token",
         }));
 
         // AP JWKS

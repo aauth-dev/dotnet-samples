@@ -43,6 +43,13 @@ app.MapGet("/data", () => Results.Ok("data"))
 Because of the level check, a signature-only or agent-token-only (PoP) request can
 never satisfy a scope requirement, even if it somehow carried a matching scope claim.
 
+When `.RequireAAuth(scope: ...)` or `UseAAuth` sees a valid auth token that is
+too narrow for the endpoint scope, the SDK answers `401` with
+`AAuth-Requirement: requirement=auth-token` and a new resource token bound to
+the presented auth token. The agent exchanges that resource token and retries
+with the stepped-up grant. If the auth token already carries the scope but a
+role or application policy fails, the response remains an authorization `403`.
+
 ### Named policies (building block)
 
 MVC controllers and other call sites that can't use the per-route `.RequireAAuth`
@@ -67,7 +74,11 @@ public sealed class ReadDataController : ControllerBase
 
 The `AddAAuthScopePolicy(name, scope)` helper is a shortcut for the same
 registration. Prefer `.RequireAAuth(scope: ...)` for minimal-API endpoints; reach
-for named policies only where the endpoint extension is unavailable.
+for named policies only where the endpoint extension is unavailable. Named
+policies are lower-level ASP.NET authorization policies; by themselves they
+return `403` for a missing scope because they do not invoke the resource-token
+challenge flow. Prefer `.RequireAAuth(scope: ...)` when a valid but narrower
+auth token should receive a `401 requirement=auth-token` challenge.
 
 ## Role-Based Policies
 
@@ -108,9 +119,11 @@ auditing but are not enforced by a built-in helper.
 > asserted by `https://ps-a.example` is therefore distinct from the same role
 > asserted by `https://ps-b.example`. Issuer trust is open by default: the
 > verification middleware honors auth tokens from any *verifiable* Person Server
-> (namespaced by `iss`) when `AAuthVerificationOptions.TrustedAuthTokenIssuers`
-> is unset; set the list (or the `IsTrustedAuthTokenIssuer` predicate) to
-> restrict which issuers are honored (see
+> (namespaced by `iss`) when `AAuthVerificationOptions.Trust.AuthTokenIssuers`
+> is unset; set its `Allowed` list (or `Predicate`) to
+> restrict which issuers are honored. Four-party resources that set
+> `AAuthResourceOptions.AccessServer` derive AS-only auth-token trust for that
+> Access Server unless you configure an explicit mixed-mode trust policy (see
 > [verification-middleware.md](verification-middleware.md)).
 
 ## AAuthAuthenticationHandler
@@ -120,17 +133,21 @@ The authentication handler reads `AAuthVerificationResult` from `HttpContext.Fea
 | Claim | Source |
 |-------|--------|
 | `System.Security.Claims.ClaimTypes.NameIdentifier` (`sub`) | `AAuthVerificationResult.Subject` |
+| `aauth:sub_iss` | Composite `{iss}|{sub}` when both `AAuthVerificationResult.Issuer` and `Subject` are present |
 | `aauth:agent` | `AAuthVerificationResult.Agent` |
 | `aauth:scope` | One claim per scope in `AAuthVerificationResult.Scopes` |
+| `aauth:account` | `AAuthVerificationResult.Account`, only when `AccountVerified` is true |
 | `aauth:issuer` | `AAuthVerificationResult.Issuer` |
+| `aauth:ps` | `AAuthVerificationResult.PersonServer` |
+| `aauth:mission_s256` | `AAuthVerificationResult.MissionS256` |
+| `aauth:tenant` | `AAuthVerificationResult.Tenant` |
 | `aauth:level` | `AAuthVerificationResult.Level` (`AAuthLevel` enum, serialized as string) |
-| `aauth:scheme` | `AAuthVerificationResult.Scheme` (`hwk`, `jwks_uri`, `jwt`, `jkt-jwt`) |
+| `aauth:scheme` | `AAuthVerificationResult.Scheme` (`jwt` by default; generic routes may also accept `hwk`, `jkt-jwt`, `jwks_uri`, `jwks`, or `self-jwt`) |
 | `aauth:jkt` | `AAuthVerificationResult.Jkt` (JWK thumbprint of the signing key) |
-| `aauth:act_sub` | `AAuthVerificationResult.ActorSubject` (intermediary in call-chaining) |
 | `System.Security.Claims.ClaimTypes.Role` | One claim per role in `AAuthVerificationResult.Roles` |
 | `aauth:group` | One claim per group in `AAuthVerificationResult.Groups` |
 
-Claim type constants are exposed as `public const string` fields on `AAuthAuthenticationHandler` (for example `AAuthAuthenticationHandler.ScopeClaimType` and `AAuthAuthenticationHandler.GroupClaimType`). Roles use the standard framework `ClaimTypes.Role` so `RequireRole` works out of the box.
+Claim type constants are exposed as `public const string` fields on `AAuthAuthenticationHandler` (for example `AAuthAuthenticationHandler.ScopeClaimType`, `AAuthAuthenticationHandler.AccountClaimType`, and `AAuthAuthenticationHandler.GroupClaimType`). Roles use the standard framework `ClaimTypes.Role` so `RequireRole` works out of the box.
 
 ## AAuthLevel
 
@@ -139,11 +156,15 @@ The verification level is available in both the feature and claims:
 ```csharp
 public enum AAuthLevel
 {
-    Pseudonymous,  // hwk scheme — key-only identity
-    Identified,    // jwt/jwks_uri — agent identity known
+    Pseudonymous,  // generic hwk / jkt-jwt — key-only identity
+    Identified,    // verified jwt agent/person token, or identified generic signer
     Authorized,    // aa-auth+jwt — full PS/AS authorization
 }
 ```
+
+AAuth resource, PS, and AS endpoints accept the `jwt` Signature-Key scheme by
+default. Generic Signature-Key schemes are opt-in with `RequireGenericSignature()`
+or `AAuthVerificationOptions.Generic(...)`.
 
 ## Complete Example
 
@@ -164,7 +185,7 @@ var app = builder.Build();
 app.MapAAuthWellKnown();
 
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 app.UseAuthentication();
 app.UseAuthorization();
 

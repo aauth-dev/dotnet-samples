@@ -50,10 +50,8 @@ public class AgentProviderTokenRefresherTests
             refresher.RefreshAsync(null!, CancellationToken.None));
     }
 
-    [Theory]
-    [InlineData(RefreshMode.SingleKey, "sig=hwk")]
-    [InlineData(RefreshMode.TwoKey, "sig=jkt-jwt")]
-    public async Task RefreshAsync_DelegatesToAdmittedClient(RefreshMode mode, string scheme)
+    [Fact]
+    public async Task RefreshAsync_DelegatesToSingleKeyAdmittedClient()
     {
         var key = AAuthKey.Generate();
         var keyStore = new InMemoryKeyStore();
@@ -61,7 +59,7 @@ public class AgentProviderTokenRefresherTests
 
         var transport = new RefreshTransport();
         using var http = new InProcessHttpClient(transport);
-        var refresher = new AgentProviderTokenRefresher(http, keyStore, "https://ap.example/refresh", "k1", mode);
+        var refresher = new AgentProviderTokenRefresher(http, keyStore, "https://ap.example/refresh", "k1");
 
         var context = new TokenRefreshContext
         {
@@ -72,9 +70,18 @@ public class AgentProviderTokenRefresherTests
         };
 
         Assert.Equal("new-token", await refresher.RefreshAsync(context, CancellationToken.None));
-        Assert.StartsWith(scheme, transport.SignatureKey);
+        Assert.StartsWith("sig=hwk", transport.SignatureKey);
         Assert.Equal(1, transport.Calls);
-        Assert.Equal(mode == RefreshMode.TwoKey, refresher.LatestEphemeralKey is not null);
+    }
+
+    [Fact]
+    public void AutomaticTwoKeyRefreshSurface_IsRemoved()
+    {
+        Assert.Null(Type.GetType("AAuth.Agent.RefreshMode, AAuth"));
+        Assert.DoesNotContain(typeof(AgentProviderTokenRefresher).GetConstructors(),
+            ctor => ctor.GetParameters().Any(parameter => parameter.ParameterType.Name == "RefreshMode"));
+        Assert.Null(typeof(AgentProviderTokenRefresher).GetProperty("LatestEphemeralKey"));
+        Assert.Null(typeof(AgentProviderTokenRefresher.RefresherBuilder).GetMethod("WithRefreshMode"));
     }
 
     [Fact]

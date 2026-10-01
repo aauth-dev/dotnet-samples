@@ -7,10 +7,11 @@
 The mission lifecycle is driven by four agent-side clients that talk to the
 Person Server's governance endpoints (§PS Governance Endpoints):
 
-- `MissionClient` — propose a mission and receive the approved blob.
+- `MissionClient` — propose a mission, record updates, and propose completion at
+  the PS's `mission_endpoint`.
 - `PermissionClient` — ask whether a local action (a tool) is allowed.
 - `AuditClient` — report actions the agent has performed.
-- `InteractionClient` — reach the user to relay an interaction, ask a question, or close out the mission.
+- `InteractionClient` — reach the user to relay an interaction or payment, or ask a question.
 
 `AAuthGovernanceClient` bundles all four over a single signed channel. Every
 governance request is signed with the agent identity, so the supplied
@@ -18,7 +19,8 @@ governance request is signed with the agent identity, so the supplied
 token. The easiest way to get a correctly wired client is
 `AAuthClientBuilder.BuildGovernance()`.
 
-For the mission model itself (the blob, `s256`, the `AAuth-Mission` header), see
+For the mission model itself (the blob, `s256`, and how `mission_s256` flows
+through person, resource, and auth tokens), see
 [Missions](missions.md). For the PS side of these endpoints, see
 [Mission Governance (Server)](../server/mission-governance.md).
 
@@ -48,7 +50,7 @@ var governance = new AAuthGovernanceClient(signedClient, metadataClient, "https:
 The four endpoint clients are exposed as bound properties
 (`governance.Mission`, `.Permission`, `.Audit`, `.Interaction`) for direct use,
 but the usual path is `ProposeMissionAsync`, which returns a `MissionSession`
-that auto-threads the mission claim and PS into every later call.
+that auto-threads the mission's `s256` (as `mission_s256`) and PS into every later call.
 
 ## Proposing a mission
 
@@ -77,12 +79,15 @@ MissionSession session = await governance.ProposeMissionAsync(
 
 Mission mission = session.Mission;
 // mission.ApprovedTools may be a subset of what was proposed.
-Console.WriteLine($"Mission {mission.S256} approved by {mission.Approver}.");
+Console.WriteLine($"Mission {mission.S256} approved by {mission.PersonServer}.");
 ```
 
-`ProposeMissionAsync` stores the approval body verbatim, computes its `s256`, and
-verifies it against the `AAuth-Mission` response header before returning. A
-mismatch throws `InvalidOperationException`.
+The PS answers with an approval envelope `{ s256, mission, capabilities?,
+person_tokens? }`. `ProposeMissionAsync` decodes the base64url `mission` blob,
+keeps its bytes verbatim, and verifies `s256` against them before returning; a
+malformed envelope or a mismatch throws `InvalidOperationException`. If the
+proposal named `Resources`, `mission.PersonTokens` holds any person tokens the PS
+issued with the approval.
 
 ## Requesting permission for a tool
 
@@ -137,9 +142,10 @@ await session.RecordAuditAsync(
 ## Reaching the user
 
 The interaction endpoint is how the agent reaches the user through the PS:
-relay a resource interaction it cannot satisfy itself, forward a payment, ask a
-question, or propose mission completion. Each request type resolves to a typed
-`InteractionResult`.
+relay a resource interaction it cannot satisfy itself, forward a payment, or ask a
+question. Each request type resolves to a typed `InteractionResult`. Mission
+updates and completion are not interactions: they are POSTed to the mission
+itself at `{mission_endpoint}/{s256}` (§Mission Update, §Mission Completion).
 
 ```csharp
 // Ask the user a clarifying question mid-mission.
@@ -151,14 +157,22 @@ await session.RelayInteractionAsync(
     code: "4821",
     description: "Confirm the booking.");
 
+// Record a change in the work; returns the accepted update's s256. The mission is unchanged.
+string updateS256 = await session.UpdateAsync("The hotel is full; booking a comparable one nearby.");
+
 // Propose completion; true when the user accepted and the PS terminated the mission.
 bool done = await session.ProposeCompletionAsync(
     "Booked the Friday-evening flight and a hotel for four, and added them to the calendar.");
 ```
 
-Each interaction call returns an `InteractionResult` whose populated fields depend
-on the type: `question` fills `Answer`, `completion` fills `Terminated`, and
-`interaction`/`payment` resolve once the user completes.
+`question` results fill `InteractionResult.Answer`. For PS-hosted
+`interaction`/`payment` flows, the PS relay poll can be authoritative. For
+resource-hosted interactions, the resource's original pending URL is
+authoritative: the PS relay only reports that the PS reached the user (or that it
+cannot), and the agent keeps polling the resource `Location` until the resource
+completes. `ProposeCompletionAsync` returns `false` when the person does not
+accept the summary (for example, asks follow-up questions) and the mission stays
+active.
 
 ## A full lifecycle
 

@@ -7,6 +7,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.R3.Model;
+using AAuth.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
@@ -19,34 +20,34 @@ namespace AAuth.R3.Tests;
 public class ResourceR3Tests
 {
     [Fact]
-    public void ProposalAndDocumentRemainAvailableWhileIssuedGrantIsValid()
+    public async Task ProposalAndDocumentRemainAvailableWhileIssuedGrantIsValid()
     {
         var clock = new RetentionClock();
         var store = new R3ProposalStore();
         var document = store.AddBytes(R3TestData.Document().ToUtf8Bytes(), new Uri(R3TestData.ResourceIssuer));
-        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer));
+        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer), singleUseGate: new InMemorySingleUseGate(clock));
         var claims = new R3ClaimReader.AuthTokenClaims(document.Uri, document.S256, R3Grant.Mcp(), R3Grant.Mcp("book"));
         var parameters = new Dictionary<string, R3Parameter> { ["id"] = R3Parameter.Inline(JsonValue.Create("reservation")!) };
         var proposal = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book"), parameters);
         var issued = clock.Now;
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var token = new AAuth.Tokens.AuthTokenBuilder
+        var token = await new AAuth.Tokens.AuthTokenBuilder
         {
             Issuer = R3TestData.AsIssuer, Audience = R3TestData.ResourceIssuer,
-            Agent = R3TestData.AgentId, AgentConfirmationKey = agentKey,
+            PersonServer = R3TestData.PsIssuer, Subject = R3TestData.PersonSubject, AgentConfirmationKey = agentKey,
             Scope = "book",
             Key = issuerKey, KeyId = "issuer", Dwk = AAuth.Tokens.AuthTokenBuilder.AccessDwk,
             IssuedAt = issued, AgentTokenExpiresAt = issued.AddHours(1),
             AdditionalClaims = R3AuthClaims.AuthToken(proposal.ProposalUri!, proposal.ProposalS256!, R3Grant.Mcp("book")),
-        }.Build();
+        }.BuildAsync();
         clock.Now = issued.AddMinutes(11);
-        var verified = new AAuth.Tokens.TokenVerifier { Clock = () => clock.Now }.VerifyAuthToken(
-            token, issuerKey, R3TestData.ResourceIssuer, agentKey, R3TestData.AgentId);
+        var verified = new AAuth.Tokens.TokenVerifier { TimeProvider = clock }.VerifyAuthToken(
+            token, issuerKey, R3TestData.ResourceIssuer, agentKey);
         var approved = R3ClaimReader.ReadAuthToken(verified.Payload);
         Assert.True(store.TryGet(document.S256, out var documentBytes));
         R3Hash.Verify(documentBytes, document.S256);
-        Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, R3OperationIdentity.Mcp("book"), parameters,
+        Assert.Equal(R3EnforcementDecisionKind.SingleUse, enforcement.Evaluate(approved, R3OperationIdentity.Mcp("book"), parameters,
             approvedProposalS256: approved.S256).Kind);
     }
 
@@ -75,17 +76,17 @@ public class ResourceR3Tests
         var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash",
             R3Grant.Mcp("search"), R3Grant.Mcp("book")) { Account = "personal" };
         var store = new R3ProposalStore();
-        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer));
+        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer), singleUseGate: new InMemorySingleUseGate());
         var parameters = new Dictionary<string, R3Parameter> { ["id"] = R3Parameter.Inline(JsonValue.Create("reservation")!) };
         Assert.Equal("account_mismatch", enforcement.Evaluate(claims, R3OperationIdentity.Mcp("search"), expectedAccount: "work").Error);
         Assert.Equal("account_mismatch", enforcement.Evaluate(claims, R3OperationIdentity.Mcp("search")).Error);
         var proposal = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book"), parameters, expectedAccount: "personal");
-        Assert.Equal(R3EnforcementDecisionKind.Conditional, proposal.Kind);
+        Assert.Equal(R3EnforcementDecisionKind.PerCall, proposal.Kind);
         Assert.True(store.TryGet(proposal.ProposalS256!, out var bytes));
         Assert.Equal("personal", R3ProposalDocument.FromUtf8Bytes(bytes).Account);
-        var approved = new R3ClaimReader.AuthTokenClaims(proposal.ProposalUri!, proposal.ProposalS256!, R3Grant.Mcp("book"), null)
-            { Account = "personal" };
-        Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, R3OperationIdentity.Mcp("book"), parameters,
+        var approved = ApprovedClaims(proposal.ProposalUri!, proposal.ProposalS256!, R3Grant.Mcp("book"))
+            with { Account = "personal" };
+        Assert.Equal(R3EnforcementDecisionKind.SingleUse, enforcement.Evaluate(approved, R3OperationIdentity.Mcp("book"), parameters,
             approvedProposalS256: approved.S256, expectedAccount: "personal").Kind);
         Assert.Equal("account_mismatch", enforcement.Evaluate(approved, R3OperationIdentity.Mcp("book"), parameters,
             approvedProposalS256: approved.S256, expectedAccount: "work").Error);
@@ -144,10 +145,8 @@ public class ResourceR3Tests
             unsigned.BaseAddress = new Uri(R3TestData.ResourceIssuer);
             var response = await unsigned.GetAsync("/r3/doc");
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-            Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-            var error = await response.Content.ReadFromJsonAsync<JsonObject>();
-            Assert.Equal("invalid_signature", (string?)error!["error"]);
-            Assert.Equal("error=invalid_request", response.Headers.GetValues("Signature-Error").Single());
+            Assert.Equal("error=invalid_signature", response.Headers.GetValues("Signature-Error").Single());
+            Assert.Empty(await response.Content.ReadAsByteArrayAsync());
         }
         finally
         {
@@ -263,7 +262,7 @@ public class ResourceR3Tests
             R3Grant.Mcp("search_trip_options"),
             R3Grant.Mcp("book_trip"));
         var store = new R3ProposalStore();
-        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer));
+        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer), singleUseGate: new InMemorySingleUseGate());
         var parameters = new Dictionary<string, R3Parameter>
         {
             ["itinerary_id"] = R3Parameter.Inline(JsonValue.Create("it-123")!),
@@ -280,10 +279,10 @@ public class ResourceR3Tests
         Assert.Equal(R3EnforcementDecisionKind.Rejected,
             enforcement.Evaluate(claims, R3OperationIdentity.Mcp("cancel_trip")).Kind);
 
-        var conditional = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book_trip"), parameters, (tool, _) =>
+        var perCall = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book_trip"), parameters, (tool, _) =>
             new R3Display { Summary = $"Approve {tool}", Detail = "Concrete itinerary." });
-        Assert.Equal(R3EnforcementDecisionKind.Conditional, conditional.Kind);
-        Assert.True(store.TryGet(conditional.ProposalS256!, out _));
+        Assert.Equal(R3EnforcementDecisionKind.PerCall, perCall.Kind);
+        Assert.True(store.TryGet(perCall.ProposalS256!, out _));
 
         var reorderedInline = new Dictionary<string, R3Parameter>(parameters)
         {
@@ -293,20 +292,20 @@ public class ResourceR3Tests
                 ["name"] = "Aria",
             }),
         };
-        var classTokenRetry = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: conditional.ProposalS256);
+        var classTokenRetry = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: perCall.ProposalS256);
         Assert.Equal(R3EnforcementDecisionKind.Rejected, classTokenRetry.Kind);
         Assert.Equal("operation_not_granted", classTokenRetry.Error);
 
-        var approvedClaims = new R3ClaimReader.AuthTokenClaims(
-            conditional.ProposalUri!,
-            conditional.ProposalS256!,
+        var approvedClaims = ApprovedClaims(
+            perCall.ProposalUri!,
+            perCall.ProposalS256!,
             R3Grant.Mcp("book_trip"),
             null);
-        Assert.Equal(R3EnforcementDecisionKind.Granted,
-            enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: conditional.ProposalS256).Kind);
+        Assert.Equal(R3EnforcementDecisionKind.SingleUse,
+            enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: perCall.ProposalS256).Kind);
 
         var mismatchedToken = approvedClaims with { S256 = "different-proposal-hash" };
-        var mismatched = enforcement.Evaluate(mismatchedToken, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: conditional.ProposalS256);
+        var mismatched = enforcement.Evaluate(mismatchedToken, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: perCall.ProposalS256);
         Assert.Equal(R3EnforcementDecisionKind.Rejected, mismatched.Kind);
         Assert.Equal("proposal_token_mismatch", mismatched.Error);
 
@@ -315,7 +314,7 @@ public class ResourceR3Tests
             ["total_usd"] = R3Parameter.Inline(JsonValue.Create(1300)!),
         };
         Assert.Equal(R3EnforcementDecisionKind.Rejected,
-            enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), tampered, approvedProposalS256: conditional.ProposalS256).Kind);
+            enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), tampered, approvedProposalS256: perCall.ProposalS256).Kind);
     }
 
     [Fact]
@@ -327,7 +326,7 @@ public class ResourceR3Tests
             R3Grant.Mcp("search_trip_options"),
             R3Grant.Mcp("book_trip"));
         var store = new R3ProposalStore();
-        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer));
+        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer), singleUseGate: new InMemorySingleUseGate());
         var policyBytes = Encoding.UTF8.GetBytes("Refundable for 24 hours, then airline fare rules apply.");
         var parameters = new Dictionary<string, R3Parameter>
         {
@@ -338,10 +337,10 @@ public class ResourceR3Tests
                 mediaType: "text/plain"),
         };
 
-        var conditional = enforcement.Evaluate(initialClaims, R3OperationIdentity.Mcp("book_trip"), parameters);
-        var approvedClaims = new R3ClaimReader.AuthTokenClaims(
-            conditional.ProposalUri!,
-            conditional.ProposalS256!,
+        var perCall = enforcement.Evaluate(initialClaims, R3OperationIdentity.Mcp("book_trip"), parameters);
+        var approvedClaims = ApprovedClaims(
+            perCall.ProposalUri!,
+            perCall.ProposalS256!,
             R3Grant.Mcp("book_trip"),
             null);
         var presented = new R3PresentedParameters(
@@ -354,7 +353,7 @@ public class ResourceR3Tests
                 ["cancellation_policy"] = policyBytes,
             });
 
-        Assert.Equal(R3EnforcementDecisionKind.Granted,
+        Assert.Equal(R3EnforcementDecisionKind.SingleUse,
             enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), presented, approvedClaims.S256).Kind);
 
         var tampered = new R3PresentedParameters(
@@ -369,13 +368,80 @@ public class ResourceR3Tests
     }
 
     [Fact]
-    public async Task Enforcement_ConditionalChallengeResultEmitsAAuthRequirementWithProposalResourceToken()
+    public async Task ApprovedProposalRetry_UsesSingleUseGateAndReturnsRetainedResult()
+    {
+        var store = new R3ProposalStore();
+        var gate = new InMemorySingleUseGate();
+        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer), singleUseGate: gate);
+        var initial = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash", R3Grant.Mcp(), R3Grant.Mcp("book"));
+        var parameters = new Dictionary<string, R3Parameter> { ["id"] = R3Parameter.Inline(JsonValue.Create("reservation")!) };
+        var proposal = enforcement.Evaluate(initial, R3OperationIdentity.Mcp("book"), parameters);
+        var approved = ApprovedClaims(proposal.ProposalUri!, proposal.ProposalS256!, R3Grant.Mcp("book"))
+            with { Jti = "auth-jti" };
+
+        var first = enforcement.Evaluate(approved, R3OperationIdentity.Mcp("book"), parameters, approvedProposalS256: approved.S256);
+        var second = enforcement.Evaluate(approved, R3OperationIdentity.Mcp("book"), parameters, approvedProposalS256: approved.S256);
+
+        Assert.Equal(R3EnforcementDecisionKind.SingleUse, first.Kind);
+        Assert.Equal(first.SingleUseGrant!.Key, second.SingleUseGrant!.Key);
+        var executions = 0;
+        var one = await first.SingleUseGrant.ExecuteOnceAsync(_ =>
+        {
+            executions++;
+            return Task.FromResult(HeldInvocationResult.Json(new { value = executions }));
+        });
+        var two = await second.SingleUseGrant.ExecuteOnceAsync(_ =>
+        {
+            executions++;
+            return Task.FromResult(HeldInvocationResult.Json(new { value = executions }));
+        });
+        Assert.Equal(1, executions);
+        Assert.Equal(one.Body, two.Body);
+    }
+
+    [Theory]
+    [InlineData("gate")]
+    [InlineData("jti")]
+    [InlineData("exp")]
+    public void ApprovedProposalRetry_MissingSingleUsePrerequisiteRejects(string missing)
+    {
+        var store = new R3ProposalStore();
+        var gate = missing == "gate" ? null : new InMemorySingleUseGate();
+        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer), singleUseGate: gate);
+        var initial = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash", R3Grant.Mcp(), R3Grant.Mcp("book"));
+        var parameters = new Dictionary<string, R3Parameter> { ["id"] = R3Parameter.Inline(JsonValue.Create("reservation")!) };
+        var proposal = enforcement.Evaluate(initial, R3OperationIdentity.Mcp("book"), parameters);
+        var approved = ApprovedClaims(proposal.ProposalUri!, proposal.ProposalS256!, R3Grant.Mcp("book")) with
+        {
+            Jti = missing == "jti" ? null : "auth-jti",
+            ExpiresAt = missing == "exp" ? null : DateTimeOffset.UtcNow.AddMinutes(5),
+        };
+
+        var decision = enforcement.Evaluate(approved, R3OperationIdentity.Mcp("book"), parameters, approvedProposalS256: approved.S256);
+
+        Assert.Equal(R3EnforcementDecisionKind.Rejected, decision.Kind);
+        Assert.Equal("single_use_required", decision.Error);
+    }
+
+    [Fact]
+    public async Task Enforcement_PerCallChallengeResultEmitsAAuthRequirementWithProposalResourceToken()
     {
         var resourceKey = AAuthKey.Generate();
+        var asKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var decision = R3EnforcementDecision.Conditional(
-            "https://resource.test/r3/proposals/proposal-hash",
-            "proposal-hash");
+        var authToken = await new AAuth.Tokens.AuthTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy, Issuer = R3TestData.AsIssuer, Audience = R3TestData.ResourceIssuer,
+            PersonServer = R3TestData.PsIssuer, Subject = R3TestData.PersonSubject, AgentConfirmationKey = agentKey,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1), Key = asKey, KeyId = R3TestData.AsKid,
+            Dwk = AAuth.Tokens.AuthTokenBuilder.AccessDwk, Account = "personal",
+        }.BuildAsync();
+        var verifiedAuthToken = new AAuth.Tokens.TokenVerifier { EgressPolicy = TestEgress.Policy }
+            .VerifyAuthToken(authToken, asKey, R3TestData.ResourceIssuer, agentKey);
+        var proposalS256 = R3Hash.ComputeS256("proposal"u8);
+        var decision = R3EnforcementDecision.PerCall(
+            "https://resource.test/r3/proposals/" + proposalS256,
+            proposalS256);
         var context = new DefaultHttpContext
         {
             RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider(),
@@ -390,13 +456,13 @@ public class ResourceR3Tests
             Audience = R3TestData.AsIssuer,
             Key = resourceKey,
             KeyId = R3TestData.ResourceKid,
+            OperationValidator = NoopOperationValidator.Instance,
         };
 
-        await decision.ToResult(
+        await (await decision.ToResultAsync(
             context,
             challenge,
-            R3TestData.AgentId,
-            agentKey.ComputeJwkThumbprint()).ExecuteAsync(context);
+            verifiedAuthToken)).ExecuteAsync(context);
 
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
         Assert.Equal("application/problem+json", context.Response.ContentType);
@@ -414,6 +480,12 @@ public class ResourceR3Tests
         var payload = (JsonObject)JsonNode.Parse(Base64UrlEncoder.DecodeBytes(resourceToken.Split('.')[1]))!;
         Assert.Equal(decision.ProposalUri, (string?)payload[R3AuthClaims.UriClaim]);
         Assert.Equal(decision.ProposalS256, (string?)payload[R3AuthClaims.S256Claim]);
+        Assert.Equal(R3TestData.PsIssuer, (string?)payload["ps"]);
+        Assert.Equal(R3TestData.PersonSubject, (string?)payload["sub"]);
+        Assert.Equal(verifiedAuthToken.Jti, (string?)payload["presented_jti"]);
+        Assert.Equal(agentKey.ComputeJwkThumbprint(), (string?)payload["agent_jkt"]);
+        Assert.Equal("personal", (string?)payload["account"]);
+        Assert.False(payload.ContainsKey("agent"));
     }
 
     private static async Task<HttpResponseMessage> SignedGet(WebApplication app, AAuthKey key, string jwksUri, string kid)
@@ -425,4 +497,12 @@ public class ResourceR3Tests
         client.BaseAddress = new Uri(R3TestData.ResourceIssuer);
         return await client.GetAsync("/r3/doc");
     }
+
+    private static R3ClaimReader.AuthTokenClaims ApprovedClaims(string uri, string s256, R3Grant granted, R3Grant? perCall = null) =>
+        new(uri, s256, granted, perCall)
+        {
+            Issuer = R3TestData.AsIssuer,
+            Jti = Guid.NewGuid().ToString("N"),
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+        };
 }

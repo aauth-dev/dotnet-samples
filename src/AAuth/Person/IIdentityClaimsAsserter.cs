@@ -23,7 +23,11 @@ namespace AAuth.Person;
 /// same asserter gates federation independently of AS claims negotiation and
 /// answers the AS's §Claims Required push: the host maps an
 /// <see cref="IdentityAssertion.Assert"/> into the directed <c>sub</c> + claims
-/// pushed to the AS. The host packages the mission three-gate model around the
+/// pushed to the AS. Returning <see cref="IdentityAssertion.Assert"/> is the
+/// host's approval decision: when it includes an explicit directed
+/// <c>Subject</c> for a new resource, the SDK still records the
+/// person/resource enrollment before minting instead of inferring identity from
+/// a later token. The host packages the mission three-gate model around the
 /// asserter (terminated rejection and prior-consent silent grant use the
 /// <c>IMissionStore</c>/<c>IMissionLog</c> primitives); the asserter owns the
 /// in-scope / prompt policy decision for a mission-bound request.
@@ -40,14 +44,35 @@ public sealed class IdentityAssertionRequest
 {
     public string? Account { get; init; }
     public string? AgentKeyThumbprint { get; init; }
-    /// <summary>The resource URL the auth token will be audienced to (the resource token's <c>iss</c>).</summary>
+    /// <summary>
+    /// The resource the token will be audienced to: the <c>resource</c> parameter of
+    /// a person token request, or the resource token's <c>iss</c>.
+    /// </summary>
     public required string ResourceUrl { get; init; }
 
-    /// <summary>The requested scope (from the resource token).</summary>
+    /// <summary>The requested scope (from the resource token); empty for a person token request.</summary>
     public required string Scope { get; init; }
 
     /// <summary>The verified agent identifier (the agent token's <c>sub</c>).</summary>
     public required string AgentId { get; init; }
+
+    /// <summary>The verified agent-token issuer (<c>iss</c>).</summary>
+    public string AgentIssuer { get; init; } = "";
+
+    /// <summary>
+    /// <see langword="true"/> for a person token request: decide which person the
+    /// agent acts for at <see cref="ResourceUrl"/> and return that person's directed
+    /// <c>sub</c>. <see langword="false"/> for an auth token request, where the person
+    /// is fixed by the verified resource token (<see cref="Subject"/>) and the
+    /// asserter decides consent and identity claims.
+    /// </summary>
+    public bool PersonTokenRequest { get; init; }
+
+    /// <summary>The verified directed subject of an auth token request (the resource token's <c>sub</c>).</summary>
+    public string? Subject { get; init; }
+
+    /// <summary>The <c>login_hint</c> the agent passed through, if any. The PS MAY ignore it.</summary>
+    public string? LoginHint { get; init; }
 
     /// <summary>
     /// The claim names the recipient asked for. In a four-party exchange these
@@ -58,13 +83,12 @@ public sealed class IdentityAssertionRequest
     public IReadOnlyList<string>? RequiredClaims { get; init; }
 
     /// <summary>
-    /// The mission context (if any) the resource token carried. When set, the
-    /// request is governed by the mission; the asserter decides whether the
-    /// (resource, scope) is within the mission's approved intent (silent
-    /// <see cref="IdentityAssertion.Assert"/>) or needs the user
-    /// (<see cref="IdentityAssertion.NeedsConsent"/>).
+    /// The mission (<c>mission_s256</c>) governing the request, if any. The
+    /// asserter decides whether the (resource, scope) is within the mission's
+    /// approved intent (silent <see cref="IdentityAssertion.Assert"/>) or needs the
+    /// user (<see cref="IdentityAssertion.NeedsConsent"/>).
     /// </summary>
-    public MissionClaim? Mission { get; init; }
+    public string? MissionS256 { get; init; }
 
     /// <summary>
     /// The OIDC <c>prompt</c> value from the token request, if any (space-delimited
@@ -85,8 +109,27 @@ public sealed class IdentityAssertionRequest
 
     /// <summary>The pending-entry id when the request resumes a parked consent.</summary>
     public string? InteractionId { get; init; }
+
+    /// <summary>
+    /// Resource-asserted content: the verified resource token's claims (§Consent
+    /// Presentation). Render it apart from <see cref="AgentAsserted"/>.
+    /// </summary>
     public JsonObject? ResourceContext { get; init; }
+
+    /// <summary>
+    /// Agent-asserted content from the request body (<c>justification</c>,
+    /// <c>platform</c>, <c>device</c>), or <see langword="null"/> when the agent sent
+    /// none. A consent surface MUST attribute it to the agent (§Consent Presentation).
+    /// </summary>
+    public AgentAssertedContent? AgentAsserted { get; init; }
+
     public UpstreamTokenValidationResult? UpstreamAuthorization { get; init; }
+
+    /// <summary>
+    /// The resolved stable person key for auth-token requests, or a known key
+    /// carried into a resumed consent decision. It is never emitted on the wire.
+    /// </summary>
+    public AAuthPersonKey? PersonKey { get; init; }
 }
 
 /// <summary>The kinds of decision an <see cref="IIdentityClaimsAsserter"/> can return.</summary>
@@ -112,6 +155,7 @@ public sealed class IdentityAssertion
     private IdentityAssertion(
         IdentityAssertionKind kind,
         string? subject = null,
+        AAuthPersonKey? personKey = null,
         string? tenant = null,
         IReadOnlyList<string>? roles = null,
         IReadOnlyList<string>? groups = null,
@@ -120,6 +164,7 @@ public sealed class IdentityAssertion
     {
         Kind = kind;
         Subject = subject;
+        PersonKey = personKey;
         Tenant = tenant;
         Roles = roles;
         Groups = groups;
@@ -130,8 +175,11 @@ public sealed class IdentityAssertion
     /// <summary>The decision kind.</summary>
     public IdentityAssertionKind Kind { get; }
 
-    /// <summary>The directed (pairwise) user identifier — the auth token's <c>sub</c>.</summary>
+    /// <summary>The directed (pairwise) person identifier: a person token's <c>sub</c>. Ignored for auth token requests, whose <c>sub</c> is the verified resource token's.</summary>
     public string? Subject { get; }
+
+    /// <summary>The stable PS-internal person key. This is never emitted in tokens.</summary>
+    public AAuthPersonKey? PersonKey { get; }
 
     /// <summary>The asserted tenant claim, if any.</summary>
     public string? Tenant { get; }
@@ -150,44 +198,46 @@ public sealed class IdentityAssertion
 
     /// <summary>
     /// Assert identity + consent. <paramref name="subject"/> is the directed
-    /// <c>sub</c>; the remaining fields are optional asserted identity claims.
+    /// <c>sub</c>; the SDK records the person/resource enrollment before
+    /// minting when this is the first approval for that resource. The remaining
+    /// fields are optional asserted identity claims.
     /// </summary>
     public static IdentityAssertion Assert(
-        string subject,
+        AAuthPersonKey personKey,
+        string? subject = null,
         string? tenant = null,
         IReadOnlyList<string>? roles = null,
         IReadOnlyList<string>? groups = null,
         IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null)
-        => new(IdentityAssertionKind.Assert, subject, tenant, roles, groups, additionalClaims);
+        => new(IdentityAssertionKind.Assert, subject, personKey, tenant, roles, groups, additionalClaims);
 
     /// <summary>Deny the request with a reason.</summary>
     public static IdentityAssertion Deny(string reason)
         => new(IdentityAssertionKind.Deny, reason: reason);
 
     /// <summary>Require the user to review/consent before the request resolves.</summary>
-    public static IdentityAssertion NeedsConsent()
-        => new(IdentityAssertionKind.NeedsConsent);
+    public static IdentityAssertion NeedsConsent(AAuthPersonKey? personKey = null)
+        => new(IdentityAssertionKind.NeedsConsent, personKey: personKey);
 }
 
 /// <summary>
-/// The default <see cref="IIdentityClaimsAsserter"/>: asserts a fixed directed
-/// <c>sub</c> and no further claims, with no consent prompt. Suitable for a
-/// non-interactive demo PS; a production PS swaps in an implementation that
-/// derives the principal's directed identity and consent decision.
+/// The default <see cref="IIdentityClaimsAsserter"/>: asserts a fixed stable
+/// person key and no further claims, with no consent prompt. The host derives
+/// pairwise directed <c>sub</c> values per resource.
 /// </summary>
 public sealed class DefaultIdentityClaimsAsserter : IIdentityClaimsAsserter
 {
-    private readonly string _subject;
+    private readonly AAuthPersonKey _personKey;
 
     /// <summary>Create the default asserter.</summary>
-    /// <param name="subject">The directed <c>sub</c> to assert. Default <c>pairwise-sub</c>.</param>
-    public DefaultIdentityClaimsAsserter(string subject = "pairwise-sub")
+    /// <param name="personKey">The internal stable person key. Default <c>demo-person</c>.</param>
+    public DefaultIdentityClaimsAsserter(string personKey = "demo-person")
     {
-        _subject = subject;
+        _personKey = new AAuthPersonKey(personKey);
     }
 
     /// <inheritdoc />
     public Task<IdentityAssertion> AssertAsync(
         IdentityAssertionRequest request, CancellationToken cancellationToken = default)
-        => Task.FromResult(IdentityAssertion.Assert(_subject));
+        => Task.FromResult(IdentityAssertion.Assert(request.PersonKey ?? _personKey, request.Subject));
 }

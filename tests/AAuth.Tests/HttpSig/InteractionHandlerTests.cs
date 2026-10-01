@@ -34,7 +34,7 @@ public class InteractionHandlerTests
             _ => Make202Interaction("https://ps.example/consent", "TWO", "https://ps.example/pending/1"),
             _ => new HttpResponseMessage(HttpStatusCode.OK));
         using var client = new InProcessHttpClient(new InteractionHandler(
-            onInteractionRequired: (_, code, _) => { codes.Add(code); return Task.CompletedTask; },
+            onInteractionRequired: (interaction, _) => { codes.Add(interaction.Code); return Task.CompletedTask; },
             minPollInterval: TimeSpan.Zero)
         {
             EgressPolicy = TestEgress.Policy,
@@ -64,10 +64,10 @@ public class InteractionHandlerTests
             });
 
         var interactionHandler = new InteractionHandler(
-            onInteractionRequired: (url, code, ct) =>
+            onInteractionRequired: (interaction, ct) =>
             {
-                capturedUrl = url;
-                capturedCode = code;
+                capturedUrl = interaction.BuildUserUrl();
+                capturedCode = interaction.Code;
                 return Task.CompletedTask;
             },
             pollingTimeout: TimeSpan.FromSeconds(10))
@@ -85,6 +85,72 @@ public class InteractionHandlerTests
         Assert.Contains("ABC123", capturedUrl);
         Assert.Equal("ABC123", capturedCode);
         Assert.Equal(3, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task Interaction_RelaysBeforeLocalCallback_WhenRelaySucceeds()
+    {
+        var order = new List<string>();
+        var handler = new ScriptedHandler(
+            _ => Make202Interaction("https://ps.example/interact", "ABC123", "https://ps.example/pending/1"),
+            _ => new HttpResponseMessage(HttpStatusCode.OK));
+
+        var interactionHandler = new InteractionHandler(
+            onInteractionRequired: (_, _) =>
+            {
+                order.Add("local");
+                return Task.CompletedTask;
+            },
+            minPollInterval: TimeSpan.Zero)
+        {
+            EgressPolicy = TestEgress.Policy,
+            TransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
+            RelayInteractionAsync = (interaction, _) =>
+            {
+                order.Add("relay:" + interaction.Code);
+                return Task.FromResult(true);
+            },
+            InnerHandler = handler,
+        };
+
+        using var client = new InProcessHttpClient(interactionHandler);
+        using var response = await client.GetAsync("https://ps.example/api");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(new[] { "relay:ABC123" }, order);
+    }
+
+    [Fact]
+    public async Task Interaction_FallsBackToLocalCallback_WhenRelayUnavailable()
+    {
+        var order = new List<string>();
+        var handler = new ScriptedHandler(
+            _ => Make202Interaction("https://ps.example/interact", "ABC123", "https://ps.example/pending/1"),
+            _ => new HttpResponseMessage(HttpStatusCode.OK));
+
+        var interactionHandler = new InteractionHandler(
+            onInteractionRequired: (interaction, _) =>
+            {
+                order.Add("local:" + interaction.Code);
+                return Task.CompletedTask;
+            },
+            minPollInterval: TimeSpan.Zero)
+        {
+            EgressPolicy = TestEgress.Policy,
+            TransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
+            RelayInteractionAsync = (interaction, _) =>
+            {
+                order.Add("relay:" + interaction.Code);
+                return Task.FromResult(false);
+            },
+            InnerHandler = handler,
+        };
+
+        using var client = new InProcessHttpClient(interactionHandler);
+        using var response = await client.GetAsync("https://ps.example/api");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(new[] { "relay:ABC123", "local:ABC123" }, order);
     }
 
     [Fact]
@@ -151,7 +217,7 @@ public class InteractionHandlerTests
             });
 
         var interactionHandler = new InteractionHandler(
-            onInteractionRequired: (_, _, _) => Task.CompletedTask,
+            onInteractionRequired: (_, _) => Task.CompletedTask,
             pollingTimeout: TimeSpan.FromSeconds(30))
         {
             EgressPolicy = TestEgress.Policy,
@@ -186,7 +252,7 @@ public class InteractionHandlerTests
             });
 
         var interactionHandler = new InteractionHandler(
-            onInteractionRequired: (_, _, _) => Task.CompletedTask,
+            onInteractionRequired: (_, _) => Task.CompletedTask,
             pollingTimeout: TimeSpan.FromMilliseconds(50))
         {
             EgressPolicy = TestEgress.Policy,
@@ -206,7 +272,7 @@ public class InteractionHandlerTests
             .UseHwk()
             .WithInteractionHandling(opts =>
             {
-                opts.OnInteractionRequired = (_, _, _) => Task.CompletedTask;
+                opts.OnInteractionRequired = (_, _) => Task.CompletedTask;
             })
             .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new OkHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
@@ -222,7 +288,7 @@ public class InteractionHandlerTests
 
         using var client = new AAuthClientBuilder(_key)
             .UseHwk()
-            .WithInteractionHandling()
+            .WithInteractionHandling(opts => opts.OnInteractionRequired = (_, _) => Task.CompletedTask)
             .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(handler, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
@@ -231,6 +297,24 @@ public class InteractionHandlerTests
         Assert.True(capturedRequest!.Headers.Contains("AAuth-Capabilities"));
         var caps = string.Join(",", capturedRequest.Headers.GetValues("AAuth-Capabilities"));
         Assert.Contains("interaction", caps);
+    }
+
+    [Fact]
+    public async Task Builder_WithInteractionHandling_WithoutHandler_OmitsCapability()
+    {
+        var capturedRequest = (HttpRequestMessage?)null;
+        var handler = new CapturingHandler(r => capturedRequest = r);
+
+        using var client = new AAuthClientBuilder(_key)
+            .UseHwk()
+            .WithInteractionHandling()
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(handler, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
+            .Build();
+
+        await client.GetAsync("https://resource.example/api");
+        Assert.NotNull(capturedRequest);
+        var caps = capturedRequest!.Headers.TryGetValues("AAuth-Capabilities", out var values) ? string.Join(",", values) : "";
+        Assert.DoesNotContain("interaction", caps);
     }
 
     private static HttpResponseMessage Make202Interaction(string interactUrl, string code, string pendingUrl)

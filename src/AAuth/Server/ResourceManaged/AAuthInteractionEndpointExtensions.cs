@@ -38,8 +38,7 @@ public static class AAuthInteractionEndpointExtensions
             var entry = pending.Get(code);
             if (entry is null)
             {
-                return AAuthProblemDetails.Create(AAuth.Headers.InteractionCode.IsValid(code) ? "expired" : "unknown_pending",
-                    statusCode: AAuth.Headers.InteractionCode.IsValid(code) ? 410 : 404);
+                return AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
             }
 
             // §Resource-Managed Authorization (spec, #aauth-access): the issued
@@ -50,7 +49,7 @@ public static class AAuthInteractionEndpointExtensions
             var pollerJkt = ctx.GetAAuthVerification()?.Jkt;
             if (string.IsNullOrEmpty(pollerJkt))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "poll requires a verified AAuth signature", statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidSignature);
             }
             if (!string.Equals(pollerJkt, entry.AgentJkt, StringComparison.Ordinal)
                 || !string.Equals(entry.OwnerIssuer, ctx.GetAAuthVerification()?.Issuer, StringComparison.Ordinal)
@@ -78,7 +77,7 @@ public static class AAuthInteractionEndpointExtensions
                 // concurrent poll wins and issues a token; a loser sees it already gone.
                 if (!pending.TryConsume(code, out var consumed))
                 {
-                    return AAuth.Server.AAuthProblemDetails.Create("expired", statusCode: StatusCodes.Status410Gone);
+                    return AAuth.Server.AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
                 }
 
                 var grant = new OpaqueTokenInfo

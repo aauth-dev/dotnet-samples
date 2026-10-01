@@ -25,22 +25,15 @@ public sealed class AAuthVerifier
             ["repr-digest"] = StructuredFieldType.Dictionary,
         };
     /// <summary>
-    /// Default freshness window for the RFC 9421 <c>created</c> parameter.
-    /// Matches the AAuth spec's default of 60 seconds; resources may
-    /// advertise a different value via the <c>signature_window</c> field of
-    /// their <c>aauth-resource.json</c> metadata.
+    /// Signature validity window for the RFC 9421 <c>created</c> parameter,
+    /// applied in both directions. Matches the AAuth spec's default of 60
+    /// seconds; resources may advertise a different value via the
+    /// <c>signature_window</c> field of their <c>aauth-resource.json</c> metadata.
     /// </summary>
     public TimeSpan MaxAge { get; init; } = TimeSpan.FromSeconds(60);
 
-    /// <summary>
-    /// Tolerated <c>created</c> drift into the future. A small one-sided
-    /// window accommodates real-world NTP skew without widening the legitimate
-    /// replay window the way a symmetric <see cref="MaxAge"/> would.
-    /// </summary>
-    public TimeSpan MaxFutureSkew { get; init; } = TimeSpan.FromSeconds(5);
-
-    /// <summary>Clock injection point for deterministic tests.</summary>
-    public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
+    /// <summary>Time source for the <c>created</c> window.</summary>
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>
     /// Verify an inbound AAuth-signed HTTP request.
@@ -53,7 +46,6 @@ public sealed class AAuthVerifier
     /// <param name="signatureHeader">Verbatim <c>Signature</c> header value.</param>
     /// <param name="publicKey">Public key for HTTP-signature verification (resolved from scheme).</param>
     /// <param name="authorization">Verbatim <c>Authorization</c> header value, or null if absent.</param>
-    /// <param name="mission">Verbatim <c>AAuth-Mission</c> header value, or null if absent.</param>
     /// <exception cref="AAuthVerificationException">If any check fails.</exception>
     public string Verify(
         string method,
@@ -64,7 +56,6 @@ public sealed class AAuthVerifier
         string signatureHeader,
         IAAuthKey publicKey,
         string? authorization = null,
-        string? mission = null,
         string label = "sig",
         IReadOnlyDictionary<string, string>? fields = null,
         IReadOnlyCollection<string>? requiredComponents = null,
@@ -75,14 +66,14 @@ public sealed class AAuthVerifier
         string? requestTarget = null)
     {
         ArgumentNullException.ThrowIfNull(publicKey);
-        var input = ValidateInput(signatureInput, label, authorization, mission, requiredComponents);
+        var input = ValidateInput(signatureInput, label, authorization, requiredComponents);
         SignatureKeyHeader.Parse(signatureKey, label);
         if (input.Parameters.TryGetValue("keyid", out var keyIdValue)
             && (keyIdValue is not string suppliedId || suppliedId != (keyId ?? publicKey.ComputeJwkThumbprint())))
             throw new AAuthVerificationException(SignatureErrorCode.InvalidKey, "Signature keyid conflicts with Signature-Key.");
         var signature = StructuredFields.Member(signatureHeader, label);
         if (signature.Value is not ReadOnlyMemory<byte> signatureBytes)
-            throw new AAuthVerificationException(SignatureErrorCode.InvalidRequest, "Signature must be a byte sequence.");
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature must be a byte sequence.");
         var sb = new StringBuilder();
         foreach (var component in (IReadOnlyList<ParsedItem>)input.Value)
         {
@@ -103,7 +94,6 @@ public sealed class AAuthVerifier
                 "@target-uri" => requestScheme is null ? null : requestScheme.ToLowerInvariant() + "://" + normalizedAuthority + path + query,
                 "signature-key" => signatureKey,
                 "authorization" => authorization,
-                "aauth-mission" => mission,
                 _ when name.StartsWith('@') => null,
                 _ => fields is not null && fields.TryGetValue(name, out var field) ? field : null,
             };
@@ -123,7 +113,7 @@ public sealed class AAuthVerifier
     }
 
     internal ParsedItem ValidateInput(string signatureInput, string label, string? authorization = null,
-        string? mission = null, IReadOnlyCollection<string>? requiredComponents = null)
+        IReadOnlyCollection<string>? requiredComponents = null)
     {
         var input = StructuredFields.Member(signatureInput, label);
         if (input.Value is not IReadOnlyList<ParsedItem> components || components.Count == 0)
@@ -140,14 +130,15 @@ public sealed class AAuthVerifier
         }
         var required = AAuthSigningHandler.CoveredComponents.Concat(requiredComponents ?? []).ToHashSet(StringComparer.Ordinal);
         if (authorization is not null) required.Add("authorization");
-        if (mission is not null) required.Add("aauth-mission");
         if (!required.IsSubsetOf(names))
             throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Required covered components are missing.");
         if (!input.Parameters.TryGetValue("created", out var createdValue) || createdValue is not long created)
             throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature-Input requires integer created.");
-        var now = Clock().ToUnixTimeSeconds();
-        if (created < now - (long)MaxAge.TotalSeconds || created > now + (long)MaxFutureSkew.TotalSeconds)
-            throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature is outside freshness window.");
+        var now = TimeProvider.GetUtcNow().ToUnixTimeSeconds();
+        if (created < now - (long)MaxAge.TotalSeconds)
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature is older than the validity window.");
+        if (created > now + (long)MaxAge.TotalSeconds)
+            throw new AAuthVerificationException(SignatureErrorCode.ClockSkew, "Signature created is ahead of the verifier clock by more than the validity window.");
         if (input.Parameters.TryGetValue("expires", out var expiresValue)
             && (expiresValue is not long expires || expires < now || expires < created))
             throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature expires is invalid or in the past.");

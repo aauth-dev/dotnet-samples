@@ -49,7 +49,7 @@ internal sealed class PersonResourceInteraction
         return new() { Request = new(url, code), Context = (JsonObject)payload.DeepClone(), ResourceToken = token };
     }
 
-    public static void Map(WebApplication app, IPersonPendingStore pending, AAuthPersonServerOptions options)
+    public static void Map(Microsoft.AspNetCore.Routing.IEndpointRouteBuilder app, IPersonPendingStore pending, AAuthPersonServerOptions options)
     {
         var sessions = options.ResourceInteractionSessions ?? new BrowserConsentSessions("AAuth.ResourceInteraction");
         var path = "/" + options.InteractionPath.Trim('/') + "/resource";

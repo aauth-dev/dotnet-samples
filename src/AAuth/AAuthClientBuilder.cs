@@ -7,7 +7,9 @@ using AAuth.Agent;
 using AAuth.Agent.Governance;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Headers;
 using AAuth.HttpSig;
+using AAuth.Protocol;
 using AAuth.Server;
 using AAuth.Server.CallChaining;
 using Microsoft.AspNetCore.Http;
@@ -28,7 +30,7 @@ namespace AAuth;
 /// </example>
 public sealed class AAuthClientBuilder
 {
-    private readonly IAAuthKey _key;
+    private readonly IAAuthSigner _key;
     private ISignatureKeyProvider? _provider;
     private HttpMessageHandler? _innerHandler;
     private AAuthEgressPolicy _egressPolicy = AAuthEgressPolicy.Production;
@@ -105,11 +107,15 @@ public sealed class AAuthClientBuilder
     private bool _resourceManagedAccess;
     private IAAuthAccessStore? _accessStore;
 
+    // Carrier tokens obtained by exchange; shared when set, else per built pipeline.
+    private IAAuthTokenCache? _tokenCache;
+    private JwksClient? _tokenExchangeJwksClient;
+
     // Stored token (for reading claims)
     private string? _agentToken;
     private Func<string>? _tokenFactory;
 
-    public AAuthClientBuilder(IAAuthKey key)
+    public AAuthClientBuilder(IAAuthSigner key)
     {
         ArgumentNullException.ThrowIfNull(key);
         _key = key;
@@ -128,7 +134,7 @@ public sealed class AAuthClientBuilder
     ///     .Build();
     /// </code>
     /// </example>
-    public static SelfIssuingBuilder SelfIssuing(IAAuthKey key)
+    public static SelfIssuingBuilder SelfIssuing(IAAuthSigner key)
     {
         ArgumentNullException.ThrowIfNull(key);
         return new SelfIssuingBuilder(key);
@@ -148,7 +154,7 @@ public sealed class AAuthClientBuilder
     ///     .Build();
     /// </code>
     /// </example>
-    public static EnrolledBuilder Enrolled(IAAuthKey key)
+    public static EnrolledBuilder Enrolled(IAAuthSigner key)
     {
         ArgumentNullException.ThrowIfNull(key);
         return new EnrolledBuilder(key);
@@ -249,7 +255,7 @@ public sealed class AAuthClientBuilder
     /// <summary>Declare AAuth-Capabilities on every signed request.</summary>
     public AAuthClientBuilder WithCapabilities(params string[] capabilities)
     {
-        _capabilities = capabilities;
+        _capabilities = AAuthProtocolInput.ValidateCapabilities(capabilities, nameof(capabilities));
         return this;
     }
 
@@ -352,18 +358,17 @@ public sealed class AAuthClientBuilder
 
     /// <summary>
     /// Operate the client in the context of the agent's own approved
-    /// <see cref="Agent.Mission"/>. Every outbound request carries the
-    /// <c>AAuth-Mission</c> header (<c>{approver, s256}</c>), which the signing
-    /// pipeline covers as the <c>aauth-mission</c> component.
+    /// <see cref="Agent.Mission"/>: person tokens are requested with its
+    /// <c>mission_s256</c>.
     /// </summary>
     /// <remarks>
-    /// Per §Mission Context at Resources, an agent operating in a mission context
-    /// includes the <c>AAuth-Mission</c> header on requests to resources. Combine
+    /// The challenge handler requests person tokens with the mission's
+    /// <c>mission_s256</c>, so resource and auth tokens carry it (#missions). Combine
     /// with <see cref="WithChallengeHandling()"/> / <see cref="WithInteractionHandling()"/>
-    /// so the whole resource-access leg (mission header + 401 challenge + token
+    /// so the whole resource-access leg (person token + 401 challenge + token
     /// exchange + retry) is handled automatically. This is for the <em>originating</em>
     /// agent that holds its own approved mission; call-chaining intermediaries that
-    /// re-emit a mission from an upstream token use <see cref="WithCallChaining(string)"/>.
+    /// inherit a mission from an upstream token use <see cref="WithCallChaining(string)"/>.
     /// </remarks>
     /// <param name="mission">The agent's own approved mission.</param>
     public AAuthClientBuilder WithMission(Agent.Mission mission)
@@ -406,6 +411,9 @@ public sealed class AAuthClientBuilder
     /// The refresher remains caller-owned. A later explicit Use* selector
     /// disables refresh; resource flow options do not select a scheme.
     /// </summary>
+    /// <param name="refresher">Obtains a fresh agent token.</param>
+    /// <param name="refreshThreshold">Refresh when less than this remains before <c>exp</c>. Default five
+    /// minutes, the spec's refresh margin (§Expiry and the Refresh Margin).</param>
     public AAuthClientBuilder WithTokenRefresh(ITokenRefresher refresher, TimeSpan? refreshThreshold = null)
     {
         ArgumentNullException.ThrowIfNull(refresher);
@@ -486,9 +494,37 @@ public sealed class AAuthClientBuilder
         return this;
     }
 
-    /// <summary>Build the configured <see cref="HttpClient"/>.</summary>
+    /// <summary>
+    /// Keep the person tokens and auth tokens this client obtains in <paramref name="cache"/>. Clients
+    /// built with the same cache reuse each other's tokens; without one, each built pipeline has its own.
+    /// Build a client once and reuse it: a client built per request repeats every token exchange.
+    /// </summary>
+    public AAuthClientBuilder WithTokenCache(IAAuthTokenCache cache)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        _tokenCache = cache;
+        return this;
+    }
+
+    internal AAuthClientBuilder WithTokenExchangeJwksClient(JwksClient jwks)
+    {
+        _tokenExchangeJwksClient = jwks ?? throw new ArgumentNullException(nameof(jwks));
+        return this;
+    }
+
+    /// <summary>
+    /// Build the configured <see cref="HttpClient"/>. The caller owns and disposes it. Build once and
+    /// reuse it: the client holds the agent's token caches, so a client built per request repeats every
+    /// token exchange (share caches across builds with <see cref="WithTokenCache"/>).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="HttpClient.Timeout"/> is infinite: each HTTP call is bounded by the egress policy's
+    /// <see cref="AAuthEgressPolicy.RequestTimeout"/>, and deferred polling by its handler's
+    /// <c>PollingTimeout</c>, so a long consent is not cut off by the default 100-second client timeout.
+    /// </remarks>
     /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
-    public HttpClient Build() => AAuthHttpTransport.AttachPolicy(new HttpClient(BuildHandler()),
+    public HttpClient Build() => AAuthHttpTransport.AttachPolicy(
+        new HttpClient(BuildHandler()) { Timeout = Timeout.InfiniteTimeSpan },
         _egressPolicy, _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy);
 
     /// <summary>
@@ -523,18 +559,7 @@ public sealed class AAuthClientBuilder
             throw new InvalidOperationException(
                 "BuildGovernance requires a Person Server. Configure one via WithPersonServer(...).");
         }
-        var agentBuilder = new AAuthClientBuilder(_key)
-        {
-            _provider = _provider, _agentToken = _agentToken, _tokenFactory = _tokenFactory,
-            _tokenRefresher = _tokenRefresher, _ownedTokenRefresherFactory = _ownedTokenRefresherFactory,
-            _refreshThreshold = _refreshThreshold, _selfIssuedIssuer = _selfIssuedIssuer,
-            _selfIssuedSubject = _selfIssuedSubject, _selfIssuedKid = _selfIssuedKid,
-            _selfIssuedPersonServer = _selfIssuedPersonServer, _egressPolicy = _egressPolicy,
-            _innerHandler = _innerHandler, _transportContract = _transportContract,
-            _capabilities = _capabilities, _onSignatureBase = _onSignatureBase,
-        };
-        var signed = agentBuilder.Build();
-        signed.Timeout = Timeout.InfiniteTimeSpan;
+        var signed = BuildAgentSigned();
         try
         {
             var metadata = new MetadataClient(policy: _egressPolicy);
@@ -546,6 +571,32 @@ public sealed class AAuthClientBuilder
             throw;
         }
     }
+
+    /// <summary>
+    /// A client signed as the agent itself (never a carrier), with no challenge or interaction
+    /// handling: the channel for calls to the Person Server, whose deferred responses the typed
+    /// clients handle.
+    /// </summary>
+    internal HttpClient BuildAgentSigned()
+    {
+        if (_provider is not JwtSignatureKeyProvider && _tokenRefresher is null
+            && _ownedTokenRefresherFactory is null && _selfIssuedIssuer is null)
+            throw new InvalidOperationException("Person Server clients require an agent JWT source. Use UseJwt, Enrolled, SelfIssuing, or WithTokenRefresh.");
+        var agentBuilder = new AAuthClientBuilder(_key)
+        {
+            _provider = _provider, _agentToken = _agentToken, _tokenFactory = _tokenFactory,
+            _tokenRefresher = _tokenRefresher, _ownedTokenRefresherFactory = _ownedTokenRefresherFactory,
+            _refreshThreshold = _refreshThreshold, _selfIssuedIssuer = _selfIssuedIssuer,
+            _selfIssuedSubject = _selfIssuedSubject, _selfIssuedKid = _selfIssuedKid,
+            _selfIssuedPersonServer = _selfIssuedPersonServer, _egressPolicy = _egressPolicy,
+            _innerHandler = _innerHandler, _transportContract = _transportContract,
+            _capabilities = _capabilities, _onSignatureBase = _onSignatureBase,
+        };
+        return agentBuilder.Build();
+    }
+
+    internal AAuthEgressPolicy EgressPolicy => _egressPolicy;
+    internal string? PersonServer => _personServer;
 
     // Build a signed HttpClient (pinned to the agent identity) plus a metadata
     // client — the channel used for token exchange and governance calls. The long
@@ -618,13 +669,13 @@ public sealed class AAuthClientBuilder
             // When WithTokenRefresh is configured but no explicit provider,
             // create a JWT signing pipeline with lazy token acquisition.
             if (_provider is null && tokenRefresher is not null)
-                return WithMissionHeader(BuildRefreshOnlyHandler(tokenRefresher, ref partial));
+                return WithMissionContext(BuildRefreshOnlyHandler(tokenRefresher, ref partial));
 
             // Simple signing-only pipeline (possibly with interaction handling).
             var handler = new AAuthSigningHandler(_key, _provider!)
             {
                 InnerHandler = CreateTransport(),
-                Capabilities = _interactionHandling ? MergeCapabilities("interaction") : _capabilities,
+                Capabilities = _capabilities,
                 OnSignatureBase = _onSignatureBase,
             };
             partial = handler;
@@ -634,7 +685,7 @@ public sealed class AAuthClientBuilder
             var signed = WrapWithAccessHandler(handler);
 
             if (!_interactionHandling)
-                return WithMissionHeader(signed);
+                return WithMissionContext(signed);
 
             // Wrap with interaction handler
             var interactionOpts = new InteractionHandlingOptions();
@@ -652,7 +703,7 @@ public sealed class AAuthClientBuilder
                 TransportContract = _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy,
                 InnerHandler = signed,
             };
-            return WithMissionHeader(interactionHandler);
+            return WithMissionContext(interactionHandler);
         }
 
         // --- Challenge-handling pipeline ---
@@ -673,7 +724,7 @@ public sealed class AAuthClientBuilder
         var agentTokenHolder = agentToken is not null
             ? new AAuthTokenHolder(agentToken)
             : new AAuthTokenHolder();
-        var carrierHolder = new AAuthTokenHolder();
+        var carrierHolder = new AAuthTokenHolder(_tokenCache);
 
         // Resource requests present the carrier once one is obtained, else the (fresh)
         // agent token.
@@ -684,9 +735,7 @@ public sealed class AAuthClientBuilder
         var outerSigner = new AAuthSigningHandler(_key, resourceProvider)
         {
             InnerHandler = CreateTransport(),
-            Capabilities = _interactionHandling
-                ? MergeCapabilities("auth-token", "interaction")
-                : MergeCapabilities("auth-token"),
+            Capabilities = _capabilities,
             OnSignatureBase = _onSignatureBase,
         };
         partial = outerSigner;
@@ -698,9 +747,11 @@ public sealed class AAuthClientBuilder
         var (exchangeHttpClient, metadata) = BuildSignedChannel(exchangeProvider, AAuthHttpTransport.CreateHandler(_egressPolicy));
         owned.Add(exchangeHttpClient);
         owned.Add(metadata);
-        var exchangeClient = new TokenExchangeClient(exchangeHttpClient, metadata);
-        var jwks = new JwksClient(policy: _egressPolicy);
-        owned.Add(jwks);
+        var jwks = _tokenExchangeJwksClient ?? new JwksClient(policy: _egressPolicy);
+        if (_tokenExchangeJwksClient is null)
+            owned.Add(jwks);
+        var exchangeClient = new TokenExchangeClient(exchangeHttpClient, metadata,
+            new TokenExchangeClientOptions { JwksClient = jwks });
 
         var pollerOptions = new DeferredPollerOptions
         {
@@ -764,15 +815,15 @@ public sealed class AAuthClientBuilder
             {
                 EgressPolicy = _egressPolicy,
                 TransportContract = _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy,
+                RelayInteractionAsync = BuildInteractionRelay(exchangeHttpClient, metadata, personServer),
                 InnerHandler = topHandler,
             };
             topHandler = interactionHandler;
             partial = topHandler;
         }
 
-        // If call-chaining is configured, add mission forwarding at the top.
-        // Per §Call Chaining, intermediaries in a mission context MUST include
-        // AAuth-Mission on downstream requests.
+        // If call-chaining is configured, attach the upstream token at the top so the
+        // challenge handler sends it as upstream_token (§Call Chaining).
         if (_upstreamTokenProvider is not null)
         {
             var missionHandler = new MissionForwardingHandler(_upstreamTokenProvider)
@@ -782,20 +833,35 @@ public sealed class AAuthClientBuilder
             topHandler = missionHandler;
         }
 
-        return WithMissionHeader(topHandler);
+        return WithMissionContext(topHandler);
     }
 
-    // Wrap a pipeline with the originating-agent mission header handler when a
-    // mission was configured via WithMission(...). Sits at the very top so the
-    // AAuth-Mission header is present before the request is signed; the signing
-    // handler beneath then covers it as the `aauth-mission` component (§Mission
-    // Context at Resources). Skipped under call-chaining, where
-    // MissionForwardingHandler already emits the header from the upstream token.
-    private HttpMessageHandler WithMissionHeader(HttpMessageHandler inner)
+    // Tag requests with the originating agent's mission (WithMission) so the
+    // challenge handler requests person tokens with its mission_s256. Skipped
+    // under call-chaining, where the upstream token carries the mission.
+    private HttpMessageHandler WithMissionContext(HttpMessageHandler inner)
     {
         if (_mission is null || _upstreamTokenProvider is not null)
             return inner;
-        return new MissionHeaderHandler(_mission) { InnerHandler = inner };
+        return new MissionContextHandler(_mission) { InnerHandler = inner };
+    }
+
+    private Func<Interaction, CancellationToken, Task<bool>>? BuildInteractionRelay(
+        HttpClient signedClient, MetadataClient metadata, string? personServer)
+    {
+        personServer ??= _mission?.PersonServer;
+        if (personServer is null)
+            return null;
+        var relay = new InteractionClient(signedClient, metadata, personServer);
+        return async (interaction, cancellationToken) =>
+        {
+            var result = await relay.RelayInteractionAsync(
+                interaction.Url,
+                interaction.Code,
+                missionS256: _mission?.S256,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            return result is { Unavailable: false, Status: AAuthConstants.Governance.Status.Interacting };
+        };
     }
 
     // Wrap a signing handler with the resource-managed AAuth-Access handler when
@@ -821,7 +887,7 @@ public sealed class AAuthClientBuilder
         var signingHandler = new AAuthSigningHandler(_key, provider)
         {
             InnerHandler = CreateTransport(),
-            Capabilities = _interactionHandling ? MergeCapabilities("interaction") : _capabilities,
+            Capabilities = _capabilities,
             OnSignatureBase = _onSignatureBase,
         };
         partial = signingHandler;
@@ -909,28 +975,6 @@ public sealed class AAuthClientBuilder
         return (string?)payload["ps"];
     }
 
-    private IReadOnlyList<string>? MergeCapabilities(string required)
-    {
-        if (_capabilities is null || _capabilities.Count == 0)
-            return new[] { required };
-
-        var list = new List<string>(_capabilities);
-        if (!list.Contains(required))
-            list.Add(required);
-        return list;
-    }
-
-    private IReadOnlyList<string> MergeCapabilities(string required1, string required2)
-    {
-        var list = _capabilities is null || _capabilities.Count == 0
-            ? new List<string>()
-            : new List<string>(_capabilities);
-        if (!list.Contains(required1))
-            list.Add(required1);
-        if (!list.Contains(required2))
-            list.Add(required2);
-        return list;
-    }
 }
 
 internal sealed class DelegateTokenRefresher : ITokenRefresher

@@ -6,6 +6,7 @@
 @using AAuth.Tokens
 @using Microsoft.IdentityModel.Tokens
 @inject IJSRuntime JS
+@inject SampleAgents Agents
 @rendermode InteractiveServer
 
 <PageTitle>Sub-Agents — Parent-Mediated Workers</PageTitle>
@@ -32,8 +33,8 @@
     at the Person Server — signing with the <strong>parent's</strong> key and including the
     sub-agent's token as <code>subagent_token</code>. The issued auth token binds to the
     <strong>sub-agent</strong> (so the parent can't use it) and is <strong>returned to the
-    parent</strong>, which <strong>hands it down</strong> to the worker; its <code>act</code>
-    claim records the full chain.
+    parent</strong>, which <strong>hands it down</strong> to the worker. Like every auth token
+    it names the person (<code>ps</code> + <code>sub</code>), not the agents.
 </p>
 
 <p class="text-muted">
@@ -74,7 +75,7 @@ string personServer = "http://localhost:5100";     // your Person Server</code><
 // marker; the `+` in the local part is operational readability only. The
 // AP knows `parentId` (a PUBLIC string) because the parent asked it to
 // spawn this worker — no parent SECRET is involved.
-var subAgentToken = new AgentTokenBuilder
+var subAgentToken = await new AgentTokenBuilder
 {
     EgressPolicy = SampleEgress.Policy,
     Issuer          = agentProvider,   // the AP
@@ -84,10 +85,10 @@ var subAgentToken = new AgentTokenBuilder
     ConfirmationKey = subAgentKey,     // binds the WORKER's PUBLIC key
     ParentAgent     = parentId,        // the parent's PUBLIC id (set by the AP)
     PersonServer    = personServer,
-}.Build();
+}.BuildAsync();
 
 // Single-level depth (§Sub-Agents): the AP MUST NOT issue a sub-agent
-// token whose parent is itself a sub-agent — Build() throws. And a
+// token whose parent is itself a sub-agent — BuildAsync() throws. And a
 // sub-agent MUST NOT call the Person Server directly.</code></pre>
 </div>
 <div class="col-md-6">
@@ -110,9 +111,9 @@ var authToken = await exchange.ExchangeAsync(
         OnInteractionRequired = ShowConsentAsync,
     });
 
-// The PS RETURNS this token to the parent. Its `agent` + `cnf` are the
-// SUB-AGENT's, so the parent can't use it — it hands it down to the
-// worker. `act` = { agent: parent, act: { agent: original } }.</code></pre>
+// The PS RETURNS this token to the parent. Its `cnf` is the SUB-AGENT's
+// key, so the parent can't use it — it hands it down to the worker. It
+// names the person (`ps`, `sub`); there is no `agent` or `act` claim.</code></pre>
 </div>
 </div>
 
@@ -125,12 +126,13 @@ var authToken = await exchange.ExchangeAsync(
     @(_loading ? "Running..." : "Run the parent-mediated sub-agent flow")
 </button>
 
-@if (_interactionUrl is not null && _loading)
+@if (_interaction is not null && _loading)
 {
     <div class="alert alert-warning mt-3">
         <h5>Consent Required</h5>
         <p>The parent-mediated exchange is paused until you complete the current consent step.</p>
-        <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">Open consent page</a>
+        <PersonServerApprovalPrompt PersonServer="@Agents.PersonServer" Interaction="_interaction"
+                                    ExternalLabel="Open Access Server consent page" />
     </div>
 }
 
@@ -200,26 +202,30 @@ var authToken = await exchange.ExchangeAsync(
     private string? _authClaims;
     private bool _cnfBound;
     private string? _error;
-    private string? _interactionUrl;
+    private AAuth.Headers.Interaction? _interaction;
     private string? _resourceResponse;
 
     private async Task RunLiveDemo()
     {
         _loading = true;
         _steps.Clear();
-        _error = _subAgentClaims = _authClaims = _resourceResponse = _interactionUrl = null;
+        _error = _subAgentClaims = _authClaims = _resourceResponse = null;
+        _interaction = null;
+        // The parent, worker and original caller are distinct identities with their own keys
+        // (the page's lesson), so the scenario presents each held token itself rather than
+        // through Aria's registered client.
         using var flow = new FederatedWorkerScenario(_identity.Key, _identity.KeyId, _identity.Issuer,
-            Config["AAuth:PersonServer"] ?? "http://localhost:5100", Config["AAuth:Wallet"] ?? "http://localhost:5003");
+            Agents.PersonServer, Config["AAuth:Wallet"] ?? "http://localhost:5003");
         flow.OnInteraction = async (interaction, _) =>
         {
-            _interactionUrl = interaction.BuildUserUrl();
+            _interaction = interaction;
             await InvokeAsync(StateHasChanged);
         };
         try
         {
-            flow.IssueParent();
+            await flow.IssueParentAsync();
             _steps.Add(new("Parent enrolled", "Aria receives its own key-bound identity.", flow.ParentId));
-            flow.IssueWorker();
+            await flow.IssueWorkerAsync();
             _subAgentClaims = Pretty(FederatedWorkerScenario.Payload(flow.WorkerToken!));
             _steps.Add(new("Sub-agent issued", "The worker has a distinct key and parent_agent relationship.", flow.WorkerId));
             await flow.ObtainUpstreamAsync();
@@ -227,9 +233,11 @@ var authToken = await exchange.ExchangeAsync(
             await flow.ObtainResourceAsync();
             _steps.Add(new("Worker obtained a Wallet challenge", "Wallet binds the resource token to the worker.", "resource_token.aud names the Wallet Access Server."));
             await flow.ExchangeAsync();
-            _authClaims = Pretty(FederatedWorkerScenario.Payload(flow.AuthToken!));
-            _cnfBound = true;
-            _steps.Add(new("PS returns the AS auth token to the parent", "PS consent and AS policy passed.", "agent = worker; act.agent = parent; act.act.agent = original."));
+            var authPayload = FederatedWorkerScenario.Payload(flow.AuthToken!);
+            _authClaims = Pretty(authPayload);
+            _cnfBound = JsonNode.DeepEquals(authPayload["cnf"]?["jwk"],
+                FederatedWorkerScenario.Payload(flow.WorkerToken!)["cnf"]?["jwk"]);
+            _steps.Add(new("PS returns the AS auth token to the parent", "PS consent and AS policy passed.", "cnf = worker key; ps + sub name the person; no agent or act claim."));
             _steps.Add(new("Parent hands the token to the worker", "Only the worker can present this grant.", "No private key is forwarded to the PS or AS."));
             await flow.CallWalletAsync();
             _resourceResponse = flow.ResourceResponse;

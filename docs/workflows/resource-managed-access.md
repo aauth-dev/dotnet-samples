@@ -6,7 +6,14 @@
 
 The resource handles authorization itself — via user interaction, existing OAuth/OIDC, or internal policy. After authorization, the resource returns an opaque access token for subsequent calls. Two-party only (agent + resource).
 
-This is the AAuth mode for resources that authorize requests themselves — the role a first-party OAuth deployment fills when a service runs its own authorization server alongside its API. The resource is both the authority that mints the opaque token and the API that accepts it, and that token MAY wrap an existing OAuth access token. When authorization is instead delegated to a separate authority, that authority is a Person Server or Access Server — see [PS-asserted](ps-asserted-access.md) and [federated](federated-access.md) access.
+This is the AAuth mode for resources that authorize requests themselves — the
+role a first-party OAuth deployment fills when a service runs its own
+authorization server alongside its API. The resource is both the authority that
+mints the opaque token and the API that accepts it, and that token MAY wrap an
+existing OAuth access token. When authorization is delegated to a separate
+authority, that authority is a Person Server or Access Server — see
+[PS authorization](ps-asserted-access.md) and [federated](federated-access.md)
+access.
 
 Runnable demo: the **Inbox** resource server (`samples/MockResourceServers/Inbox`, `:5004`) and the SampleApp [`/inbox`](http://localhost:5240/inbox) page / GuidedTour **Resource-Managed** flow.
 
@@ -31,7 +38,8 @@ sequenceDiagram
     participant User
     Note over Agent: Setup complete: self-issued or AP-enrolled agent JWT
     Agent->>Resource: GET /data (jwt + HTTP proof)
-    Resource-->>Agent: 202 + AAuth-Requirement: interaction (url, code)
+    Resource-->>Agent: 202 + Location + requirement=interaction; url; code
+    Note over Agent: Start signed polling immediately
     User->>Resource: Completes interaction at resource's page
     Agent->>Resource: GET /pending/<id> (poll)
     Resource-->>Agent: 200 + AAuth-Access: <opaque-token>
@@ -43,7 +51,7 @@ sequenceDiagram
 
 ### Client-Side (Agent)
 
-`WithResourceManagedAccess()` captures the `AAuth-Access` token and replays it as `Authorization: AAuth <token68>` (the signer covers `authorization` automatically). Combine with `WithInteractionHandling()` to drive the resource's `202 → consent → 200` handshake:
+`WithResourceManagedAccess()` captures the `AAuth-Access` token and replays it as `Authorization: AAuth <token68>` (the signer covers `authorization` automatically). Combine with `WithInteractionHandling()` to drive the resource's `202 → poll/interaction → 200` handshake:
 
 ```csharp
 var keyStore = FileKeyStore.Default();
@@ -58,16 +66,17 @@ using var client = AAuthClientBuilder.Enrolled(enrollment.Key)
     .WithResourceManagedAccess()
     .WithInteractionHandling(options =>
     {
-        options.OnInteractionRequired = (url, code, ct) =>
+        options.OnInteractionRequired = (interaction, ct) =>
         {
-            Console.WriteLine($"Approve at: {url}");
+            Console.WriteLine($"Approve at: {interaction.BuildUserUrl()}");
             return Task.CompletedTask;
         };
     })
     .Build();
 
-// First call drives the 202 → consent → poll handshake; the SDK captures the
-// AAuth-Access token. Subsequent calls replay it, bound to the signature.
+// First call drives the 202 → poll-on-arrival → consent → 200 handshake; the
+// SDK captures the AAuth-Access token. Subsequent calls replay it, bound to the
+// signature.
 await client.GetAsync("https://resource.example/messages");
 var response = await client.GetAsync("https://resource.example/messages");
 ```
@@ -93,7 +102,9 @@ if (response.StatusCode == HttpStatusCode.Accepted)
     // Parse AAuth-Requirement header for the interaction URL + code
     var requirement = AAuthRequirementHeader.Parse(
         response.Headers.GetValues("AAuth-Requirement").First());
-    // Present the interaction URL to the user, then poll the Location URL.
+    // Start signed polling of the Location URL immediately, then present the
+    // interaction URL to the user. The user may decide from that page or from a
+    // dashboard while the agent is already polling.
     // On 200, read AAuth-Access and present it on the next request as
     // Authorization: AAuth <token68> (covered by the signature).
 }
@@ -118,8 +129,8 @@ app.MapGet("/messages", async (HttpContext ctx) =>
     if (info is not null)
         return Results.Ok(new { scope = info.Scope, messages });
 
-    // No token yet → 202 + AAuth-Requirement: interaction (url + code + poll
-    // Location all sourced from the module options).
+    // No token yet → 202 with Location, Retry-After, Cache-Control: no-store and
+    // AAuth-Requirement: requirement=interaction; url=...; code=...
     return ctx.RequireAAuthInteraction("inbox.read");
 }).RequireAAuthSignature();
 
@@ -127,21 +138,16 @@ app.MapGet("/messages", async (HttpContext ctx) =>
 // on approval — the resource maps no poll plumbing of its own.
 app.MapAAuthInteractionPoll().RequireAAuthSignature();
 
-// Optional proactive entry point (§Authorization Endpoint Request) — same
-// decision path as /messages.
-app.MapAAuthAuthorizationEndpoint("/authorize", async (ctx, request) =>
-{
-    var info = await ctx.ResolveAAuthAccessAsync(store, ctx.RequestAborted);
-    if (info is not null)
-        return Results.Ok(new { authorized = true, scope = info.Scope });
-
-    return ctx.RequireAAuthInteraction(request.Scope);
-}).RequireAAuthSignature();
-
 // The resource's authenticated consent page consumes the correlation code,
 // binds a decision session to the person and pending owner, and validates CSRF.
 // Only that verified decision context can approve the stored interaction.
 ```
+
+> The resource-managed `session-token` flow is separate from the protocol
+> `authorization_endpoint`. A published authorization endpoint requires a
+> person token and is for proactively requesting a resource token; a two-party
+> resource-managed sample like Inbox should use the reactive `202 interaction`
+> path instead of mapping `/authorize`.
 
 ## DI Registration
 
@@ -152,14 +158,14 @@ var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 
 builder.Services.AddAAuthAgent("resource-managed", options =>
 {
-    options.Key = key!;
+    options.Signer = key!;
     options.AgentToken = agentToken; // already-held aa-agent+jwt bound to key
     options.EnableResourceManagedAccess = true; // capture + replay AAuth-Access
-    options.OnResourceInteraction = async (url, code, ct) =>
+    options.Interaction.OnInteractionRequired = async (interaction, ct) =>
     {
-        await Surface(url);
+        await Surface(interaction.BuildUserUrl());
     };
-    options.PollingTimeout = TimeSpan.FromMinutes(3);
+    options.Interaction.PollingTimeout = TimeSpan.FromMinutes(3);
 });
 ```
 
@@ -170,8 +176,7 @@ builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://resource.example";
     options.SigningKeys = new() { ["key-1"] = resourceKey };
-    options.AccessMode = AAuthConstants.AccessModes.AAuthAccessToken;
-    options.AuthorizationEndpoint = "https://resource.example/authorize";
+    options.AccessMode = AAuthConstants.AccessModes.SessionToken;
 });
 
 // The resource-managed module registers the opaque-token store, the interaction
@@ -185,12 +190,12 @@ builder.Services.AddAAuthResourceManaged(options =>
 ```
 
 The endpoints then drive the flow with `ResolveAAuthAccessAsync` /
-`RequireAAuthInteraction` and `MapAAuthInteractionPoll`; the consent page records
-the decision using an authenticated, owner-bound `BrowserConsentSessions`
-session and the pending-store generation. See the actual
+`RequireAAuthInteraction` and `MapAAuthInteractionPoll`; the agent can poll as
+soon as it receives the `202`, while the consent page records the decision using
+an authenticated, owner-bound `BrowserConsentSessions` session and the
+pending-store generation. Opening the code does not grant access; only the
+session-bound approve/deny POST does. See the actual
 [Inbox consent endpoints](../../samples/MockResourceServers/Inbox/Program.cs).
-Optionally,
-`MapAAuthAuthorizationEndpoint` adds the proactive entry point.
 
 See [Dependency Injection](../reference/dependency-injection.md) for full reference.
 
@@ -198,12 +203,12 @@ See [Dependency Injection](../reference/dependency-injection.md) for full refere
 
 | Status | Header | Cause |
 |--------|--------|-------|
-| 401 | `Signature-Error: invalid_signature` | Signature doesn't verify |
-| 202 | `AAuth-Requirement: interaction` | Authorization pending — user interaction required |
+| 401 | `Signature-Error: error=invalid_signature` | Signature doesn't verify |
+| 202 | `AAuth-Requirement: requirement=interaction; url=...; code=...` plus `Location` | Authorization pending — user interaction required |
 | 403 | *(none)* | Interaction completed but access denied by resource policy |
 
 ## Further Reading
 
 - [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
-- [Identity-Based Access](identity-based-access.md)
-- [PS-Asserted Access](ps-asserted-access.md)
+- [Agent identity access](identity-based-access.md)
+- [PS authorization](ps-asserted-access.md)

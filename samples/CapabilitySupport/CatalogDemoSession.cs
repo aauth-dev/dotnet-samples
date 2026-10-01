@@ -16,12 +16,13 @@ public sealed class CatalogDemoSession(string provider, string person, string re
     public int Step { get; private set; }
     public string Service { get; set; } = "destinations";
     public string OtherService => Service == "destinations" ? "experiences" : "destinations";
-    public string? ConsentUrl { get; private set; }
+    public Interaction? Consent { get; private set; }
+    public string? ConsentUrl => Consent?.BuildUserUrl();
     public string? Result { get; private set; }
     public Func<Task>? Changed { get; set; }
     public List<ScenarioExchange> Exchanges { get; } = [];
-    public static string[] Steps { get; } = ["Discover catalog services", "Authorize selected service", "Read selected catalog",
-        "Reject a sibling-service grant", "Authorize sibling and recover"];
+    public static string[] Steps { get; } = ["Discover catalog definition", "Authorize selected operation", "Read selected catalog",
+        "Reject a sibling-operation grant", "Authorize sibling and recover"];
 
     public async Task NextAsync(CancellationToken cancellationToken)
     {
@@ -31,16 +32,17 @@ public sealed class CatalogDemoSession(string provider, string person, string re
                 using (var metadata = new MetadataClient(_http))
                 {
                     var document = await metadata.FetchAsync(metadata.GetUrl(resource, "aauth-resource.json"), cancellationToken);
-                    var services = document["r3_vocabularies"]!["urn:aauth:vocabulary:openapi-gateway"]!.AsObject();
-                    var definitions = new JsonObject();
-                    foreach (var service in services)
+                    var definition = (string)document["r3_vocabularies"]!["urn:aauth:vocabulary:openapi"]!;
+                    using (var request = new HttpRequestMessage(HttpMethod.Get, definition))
+                    using (var response = await AAuthHttpTransport.SendAsync(_http, request, cancellationToken))
                     {
-                        using var request = new HttpRequestMessage(HttpMethod.Get, (string)service.Value!);
-                        using var response = await AAuthHttpTransport.SendAsync(_http, request, cancellationToken);
                         response.EnsureSuccessStatusCode();
-                        definitions[service.Key] = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                        Result = new JsonObject
+                        {
+                            ["metadata"] = document,
+                            ["definition"] = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken)),
+                        }.ToJsonString(WalletDemoSession.Pretty);
                     }
-                    Result = new JsonObject { ["metadata"] = document, ["definitions"] = definitions }.ToJsonString(WalletDemoSession.Pretty);
                 }
                 var enrolled = await AAuthClientBuilder.Bootstrap(provider + "/enrol").WithKey(_key)
                     .WithKeyStore(new InMemoryKeyStore()).WithPersonServer(person).WithEgressPolicy(SampleEgress.Policy).EnrolAsync(cancellationToken);
@@ -59,26 +61,39 @@ public sealed class CatalogDemoSession(string provider, string person, string re
 
     private async Task<string> AuthorizeAsync(string service, CancellationToken cancellationToken)
     {
+        var url = resource + "/catalog/" + service;
         using var signed = Signed(_agentToken!);
-        using var challenge = await signed.GetAsync(resource + "/catalog/" + service, cancellationToken);
-        if (challenge.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("Expected catalog challenge.");
-        var token = AAuthRequirementHeader.Parse(challenge.Headers.GetValues("AAuth-Requirement").First()).ResourceToken!;
         using var metadata = new MetadataClient(_http);
+        var exchange = new TokenExchangeClient(signed, metadata);
+        async Task Surface(Interaction interaction, CancellationToken _)
+        {
+            Consent = interaction;
+            if (Changed is not null) await Changed();
+        }
         string grant;
         try
         {
-            grant = await new TokenExchangeClient(signed, metadata).ExchangeAsync(person, token, new TokenExchangeRequest
+            // §Person Token Required: the agent token earns a person-token requirement first.
+            using (var prerequisite = await signed.GetAsync(url, cancellationToken))
             {
-                OnInteractionRequired = async (interaction, _) =>
-                {
-                    ConsentUrl = interaction.BuildUserUrl();
-                    if (Changed is not null) await Changed();
-                },
-            }, cancellationToken);
+                if (prerequisite.StatusCode != HttpStatusCode.Unauthorized
+                    || AAuthRequirementHeader.Parse(prerequisite.Headers.GetValues(AAuthRequirementHeader.Name).First()).Requirement
+                        != AAuthRequirementHeader.PersonTokenRequirement)
+                    throw new InvalidOperationException("Expected a catalog person-token requirement.");
+            }
+            var personToken = await exchange.RequestPersonTokenAsync(person, resource,
+                new TokenExchangeRequest { OnInteractionRequired = Surface }, cancellationToken);
+            using var personClient = Signed(personToken);
+            using var challenge = await personClient.GetAsync(url, cancellationToken);
+            if (challenge.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("Expected catalog challenge.");
+            var token = AAuthRequirementHeader.Parse(challenge.Headers.GetValues(AAuthRequirementHeader.Name).First()).ResourceToken
+                ?? throw new InvalidOperationException("Catalog challenge is missing its resource token.");
+            grant = await exchange.ExchangeAsync(person, token,
+                new TokenExchangeRequest { PresentedToken = personToken, OnInteractionRequired = Surface }, cancellationToken);
         }
         finally
         {
-            ConsentUrl = null;
+            Consent = null;
             if (Changed is not null) await Changed();
         }
         Result = ScenarioWireHandler.Claims(grant).ToJsonString(WalletDemoSession.Pretty);

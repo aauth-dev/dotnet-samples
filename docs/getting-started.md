@@ -77,7 +77,7 @@ using var client = AAuthSigningHandler.CreateClient(key, new JwtSignatureKeyProv
 // In Program.cs
 builder.Services.AddAAuthAgent("agent", options =>
 {
-    options.Key = key;
+    options.Signer = key;
     options.AgentToken = agentToken;
 });
 
@@ -92,7 +92,7 @@ public class MyService(IHttpClientFactory factory)
 
 - `FileKeyStore.LoadOrCreate()` retained the agent's software key locally.
 - Signed enrollment bound its public key to an AP-assigned identity.
-- The enrolled builder refreshes the agent JWT and produces an `HttpClient`.
+- The enrolled builder configures AP token refresh and produces an `HttpClient`.
 - `AAuthSigningHandler` signs the request per RFC 9421 covering `@method`, `@authority`, `@path`, and `signature-key`.
 - The resource verifies the AP assertion and the matching HTTP proof. Generic
     [HWK](signing-modes/pseudonymous-hwk.md) examples use a different explicit profile.
@@ -129,7 +129,7 @@ AAuth uses a minimal set of cryptographic primitives:
 |-----------|---------|-----|
 | **Ed25519** | Signing key for all HTTP signatures and JWT tokens | `AAuthKey.Generate()` |
 | **JWK Thumbprint (S256)** | Compact key identifier — a SHA-256 hash of the canonical public key | `key.ComputeJwkThumbprint()` |
-| **JWT (Ed25519-signed)** | All AAuth tokens (`aa-agent+jwt`, `aa-resource+jwt`, `aa-auth+jwt`) | `AgentTokenBuilder`, `ResourceTokenBuilder`, `AuthTokenBuilder` |
+| **JWT (Ed25519-signed)** | All AAuth tokens (`aa-agent+jwt`, `aa-person+jwt`, `aa-resource+jwt`, `aa-auth+jwt`) | `AgentTokenBuilder`, `PersonTokenBuilder`, `ResourceTokenBuilder`, `AuthTokenBuilder` |
 
 Ed25519 is required; the SDK also supports ES256. Fully specified algorithms are
 required in JWKs and JWT headers; polymorphic `EdDSA`, `none` and symmetric keys
@@ -137,20 +137,28 @@ are rejected. HTTP signatures follow RFC 9421 and do not add an `alg` parameter.
 
 ## Supported Flows
 
-AAuth supports four resource access modes. Each adds parties and capabilities:
+AAuth supports five resource access modes. Each adds parties and capabilities:
 
 | Flow | Parties | When to Use | Signing Mode | See it run |
 |------|---------|-------------|--------------|------------|
-| **[Identity-Based](workflows/identity-based-access.md)** | Agent + Resource | Resource authorizes verified agent identity | `jwt` | Profile `/identified` accepts agent JWT; generic Profile demos are separate |
+| **[Agent identity](workflows/identity-based-access.md)** | Agent + Resource | Resource authorizes verified agent identity | `jwt` | Profile `/identified` accepts agent JWT; generic Profile demos are separate |
 | **[Resource-Managed](workflows/resource-managed-access.md)** (two-party) | Agent + Resource | Resource handles its own authorization | `jwt` plus opaque AAuth-Access | GuidedTour **Resource-Managed (Two-Party)**; SampleApp `/inbox` |
-| **[PS-Asserted](workflows/ps-asserted-access.md)** (three-party) | Agent + Resource + PS | User consent required, resource delegates auth to PS | `jwt` | GuidedTour **PS-Asserted (Direct Grant)** & **(Deferred)**; SampleApp `/calendar`, `/calendar-deferred` |
-| **[Federated](workflows/federated-access.md)** (four-party) | Agent + Resource + PS + AS | Cross-domain policy, resource has its own Access Server | `jwt` | GuidedTour **Federated (Four-Party)**; SampleApp `/wallet` (live Keycloak: `make demo-keycloak`) |
+| **Person Identity** | Agent + Resource + PS | Resource needs a person identifier before deciding what to challenge for | `jwt` with a person token | Intermediate `requirement=person-token` step in PS authorization flows |
+| **[PS Authorization](workflows/ps-asserted-access.md)** (three-party) | Agent + Resource + PS | User consent required, resource delegates auth to PS | `jwt` | GuidedTour **PS Authorization (Direct Grant)** & **(Deferred)**; SampleApp `/calendar`, `/calendar-deferred` |
+| **[Federated authorization](workflows/federated-access.md)** (four-party) | Agent + Resource + PS + AS | Cross-domain policy, resource has its own Access Server | `jwt` | GuidedTour **Federated authorization (Four-Party)**; SampleApp `/wallet` (live Keycloak: `make demo-keycloak`) |
 
 Adoption is incremental — each party can add support independently, and modes build on each other. See [Signing Modes](signing-modes/overview.md) for details on each scheme.
 
 ## Three-Party Flow Deep Dive
 
-The PS-Asserted flow is the most common authorization model. The resource issues a challenge; the agent exchanges it at the Person Server for an auth token with user consent.
+The PS authorization flow is the common three-party authorization model. Draft-11
+is a two-challenge sequence: first the resource asks for a person token
+(`#requirement-person-token`, L615), then it uses that verified person token to
+mint a resource token whose `presented_jti` names the person token's `jti`
+(`#resource-token`, L725-L760). The agent sends both the `resource_token` and
+the exact `presented_token` to the PS auth-token endpoint (`#ps-token-endpoint`,
+L924-L968), and the returned auth token contains a required `sub`
+(`#auth-token-structure`, L1768-L1790).
 
 ### Sequence
 
@@ -162,14 +170,22 @@ sequenceDiagram
     participant User
 
     Agent->>Resource: GET /data (Signature-Key: sig=jwt, agent token)
-    Resource->>Resource: Verify signature, read ps claim
-    Resource-->>Agent: 401 + AAuth-Requirement: resource_token (aud=PS)
+    Resource->>Resource: Verify agent token and key proof
+    Resource-->>Agent: 401 + requirement=person-token
 
-    Agent->>PS: POST /token (signed, resource_token in body)
-    PS->>PS: Validate agent token (issuer JWKS, cnf, exp)
+    Agent->>PS: POST /person (signed; resource=https://resource.example)
+    PS->>PS: Validate agent token, mission/context and person selection
+    PS-->>Agent: person_token (aa-person+jwt)
+
+    Agent->>Resource: GET /data (Signature-Key: sig=jwt, person token)
+    Resource->>Resource: Verify person token, copy ps/sub and set presented_jti
+    Resource-->>Agent: 401 + requirement=auth-token; resource-token=...
+
+    Agent->>PS: POST /token (signed; resource_token + presented_token)
+    PS->>PS: Verify resource token and the named presented token
     PS->>User: Consent prompt (scope, justification)
     User-->>PS: Grant consent
-    PS-->>Agent: 200 + auth_token (aa-auth+jwt, claims: sub, email)
+    PS-->>Agent: 200 + auth_token (aa-auth+jwt, required sub)
 
     Agent->>Resource: GET /data (Signature-Key: sig=jwt, auth token)
     Resource->>Resource: Verify auth token (issuer JWKS, aud, cnf, scope)
@@ -190,52 +206,138 @@ Signature-Input: sig=("@method" "@authority" "@path" "signature-key");...
 Signature: sig=:<base64-signature>:
 ```
 
-**2. Resource → Agent (401 challenge)**
+**2. Resource → Agent (401 `requirement=person-token`)**
 
-The resource verifies the HTTP signature, extracts the `ps` claim from the agent token, and issues a `resource_token` (`aa-resource+jwt`) with `aud` set to the PS URL:
+The resource can verify the agent token, but it cannot issue a resource token
+until it has verified a person or auth token. It asks the agent to obtain a
+person token from the PS (`#requirement-person-token`, L615):
 
-```
+```http
 HTTP/1.1 401 Unauthorized
-AAuth-Requirement: requirement=auth-token; resource-token="<resource-token>"
+AAuth-Requirement: requirement=person-token
 ```
 
-The resource token contains: issuer (resource URL), audience (PS URL), agent identifier, agent key thumbprint (`agent_jkt`), and requested scope.
+**3. Agent → Person Server (`/person`)**
 
-**3. Agent → Person Server (token exchange)**
+The agent makes a signed POST to the PS `person_token_endpoint` (`/person` in
+the SDK defaults), presenting its agent token via `Signature-Key: sig=jwt` and
+naming the resource that will receive the person token (`#person-token-endpoint`,
+L801):
 
-The agent POSTs the resource token to the PS's token endpoint (discovered via `/.well-known/aauth-person.json`):
-
-```
-POST /token HTTP/1.1
+```http
+POST /person HTTP/1.1
 Host: ps.example
 Content-Type: application/json
 Signature-Key: sig=jwt;jwt="<agent-token>"
 
-{"resource_token": "<resource-token>"}
+{
+  "resource": "https://resource.example",
+  "justification": "Read calendar events"
+}
 ```
 
-**4. Person Server validates and prompts for consent**
+The PS validates the agent token, mission/context values, optional
+`capabilities`, and the person selection policy. It returns an `aa-person+jwt`
+whose `aud` is the resource and whose `sub` is the directed person identifier.
 
-The PS:
-- Verifies the agent token signature against the AP's published JWKS
-- Verifies `cnf.jwk` matches the request's signing key
-- Decodes the resource token and verifies it was issued by the resource (via resource JWKS)
-- Prompts the user for consent on the requested scope
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
 
-**5. Consent: immediate vs deferred**
+{
+  "person_token": "<person-token>",
+  "expires_in": 3600
+}
+```
 
-- **Immediate**: Existing consent or policy already permits the request; the PS returns the auth token directly.
-- **Deferred**: A decision is needed. The PS returns `202 Accepted`, a `Location` pending URL and the requirement. `TokenExchangeRequest` callbacks surface interaction or clarification while the exchange polls. The browser code correlates the request; authenticated identity and CSRF protection authorize the decision.
+**4. Agent → Resource (retry with person token)**
+
+The agent retries with the person token. The resource verifies it, then issues a
+resource token because it now knows the PS/person namespace. The resource token
+copies `ps` and `sub` from the token the request carried and sets
+`presented_jti` to that token's `jti`
+(`#resource-token`, L725-L760):
+
+```http
+HTTP/1.1 401 Unauthorized
+AAuth-Requirement: requirement=auth-token; resource-token="<resource-token>"
+```
+
+The resource token contains the resource issuer, the recipient (`aud` = PS for
+three-party, AS for four-party), the `ps`/`sub` copied from the person token,
+`presented_jti` equal to the person token's `jti`, `agent_jkt`, and the
+requested scope.
+
+**5. Agent → Person Server (auth-token request)**
+
+The agent posts both the resource token and the exact token named by
+`presented_jti` to the PS `auth_token_endpoint` (`#ps-token-endpoint`,
+L924-L968):
+
+```http
+POST /token HTTP/1.1
+Host: ps.example
+Content-Type: application/json
+Prefer: wait=45
+Signature-Key: sig=jwt;jwt="<agent-token>"
+
+{
+  "resource_token": "<resource-token>",
+  "presented_token": "<person-token>",
+  "justification": "Read calendar events"
+}
+```
+
+The PS verifies the resource token, verifies the presented person token against
+the resource token, checks that its `jti` equals `presented_jti`, then applies
+consent, mission and policy. For a four-party resource, the PS sends the same
+bound pair to the resource's AS.
 
 **6. Person Server → Agent (auth token)**
 
-The PS issues an `auth_token` (`aa-auth+jwt`) containing:
-- `iss`: PS URL
-- `aud`: Resource URL
-- `sub`: Optional directed person identifier, scoped to the receiving party
-- `cnf.jwk`: Agent's public key (proof-of-possession binding)
-- `scope`: Granted scope
-- Optional identity claims: `email`, `tenant`, `groups`, `roles`
+When the request can be resolved immediately, the PS or AS issues an
+`auth_token` (`aa-auth+jwt`):
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "auth_token": "<auth-token>",
+  "expires_in": 3600
+}
+```
+
+If user interaction is required, the PS returns a deferred response
+(`#deferred-responses`, L2478-L2538) instead. The agent polls the same-origin
+`Location` with signed `GET` requests and may include `Prefer: wait=N` on those
+polls:
+
+```http
+HTTP/1.1 202 Accepted
+Location: /pending/f7a3b9c
+Retry-After: 1
+Cache-Control: no-store
+AAuth-Requirement: requirement=interaction; url="https://ps.example/interact"; code="abc123"
+Content-Type: application/json
+
+{
+  "status": "pending"
+}
+```
+
+The final `auth_token` uses `typ: aa-auth+jwt`, follows the common JWT profile
+(`jti`, `iat`, `exp`, `cnf`), and contains:
+
+- `iss`: PS URL for three-party, AS URL for four-party.
+- `dwk`: `aauth-person.json` for PS-issued tokens or `aauth-access.json` for AS-issued tokens.
+- `aud`: Resource URL.
+- `ps`: Person Server URL.
+- `sub`: Required directed person identifier, scoped to the issuer/resource pair.
+- `cnf.jwk`: Agent's public key (proof-of-possession binding).
+- `exp`: No more than 1 hour, bounded by the agent token, the `presented_token`,
+  and any upstream token or mission expiry.
+- Optional `scope`, `account`, `mission_s256`, `tenant`, and identity claims.
 
 **7. Agent → Resource (retry with auth token)**
 
@@ -250,13 +352,20 @@ Signature: sig=:<base64-signature>:
 ```
 
 The resource verifies the auth token:
-- Fetches the PS's JWKS (from `{iss}/.well-known/aauth-person.json`) and verifies the JWT signature
+- Fetches the PS or AS JWKS and verifies the JWT signature
 - Checks `aud` matches its own identifier
 - Confirms `cnf.jwk` matches the key used to sign the HTTP request (proof-of-possession)
 - Evaluates the granted `scope` against the requested operation
-- Optionally checks the issuer is in `TrustedAuthTokenIssuers`
+- Optionally checks the issuer against `Trust.AuthTokenIssuers`
 
-Per the spec, any PS can assert identity claims to any resource without bilateral setup — the resource namespaces claims by the PS's issuer URL (the same `sub` from a different PS is a different subject). Resources that want to restrict which PSes they accept set `TrustedAuthTokenIssuers`.
+If a later endpoint requires a broader `scope` than the presented auth token
+grants, `RequireAAuth(scope:)` performs step-up by returning another `401` with
+`requirement=auth-token` and a fresh resource token, not a `403`.
+
+Per the spec, any trusted, verifiable PS can assert identity claims to a
+resource. The resource namespaces claims by issuer URL: the same `sub` from a
+different PS is a different person. Resources that want to restrict which PSes
+or ASes they accept configure `Trust.AuthTokenIssuers`.
 
 ### Self-Hosted Agent Example
 
@@ -275,10 +384,10 @@ var issuer = "https://my-service.example";
 var app = builder.Build();
 
 // Publish /.well-known/aauth-agent.json so resources can discover the JWKS
-app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+app.MapAAuthAgentWellKnown(options =>
 {
-    Issuer = issuer,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [Kid] = key },
+    options.Issuer = issuer;
+    options.SigningKeys = new AAuthSigningKeySet(Kid, key);
 });
 
 // Build a signed HTTP client with automatic token refresh and challenge handling
@@ -327,11 +436,11 @@ app.MapAAuthWellKnown();
 // signature and, when an endpoint needs an auth token, challenges for one.
 // Restrict which Person Servers this resource trusts — the resource verifies
 // auth tokens against the PS's JWKS (discovered at
-// {iss}/.well-known/aauth-person.json). Omit TrustedAuthTokenIssuers (or assign
-// AAuthTrust.Any) to accept any *verifiable* PS dynamically — claims are
+// {iss}/.well-known/aauth-person.json). Leave Trust.AuthTokenIssuers unset (or assign
+// AAuthTrust.Any to its Predicate) to accept any *verifiable* PS dynamically — claims are
 // namespaced by issuer; leaving it open logs a startup warning.
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" });
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { "https://ps.example" });
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -353,14 +462,18 @@ With the SDK's `ChallengeHandler`, the entire three-party exchange is automatic:
 ```csharp
 var response = await client.GetAsync("https://resource.example/data");
 Console.WriteLine(await response.Content.ReadAsStringAsync());
-// {"message":"Hello aauth:my-service@my-service.example"}
+// {"message":"Hello person-123"}
 ```
 
-The `ChallengeHandler` intercepts the `401`, extracts the resource token, exchanges it at the PS, caches the resulting auth token, and retries — all transparently.
+The `ChallengeHandler` handles the draft-11 sequence transparently: it first
+answers the `requirement=person-token` challenge by requesting a person token,
+then answers the `requirement=auth-token` challenge by POSTing both
+`resource_token` and `presented_token` to the PS, caches the resulting auth
+token, and retries.
 
 ### Going Four-Party (Federated)
 
-When the resource has its own **Access Server (AS)**, the resource token's `aud` points at the AS instead of the PS. The PS recognizes this and federates to the AS, which mints the auth token. **The agent code is unchanged** — `WithChallengeHandling` handles it transparently, including any AS-side interactive consent. See [Federated Access](workflows/federated-access.md) for the PS- and AS-side code.
+When the resource has its own **Access Server (AS)**, the resource token's `aud` points at the AS instead of the PS. The PS recognizes this and federates to the AS, which mints the auth token. **The agent code is unchanged** — `WithChallengeHandling` handles it transparently, including any AS-side interactive consent. See [Federated authorization](workflows/federated-access.md) for the PS- and AS-side code.
 
 ## Enrollment: Hosted vs CLI/Desktop Agents
 
@@ -419,7 +532,7 @@ var key = keyStore.Load(localKeyHandle)
     ?? throw new InvalidOperationException($"Key '{localKeyHandle}' not found. Run enrollment first.");
 
 // The SDK acquires the agent token lazily on first request
-// via WithTokenRefresh, then keeps it fresh automatically.
+// via the configured AP refresh endpoint, then keeps it fresh automatically.
 using var client = AAuthClientBuilder.Enrolled(key)
     .RefreshingFrom(apRefreshEndpoint, localKeyHandle)
     .WithKeyStore(keyStore)
@@ -457,7 +570,8 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 
 using var apHttp = AAuthHttpTransport.CreateClient();
-var apClient = new AgentProviderClient(apHttp, new InMemoryKeyStore());
+var keyStore = new InMemoryKeyStore();
+var apClient = new AgentProviderClient(apHttp, keyStore);
 var enrol = await apClient.EnrolAsync(
     apIssuer: "https://ap.example",
     agentId: null,
@@ -492,13 +606,14 @@ Console.WriteLine(await response.Content.ReadAsStringAsync());
 <details>
 <summary>Manual Pipeline Setup (Low-Level)</summary>
 
-This shows the internal handler pipeline for educational purposes. Use `WithTokenRefresh` + `WithChallengeHandling` in production code.
+This shows the internal handler pipeline for educational purposes. Use
+`RefreshingFrom(...)` + `WithChallengeHandling(...)` in production code.
 
 ```csharp
 // Acquire a fresh agent token via the AP refresh endpoint
 using var apHttp = AAuth.Discovery.AAuthHttpTransport.CreateClient();
 var apClient = new AgentProviderClient(apHttp, keyStore);
-var agentToken = await apClient.RefreshAsync("https://ap.example/refresh", keyId);
+var agentToken = await apClient.RefreshAsync("https://ap.example/refresh", localKeyHandle);
 
 // Carrier-token holder — shared between signer and challenge handler.
 var holder = new AAuthTokenHolder(agentToken);
@@ -531,20 +646,28 @@ using var client = new HttpClient(pipeline);
 
 ### What Happens Under the Hood
 
-1. Agent sends a signed GET → Resource replies **401** with `AAuth-Requirement: requirement=auth-token` and a `resource_token`.
-2. `ChallengeHandler` verifies the resource token and original request binding before POSTing it to the Person Server's token endpoint.
-3. The PS validates the agent token, confirms user consent (or defers), and returns an `auth_token`.
-4. `AAuthTokenHolder` is updated; the handler retries the original request signed with the auth token.
-5. Subsequent requests reuse the auth token until it expires.
+1. Agent sends a signed GET with an agent token → Resource replies **401** with
+   `AAuth-Requirement: requirement=person-token`.
+2. `ChallengeHandler` requests a person token from the PS `person_token_endpoint`
+   and retries the resource with that person token.
+3. Resource verifies the person token → replies **401** with
+   `AAuth-Requirement: requirement=auth-token` and a resource token whose
+   `presented_jti` names the person token's `jti`.
+4. `ChallengeHandler` POSTs both `resource_token` and `presented_token` to the
+   PS auth-token endpoint. The PS validates the pair, confirms consent directly
+   or returns a `202` deferred interaction, and then returns an `auth_token`.
+5. `AAuthTokenHolder` is updated; the handler retries the original request signed
+   with the auth token. Subsequent requests reuse the auth token until it expires
+   or needs step-up.
 
 ## Next Steps
 
 - [Signing Modes Overview](signing-modes/overview.md) — choose the right mode for your use case
-- [Identity-Based Access](workflows/identity-based-access.md) — simplest workflow (no PS needed)
+- [Agent identity access](workflows/identity-based-access.md) — simplest workflow (no PS needed)
 - [Resource-Managed Access](workflows/resource-managed-access.md) — resource runs its own authorization
-- [PS-Asserted Access](workflows/ps-asserted-access.md) — full three-party authorization flow
-- [Federated Access](workflows/federated-access.md) — four-party flow with an Access Server
-- [Call Chaining](workflows/call-chaining.md) — multi-agent delegation with nested `act`
+- [PS authorization](workflows/ps-asserted-access.md) — full three-party authorization flow
+- [Federated authorization](workflows/federated-access.md) — four-party flow with an Access Server
+- [Call Chaining](workflows/call-chaining.md) — multi-hop access with `upstream_token`
 - [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md) — detailed AP enrollment for CLI/desktop agents
 - [Server Guide](server/verification-middleware.md) — verification middleware and token issuance
 - [Protocol Concepts](concepts.md) — understand the full picture

@@ -8,9 +8,11 @@ delegation), exactly like a travel concierge booking through other providers.
 ## What It Demonstrates
 
 - Intermediate service pattern: resource + agent in one process
-- Proper 401 challenge with resource token when receiving agent tokens
-- Token exchange with `upstream_token` for nested `act` delegation
-- `UseJwt(string)` to present a pre-acquired auth token downstream
+- Proper 401 challenge with resource token when receiving person tokens
+- Downstream person and auth token requests carrying `upstream_token`, routed
+  to the Person Server the upstream token names (§Call Chaining)
+- `WithCallChaining(string)` to drive the downstream leg from the caller's
+  auth token
 - Mandatory JWT issuer verification
 
 ## Flow
@@ -22,35 +24,42 @@ sequenceDiagram
     participant PS as Person Server (:5100)
     participant Cal as Calendar (:5001)
 
-    A->>C: GET / (signed, agent token)
+    A->>C: GET / (signed, person token)
     C-->>A: 401 + resource_token (aud = PS)
-    A->>PS: exchange resource_token
+    A->>PS: exchange resource_token + presented_token
     PS-->>A: auth token for the Concierge
     A->>C: GET / (signed, auth token)
 
     Note over C,Cal: Concierge now acts as an agent on the user's behalf
-    C->>Cal: GET /events (signed, agent token)
+    C->>PS: person token request (upstream_token = caller's auth token)
+    PS-->>C: person token for the Calendar (directed sub)
+    C->>Cal: GET /events (signed, person token)
     Cal-->>C: 401 + resource_token
-    C->>PS: exchange resource_token (upstream_token = caller's auth token)
-    PS-->>C: chained auth token (nested act)
-    C->>Cal: GET /events (signed, chained auth token)
+    C->>PS: exchange resource_token + presented_token + upstream_token
+    PS-->>C: downstream auth token (ps + sub name the person; no agent or act)
+    C->>Cal: GET /events (signed, downstream auth token)
     Cal-->>C: 200 OK
     C-->>A: 200 OK (combined chain result)
 ```
 
-The final response includes:
+The final response includes (values abbreviated):
 
 ```json
 {
   "chain": "Agent → Concierge → Calendar",
-  "upstream": { "agent": "aauth:sample-app@ap.example" },
-  "downstream": {
-    "mode": "three-party",
-    "act": {
-      "sub": "aauth:concierge@concierge.example",
-      "act": { "sub": "aauth:sample-app@ap.example" }
-    }
-  }
+  "upstream": {
+    "scheme": "jwt",
+    "issuer": "http://localhost:5100",
+    "ps": "http://localhost:5100",
+    "sub": "…",
+    "mission_s256": null,
+    "tokenType": "aa-auth+jwt"
+  },
+  "concierge": {
+    "identity": "aauth:concierge@…",
+    "action": "call-chained to downstream with upstream_token"
+  },
+  "downstream": { "…": "the Calendar's response body" }
 }
 ```
 
@@ -98,4 +107,4 @@ dotnet run --project samples/AgentConsole -- http://localhost:5200 \
 
 1. **Self-issued identity**: The Concierge acts as its own AP per spec §Self-Hosted Agents — it publishes agent metadata at `/.well-known/aauth-agent.json` and self-signs agent tokens with its published key.
 2. **Per-request consent grant**: Grants consent for itself at the PS before each downstream call (demo simplification).
-3. **Fallback path**: If the caller used HWK/JWKS-URI (no upstream auth token), falls back to standard challenge handling without chaining.
+3. **Fallback path**: If the caller used a generic Signature-Key demonstration (no upstream auth token), falls back to standard challenge handling without chaining.

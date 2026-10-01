@@ -15,7 +15,7 @@ namespace AAuth.Crypto;
 /// ECDSA P-256 key using RFC 6979 deterministic signatures via BouncyCastle's
 /// <see cref="HMacDsaKCalculator"/>. Produces ES256-compatible JWTs.
 /// </summary>
-public sealed class EcdsaAAuthKey : IAAuthKey
+public sealed class EcdsaAAuthKey : IAAuthExportableKey
 {
     /// <summary>The JOSE <c>alg</c> value.</summary>
     public const string Alg = "ES256";
@@ -57,6 +57,10 @@ public sealed class EcdsaAAuthKey : IAAuthKey
     }
 
     /// <inheritdoc/>
+    public ValueTask<byte[]> SignAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(Sign(data.ToArray()));
+
+    /// <summary>Sign the given data synchronously with the local private key.</summary>
     public byte[] Sign(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);

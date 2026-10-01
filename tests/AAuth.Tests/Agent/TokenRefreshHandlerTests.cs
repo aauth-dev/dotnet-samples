@@ -20,8 +20,8 @@ public class TokenRefreshHandlerTests
     [InlineData(true)]
     public async Task CancellationDuringRefreshDoesNotPublishToken(bool initialAcquisition)
     {
-        var original = BuildAgentToken(TimeSpan.FromSeconds(20));
-        var replacement = BuildAgentToken(TimeSpan.FromHours(1));
+        var original = await BuildAgentTokenAsync(TimeSpan.FromSeconds(20));
+        var replacement = await BuildAgentTokenAsync(TimeSpan.FromHours(1));
         var holder = initialAcquisition ? new AAuthTokenHolder() : new AAuthTokenHolder(original);
         using var cancellation = new CancellationTokenSource();
         var refresher = new CallbackRefresher((_, _) =>
@@ -41,14 +41,14 @@ public class TokenRefreshHandlerTests
     [InlineData(null, false)]
     public async Task Refresh_PreservesExactAccount(string? replacementAccount, bool accepted)
     {
-        string Token(string? account, int seconds) => new AuthTokenBuilder
+        ValueTask<string> TokenAsync(string? account, int seconds) => new AuthTokenBuilder
         {
-            Issuer = "https://ps.example", Audience = "https://resource.example", Agent = "aauth:test@example.com",
+            Issuer = "https://ps.example", Audience = "https://resource.example", PersonServer = "https://ps.example",
             AgentConfirmationKey = _key, Key = _key, KeyId = "ps-1", Subject = "person",
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10), Lifetime = TimeSpan.FromSeconds(seconds), Account = account,
-        }.Build();
-        var original = Token("personal", 20);
-        var replacement = Token(replacementAccount, 120);
+        }.BuildAsync();
+        var original = await TokenAsync("personal", 20);
+        var replacement = await TokenAsync(replacementAccount, 120);
         var holder = new AAuthTokenHolder(original);
         var refresher = new CallbackRefresher((context, _) =>
         {
@@ -71,9 +71,9 @@ public class TokenRefreshHandlerTests
 
     private readonly AAuthKey _key = AAuthKey.Generate();
 
-    private string BuildAgentToken(TimeSpan lifetime)
+    private async Task<string> BuildAgentTokenAsync(TimeSpan lifetime)
     {
-        return new AgentTokenBuilder
+        return await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -82,13 +82,13 @@ public class TokenRefreshHandlerTests
             Key = _key,
             PersonServer = "https://ps.example",
             Lifetime = lifetime,
-        }.Build();
+        }.BuildAsync();
     }
 
     [Fact]
     public async Task DoesNotRefresh_WhenTokenNotNearExpiry()
     {
-        var token = BuildAgentToken(TimeSpan.FromHours(1));
+        var token = await BuildAgentTokenAsync(TimeSpan.FromHours(1));
         var holder = new AAuthTokenHolder(token);
         var refresher = new CountingRefresher(token);
 
@@ -106,8 +106,8 @@ public class TokenRefreshHandlerTests
     public async Task Refreshes_WhenTokenNearExpiry()
     {
         // Token that expires in 30s (threshold is 60s)
-        var expiringToken = BuildAgentToken(TimeSpan.FromSeconds(30));
-        var freshToken = BuildAgentToken(TimeSpan.FromHours(1));
+        var expiringToken = await BuildAgentTokenAsync(TimeSpan.FromSeconds(30));
+        var freshToken = await BuildAgentTokenAsync(TimeSpan.FromHours(1));
         var holder = new AAuthTokenHolder(expiringToken);
         var refresher = new CountingRefresher(freshToken);
 
@@ -125,7 +125,7 @@ public class TokenRefreshHandlerTests
     [Fact]
     public async Task Refresh_PassesCorrectContext()
     {
-        var expiringToken = BuildAgentToken(TimeSpan.FromSeconds(10));
+        var expiringToken = await BuildAgentTokenAsync(TimeSpan.FromSeconds(10));
         TokenRefreshContext? captured = null;
         var refresher = new CallbackRefresher((ctx, _) =>
         {
@@ -148,11 +148,26 @@ public class TokenRefreshHandlerTests
         Assert.Equal(expiringToken, captured.CurrentToken);
     }
 
+    [Theory(DisplayName = "TokenRefreshHandler — the default margin refreshes inside five minutes, not outside")]
+    [InlineData(4, true)]
+    [InlineData(6, false)]
+    public async Task DefaultMargin_IsFiveMinutes(int minutesLeft, bool refreshes)
+    {
+        var token = await BuildAgentTokenAsync(TimeSpan.FromMinutes(minutesLeft));
+        var refresher = new CountingRefresher(await BuildAgentTokenAsync(TimeSpan.FromHours(1)));
+        var handler = new TokenRefreshHandler(new AAuthTokenHolder(token), refresher, "k1") { InnerHandler = new OkHandler() };
+        using var client = new InProcessHttpClient(handler);
+
+        await client.GetAsync("https://resource.example/api");
+
+        Assert.Equal(refreshes ? 1 : 0, refresher.CallCount);
+    }
+
     [Fact]
     public async Task ConcurrentRequests_OnlyRefreshOnce()
     {
-        var expiringToken = BuildAgentToken(TimeSpan.FromSeconds(5));
-        var freshToken = BuildAgentToken(TimeSpan.FromHours(1));
+        var expiringToken = await BuildAgentTokenAsync(TimeSpan.FromSeconds(5));
+        var freshToken = await BuildAgentTokenAsync(TimeSpan.FromHours(1));
         var refresher = new SlowRefresher(freshToken, delay: TimeSpan.FromMilliseconds(100));
         var holder = new AAuthTokenHolder(expiringToken);
 
@@ -171,18 +186,18 @@ public class TokenRefreshHandlerTests
     }
 
     [Fact]
-    public void ReadPayloadUnsafe_ParsesValidToken()
+    public async Task ReadPayloadUnsafe_ParsesValidToken()
     {
-        var token = BuildAgentToken(TimeSpan.FromHours(1));
+        var token = await BuildAgentTokenAsync(TimeSpan.FromHours(1));
         var payload = TokenRefreshHandler.ReadPayloadUnsafe(token);
         Assert.Equal("https://ap.example", (string?)payload["iss"]);
         Assert.Equal("aauth:test@example.com", (string?)payload["sub"]);
     }
 
     [Fact]
-    public void ReadExpClaim_ReturnsExpiry()
+    public async Task ReadExpClaim_ReturnsExpiry()
     {
-        var token = BuildAgentToken(TimeSpan.FromHours(1));
+        var token = await BuildAgentTokenAsync(TimeSpan.FromHours(1));
         var exp = TokenRefreshHandler.ReadExpClaim(token);
         Assert.NotNull(exp);
         Assert.True(exp!.Value > DateTimeOffset.UtcNow);

@@ -14,65 +14,64 @@ public class ScopeNarrowingTests
 {
     private const string Iss = "https://ps.example";
     private const string Aud = "https://resource.example";
-    private const string Agent = "aauth:alice@ap.example";
     private const string Kid = "ps-1";
 
-    private static (string Jwt, AAuthKey PsKey, AAuthKey AgentKey) BuildWithScope(string scope)
+    private static async Task<(string Jwt, AAuthKey PsKey, AAuthKey AgentKey)> BuildWithScopeAsync(string scope)
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = new AuthTokenBuilder
+        var jwt = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Iss,
             Audience = Aud,
-            Agent = Agent,
+            PersonServer = Iss,
             AgentConfirmationKey = agentKey,
             Key = psKey,
             KeyId = Kid,
             Subject = "sub",
             Scope = scope,
-        }.Build();
+        }.BuildAsync();
         return (jwt, psKey, agentKey);
     }
 
     [Fact(DisplayName = "§Auth Token scope — accepts equal scope")]
-    public void Accepts_EqualScope()
+    public async Task Accepts_EqualScope()
     {
-        var (jwt, psKey, agentKey) = BuildWithScope("read write");
+        var (jwt, psKey, agentKey) = await BuildWithScopeAsync("read write");
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
-        var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent,
+        var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey,
             expectedMaxScope: "read write");
         Assert.NotNull(result);
     }
 
     [Fact(DisplayName = "§Auth Token scope — accepts narrowed scope")]
-    public void Accepts_NarrowedScope()
+    public async Task Accepts_NarrowedScope()
     {
-        var (jwt, psKey, agentKey) = BuildWithScope("read");
+        var (jwt, psKey, agentKey) = await BuildWithScopeAsync("read");
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
-        var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent,
+        var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey,
             expectedMaxScope: "read write admin");
         Assert.NotNull(result);
     }
 
     [Fact(DisplayName = "§Auth Token scope — rejects broadened scope")]
-    public void Rejects_BroadenedScope()
+    public async Task Rejects_BroadenedScope()
     {
-        var (jwt, psKey, agentKey) = BuildWithScope("read write admin");
+        var (jwt, psKey, agentKey) = await BuildWithScopeAsync("read write admin");
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
-            verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent,
+            verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey,
                 expectedMaxScope: "read write"));
     }
 
     [Fact(DisplayName = "§Auth Token scope — null expectedMaxScope skips check")]
-    public void Accepts_WhenNoMaxScopeSpecified()
+    public async Task Accepts_WhenNoMaxScopeSpecified()
     {
-        var (jwt, psKey, agentKey) = BuildWithScope("anything whatever");
+        var (jwt, psKey, agentKey) = await BuildWithScopeAsync("anything whatever");
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
-        var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent,
+        var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey,
             expectedMaxScope: null);
         Assert.NotNull(result);
     }

@@ -3,14 +3,15 @@
 ## Overview
 
 The `jwt` Signature-Key scheme presents a token with a confirmation key.
-An agent token authenticates agent identity; an auth token carries authorization;
-the Events companion uses a subscribe token at subscription endpoints. AAuth
-agents use `jwt` for all four resource access modes. A Person Server is not
-required for identity-based or resource-managed access.
+An agent token authenticates agent identity; a person token carries person
+identity; an auth token carries authorization; the Events companion uses a
+subscribe token at subscription endpoints. AAuth agents use `jwt` for all five
+resource access modes. A Person Server is not required for agent identity or
+resource-managed access.
 
 ## When to Use
 
-- All four AAuth resource access modes, including PS-asserted and federated flows
+- All five AAuth resource access modes, including PS authorization and federated flows
 - When the resource needs to discover the agent's Person Server (from the `ps` claim)
 - When the resource needs verified agent identity with issuer attestation
 
@@ -44,7 +45,7 @@ use the full `AgentTokenBuilder` via `WithTokenRefresh`:
 
 ```csharp
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh((ctx, ct) => Task.FromResult(new AgentTokenBuilder
+    .WithTokenRefresh(async (ctx, ct) => await new AgentTokenBuilder
     {
         Issuer = "https://my-service.example",
         Subject = "aauth:my-service@my-service.example",
@@ -55,7 +56,7 @@ using var client = new AAuthClientBuilder(key)
         {
             ["attestation"] = "platform-verified",
         },
-    }.Build()))
+    }.BuildAsync(ct))
     .WithChallengeHandling("https://ps.example")
     .Build();
 ```
@@ -86,6 +87,8 @@ var response = await client.GetAsync("https://resource.example/data");
 <summary>Manual Setup</summary>
 
 ```csharp
+using AAuth.HttpSig;
+
 var provider = new JwtSignatureKeyProvider(() => agentToken);
 var handler = new AAuthSigningHandler(key, provider)
 {
@@ -104,11 +107,13 @@ using var client = new HttpClient(handler);
 
 ## Verification
 
-When the resource sees a `ps` claim, it can issue a resource token challenging the agent to get authorization from that PS. This is the entry point to PS-asserted and federated access.
+When the resource sees a `ps` claim, it can challenge for a person token and
+then issue a resource token that the agent presents to that PS. This is the
+entry point to PS authorization and federated access.
 
 ## Further Reading
 
 - [Call Chaining](../workflows/call-chaining.md) — multi-hop delegation with `UseJwt` and `upstream_token`
 - [Federated Demo](https://explorer.aauth.dev/access/federated)
-- [PS-Asserted Access](../workflows/ps-asserted-access.md)
+- [PS authorization](../workflows/ps-asserted-access.md)
 - [Bootstrap](../workflows/bootstrap-enrollment.md)

@@ -19,7 +19,7 @@ public sealed class R3FetchClient : IDisposable
         _ownsClient = ownsClient;
     }
 
-    public static R3FetchClient Create(IAAuthKey signingKey, string identifier, string dwk, string kid,
+    public static R3FetchClient Create(IAAuthSigner signingKey, string identifier, string dwk, string kid,
         HttpMessageHandler? innerHandler = null, AAuthEgressPolicy? policy = null,
         AAuthTransportContract? transportContract = null)
     {

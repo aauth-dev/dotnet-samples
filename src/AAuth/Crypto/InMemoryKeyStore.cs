@@ -12,17 +12,17 @@ namespace AAuth.Crypto;
 /// </summary>
 public sealed class InMemoryKeyStore : IKeyStore
 {
-    private readonly ConcurrentDictionary<string, IAAuthKey> _keys = new();
+    private readonly ConcurrentDictionary<string, IAAuthSigner> _keys = new();
 
     /// <inheritdoc/>
-    public Task<IAAuthKey?> LoadAsync(string handle, CancellationToken ct = default)
+    public Task<IAAuthSigner?> LoadAsync(string handle, CancellationToken ct = default)
     {
         _keys.TryGetValue(handle, out var key);
         return Task.FromResult(key);
     }
 
     /// <inheritdoc/>
-    public Task StoreAsync(string handle, IAAuthKey key, CancellationToken ct = default)
+    public Task StoreAsync(string handle, IAAuthSigner key, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(handle);
         ArgumentNullException.ThrowIfNull(key);

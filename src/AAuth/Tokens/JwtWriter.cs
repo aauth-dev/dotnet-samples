@@ -14,7 +14,8 @@ namespace AAuth.Tokens;
 internal static class JwtWriter
 {
     /// <summary>Serialize, sign, and return the compact JWS string.</summary>
-    public static string SignCompact(JsonObject header, JsonObject payload, IAAuthKey key)
+    public static async ValueTask<string> SignCompactAsync(JsonObject header, JsonObject payload, IAAuthSigner key,
+        CancellationToken cancellationToken = default)
     {
         var headerBytes = Encoding.UTF8.GetBytes(header.ToJsonString());
         var payloadBytes = Encoding.UTF8.GetBytes(payload.ToJsonString());
@@ -22,7 +23,7 @@ internal static class JwtWriter
         var headerSegment = Base64UrlEncoder.Encode(headerBytes);
         var payloadSegment = Base64UrlEncoder.Encode(payloadBytes);
         var signingInput = headerSegment + "." + payloadSegment;
-        var signature = key.Sign(Encoding.ASCII.GetBytes(signingInput));
+        var signature = await key.SignAsync(Encoding.ASCII.GetBytes(signingInput), cancellationToken).ConfigureAwait(false);
         return signingInput + "." + Base64UrlEncoder.Encode(signature);
     }
 }

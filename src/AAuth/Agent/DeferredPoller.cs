@@ -16,25 +16,25 @@ namespace AAuth.Agent;
 /// </summary>
 public sealed record DeferredPollerOptions
 {
-    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
-    internal Func<TimeSpan, CancellationToken, Task>? DelayAsync { get; init; }
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+    internal Func<TimeSpan, CancellationToken, Task>? DelayAsync { get; set; }
 
     /// <summary>Hard upper bound on total polling time.</summary>
-    public TimeSpan MaxTotalWait { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan MaxTotalWait { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// Interval to wait between polls when the server does NOT send a
     /// <c>Retry-After</c> header. Per spec §Deferred Responses the default
     /// polling interval is 5 seconds.
     /// </summary>
-    public TimeSpan DefaultPollInterval { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan DefaultPollInterval { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// Minimum delay between polls — clamps a tiny <c>Retry-After: 0</c>
-    /// from runaway tight-looping if the server is broken. Set to
-    /// <see cref="TimeSpan.Zero"/> to honour the server verbatim.
+    /// Minimum delay between polls. The default is <see cref="TimeSpan.Zero"/>
+    /// so <c>Retry-After: 0</c> is honoured verbatim; hosts may opt into a local
+    /// safety floor.
     /// </summary>
-    public TimeSpan MinPollInterval { get; init; } = TimeSpan.FromMilliseconds(100);
+    public TimeSpan MinPollInterval { get; set; } = TimeSpan.Zero;
 
     /// <summary>
     /// When set, sends a <c>Prefer: wait=N</c> header on each poll request,
@@ -42,13 +42,13 @@ public sealed record DeferredPollerOptions
     /// up to N seconds before receiving a response. Per RFC 7240 §4.3.
     /// When <see langword="null"/> (default), no <c>Prefer</c> header is sent.
     /// </summary>
-    public int? PreferWaitSeconds { get; init; }
+    public int? PreferWaitSeconds { get; set; }
 
     /// <summary>
     /// Optional callback invoked after each poll response. Useful for logging
     /// or progress UI during deferred exchanges.
     /// </summary>
-    public Action<HttpResponseMessage>? OnPoll { get; init; }
+    public Action<HttpResponseMessage>? OnPoll { get; set; }
 
     /// <summary>
     /// Optional predicate evaluated on each <c>202 Accepted</c> poll response.
@@ -62,7 +62,7 @@ public sealed record DeferredPollerOptions
     /// When <see langword="null"/> (default) every <c>202</c> is treated as
     /// "keep polling".
     /// </summary>
-    public Func<HttpResponseMessage, bool>? StopWhenAccepted { get; init; }
+    public Func<HttpResponseMessage, bool>? StopWhenAccepted { get; set; }
 }
 
 /// <summary>
@@ -106,6 +106,7 @@ public sealed class DeferredPoller
         ArgumentNullException.ThrowIfNull(signedClient);
         _signedClient = signedClient;
         _options = options ?? new DeferredPollerOptions();
+        ValidateOptions(_options);
     }
 
     /// <summary>
@@ -208,13 +209,13 @@ public sealed class DeferredPoller
                     or (HttpStatusCode)429
                     or HttpStatusCode.InternalServerError)
                 {
-                    var errorCode = await TryParsePollingErrorAsync(response).ConfigureAwait(false);
+                    var (errorCode, detail) = await TryParsePollingErrorAsync(response).ConfigureAwait(false);
                     if (errorCode is not null)
                     {
                         var code = errorCode.Value;
                         // Terminal errors: throw typed exception.
                         response.Dispose();
-                        throw new PollingErrorException(code, (int)response.StatusCode);
+                        throw new PollingErrorException(code, (int)response.StatusCode, detail: detail);
                     }
                 }
 
@@ -254,6 +255,10 @@ public sealed class DeferredPoller
             else
                 await Task.Delay(delay, _options.TimeProvider, cancellationToken).ConfigureAwait(false);
         }
+        else if (_options.DelayAsync is { } delayAsync)
+        {
+            await delayAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private TimeSpan ComputeDelay(RetryConditionHeaderValue? retryAfter)
@@ -281,19 +286,29 @@ public sealed class DeferredPoller
         return delay < _options.MinPollInterval ? _options.MinPollInterval : delay;
     }
 
-    private static async Task<PollingErrorCode?> TryParsePollingErrorAsync(HttpResponseMessage response)
+    private static void ValidateOptions(DeferredPollerOptions options)
+    {
+        if (options.MaxTotalWait <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options.MaxTotalWait), "MaxTotalWait must be positive.");
+        if (options.DefaultPollInterval < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options.DefaultPollInterval), "DefaultPollInterval cannot be negative.");
+        if (options.MinPollInterval < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options.MinPollInterval), "MinPollInterval cannot be negative.");
+    }
+
+    private static async Task<(PollingErrorCode? Code, string? Detail)> TryParsePollingErrorAsync(HttpResponseMessage response)
     {
         try
         {
             var body = await response.Content.ReadFromJsonAsync<JsonObject>().ConfigureAwait(false);
             var errorStr = (string?)body?["error"];
             if (PollingErrorException.TryParseCode(errorStr, out var code))
-                return code;
+                return (code, body?["detail"] is JsonValue detail && detail.TryGetValue<string>(out var text) ? text : null);
         }
         catch
         {
             // If we can't parse the body, don't treat it as a polling error.
         }
-        return null;
+        return (null, null);
     }
 }

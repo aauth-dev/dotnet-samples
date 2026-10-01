@@ -8,15 +8,19 @@ using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AAuth.Samples.Events;
 
 public static class LocalEventProvider
 {
-    public static void MapLocalEventProvider(this IEndpointRouteBuilder routes, string issuer, IAAuthKey key,
-        string keyId, EventsProtocol protocol, IAgentProviderEventStore store)
+    /// <summary>Requires <c>AddAAuthEvents</c> and a registered <see cref="IAgentProviderEventStore"/>.</summary>
+    public static void MapLocalEventProvider(this IEndpointRouteBuilder routes, string issuer, IAAuthSigner key,
+        string keyId)
     {
-        routes.MapAAuthEventEndpoint("/events", protocol, store);
+        var protocol = routes.ServiceProvider.GetRequiredService<EventsProtocol>();
+        var store = routes.ServiceProvider.GetRequiredService<IAgentProviderEventStore>();
+        routes.MapAAuthEventEndpoint("/events");
         routes.MapPost("/local/events/subscribe", async (HttpContext context) =>
         {
             var assertion = await protocol.VerifyRequestAsync(context, AgentTokenBuilder.TokenType);
@@ -36,13 +40,13 @@ public static class LocalEventProvider
             }
             var eid = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
             var agent = EventsTokens.RequireText(assertion.Token.Payload, "sub");
-            var jwt = new SubscribeTokenBuilder
+            var jwt = await new SubscribeTokenBuilder
             {
                 Issuer = issuer, Subject = agent, Audience = resource, Eid = eid, Key = key,
                 KeyId = keyId, ConfirmationKey = assertion.HttpSigningKey, MaxUses = maximum,
                 Verifier = protocol.TokenVerifier
-            }.Build();
-            try { store.Create(new(eid, agent, resource, protocol.TokenVerifier.Clock().AddHours(1), maximum)); }
+            }.BuildAsync(context.RequestAborted);
+            try { store.Create(new(eid, agent, resource, protocol.TokenVerifier.TimeProvider.GetUtcNow().AddHours(1), maximum)); }
             catch (Exception exception) when (exception is not OperationCanceledException)
             { return AAuthProblemDetails.Create("temporarily_unavailable", statusCode: 503); }
             return Results.Json(new { subscribe_token = jwt, eid });

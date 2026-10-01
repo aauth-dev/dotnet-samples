@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.R3.Model;
 
@@ -19,7 +20,8 @@ public sealed record R3Parameter
     public void Validate()
     {
         if (Json is not JsonObject value || !value.ContainsKey("s256")) return;
-        if (!TryGetDigestS256(out _)) throw new InvalidOperationException("R3 digest s256 must be a nonempty string.");
+        if (!TryGetDigestS256(out var s256)) throw new InvalidOperationException("R3 digest s256 must be a nonempty string.");
+        ValidateS256(s256);
         foreach (var name in new[] { "excerpt", "media_type" })
             if (value.ContainsKey(name) && (value[name] is not JsonValue member || !member.TryGetValue<string>(out _)))
                 throw new InvalidOperationException($"R3 digest {name} must be a string when present.");
@@ -47,6 +49,7 @@ public sealed record R3Parameter
     public static R3Parameter Digest(string s256, string? excerpt = null, string? mediaType = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(s256);
+        ValidateS256(s256);
         var obj = new JsonObject { ["s256"] = s256 };
         if (!string.IsNullOrWhiteSpace(excerpt))
         {
@@ -57,6 +60,20 @@ public sealed record R3Parameter
             obj["media_type"] = mediaType;
         }
         return new R3Parameter { Json = obj };
+    }
+
+    private static void ValidateS256(string s256)
+    {
+        try
+        {
+            var bytes = Base64UrlEncoder.DecodeBytes(s256);
+            if (bytes.Length != 32 || Base64UrlEncoder.Encode(bytes) != s256)
+                throw new FormatException();
+        }
+        catch (FormatException ex)
+        {
+            throw new InvalidOperationException("R3 digest s256 must be an unpadded base64url SHA-256 digest.", ex);
+        }
     }
 }
 

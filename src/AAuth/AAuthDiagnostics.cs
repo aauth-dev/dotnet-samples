@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 
 namespace AAuth;
 
@@ -15,6 +16,17 @@ public static class AAuthDiagnostics
 
     /// <summary>Shared activity source for all AAuth operations.</summary>
     public static readonly ActivitySource Source = new(SourceName, "1.0.0");
+
+    /// <summary>Shared metrics source for all AAuth operations.</summary>
+    public static readonly Meter Meter = new(SourceName, "1.0.0");
+
+    /// <summary>
+    /// Sum of time spent waiting to avoid duplicate AAuth signature replay tuples.
+    /// </summary>
+    public static readonly Counter<double> SigningCreatedWait = Meter.CreateCounter<double>(
+        "aauth.signing.created_wait",
+        unit: "s",
+        description: "Total seconds spent waiting for the next free AAuth signature created timestamp.");
 
     // ── Tag keys ────────────────────────────────────────────────────────────
 
@@ -38,4 +50,33 @@ public static class AAuthDiagnostics
 
     /// <summary>Whether issuer signature was verified.</summary>
     public const string TagIssuerVerified = "aauth.issuer_verified";
+
+    /// <summary>The HTTP request method.</summary>
+    public const string TagHttpMethod = "http.request.method";
+
+    /// <summary>The signed request authority.</summary>
+    public const string TagAuthority = "aauth.authority";
+
+    /// <summary>The signed request path.</summary>
+    public const string TagPath = "aauth.path";
+
+    internal static void RecordSigningCreatedWait(
+        TimeSpan duration, string method, string authority, string path)
+    {
+        // Paths stay off the metric: they are unbounded (ids) and may identify people.
+        var tags = new TagList
+        {
+            { TagHttpMethod, method },
+            { TagAuthority, authority },
+        };
+        SigningCreatedWait.Add(duration.TotalSeconds, tags);
+        using var activity = Source.StartActivity("AAuth.Signing.CreatedWait");
+        activity?.SetTag(TagHttpMethod, method);
+        activity?.SetTag(TagAuthority, authority);
+        activity?.SetTag(TagPath, path);
+        activity?.SetTag("aauth.signing.created_wait.duration_ms", duration.TotalMilliseconds);
+        Trace.WriteLine(
+            $"AAuth signing delayed {duration.TotalMilliseconds:0.###} ms for {method} {authority}{path}.",
+            SourceName);
+    }
 }

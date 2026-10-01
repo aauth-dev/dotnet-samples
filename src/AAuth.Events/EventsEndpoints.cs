@@ -3,45 +3,108 @@ using System.Text.Json.Nodes;
 using AAuth.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AAuth.Events;
 
+/// <summary>Describes a subscription channel mapped by <see cref="EventsEndpoints.MapAAuthSubscriptionEndpoint"/>.</summary>
+public sealed class AAuthSubscriptionEndpointOptions
+{
+    /// <summary>The resource identifier subscribe tokens must name; defaults to the registered resource's issuer.</summary>
+    public string? Resource { get; set; }
+
+    /// <summary>The operation the channel delivers.</summary>
+    public string Operation { get; set; } = "";
+
+    /// <summary>Whether the channel is ticket-protected (the route carries <c>{ticket}</c>).</summary>
+    public bool ProtectedChannel { get; set; }
+
+    /// <summary>Validates the subscription parameters against the channel schema.</summary>
+    public Func<JsonObject, bool>? ValidateParameters { get; set; }
+
+    /// <summary>How long a registration lasts. Default one hour.</summary>
+    public TimeSpan? SubscriptionLifetime { get; set; }
+}
+
+internal sealed record AAuthEventEndpointMetadata(string Path);
+
 public static class EventsEndpoints
 {
+    /// <summary>
+    /// Map an Agent Provider event endpoint. Resolves the <see cref="EventsProtocol"/> (from
+    /// <see cref="EventsServiceExtensions.AddAAuthEvents"/>) and <see cref="IAgentProviderEventStore"/> from DI.
+    /// </summary>
     public static IEndpointConventionBuilder MapAAuthEventEndpoint(this IEndpointRouteBuilder routes,
-        string path, EventsProtocol protocol, IAgentProviderEventStore store) => routes.MapPost(path, async (HttpContext context) =>
+        string path)
     {
-        var assertion = await protocol.VerifyRequestAsync(context, EventsTokens.EventType).ConfigureAwait(false);
-        if (assertion is null) return Results.Empty;
-        using var body = new MemoryStream();
-        await context.Request.Body.CopyToAsync(body, context.RequestAborted).ConfigureAwait(false);
-        var token = assertion.Token;
-        var envelope = new EventEnvelope(assertion.CompactToken, EventsTokens.RequireText(token.Payload, "eid"),
-            token.Issuer, EventsTokens.RequireText(token.Payload, "aud"), token.ExpiresAt, body.ToArray());
-        EventAcceptance acceptance;
-        try { acceptance = store.Accept(envelope, protocol.TokenVerifier.Clock()); }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        { return AAuthProblemDetails.Create("temporarily_unavailable", "Durable event acceptance failed.", statusCode: 503); }
-        if (acceptance.StatusCode != 202)
-            return AAuthProblemDetails.Create("event_rejected", statusCode: acceptance.StatusCode);
-        return acceptance.RemainingUses is { } remaining
-            ? Results.Json(new { remaining_uses = remaining }, statusCode: 202)
-            : Results.StatusCode(202);
-    });
+        var builder = routes.MapPost(path, async (HttpContext context, [FromServices] EventsProtocol protocol, [FromServices] IAgentProviderEventStore store) =>
+        {
+            var assertion = await protocol.VerifyRequestAsync(context, EventsTokens.EventType).ConfigureAwait(false);
+            if (assertion is null) return Results.Empty;
+            using var body = new MemoryStream();
+            await context.Request.Body.CopyToAsync(body, context.RequestAborted).ConfigureAwait(false);
+            var token = assertion.Token;
+            var envelope = new EventEnvelope(assertion.CompactToken, EventsTokens.RequireText(token.Payload, "eid"),
+                token.Jti, token.Issuer, EventsTokens.RequireText(token.Payload, "aud"), token.ExpiresAt, body.ToArray());
+            EventAcceptance acceptance;
+            try { acceptance = store.Accept(envelope, protocol.TokenVerifier.TimeProvider.GetUtcNow()); }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            { return AAuthProblemDetails.Create("temporarily_unavailable", "Durable event acceptance failed.", statusCode: 503); }
+            return acceptance.Outcome switch
+            {
+                EventAcceptanceOutcome.Accepted or EventAcceptanceOutcome.Duplicate => acceptance.RemainingUses is { } remaining
+                    ? Results.Json(new { remaining_uses = remaining }, statusCode: 202)
+                    : Results.StatusCode(202),
+                EventAcceptanceOutcome.Unknown or EventAcceptanceOutcome.Expired or EventAcceptanceOutcome.Exhausted =>
+                    AAuthProblemDetails.Create("event_rejected", statusCode: 404),
+                EventAcceptanceOutcome.Forbidden => AAuthProblemDetails.Create("event_rejected", statusCode: 403),
+                _ => AAuthProblemDetails.Create("event_rejected", statusCode: 400),
+            };
+        });
+        builder.WithMetadata(new AAuthEventEndpointMetadata(path));
+        return builder;
+    }
 
+    /// <summary>
+    /// Map a resource subscription endpoint. Resolves the <see cref="EventsProtocol"/> and
+    /// <see cref="IResourceEventStore"/> from DI; <paramref name="configure"/> describes the channel.
+    /// </summary>
     public static IEndpointConventionBuilder MapAAuthSubscriptionEndpoint(this IEndpointRouteBuilder routes,
-        string path, string resource, string operation, bool protectedChannel, EventsProtocol protocol,
-        IResourceEventStore store, Func<JsonObject, bool> validateParameters,
-        TimeSpan? subscriptionLifetime = null) => routes.MapPost(path, async (HttpContext context) =>
+        string path, Action<AAuthSubscriptionEndpointOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        var channel = new AAuthSubscriptionEndpointOptions();
+        configure(channel);
+        var resource = channel.Resource
+            ?? routes.ServiceProvider.GetService<Microsoft.Extensions.Options.IOptions<AAuth.AAuthResourceOptions>>()?.Value.Issuer
+            ?? throw new InvalidOperationException("AAuthSubscriptionEndpointOptions.Resource is required without AddAAuthResource.");
+        ArgumentException.ThrowIfNullOrEmpty(channel.Operation);
+        var validateParameters = channel.ValidateParameters
+            ?? (parameters => parameters.Count == 0);
+        return routes.MapSubscriptionCore(path, resource, channel.Operation, channel.ProtectedChannel, validateParameters,
+            channel.SubscriptionLifetime);
+    }
+
+    private static IEndpointConventionBuilder MapSubscriptionCore(this IEndpointRouteBuilder routes,
+        string path, string resource, string operation, bool protectedChannel,
+        Func<JsonObject, bool> validateParameters,
+        TimeSpan? subscriptionLifetime) => routes.MapPost(path, async (HttpContext context, [FromServices] EventsProtocol protocol, [FromServices] IResourceEventStore store) =>
     {
         var assertion = await protocol.VerifyRequestAsync(context, EventsTokens.SubscribeType, resource).ConfigureAwait(false);
         if (assertion is null) return Results.Empty;
-        JsonObject? parameters;
-        try { parameters = await context.Request.ReadFromJsonAsync<JsonObject>(context.RequestAborted).ConfigureAwait(false); }
+        JsonObject parameters;
+        try
+        {
+            parameters = EventsProtocol.HasHttpBody(context.Request)
+                ? await context.Request.ReadFromJsonAsync<JsonObject>(context.RequestAborted).ConfigureAwait(false)
+                    ?? throw new JsonException("Subscription JSON body was empty.")
+                : new JsonObject();
+        }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         { return AAuthProblemDetails.Create("invalid_request", "Invalid subscription JSON.", statusCode: 400); }
-        if (parameters is null || !validateParameters(parameters))
+        if (!validateParameters(parameters))
             return AAuthProblemDetails.Create("invalid_request", "Subscription parameters do not match the channel schema.", statusCode: 400);
         var ticket = protectedChannel ? context.Request.RouteValues["ticket"] as string : null;
         if (protectedChannel && string.IsNullOrWhiteSpace(ticket)) return Results.NotFound();
@@ -49,9 +112,10 @@ public static class EventsEndpoints
         await protocol.ResolveEventEndpointAsync(token.Issuer, context.RequestAborted).ConfigureAwait(false);
         var subscription = new ResourceSubscription(EventsTokens.RequireText(token.Payload, "eid"), token.Issuer,
             EventsTokens.RequireText(token.Payload, "sub"), operation, null, "public",
-            protocol.TokenVerifier.Clock().Add(subscriptionLifetime ?? TimeSpan.FromHours(1)));
+            protocol.TokenVerifier.TimeProvider.GetUtcNow().Add(subscriptionLifetime ?? TimeSpan.FromHours(1)),
+            assertion.HttpSigningKey.ComputeJwkThumbprint());
         RegistrationResult registration;
-        try { registration = store.Register(subscription, ticket, protocol.TokenVerifier.Clock()); }
+        try { registration = store.Register(subscription, ticket, protocol.TokenVerifier.TimeProvider.GetUtcNow()); }
         catch (Exception exception) when (exception is not OperationCanceledException)
         { return AAuthProblemDetails.Create("temporarily_unavailable", "Durable registration failed.", statusCode: 503); }
         return registration.StatusCode == 200

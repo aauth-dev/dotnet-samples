@@ -27,7 +27,7 @@ public class Phase14DiscoveryTests
     [InlineData("aauth-agent.json", "{\"issuer\":\"{issuer}\",\"jwks_uri\":123}", false)]
     [InlineData("aauth-agent.json", "{\"issuer\":\"{issuer}\",\"jwks_uri\":[]}", false)]
     [InlineData("aauth-agent.json", "{\"issuer\":\"{issuer}\",\"jwks_uri\":{}}", false)]
-    [InlineData("aauth-agent.json", "{\"issuer\":\"{issuer}\",\"jwks_uri\":\"{issuer}/keys\",\"token_endpoint\":123}", false)]
+    [InlineData("aauth-agent.json", "{\"issuer\":\"{issuer}\",\"jwks_uri\":\"{issuer}/keys\",\"auth_token_endpoint\":123}", false)]
     [InlineData("aauth-agent.json", "{}", true)]
     [InlineData("aauth-agent.json", "{\"keys\":null}", true)]
     [InlineData("aauth-agent.json", "{\"keys\":{}}", true)]
@@ -66,8 +66,8 @@ public class Phase14DiscoveryTests
         await app.StartAsync();
         issuer = app.Urls.Single().Replace("127.0.0.1", "localhost", StringComparison.Ordinal);
         var key = AAuthKey.Generate();
-        var token = new AgentTokenBuilder { EgressPolicy = AAuthEgressPolicy.ForDevelopmentLoopback(issuer), Issuer = issuer,
-            Subject = "aauth:test@example.com", Key = key, KeyId = "issuer", ConfirmationKey = key }.Build();
+        var token = await new AgentTokenBuilder { EgressPolicy = AAuthEgressPolicy.ForDevelopmentLoopback(issuer), Issuer = issuer,
+            Subject = "aauth:test@example.com", Key = key, KeyId = "issuer", ConfirmationKey = key }.BuildAsync();
         using var request = new HttpRequestMessage(HttpMethod.Get, issuer + "/protected");
         request.Headers.TryAddWithoutValidation("Signature-Key", dwk is "." or ".."
             ? $"sig=jwks_uri;id=\"{issuer}\";dwk=\"{dwk}\";kid=\"issuer\""

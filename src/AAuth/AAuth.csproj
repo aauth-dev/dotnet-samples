@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AAuth.Tests" />
+    <InternalsVisibleTo Include="AAuth.R3" />
     <InternalsVisibleTo Include="AAuth.Conformance" />
   </ItemGroup>
 

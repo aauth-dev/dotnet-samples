@@ -13,21 +13,27 @@ decision vocabulary; the PS owns the policy and the user channel.
 This split is deliberate. A mission is a Markdown statement of intent, not a
 machine-checkable rule set. The PS decides each request in context — the SDK
 never tries to evaluate the mission for you. See
-[Missions](../advanced/missions.md) for the agent-side model and the
-`AAuth-Mission` header, and
+[Missions](../advanced/missions.md) for the agent-side model and how
+`mission_s256` flows through tokens, and
 [Mission Governance Clients](../advanced/mission-governance-clients.md) for the
 calls the PS answers.
 
 ## Registering the seams
 
-`AddAAuthGovernance` registers the storage defaults **and** conservative no-op
+`AddAAuthGovernance` registers the storage defaults **and** conservative fail-closed
 policy/user-channel defaults. Every seam is registered with `TryAdd`, so a PS can
 register its own implementations (before or after the call) and keep the rest.
+A Person Server registered with `AddAAuthPersonServer` can call `.WithGovernance()`
+on its builder, which calls `AddAAuthGovernance` for you, declares the default
+`MissionPath`, `PermissionPath`, `AuditPath` and `InteractionEndpointPath`, and
+has `MapAAuthPersonServer()` map those paths. Hosts can override the same Person
+Server options before mapping; metadata and routes are derived from that single
+declaration.
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 
-builder.Services.AddAAuthGovernance(); // stores + no-op approver/decider/sink/relay
+builder.Services.AddAAuthGovernance(); // stores + conservative policy/sink/relay defaults
 
 // Override the policy and user-channel seams with the PS's own:
 builder.Services.AddSingleton<IMissionApprover>(missionApprover);
@@ -39,14 +45,16 @@ builder.Services.AddSingleton<IInteractionRelay>(interactionRelay);
 For a lightweight user channel you can supply the relay as a lambda instead of a
 full `IInteractionRelay` class, via `AddAAuthInteractionRelay(...)` (backed by
 `DelegateInteractionRelay`). It replaces any relay registered earlier, including
-the no-op default:
+the fail-closed default:
 
 ```csharp
 builder.Services.AddAAuthInteractionRelay(async (request, ct) =>
 {
-    // request.Type is question | completion | interaction | payment
-    var accepted = await askThroughUserChannel(request, ct);
-    return new InteractionRelayResult { Accepted = accepted };
+    // request.Type is question | interaction | payment; the mapper also relays
+    // a mission completion proposal here with Type = Completion.
+    return request.Type == InteractionType.Question
+        ? new InteractionRelayResult { Answer = "Approved." }
+        : new InteractionRelayResult { Pending = true };
 });
 ```
 
@@ -55,10 +63,11 @@ builder.Services.AddAAuthInteractionRelay(async (request, ct) =>
 | `IMissionStore` | `InMemoryMissionStore` | SDK default; swap for durable storage |
 | `IMissionLog` | `InMemoryMissionLog` | SDK default; swap for durable storage |
 | `IMissionApprover` | `DefaultMissionApprover` | SDK default; PS supplies approval policy |
-| `IPermissionDecider` | `DefaultPermissionDecider` (no-op) | PS supplies policy |
+| `IPermissionDecider` | `DefaultPermissionDecider` (prompts for out-of-scope actions) | PS supplies policy |
 | `IAuditSink` | `DefaultAuditSink` (logs to the mission log) | PS supplies storage/alerting |
 | `IInteractionRelay` | `DefaultInteractionRelay` (no user channel) | PS supplies the user channel |
 | `IMissionTokenConsent` | `DefaultMissionTokenConsent` (hold for a user verdict) | PS supplies the out-of-scope mission **token** decision (`MapAAuthPersonServer`) |
+| `IMissionPersonTokenIssuer` | Issues nothing until `MapAAuthPersonServer` attaches its person-token minting | SDK default; replace to mint approval `person_tokens` elsewhere |
 
 By default a `Prompt` outcome is resolved synchronously (a permission denial / a
 mission decline), since the mapper has no user channel. To opt into the deferred
@@ -72,43 +81,92 @@ builder.Services.AddAAuthGovernance();
 builder.Services.AddAAuthDeferredConsent(); // Prompt → 202 + poll route
 ```
 
-## Mapping the endpoints: `MapAAuthGovernance()`
+## Mapping the endpoints
 
-`MapAAuthGovernance()` maps the mission, permission, audit, and interaction
-endpoints (plus the deferred-consent poll route) onto the registered seams in one
-call, mirroring `MapAAuthResource`. It parses each request with
-`GovernanceEndpoints`, enforces the `mission_terminated` rule, and delegates the
-decision to the seams:
+For normal Person Server hosting, call `.WithGovernance()` on the PS builder and
+then `app.MapAAuthPersonServer()`. That single mapper publishes metadata and maps
+the signed governance endpoints from the same paths:
+
+```csharp
+builder.Services.AddAAuthPersonServer(configure: options =>
+    {
+        options.Issuer = "https://ps.example";
+        options.SigningKeys = signingKeys;
+    })
+    .WithGovernance();
+
+var app = builder.Build();
+app.MapAAuthPersonServer(); // also maps /mission, /permission, /audit, /mission-interaction
+```
+
+`MapAAuthGovernance()` remains the primitive/advanced API for hosts that map the
+governance endpoints without a PS role. It derives routes from the same
+governance path declaration and is idempotent for the same Person Server/paths;
+a conflicting manual declaration fails during startup. It maps the mission,
+permission, audit, and interaction endpoints (plus the deferred-consent poll
+route) onto the registered seams in one call, mirroring `MapAAuthResource`. It
+also maps `POST {mission_endpoint}/{s256}`, where the owning agent records an
+`update` or proposes `completion` (§Mission Update, §Mission Completion). It
+parses each request with `GovernanceEndpoints`, enforces the mission status
+rules, and delegates the decision to the seams:
 
 ```csharp
 var app = builder.Build();
 
-app.MapAAuthGovernance(); // /mission, /permission, /audit, /mission-interaction + poll route
-
-// Optional: override the default paths.
 app.MapAAuthGovernance(o =>
 {
     o.MissionPath = "/aauth/mission";
     o.PermissionPath = "/aauth/permission";
+    o.InteractionEndpointPath = "/aauth/interaction";
 });
 ```
 
 A mission-creation request requires a verified **agent token**; the mapper hands
-the proposal to `IMissionApprover`, persists the resulting `StoredMission`, and
-emits the `AAuth-Mission` response header. Reach for the manual mapping below only
-when an endpoint needs behavior the seams do not express.
+the proposal to `IMissionApprover`, builds the mission blob with
+`MissionApprovalBuilder`, persists the resulting `StoredMission`, and answers
+with the approval envelope `{ s256, mission }` (the blob base64url-encoded).
+When the proposal named `resources` and the same app maps `MapAAuthPersonServer`,
+the envelope also carries `person_tokens`: for each approved resource the
+`IIdentityClaimsAsserter` asserts (a `PersonTokenRequest` with `MissionS256`
+set), the PS mints the same person token its `/person` endpoint would, bound to
+the agent token's key and capped at its `exp` and the mission's `expires_at`.
+Each is recorded as a grant of that agent token, so revoking the agent token
+revokes them. A resource the asserter defers or denies is omitted; a deferred
+approval mints them when the owning agent polls. Governance hosted without a PS
+omits `person_tokens`.
+A request naming a `mission_s256` that does not exist or belongs to another
+agent, or to another PS sharing the same durable store, is `404
+mission_not_found` — the cases are indistinguishable — and a terminated or
+expired mission is `403 mission_terminated` (§Mission Endpoint Errors). Expiry
+auto-terminates the stored mission with reason `expired`. Reach for the manual
+mapping below only when an endpoint needs behavior the seams do not express.
+
+The default interaction relay has no user channel and returns
+`424 interaction_unavailable` for `interaction`, `payment`, and `question`.
+For a completion proposal, the default relay returns `Accepted = false`, so the
+mission stays active.
+For `interaction`, `payment`, and `question`, relays that can reach the user
+must return exactly one state: `Answer` for an answered question,
+`Pending = true` to produce a `202` poll response, or `Unavailable = true` to let
+the agent fall back. Completion proposals use `Accepted = true` to terminate,
+`Accepted = false` to keep the mission active, or `Pending = true` to defer while
+the person reviews the summary. If `Pending` is returned but no
+`IDeferredConsentStore` is registered, interaction/payment relay fails closed
+with `424 interaction_unavailable`; completion remains active.
+Audit records and permission log entries preserve JSON object `parameters`;
+audit entries also preserve JSON object `result`.
 
 > **Carrier-type guard.** The governed endpoints require the request to carry the
 > expected token type. When the wrong carrier is presented (e.g. an auth token
-> where the mission flow expects an agent token), the mapper refuses with `403`
-> `invalid_carrier_token` — an authorization failure on a valid signature, not a
-> `401` authentication failure.
+> where the mission flow expects an agent token), the mapper reports `403
+> invalid_request` without signature negotiation headers. It is an authorization
+> failure on a valid signature, not a `401` authentication failure.
 
 ## Parsing requests by hand
 
 When a PS maps its own endpoints, `GovernanceEndpoints` maps request bodies to the
-shared DTOs and emits the canonical `mission_terminated` response, so endpoints
-avoid hand-rolled parsing.
+shared DTOs, authorizes the mission reference, and emits the canonical mission
+errors, so endpoints avoid hand-rolled parsing.
 
 ```csharp
 using AAuth.Server.Governance;
@@ -118,14 +176,17 @@ app.MapPost("/aauth/permission", async (HttpContext ctx, IPermissionDecider deci
 {
     var body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
     PermissionRequest request = GovernanceEndpoints.ParsePermission(body!);
+    var personServer = "https://ps.example";
 
-    StoredMission? mission = request.Mission is { } claim
-        ? await store.GetAsync(claim.S256)
+    StoredMission? mission = request.MissionS256 is { } missionS256
+        ? await store.GetAsync(personServer, missionS256)
         : null;
 
-    if (mission is { State: MissionState.Terminated })
+    // Agent token required; 404 mission_not_found for a missing or foreign
+    // mission, 403 mission_terminated for a terminated or expired one.
+    if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, mission) is { } refused)
     {
-        return GovernanceEndpoints.MissionTerminated(); // 403 mission_terminated
+        return refused;
     }
 
     var entries = mission is null
@@ -144,27 +205,31 @@ app.MapPost("/aauth/permission", async (HttpContext ctx, IPermissionDecider deci
 });
 ```
 
-The parsers throw `FormatException` on a missing required field
-(`ParsePermission` needs `action`, `ParseAudit` needs `mission` + `action`,
-`ParseInteraction` needs a valid `type`, `ParseMissionProposal` needs
-`description`).
+The parsers throw `FormatException` on a missing required field or a malformed
+`mission_s256` (`ParsePermission` needs `action`, `ParseAudit` needs
+`mission_s256` + `action`, `ParseInteraction` needs a `type` of `interaction`,
+`payment`, or `question`, `ParseMissionProposal` needs `description`).
 
 ## Persisting missions: `IMissionStore`
 
-A mission is stored as its verbatim approval bytes plus its lifecycle state, so
-the `s256` stays verifiable.
+A mission is stored as its verbatim blob bytes plus its lifecycle state, so the
+`s256` stays verifiable. The second positional member names the approving PS
+(the blob itself carries no PS), and the store key is the pair
+`(PersonServer, s256)`.
 
 ```csharp
-public sealed record StoredMission(string S256, string Approver, string Agent, ReadOnlyMemory<byte> Blob)
+public sealed record StoredMission(string S256, string PersonServer, string Agent, ReadOnlyMemory<byte> Blob)
 {
     public MissionState State { get; init; } = MissionState.Active;
+    public DateTimeOffset? ExpiresAt { get; init; } // the blob's expires_at; terminated after it
+    public string? TerminationReason { get; init; } // e.g. "completed", "revoked", "expired"
 }
 
 public interface IMissionStore
 {
     Task SaveAsync(StoredMission mission, CancellationToken ct = default);
-    Task<StoredMission?> GetAsync(string s256, CancellationToken ct = default);
-    Task SetStateAsync(string s256, MissionState state, CancellationToken ct = default); // e.g. on completion/revocation
+    Task<StoredMission?> GetAsync(string personServer, string s256, CancellationToken ct = default);
+    Task TerminateAsync(string personServer, string s256, string terminationReason, CancellationToken ct = default);
 }
 ```
 
@@ -176,15 +241,20 @@ to resolve repeat requests silently via prior consent (§Mission Log, §Agent To
 Request).
 
 ```csharp
-public enum MissionLogEntryKind { Token, Permission, Audit, Interaction, Clarification }
+public enum MissionLogEntryKind { Token, Permission, Audit, Interaction, Update, Clarification }
 
 public sealed record MissionLogEntry(string S256, MissionLogEntryKind Kind, DateTimeOffset Timestamp)
 {
+    public string? Account { get; init; }            // for token entries — prior-consent binding
+    public string? AgentId { get; init; }            // for token entries — prior-consent binding
+    public string? AgentKeyThumbprint { get; init; } // for token entries — prior-consent binding
     public string? Resource { get; init; } // for token entries — prior-consent lookup
     public string? Scope { get; init; }    // for token entries — prior-consent lookup
     public string? Action { get; init; }   // for permission/audit entries
     public bool? Granted { get; init; }     // governance decision
     public string? Detail { get; init; }    // justification or clarification text
+    public JsonObject? Parameters { get; init; } // permission/audit parameters
+    public JsonObject? Result { get; init; }     // audit result
 }
 
 public interface IMissionLog
@@ -199,7 +269,7 @@ public interface IMissionLog
 ## The decision: three gates
 
 When the agent requests an auth token or a permission, the PS reaches one of
-three outcomes (§Permission Endpoint, §Agent Token Request). The SDK supplies the
+three outcomes (§Permission Endpoint, §Auth Token Request). The SDK supplies the
 outcome and reason enums; the PS supplies the policy in `IPermissionDecider`.
 
 ```csharp
@@ -238,7 +308,7 @@ public sealed class MyPermissionDecider : IPermissionDecider
         }
 
         // Pre-approved tool → granted silently.
-        var blob = Mission.FromApprovalBytes(mission.Blob.Span);
+        var blob = Mission.FromBlob(mission.Blob.Span, mission.PersonServer);
         if (blob.ApprovedTools.Any(t => t.Name == context.Request.Action.Name))
         {
             return new PermissionDecision(PermissionOutcome.Granted, PermissionDecisionReason.ApprovedTool);
@@ -257,6 +327,14 @@ public sealed class MyPermissionDecider : IPermissionDecider
 The audit sink records what the agent reports and MAY alert the user or revoke
 the mission; the interaction relay reaches the user for the PS.
 
+Mission creation, mission-token and permission prompts need not be decided at
+the per-request `/interaction` page. The PS hosts that URL, so it MAY complete
+the interaction over a channel it already controls and consume the code there
+([User Interaction](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#user-interaction),
+v11 L1011). The sample
+[consent dashboard](../../samples/MockPersonServer/README.md#consent-dashboard)
+decides all three kinds, with an optional grouping by mission.
+
 ```csharp
 public interface IAuditSink
 {
@@ -266,8 +344,9 @@ public interface IAuditSink
 public sealed record InteractionRelayResult
 {
     public string? Answer { get; init; }  // for question
-    public bool? Accepted { get; init; }  // for completion — true terminates the mission
+    public bool? Accepted { get; init; }  // for a relayed completion — true terminates the mission
     public bool Pending { get; init; }    // defer + let the agent poll
+    public bool Unavailable { get; init; } // no PS channel; agent falls back
 }
 
 public interface IInteractionRelay
@@ -279,21 +358,24 @@ public interface IInteractionRelay
 ## Terminating a mission
 
 When a mission is terminated, the PS moves it to `MissionState.Terminated` and
-answers governed requests with the canonical error (§Mission Status Errors). The
-agent's `AuditClient` / `InteractionClient` surface this as
-`AAuthMissionTerminatedException`.
+records the first non-empty reason alongside the immutable blob. Reasons are
+open strings; the SDK exposes the spec-defined values in
+`AAuthConstants.MissionTerminationReasons`. Governed requests then receive the
+canonical error (§Mission Status Errors). The agent's governance clients surface
+this as `AAuthMissionTerminatedException`. A terminated mission never returns to
+active; the agent proposes a new one.
 
 ```csharp
-await store.SetStateAsync(s256, MissionState.Terminated);
+await store.TerminateAsync(personServer, s256, AAuthConstants.MissionTerminationReasons.Revoked);
 
-// Canonical 403 response body: { "error": "mission_terminated", "mission_status": "terminated" }
-return GovernanceEndpoints.MissionTerminated();
+// Canonical 403 body includes the stored reason when known.
+return GovernanceEndpoints.MissionTerminated(AAuthConstants.MissionTerminationReasons.Revoked);
 ```
 
 ## Further reading
 
-- [Missions](../advanced/missions.md) — the mission model and `AAuth-Mission` header
+- [Missions](../advanced/missions.md) — the mission model and `mission_s256`
 - [Mission Governance Clients](../advanced/mission-governance-clients.md) — the agent calls the PS answers
 - [Mission-Governed Access](../workflows/mission-governed-access.md) — end-to-end walkthrough
-- [Token Issuance](token-issuance.md#mission-claims) — emitting the mission claim in tokens
+- [Token Issuance](token-issuance.md#mission-claims) — emitting `mission_s256` in tokens
 - [Dependency Injection](../reference/dependency-injection.md#governance) — registering the seams

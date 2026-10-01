@@ -1,4 +1,5 @@
 using AAuth.Identifiers;
+using AAuth.Discovery;
 using Xunit;
 
 namespace AAuth.Conformance.Identifiers;
@@ -67,6 +68,24 @@ public class ServerIdTests
         Assert.False(ServerId.TryParse("http://127.0.0.1:8080", out _, out _));
         Assert.True(ServerId.TryParse("http://127.0.0.1:8080", out var id, out _, TestEgress.Policy));
         Assert.Equal("http://127.0.0.1:8080", id.Value);
+    }
+
+    [Fact(DisplayName = "§Server Identifiers — production rejects loopback issuer and metadata URLs")]
+    public void ProductionRejectsLoopback()
+    {
+        Assert.False(ServerId.TryParse("http://localhost:5002", out _, out _));
+        Assert.False(AAuthEgressPolicy.Production.IsValidIdentifier("http://localhost:5002"));
+        Assert.Throws<System.Net.Http.HttpRequestException>(() =>
+            AAuthEgressPolicy.Production.ValidateUrl("http://localhost:5002/.well-known/aauth-resource.json"));
+    }
+
+    [Theory(DisplayName = "§Server Identifiers — development loopback policy rejects non-loopback origins")]
+    [InlineData("http://*.localhost:5000")]
+    [InlineData("http://example.com:5000")]
+    [InlineData("http://[::1]:5000")]
+    public void DevelopmentLoopbackPolicyRejectsNonLoopbackOrigins(string origin)
+    {
+        Assert.ThrowsAny<Exception>(() => AAuthEgressPolicy.ForDevelopmentLoopback(origin));
     }
 
     [Fact(DisplayName = "§Server Identifiers — IDN normalised to ACE form")]

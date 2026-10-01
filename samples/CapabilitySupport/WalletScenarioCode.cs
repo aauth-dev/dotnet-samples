@@ -4,19 +4,23 @@ public static class WalletScenarioCode
 {
     public static string For(WalletFlow flow) => flow switch
     {
-        WalletFlow.DirectAs => DirectAs,
+        WalletFlow.AsGrantChaining => AsGrantChaining,
         WalletFlow.Revocation => Revocation,
         _ => Clarification,
     };
 
     public const string Clarification = """
-        public static Task<string> ClarifyAsync(HttpClient signedAgent, MetadataClient metadata,
-            string personServer, string resourceToken,
+        public static Task<string> ClarifyAsync(AAuthAgent agent,
+            string personServer, string resourceToken, string personToken,
             Func<Interaction, CancellationToken, Task> consent,
             Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>> answer,
             CancellationToken cancellationToken)
-            => new TokenExchangeClient(signedAgent, metadata).ExchangeAsync(personServer, resourceToken,
-                new TokenExchangeRequest { OnInteractionRequired = consent, OnClarificationRequired = answer },
+            // The agent's TokenExchange client is signed as the agent, never with a carrier token.
+            => agent.TokenExchange.ExchangeAsync(personServer, resourceToken,
+                new TokenExchangeRequest
+                {
+                    PresentedToken = personToken, OnInteractionRequired = consent, OnClarificationRequired = answer,
+                },
                 cancellationToken);
 
         public static ClarificationResponse Answer(string justification)
@@ -25,8 +29,8 @@ public static class WalletScenarioCode
         public static ClarificationResponse Cancel() => ClarificationResponse.Cancel();
         """;
 
-    public const string DirectAs = """
-        public static async Task<string> ReadWalletAsync(IAAuthKey key, string issuer, string agent,
+    public const string AsGrantChaining = """
+        public static async Task<string> ReadWalletAsync(IAAuthSigner key, string issuer, string agent,
             string kid, string upstreamToken, string wallet, AAuthEgressPolicy egress,
             CancellationToken cancellationToken)
         {
@@ -40,15 +44,20 @@ public static class WalletScenarioCode
         """;
 
     public const string Revocation = """
-        public static Task<HttpStatusCode> RevokeAsync(HttpClient signedPersonServer,
-            Uri resourceRevocationEndpoint, string issuer, string tokenId, CancellationToken cancellationToken)
-            => new RevocationClient(signedPersonServer).RevokeAsync(resourceRevocationEndpoint,
-                new TokenKey(issuer, tokenId), cancellationToken);
+        public static Task<RevocationCascadeResult> RevokePersonTokenAsync(IServiceProvider services,
+            string personTokenJti, CancellationToken cancellationToken)
+        {
+            // The PS revokes its person token by its jti; the stored {jti, exp}
+            // record lets it notify the resource and every AS it presented it to.
+            // Each AS cascades to the auth tokens it issued against that person token.
+            var revocation = services.GetRequiredKeyedService<IAAuthRevocationService>(AAuthPersonServerBuilder.DefaultName);
+            return revocation.RevokeTokenAsync(personTokenJti, cancellationToken);
+        }
 
-        public static Task<string> RecoverAsync(HttpClient signedAgent, MetadataClient metadata,
-            string personServer, string freshResourceToken,
+        public static Task<string> RecoverAsync(AAuthAgent agent,
+            string personServer, string freshResourceToken, string personToken,
             Func<Interaction, CancellationToken, Task> consent, CancellationToken cancellationToken)
-            => new TokenExchangeClient(signedAgent, metadata).ExchangeAsync(personServer, freshResourceToken,
-                new TokenExchangeRequest { OnInteractionRequired = consent }, cancellationToken);
+            => agent.TokenExchange.ExchangeAsync(personServer, freshResourceToken,
+                new TokenExchangeRequest { PresentedToken = personToken, OnInteractionRequired = consent }, cancellationToken);
         """;
 }

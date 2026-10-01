@@ -195,7 +195,7 @@ public sealed class SampleAuditSink : IAuditSink
 
     public Task RecordAsync(AuditRecord record, CancellationToken ct = default)
         => _log.AppendAsync(
-            new MissionLogEntry(record.Mission.S256, MissionLogEntryKind.Audit, DateTimeOffset.UtcNow)
+            new MissionLogEntry(record.MissionS256, MissionLogEntryKind.Audit, DateTimeOffset.UtcNow)
             {
                 Action = record.Action.Name,
                 Detail = record.Description,
@@ -219,7 +219,7 @@ public sealed class SampleInteractionRelay : IInteractionRelay
         {
             InteractionType.Question => new InteractionRelayResult { Answer = _script.QuestionAnswer },
             InteractionType.Completion => new InteractionRelayResult { Accepted = _script.AcceptCompletion },
-            _ => new InteractionRelayResult { Pending = false },
+            _ => new InteractionRelayResult { Unavailable = true },
         });
 }
 
@@ -260,7 +260,8 @@ public sealed class MissionPendingEntry
     public string Id { get; } = Guid.NewGuid().ToString("N");
     public AAuth.Server.BrowserInteraction Browser { get; } = new();
     public AAuth.Server.DeferredState Lifecycle { get; } = new();
-    public DateTimeOffset ExpiresAt { get; } = DateTimeOffset.UtcNow.AddMinutes(10);
+    public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset ExpiresAt => CreatedAt.AddMinutes(10);
     public string? OwnerIssuer { get; init; }
     public string? OwnerKeyThumbprint { get; init; }
 
@@ -291,11 +292,11 @@ public sealed class MissionPendingEntry
     /// <summary>The agent that made the request (token `sub`).</summary>
     public required string AgentId { get; init; }
 
-    /// <summary>The mission this request belongs to.</summary>
-    public required string S256 { get; init; }
+    /// <summary>The mission this request belongs to; empty on a creation request until it is approved.</summary>
+    public required string S256 { get; set; }
 
-    /// <summary>The mission approver (for re-emitting the mission claim).</summary>
-    public required string Approver { get; init; }
+    /// <summary>The PS that approves the mission.</summary>
+    public required string PersonServer { get; init; }
 
     /// <summary>The requested resource (token requests).</summary>
     public string? Resource { get; init; }
@@ -312,9 +313,6 @@ public sealed class MissionPendingEntry
     /// <summary>The agent's confirmation key, captured to mint the auth token.</summary>
     public IAAuthKey? ConfirmationKey { get; init; }
 
-    /// <summary>Any upstream act claim to carry into the issued auth token.</summary>
-    public JsonObject? UpstreamAct { get; init; }
-
     /// <summary>The clarification question (when started in clarification).</summary>
     public string? Question { get; init; }
 
@@ -327,13 +325,10 @@ public sealed class MissionPendingEntry
     /// <see langword="false"/> on deny. Ignored in scripted mode.
     /// </summary>
     public bool? Decision { get; set; }
-
-    /// <summary>The mission claim to embed in the issued auth token.</summary>
-    public MissionClaim MissionClaim => new(Approver, S256);
 }
 
 /// <summary>In-memory store of parked mission-governance requests.</summary>
-public sealed class MissionPendingStore
+public sealed class MissionPendingStore(ConsentRegistry registry)
 {
     private readonly ConcurrentDictionary<string, MissionPendingEntry> _entries = new(StringComparer.Ordinal);
 
@@ -343,6 +338,7 @@ public sealed class MissionPendingStore
         foreach (var pair in _entries)
             if (pair.Value.ExpiresAt.AddHours(1) <= DateTimeOffset.UtcNow) _entries.TryRemove(pair.Key, out _);
         _entries[entry.Id] = entry;
+        registry.Register(entry);
         return entry;
     }
 

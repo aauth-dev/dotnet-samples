@@ -1,4 +1,5 @@
 using AAuth.Crypto;
+using AAuth.Server;
 using AAuth.Server.Verification;
 
 // ---------------------------------------------------------------------------
@@ -17,7 +18,7 @@ using AAuth.Server.Verification;
 //
 // /events/admin enforces a role the PS asserts in the auth token's `roles`
 // claim. If the PS issues a token WITHOUT that role, the policy returns an
-// unrecoverable 403 — there is no automatic step-up re-challenge in this sample.
+// unrecoverable 403. Scope shortfalls step up; role shortfalls do not.
 // ---------------------------------------------------------------------------
 
 var builder = WebApplication.CreateBuilder(args);
@@ -63,19 +64,17 @@ var app = builder.Build();
 
 // Well-known metadata + JWKS from the DI-registered resource metadata.
 app.MapAAuthWellKnown();
-AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
-    app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options =>
-    {
-        options.AllowTokenIssuer = true;
-        options.TrustedPersonServers = trustedPersonServers;
-    });
+// Revocations are keyed by (verified caller, jti); only the trusted PSes issue
+// the tokens this resource accepts, so only they may revoke here.
+app.MapAAuthRevocationEndpoint(configure: options =>
+    options.IsAcceptedIssuer = trustedPersonServers.Contains);
 
 // One declarative pipeline: per-route scope/role lives on the endpoint
 // (.RequireAAuth(...)); this single post-routing middleware verifies and
 // challenges each matched endpoint from its metadata. Trust only the configured
 // Person Servers (fail-closed).
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -98,20 +97,18 @@ app.MapGet("/", () => Results.Ok(new
 app.MapGet("/events", (HttpContext ctx) =>
 {
     var result = ctx.GetAAuthVerification()!;
-    var parsed = ctx.GetAAuthParsedKey()!;
 
     return Results.Ok(new
     {
         accessMode = "three-party",
         scheme = "jwt",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         iss = result.Issuer,
-        // The canonical user identity is the (iss, sub) pair: the same `sub`
+        // The canonical user identity is the (ps, sub) pair: the same `sub`
         // asserted by a different Person Server is a different user.
-        userKey = result.Issuer is null ? null : $"{result.Issuer}|{result.Subject}",
-        act = parsed.Payload?["act"],
+        userKey = result.PersonServer is null ? null : $"{result.PersonServer}|{result.Subject}",
     });
 }).RequireAAuth(scope: ScopeRead);
 
@@ -125,7 +122,7 @@ app.MapGet("/events/write", (HttpContext ctx) =>
         accessMode = "three-party",
         scheme = "jwt",
         access = "write",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         iss = result.Issuer,
@@ -143,7 +140,7 @@ app.MapGet("/events/admin", (HttpContext ctx) =>
         accessMode = "three-party",
         scheme = "jwt",
         access = "admin",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         roles = result.Roles,
         groups = result.Groups,

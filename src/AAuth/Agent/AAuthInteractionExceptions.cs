@@ -46,10 +46,9 @@ public sealed class AAuthInteractionTimeoutException : Exception
 
 /// <summary>
 /// Thrown by an intermediary's <c>OnInteractionRequired</c> callback to abort an
-/// in-flight token exchange <em>before</em> it blocks polling the deferred
-/// <c>Location</c>, so the intermediary can re-emit its own
-/// <c>202 requirement=interaction</c> to its caller (AAuth protocol
-/// §Interaction Chaining).
+/// in-flight downstream token exchange before it blocks polling the deferred
+/// <c>Location</c>. The intermediary wraps the downstream requirement in its own
+/// interaction code and polling URL before responding to its caller.
 /// </summary>
 /// <remarks>
 /// <para>A resource acting as an agent (e.g. an orchestrator) has no user to
@@ -61,32 +60,31 @@ public sealed class AAuthInteractionTimeoutException : Exception
 /// callback in <c>try/finally</c> with no <c>catch</c>, the throw unwinds the
 /// exchange cleanly (response disposed, no double-write, no blocking poll) and
 /// propagates out of the originating <c>GetAsync</c>.</para>
-/// <para>The intermediary's request handler catches it, persists pending state
-/// keyed by its own id, and re-emits its own <c>202</c> carrying the captured
-/// <see cref="Interaction"/> (the downstream PS <c>url</c> and <c>code</c>,
-/// passed through) plus the intermediary's own <c>Location</c>.</para>
+/// <para>The intermediary's request handler catches it, persists serializable
+/// pending state keyed by its own code, and re-emits its own <c>202</c>. The
+/// downstream <see cref="DownstreamInteraction"/> is used only by the
+/// intermediary redirect endpoint.</para>
 /// </remarks>
 public sealed class AAuthInteractionChainedException : Exception
 {
     /// <summary>
-    /// The interaction requirement captured from the downstream <c>202</c> —
-    /// the user-facing <c>url</c> and single-use <c>code</c> the intermediary
-    /// passes through when re-emitting its own requirement.
+    /// The interaction requirement captured from the downstream <c>202</c>.
+    /// Intermediaries must not emit this directly to their caller.
     /// </summary>
-    public Interaction Interaction { get; }
+    public Interaction DownstreamInteraction { get; }
 
     public AAuthInteractionChainedException(Interaction interaction)
         : base("Downstream exchange requires user interaction; re-emitting as a chained interaction requirement.")
     {
         ArgumentNullException.ThrowIfNull(interaction);
-        Interaction = interaction;
+        DownstreamInteraction = interaction;
     }
 
     public AAuthInteractionChainedException(Interaction interaction, string message)
         : base(message)
     {
         ArgumentNullException.ThrowIfNull(interaction);
-        Interaction = interaction;
+        DownstreamInteraction = interaction;
     }
 }
 

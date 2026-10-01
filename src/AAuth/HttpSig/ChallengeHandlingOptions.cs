@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Agent;
+using AAuth.Discovery;
 using AAuth.Headers;
 
 namespace AAuth.HttpSig;
@@ -56,9 +58,9 @@ public sealed class ChallengeHandlingOptions
 
     /// <summary>
     /// Minimum delay between polls regardless of server's <c>Retry-After</c>.
-    /// Prevents runaway polling. Default: 100 ms.
+    /// Default: zero, so <c>Retry-After: 0</c> is immediate.
     /// </summary>
-    public TimeSpan MinPollInterval { get; set; } = TimeSpan.FromMilliseconds(100);
+    public TimeSpan MinPollInterval { get; set; } = TimeSpan.Zero;
 
     /// <summary>
     /// Optional callback invoked after each poll response. Useful for logging
@@ -94,4 +96,66 @@ public sealed class ChallengeHandlingOptions
     /// </summary>
     public System.Collections.Generic.IReadOnlyDictionary<string,
         System.Collections.Generic.IReadOnlyList<string>>? AdditionalSignatureComponents { get; set; }
+
+    /// <summary>
+    /// Seed first-request signing from parsed resource metadata. The resource
+    /// <c>issuer</c> supplies the origin key and
+    /// <c>additional_signature_components</c> supplies the components.
+    /// </summary>
+    /// <param name="metadata">Parsed resource metadata.</param>
+    /// <returns>This options instance for fluent configuration.</returns>
+    public ChallengeHandlingOptions AddResourceMetadata(ResourceMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        if (metadata.AdditionalSignatureComponents is not { Count: > 0 })
+        {
+            return this;
+        }
+        if (!Uri.TryCreate(metadata.Issuer, UriKind.Absolute, out var issuer))
+        {
+            throw new InvalidOperationException("Resource metadata issuer must be an absolute URI.");
+        }
+
+        var origin = issuer.GetComponents(
+                UriComponents.Scheme | UriComponents.Host | UriComponents.Port,
+                UriFormat.UriEscaped)
+            .ToLowerInvariant();
+        var merged = new Dictionary<string, IReadOnlyList<string>>(
+            AdditionalSignatureComponents ?? new Dictionary<string, IReadOnlyList<string>>(),
+            StringComparer.OrdinalIgnoreCase);
+        merged[origin] = Merge(metadata.AdditionalSignatureComponents,
+            merged.TryGetValue(origin, out var existing) ? existing : null);
+        AdditionalSignatureComponents = merged;
+        return this;
+    }
+
+    private static IReadOnlyList<string> Merge(
+        IEnumerable<string> metadataComponents, IEnumerable<string>? existingComponents)
+    {
+        var merged = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(IEnumerable<string>? components)
+        {
+            if (components is null)
+            {
+                return;
+            }
+            foreach (var raw in components)
+            {
+                if (string.IsNullOrWhiteSpace(raw))
+                {
+                    continue;
+                }
+                var component = raw.Trim().ToLowerInvariant();
+                if (seen.Add(component))
+                {
+                    merged.Add(component);
+                }
+            }
+        }
+
+        Add(metadataComponents);
+        Add(existingComponents);
+        return merged;
+    }
 }

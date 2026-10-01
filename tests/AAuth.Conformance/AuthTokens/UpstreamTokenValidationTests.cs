@@ -7,38 +7,39 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Person;
+using AAuth.Server;
 using AAuth.Tokens;
 using Xunit;
 
 namespace AAuth.Conformance.AuthTokens;
 
 /// <summary>
-/// Tests for UpstreamTokenValidator per §Upstream Token Verification.
-/// Uses a mock HTTP handler to simulate metadata and JWKS endpoints.
+/// Tests for UpstreamTokenValidator per §Upstream Token Verification. The
+/// upstream token is a person token or an auth token whose <c>aud</c> is the
+/// intermediary and whose person server is the expected PS.
 /// </summary>
 public class UpstreamTokenValidationTests
 {
     private const string PsIssuer = "http://localhost:5100";
-    private const string ResourceAudience = "http://localhost:5200";
-    private const string AgentId = "aauth:agent@example";
+    private const string AsIssuer = "http://localhost:5300";
+    private const string Intermediary = "http://localhost:5200";
     private const string PsKid = "ps-1";
+    private const string AsKid = "as-1";
+    private const string S256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
     private readonly AAuthKey _psKey = AAuthKey.Generate();
+    private readonly AAuthKey _asKey = AAuthKey.Generate();
     private readonly AAuthKey _agentKey = AAuthKey.Generate();
 
     [Theory]
     [InlineData("missing-cnf")]
     [InlineData("incomplete-key")]
     [InlineData("private-key")]
-    [InlineData("missing-sub-scope")]
-    [InlineData("malformed-act")]
-    [InlineData("person-sub")]
-    [InlineData("person-email")]
-    [InlineData("nested-person")]
-    [InlineData("nested-agent")]
+    [InlineData("missing-sub")]
     public async Task SignedButStructurallyInvalidUpstreamIsRejected(string variant)
     {
-        var segments = BuildValidUpstreamToken().Split('.');
+        var segments = (await BuildAuthTokenAsync()).Split('.');
         var header = JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[0]))!.AsObject();
         var payload = JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[1]))!.AsObject();
         switch (variant)
@@ -46,171 +47,307 @@ public class UpstreamTokenValidationTests
             case "missing-cnf": payload.Remove("cnf"); break;
             case "incomplete-key": payload["cnf"]!["jwk"]!.AsObject().Remove("x"); break;
             case "private-key": payload["cnf"]!["jwk"]!["d"] = "private"; break;
-            case "missing-sub-scope": payload.Remove("sub"); payload.Remove("scope"); break;
-            case "malformed-act": payload["act"] = "not-an-object"; break;
-            case "person-sub": payload["act"] = new JsonObject { ["agent"] = AgentId, ["sub"] = "person" }; break;
-            case "person-email": payload["act"] = new JsonObject { ["agent"] = AgentId, ["email"] = "person@example.test" }; break;
-            case "nested-person": payload["act"] = new JsonObject { ["agent"] = AgentId, ["act"] = new JsonObject { ["agent"] = AgentId, ["tenant"] = "person-tenant" } }; break;
-            case "nested-agent": payload["act"] = new JsonObject { ["agent"] = AgentId, ["act"] = new JsonObject { ["agent"] = "not-an-agent" } }; break;
+            case "missing-sub": payload.Remove("sub"); break;
         }
-        var result = await CreateValidator().ValidateAsync(JwtWriter.SignCompact(header, payload, _psKey), ResourceAudience, _ => true);
+        var result = await Validate(await JwtWriter.SignCompactAsync(header, payload, _psKey));
         Assert.False(result.IsValid);
         Assert.NotNull(result.Error);
     }
 
-    private string BuildValidUpstreamToken(
+    private async Task<string> BuildAuthTokenAsync(
         string? issuer = null,
         string? audience = null,
-        string? agent = null,
-        JsonObject? upstreamAct = null,
+        string? personServer = null,
         string? dwk = null,
-        MissionClaim? mission = null)
+        string? missionS256 = null,
+        AAuthKey? key = null,
+        string? kid = null)
     {
-        return new AuthTokenBuilder
+        var effectiveIssuer = issuer ?? PsIssuer;
+        var effectivePersonServer = personServer ?? PsIssuer;
+        var effectiveDwk = dwk ?? AuthTokenBuilder.PersonDwk;
+        var builderDwk = effectiveDwk is AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk
+            ? effectiveDwk
+            : AuthTokenBuilder.PersonDwk;
+        var builderPersonServer = builderDwk == AuthTokenBuilder.PersonDwk ? effectiveIssuer : effectivePersonServer;
+        var signingKey = key ?? _psKey;
+        var signingKid = kid ?? PsKid;
+        var token = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
-            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = issuer ?? PsIssuer,
-            Audience = audience ?? ResourceAudience,
-            Agent = agent ?? AgentId,
-            AgentConfirmationKey = _agentKey,
-            Key = _psKey,
-            KeyId = PsKid,
-            Dwk = dwk ?? AuthTokenBuilder.PersonDwk,
-            Scope = "data.read",
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            Issuer = effectiveIssuer,
+            Audience = audience ?? Intermediary,
+            PersonServer = builderPersonServer,
             Subject = "user-123",
-            Act = upstreamAct,
-            Mission = mission,
-        }.Build();
+            AgentConfirmationKey = _agentKey,
+            Key = signingKey,
+            KeyId = signingKid,
+            Dwk = builderDwk,
+            Scope = "data.read",
+            MissionS256 = missionS256,
+        }.BuildAsync();
+        if (effectiveDwk == builderDwk && effectivePersonServer == builderPersonServer)
+            return token;
+        var payload = (JsonObject)JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(token.Split('.')[1]))!;
+        payload["dwk"] = effectiveDwk;
+        payload["ps"] = effectivePersonServer;
+        return await JwtWriter.SignCompactAsync(
+            new JsonObject { ["alg"] = "Ed25519", ["typ"] = AuthTokenBuilder.TokenType, ["kid"] = signingKid },
+            payload, signingKey);
     }
+
+    private Task<string> BuildAsAuthTokenAsync(string? missionS256 = null) => BuildAuthTokenAsync(
+        issuer: AsIssuer, dwk: AuthTokenBuilder.AccessDwk, missionS256: missionS256, key: _asKey, kid: AsKid);
+
+    private ValueTask<string> BuildPersonTokenAsync(string? issuer = null, string? audience = null, string? tenant = null) => new PersonTokenBuilder
+    {
+        EgressPolicy = TestEgress.Policy,
+        Issuer = issuer ?? PsIssuer,
+        Audience = audience ?? Intermediary,
+        Subject = "user-123",
+        ConfirmationKey = _agentKey,
+        AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+        Key = _psKey,
+        KeyId = PsKid,
+        MissionS256 = S256,
+        Tenant = tenant,
+    }.BuildAsync();
 
     private UpstreamTokenValidator CreateValidator()
     {
-        var mockHandler = new MockJwksHandler(_psKey, PsKid, PsIssuer);
+        var mockHandler = new MockJwksHandler(new()
+        {
+            [PsIssuer] = (_psKey, PsKid),
+            [AsIssuer] = (_asKey, AsKid),
+        });
         var httpClient = new InProcessHttpClient(mockHandler);
         var metadata = new MetadataClient(httpClient);
         var jwks = new JwksClient(httpClient);
         return new UpstreamTokenValidator(metadata, jwks);
     }
 
-    [Fact(DisplayName = "§Upstream Token Verification — valid token accepted")]
+    private Task<UpstreamTokenValidationResult> Validate(string token, Func<string, bool>? trusted = null) =>
+        CreateValidator().ValidateAsync(token, Intermediary, PsIssuer,
+            (iss, _) => ValueTask.FromResult((trusted ?? (_ => false))(iss)));
+
+    private static TokenRegistration Registration(string jwt)
+    {
+        var payload = TokenVerifier.DecodeJsonSegment(jwt.Split('.')[1], "payload");
+        return new TokenRegistration(
+            new TokenKey(payload["iss"]!.GetValue<string>(), payload["jti"]!.GetValue<string>()),
+            DateTimeOffset.FromUnixTimeSeconds(payload["exp"]!.GetValue<long>()));
+    }
+
+    private async Task<UpstreamCallerRecord> RecordProvenanceAsync(InMemoryJtiStore store, string authToken)
+    {
+        var auth = Registration(authToken);
+        var expires = DateTimeOffset.UtcNow.AddHours(1);
+        var agent = new TokenKey(Intermediary, "agent-token");
+        var binding = AgentPersonBinding.Key(PsIssuer, Intermediary, "aauth:agent@localhost", generation: 1);
+        var presented = new TokenKey(PsIssuer, "presented-person");
+        await store.RegisterAsync(agent, expires);
+        await store.RegisterAsync(binding, BindingExpiresAt);
+        await store.RegisterAsync(presented, expires);
+        var caller = new UpstreamCallerRecord(Intermediary, "aauth:agent@localhost", agent, binding);
+        var grant = new TokenGrant(auth.Token, Intermediary, auth.ExpiresAt)
+        {
+            Provenance = new AAuthTokenProvenance(
+                AAuthConstants.TokenTypes.AuthToken, Intermediary, "user-123", PsIssuer, caller)
+            {
+                PresentedToken = presented,
+            },
+        };
+        Assert.True(await store.RegisterGrantAsync([agent, binding, presented], grant));
+        return caller;
+    }
+
+    private static readonly DateTimeOffset BindingExpiresAt = new(9000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+    [Fact(DisplayName = "§Upstream Token Verification — valid PS-issued auth token accepted")]
     public async Task ValidToken_Accepted()
     {
-        var token = BuildValidUpstreamToken();
-        var validator = CreateValidator();
-        var trusted = new HashSet<string> { PsIssuer };
-
-        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
+        var result = await Validate(await BuildAuthTokenAsync());
 
         Assert.True(result.IsValid);
         Assert.Null(result.Error);
-        // A direct-auth upstream token carries no act (OPTIONAL in draft-08).
-        Assert.Null(result.UpstreamAct);
         Assert.Equal(PsIssuer, result.Issuer);
-        Assert.Equal(AgentId, result.Agent);
+        Assert.Equal(PsIssuer, result.PersonServer);
+        Assert.Equal(AuthTokenBuilder.TokenType, result.TokenType);
+        Assert.Equal(Intermediary, result.Audience);
         Assert.Equal("user-123", result.Subject);
         Assert.Equal("data.read", result.Scope);
-        // A PS-issued upstream token reports dwk = aauth-person.json and no mission.
-        Assert.Equal(AuthTokenBuilder.PersonDwk, result.IssuerDwk);
-        Assert.Null(result.MissionApprover);
+        Assert.Null(result.MissionS256);
+        Assert.NotNull(result.ExpiresAt);
     }
 
-    [Fact(DisplayName = "§Upstream Token Verification — AS-issued (dwk) and mission approver surfaced")]
-    public async Task IssuerDwkAndMissionApprover_Surfaced()
+    [Fact(DisplayName = "§Upstream Token Verification — valid person token accepted")]
+    public async Task ValidPersonToken_Accepted()
     {
-        const string Approver = "https://ps.governing";
-        const string S256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-        var token = BuildValidUpstreamToken(
-            dwk: AuthTokenBuilder.AccessDwk,
-            mission: new MissionClaim(Approver, S256));
-        var validator = CreateValidator();
-        var trusted = new HashSet<string> { PsIssuer };
+        var result = await Validate(await BuildPersonTokenAsync(tenant: "acme"));
 
-        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
+        Assert.True(result.IsValid, result.Error);
+        Assert.Equal(PersonTokenBuilder.TokenType, result.TokenType);
+        Assert.Equal(PsIssuer, result.Issuer);
+        Assert.Equal(PsIssuer, result.PersonServer);
+        Assert.Equal("user-123", result.Subject);
+        Assert.Equal(S256, result.MissionS256);
+        Assert.Equal("acme", result.Tenant);
+        Assert.Null(result.Scope);
+    }
 
-        Assert.True(result.IsValid);
-        // The four-party discriminator: dwk = aauth-access.json identifies an AS issuer.
-        Assert.Equal(AuthTokenBuilder.AccessDwk, result.IssuerDwk);
-        // mission.approver anchors the chain to a governing PS.
-        Assert.Equal(Approver, result.MissionApprover);
+    [Fact(DisplayName = "§Upstream Token Verification — AS-issued auth token surfaces ps and mission_s256")]
+    public async Task AsIssuedToken_SurfacesPersonServerAndMission()
+    {
+        var result = await Validate(await BuildAsAuthTokenAsync(S256), iss => iss == AsIssuer);
+
+        Assert.True(result.IsValid, result.Error);
+        Assert.Equal(AsIssuer, result.Issuer);
+        Assert.Equal(PsIssuer, result.PersonServer);
+        Assert.Equal(S256, result.MissionS256);
+    }
+
+    [Fact(DisplayName = "§Upstream Token Verification — PS rejects AS auth token without provenance")]
+    public async Task PersonServerFullValidation_AsIssuedTokenWithoutProvenance_Rejected()
+    {
+        var store = new InMemoryJtiStore();
+        var result = await CreateValidator().ValidateAtPersonServerAsync(
+            await BuildAsAuthTokenAsync(), Intermediary, PsIssuer, store,
+            static (_, _) => ValueTask.FromResult(true));
+
+        Assert.False(result.IsValid);
+        Assert.Equal(AAuth.Errors.SignatureErrorCode.InvalidJwt, result.FailureCode);
+        Assert.Contains("provenance", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact(DisplayName = "§Upstream Token Verification — PS accepts AS auth token only with matching provenance")]
+    public async Task PersonServerFullValidation_AsIssuedTokenWithProvenance_Accepted()
+    {
+        var token = await BuildAsAuthTokenAsync(S256);
+        var store = new InMemoryJtiStore();
+        await RecordProvenanceAsync(store, token);
+
+        var result = await CreateValidator().ValidateAtPersonServerAsync(
+            token, Intermediary, PsIssuer, store,
+            static (_, _) => ValueTask.FromResult(true));
+
+        Assert.True(result.IsValid, result.Error);
+        Assert.Equal("aauth:agent@localhost", result.Caller?.AgentId);
+        Assert.Equal(AsIssuer, result.Issuer);
+    }
+
+    [Theory(DisplayName = "§Upstream Token Verification — revoked caller record rejects matching provenance")]
+    [InlineData("agent")]
+    [InlineData("binding")]
+    public async Task PersonServerFullValidation_RevokedCallerRecord_Rejected(string revoked)
+    {
+        var token = await BuildAsAuthTokenAsync();
+        var store = new InMemoryJtiStore();
+        var caller = await RecordProvenanceAsync(store, token);
+        await store.RevokeAsync(revoked == "agent" ? caller.AgentToken : caller.AgentPersonBinding, BindingExpiresAt);
+
+        var result = await CreateValidator().ValidateAtPersonServerAsync(
+            token, Intermediary, PsIssuer, store,
+            static (_, _) => ValueTask.FromResult(true));
+
+        Assert.False(result.IsValid);
+        Assert.Equal(AAuth.Errors.SignatureErrorCode.RevokedJwt, result.FailureCode);
     }
 
     [Fact(DisplayName = "§Upstream Token Verification — an out-of-set dwk is rejected")]
     public async Task OutOfSetDwk_Rejected()
     {
-        // A token whose dwk is neither aauth-person.json nor aauth-access.json must
-        // be rejected — the four-party mission gate classifies AS vs PS from dwk.
-        var token = BuildValidUpstreamToken(dwk: "aauth-resource.json");
-        var validator = CreateValidator();
-        var trusted = new HashSet<string> { PsIssuer };
-
-        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
+        var result = await Validate(await BuildAuthTokenAsync(dwk: "aauth-resource.json"));
 
         Assert.False(result.IsValid);
         Assert.Contains("dwk", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(DisplayName = "§Upstream Token Verification — untrusted issuer rejected")]
+    [Fact(DisplayName = "§Upstream Token Verification — auth token from an untrusted AS rejected")]
     public async Task UntrustedIssuer_Rejected()
     {
-        var token = BuildValidUpstreamToken();
-        var validator = CreateValidator();
-        var trusted = new HashSet<string> { "https://other-ps.example" }; // PS not trusted
-
-        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
+        var result = await Validate(await BuildAsAuthTokenAsync());
 
         Assert.False(result.IsValid);
-        Assert.Contains("untrusted_issuer", result.Error);
+        Assert.Contains("not trusted", result.Error);
     }
 
-    [Fact(DisplayName = "§Upstream Token Verification — predicate may reject an otherwise-valid issuer")]
+    [Fact(DisplayName = "§Upstream Token Verification — predicate may reject an otherwise-valid AS")]
     public async Task PredicateRejectsIssuer_Rejected()
     {
-        var token = BuildValidUpstreamToken();
-        var validator = CreateValidator();
-
-        var result = await validator.ValidateAsync(token, ResourceAudience, isTrustedIssuer: _ => false);
+        var result = await Validate(await BuildAsAuthTokenAsync(), iss => iss == "http://localhost:9999");
 
         Assert.False(result.IsValid);
-        Assert.Contains("untrusted_issuer", result.Error);
+        Assert.Contains("not trusted", result.Error);
     }
 
-    [Fact(DisplayName = "§Upstream Token Verification — predicate authorizes a trusted issuer")]
-    public async Task PredicateAcceptsIssuer_Accepted()
+    [Fact(DisplayName = "§Upstream Token Verification — the expected PS is trusted without the predicate")]
+    public async Task ExpectedPersonServer_TrustedWithoutPredicate()
     {
-        var token = BuildValidUpstreamToken();
-        var validator = CreateValidator();
+        var result = await Validate(await BuildAuthTokenAsync(), _ => false);
 
-        var result = await validator.ValidateAsync(token, ResourceAudience, isTrustedIssuer: iss => iss == PsIssuer);
-
-        Assert.True(result.IsValid);
+        Assert.True(result.IsValid, result.Error);
         Assert.Equal(PsIssuer, result.Issuer);
     }
 
-    [Fact(DisplayName = "§Upstream Token Verification — audience mismatch rejected")]
-    public async Task AudienceMismatch_Rejected()
+    [Theory(DisplayName = "§Upstream Token Verification — token naming another person server rejected")]
+    [InlineData("auth")]
+    [InlineData("person")]
+    public async Task OtherPersonServer_Rejected(string kind)
     {
-        var token = BuildValidUpstreamToken(audience: "http://localhost:9999");
-        var validator = CreateValidator();
-        var trusted = new HashSet<string> { PsIssuer };
+        var token = kind == "auth"
+            ? await BuildAuthTokenAsync(personServer: "http://localhost:9999")
+            : await BuildPersonTokenAsync();
+        var result = await CreateValidator().ValidateAsync(token, Intermediary,
+            kind == "auth" ? PsIssuer : "http://localhost:9999", (_, _) => ValueTask.FromResult(true));
 
-        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
+        Assert.False(result.IsValid);
+        Assert.Contains("person server", result.Error);
+    }
+
+    [Theory(DisplayName = "§Upstream Token Verification — audience mismatch rejected")]
+    [InlineData("auth")]
+    [InlineData("person")]
+    public async Task AudienceMismatch_Rejected(string kind)
+    {
+        var token = kind == "auth"
+            ? await BuildAuthTokenAsync(audience: "http://localhost:9999")
+            : await BuildPersonTokenAsync(audience: "http://localhost:9999");
+        var result = await Validate(token);
 
         Assert.False(result.IsValid);
         Assert.Contains("aud", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact(DisplayName = "§Upstream Token Verification — agent token rejected as upstream")]
+    public async Task AgentToken_Rejected()
+    {
+        var agentToken = await new AgentTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            Issuer = PsIssuer,
+            Subject = "aauth:agent@localhost",
+            ConfirmationKey = _agentKey,
+            Key = _psKey,
+            KeyId = PsKid,
+        }.BuildAsync();
+
+        var result = await Validate(agentToken);
+
+        Assert.False(result.IsValid);
+    }
+
     [Fact(DisplayName = "§Upstream Token Verification — expired token rejected")]
     public async Task ExpiredToken_Rejected()
     {
-        // Build a token that's already expired
-        var token = new AuthTokenBuilder
+        var token = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
-            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
-            Audience = ResourceAudience,
-            Agent = AgentId,
+            Audience = Intermediary,
+            PersonServer = PsIssuer,
+            Subject = "user-123",
             AgentConfirmationKey = _agentKey,
             Key = _psKey,
             KeyId = PsKid,
@@ -218,138 +355,53 @@ public class UpstreamTokenValidationTests
             IssuedAt = DateTimeOffset.UtcNow - TimeSpan.FromHours(2),
             TimeProvider = new IssuanceTestClock(DateTimeOffset.UtcNow - TimeSpan.FromHours(2)),
             Lifetime = TimeSpan.FromMinutes(5),
-        }.Build();
+        }.BuildAsync();
 
-        var validator = CreateValidator();
-        var trusted = new HashSet<string> { PsIssuer };
-
-        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
+        var result = await Validate(token);
 
         Assert.False(result.IsValid);
         Assert.Contains("expired", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(DisplayName = "§Upstream Token Verification — returns UpstreamAct for nesting")]
-    public async Task ValidToken_ReturnsUpstreamAct()
+    /// <summary>Serves metadata + JWKS for each configured issuer.</summary>
+    private sealed class MockJwksHandler(Dictionary<string, (AAuthKey Key, string Kid)> issuers) : HttpMessageHandler
     {
-        // Token whose act is itself a 2-hop chain (the upstream was already chained).
-        var innerAct = ActChainBuilder.BuildNestedAct(
-            "aauth:intermediary@example",
-            new JsonObject { ["agent"] = "aauth:original@example" });
-        var token = BuildValidUpstreamToken(upstreamAct: innerAct);
-        var validator = CreateValidator();
-        var trusted = new HashSet<string> { PsIssuer };
-
-        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
-
-        Assert.True(result.IsValid);
-        Assert.NotNull(result.UpstreamAct);
-        // The validator returns the token's raw act unchanged: { agent: intermediary, act: { agent: original } }.
-        Assert.Equal("aauth:intermediary@example", (string?)result.UpstreamAct!["agent"]);
-        var nested = result.UpstreamAct["act"] as JsonObject;
-        Assert.NotNull(nested);
-        Assert.Equal("aauth:original@example", (string?)nested!["agent"]);
-    }
-
-    [Fact(DisplayName = "§Upstream Token Verification — returns raw upstream act for nesting")]
-    public async Task ReturnsRawUpstreamAct()
-    {
-        // The validator returns the upstream token's raw act unchanged (no wrapping).
-        var rawAct = new JsonObject { ["agent"] = "aauth:original@example" };
-        var token = BuildValidUpstreamToken(upstreamAct: rawAct);
-        var validator = CreateValidator();
-        var trusted = new HashSet<string> { PsIssuer };
-
-        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
-
-        Assert.True(result.IsValid);
-        Assert.NotNull(result.UpstreamAct);
-        Assert.Equal("aauth:original@example", (string?)result.UpstreamAct!["agent"]);
-    }
-
-    [Fact(DisplayName = "§Upstream Token Verification — chain depth exceeded rejected")]
-    public async Task ChainDepthExceeded_Rejected()
-    {
-        // Build a deeply nested act chain that exceeds MaxActDepth (default 10).
-        // In draft-08 the Act node is emitted verbatim (no extra wrapping), so build
-        // 11 levels directly so total depth = 11 > max 10.
-        JsonObject act = new JsonObject { ["agent"] = "aauth:deep11@example" };
-        for (int i = 10; i >= 1; i--)
-        {
-            act = new JsonObject { ["agent"] = $"aauth:deep{i}@example", ["act"] = act };
-        }
-
-        var token = BuildValidUpstreamToken(agent: AgentId, upstreamAct: act);
-        var validator = CreateValidator();
-        var trusted = new HashSet<string> { PsIssuer };
-
-        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
-
-        Assert.False(result.IsValid);
-        Assert.Contains("invalid_act_chain", result.Error);
-    }
-
-    /// <summary>
-    /// Mock HTTP handler that serves metadata + JWKS for the test PS.
-    /// </summary>
-    private sealed class MockJwksHandler : HttpMessageHandler
-    {
-        private readonly AAuthKey _key;
-        private readonly string _kid;
-        private readonly string _issuer;
-
-        public MockJwksHandler(AAuthKey key, string kid, string issuer)
-        {
-            _key = key;
-            _kid = kid;
-            _issuer = issuer;
-        }
-
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            var path = request.RequestUri?.AbsolutePath ?? "";
+            var issuer = request.RequestUri!.GetLeftPart(UriPartial.Authority);
+            if (!issuers.TryGetValue(issuer, out var entry))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            var path = request.RequestUri.AbsolutePath;
 
             if (path.EndsWith("jwks.json"))
             {
-                var jwk = _key.ToPublicJwk();
-                jwk["kid"] = _kid;
+                var jwk = entry.Key.ToPublicJwk();
+                jwk["kid"] = entry.Kid;
                 jwk["use"] = "sig";
                 jwk["alg"] = AAuthKey.Ed25519Algorithm;
-                var jwks = new JsonObject
-                {
-                    ["keys"] = new JsonArray { jwk },
-                };
-                return JsonResponse(jwks);
+                return JsonResponse(new JsonObject { ["keys"] = new JsonArray { jwk } });
             }
 
             if (path.EndsWith(".json"))
             {
-                // Serve metadata for any well-known document name (person, access,
-                // or — for negative dwk tests — anything else) so the validator's
+                // Serve metadata for any well-known document name so the verifier's
                 // own dwk allow-list, not a 404, is what rejects an out-of-set dwk.
-                var meta = new JsonObject
+                return JsonResponse(new JsonObject
                 {
-                    ["issuer"] = _issuer,
-                    ["jwks_uri"] = $"{_issuer}/.well-known/jwks.json",
-                    ["token_endpoint"] = $"{_issuer}/token",
-                };
-                return JsonResponse(meta);
+                    ["issuer"] = issuer,
+                    ["jwks_uri"] = $"{issuer}/.well-known/jwks.json",
+                    ["token_endpoint"] = $"{issuer}/token",
+                });
             }
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
 
-        private static Task<HttpResponseMessage> JsonResponse(JsonObject json)
-        {
-            var response = new HttpResponseMessage(HttpStatusCode.OK)
+        private static Task<HttpResponseMessage> JsonResponse(JsonObject json) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(
-                    json.ToJsonString(),
-                    System.Text.Encoding.UTF8,
-                    "application/json"),
-            };
-            return Task.FromResult(response);
-        }
+                Content = new StringContent(json.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+            });
     }
 }

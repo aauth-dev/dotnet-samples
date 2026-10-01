@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using AAuth;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
@@ -9,6 +10,7 @@ using AAuth.Server.Challenge;
 using AAuth.Server.Endpoints;
 using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
+using AAuth.Headers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,11 +32,12 @@ public static class AAuthEndpointExtensions
     /// challenge metadata and an inline authorization policy — no named scope
     /// policy string to keep in sync.
     /// </summary>
+    /// <param name="trust">Trust policy for this endpoint only, replacing the resource-wide trust.</param>
     public static RouteHandlerBuilder RequireAAuth(
         this RouteHandlerBuilder builder,
         string? scope = null,
         string? role = null,
-        bool missionAware = false)
+        IAAuthTrustPolicy? trust = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.WithMetadata(new AAuthEndpointRequirement
@@ -42,7 +45,7 @@ public static class AAuthEndpointExtensions
             Mode = AAuthAccessMode.RequireAuthToken,
             Scope = scope,
             Role = role,
-            MissionAware = missionAware,
+            Trust = trust,
         });
         builder.RequireAuthorization(policy =>
         {
@@ -82,6 +85,17 @@ public static class AAuthEndpointExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Require a verified AAuth person token and challenge missing or wrong AAuth
+    /// token types with <c>requirement=person-token</c>.
+    /// </summary>
+    public static RouteHandlerBuilder RequireAAuthPersonToken(this RouteHandlerBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.WithMetadata(new AAuthEndpointRequirement { Mode = AAuthAccessMode.PersonTokenRequired });
+        return builder;
+    }
+
     public static RouteHandlerBuilder RequireGenericSignature(this RouteHandlerBuilder builder, bool identified = false)
     {
         builder.RequireAAuthSignature(identified);
@@ -112,35 +126,38 @@ public static class AAuthEndpointExtensions
         var opts = new AAuthServerOptions();
         configure?.Invoke(opts);
 
-        // Startup footgun guards (diagnostics only): throw on a configured-but-
-        // ignored trust policy; warn when auth-token endpoints are implicitly open.
-        TrustConfigDiagnostics.Validate(
-            app.ApplicationServices.GetService<ILoggerFactory>()?.CreateLogger("AAuth"),
-            authTrustConfigured: opts.TrustedAuthTokenIssuers is not null || opts.IsTrustedAuthTokenIssuer is not null,
-            agentTrustConfigured: opts.TrustedAgentProviderIssuers is not null || opts.IsTrustedAgentProviderIssuer is not null,
-            contextLabel: "UseAAuth");
-
         var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
         var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
             ?? new DefaultSignatureKeyResolver(app.ApplicationServices.GetService<JwksClient>(), app.ApplicationServices.GetService<MetadataClient>(),
-                tokenVerifiers: app.ApplicationServices.GetServices<ISignatureTokenVerifier>());
+                tokenVerifiers: app.ApplicationServices.GetServices<ISignatureTokenVerifier>(),
+                services: app.ApplicationServices);
         var metadataClient = app.ApplicationServices.GetService<MetadataClient>();
         var jwks = app.ApplicationServices.GetService<JwksClient>();
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
         var resourceMetadata = app.ApplicationServices.GetService<AAuthResourceMetadataOptions>();
 
         // Challenge defaults from the DI-registered resource metadata (G3): the
-        // resource identifier and the first signing key. UseAAuth callers override
+        // resource identifier and its signing keys. UseAAuth callers override
         // only when they must.
         var resourceIdentifier = opts.ResourceIdentifier ?? resourceMetadata?.Issuer;
-        var signingKey = opts.ResourceSigningKey;
-        var signingKid = opts.ResourceKeyId;
-        if (signingKey is null && resourceMetadata?.SigningKeys is { Count: > 0 } keys)
-        {
-            var first = keys.First();
-            signingKid = first.Key;
-            signingKey = first.Value;
-        }
+        var effectiveAccessServer = opts.AccessServer ?? resourceMetadata?.AccessServer;
+        var signingKeys = opts.ResourceSigningKeys
+            ?? (resourceMetadata?.SigningKeys is { Count: > 0 } keys ? keys : null);
+        var authVerifyOptions = AAuthResourceVerificationDefaults.Normalize(
+            new AAuthVerificationOptions
+            {
+                EgressPolicy = resourceMetadata?.EgressPolicy ?? metadataClient?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production,
+                ResourceIdentifier = resourceIdentifier,
+                Trust = opts.Trust,
+            },
+            effectiveAccessServer,
+            app.ApplicationServices);
+        TrustConfigDiagnostics.Validate(
+            app.ApplicationServices.GetService<ILoggerFactory>()?.CreateLogger("AAuth"),
+            authTrustConfigured: authVerifyOptions.Trust.IsConfigured(AAuthTrustedParty.AuthTokenIssuer, app.ApplicationServices),
+            agentTrustConfigured: authVerifyOptions.Trust.IsConfigured(AAuthTrustedParty.AgentProvider, app.ApplicationServices),
+            contextLabel: "UseAAuth",
+            accessServer: effectiveAccessServer);
 
         return app.Use((HttpContext context, RequestDelegate next) =>
         {
@@ -176,40 +193,48 @@ public static class AAuthEndpointExtensions
                 context.Items[AAuthVerificationMiddleware.JtiStoreItemKey] = jtiStore;
             }
 
+            if (req.Mode == AAuthAccessMode.PersonTokenRequired
+                && !context.Request.Headers.ContainsKey(AAuthConstants.Headers.SignatureKey))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatPersonToken();
+                return Task.CompletedTask;
+            }
+
             var verifyOptions = req.Mode == AAuthAccessMode.RequireAuthToken
-                ? new AAuthVerificationOptions
-                {
-                    EgressPolicy = resourceMetadata?.EgressPolicy ?? metadataClient?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production,
-                    ResourceIdentifier = resourceIdentifier,
-                    TrustedAuthTokenIssuers = opts.TrustedAuthTokenIssuers,
-                    IsTrustedAuthTokenIssuer = opts.IsTrustedAuthTokenIssuer,
-                    TrustedAgentProviderIssuers = opts.TrustedAgentProviderIssuers,
-                    IsTrustedAgentProviderIssuer = opts.IsTrustedAgentProviderIssuer,
-                }
+                ? authVerifyOptions
                 : new AAuthVerificationOptions
                 {
                     EgressPolicy = resourceMetadata?.EgressPolicy ?? metadataClient?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production,
                     AcceptedSchemes = req.AcceptedSchemes,
                     ResourceIdentifier = resourceIdentifier,
-                    TrustedAgentProviderIssuers = opts.TrustedAgentProviderIssuers,
-                    IsTrustedAgentProviderIssuer = opts.IsTrustedAgentProviderIssuer,
-                    TrustedAuthTokenIssuers = opts.TrustedAuthTokenIssuers,
-                    IsTrustedAuthTokenIssuer = opts.IsTrustedAuthTokenIssuer,
+                    Trust = opts.Trust,
                 };
 
-            RequestDelegate afterVerify = req.Mode == AAuthAccessMode.RequireAuthToken
-                ? ctx => new AAuthChallengeMiddleware(next, new ChallengeOptions
+            RequestDelegate afterVerify = req.Mode switch
+            {
+                AAuthAccessMode.RequireAuthToken => ctx => new AAuthChallengeMiddleware(next, new ChallengeOptions
                 {
                     EgressPolicy = resourceMetadata?.EgressPolicy ?? metadataClient?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production,
                     AccessMode = AAuthAccessMode.RequireAuthToken,
-                    ResourceSigningKey = signingKey,
-                    ResourceKeyId = signingKid,
+                    ResourceSigningKeys = signingKeys,
                     ResourceIdentifier = resourceIdentifier,
-                    PersonServerAudience = opts.PersonServerAudience,
+                    AccessServer = effectiveAccessServer,
                     DefaultScopes = req.Scope,
-                    MissionAware = req.MissionAware,
-                }).InvokeAsync(ctx)
-                : next;
+                }).InvokeAsync(ctx),
+                AAuthAccessMode.PersonTokenRequired => async ctx =>
+                {
+                    if (ctx.GetAAuthVerification() is { TokenType: AAuthTokenType.PersonToken })
+                    {
+                        await next(ctx).ConfigureAwait(false);
+                        return;
+                    }
+
+                    ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    ctx.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatPersonToken();
+                },
+                _ => next,
+            };
 
             var verifyMw = new AAuthVerificationMiddleware(
                 afterVerify, verifier, resolver, metadataClient, jwks, verifyOptions);

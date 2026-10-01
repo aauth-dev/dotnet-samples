@@ -32,14 +32,20 @@ var openApiDocument = new JsonObject
         ["/confirm_reservation"] = OpenApiPath(ConfirmReservation, "Confirm a reservation; may charge a non-refundable deposit."),
     },
 };
+// Tell agents up front that confirming blocks on a person for every call (R3 #operation-access-annotations).
+R3AccessAnnotations.Annotate(openApiDocument["paths"]!["/confirm_reservation"]!["post"]!.AsObject(), Vocabulary.OpenApi,
+    new R3OperationAccess(AAuthConstants.AccessModes.PerCall));
 var supportedOperations = openApiDocument["paths"]!.AsObject().SelectMany(path => path.Value!.AsObject())
     .Select(method => method.Value!["operationId"]!.GetValue<string>()).ToArray();
 
 var resourceUrl = (builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5005").TrimEnd('/');
 var accessServerUrl = (builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5501").TrimEnd('/');
 var personServerUrl = (builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100").TrimEnd('/');
+var trustedPersonServers = new HashSet<string>(
+    builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>()
+        ?? new[] { personServerUrl },
+    StringComparer.Ordinal);
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
-var missionAware = builder.Configuration.GetValue("Bookings:MissionAware", false);
 var accounts = builder.Configuration.GetSection("Bookings:Accounts").Get<Dictionary<string, string>>()
     ?? new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -55,17 +61,20 @@ var discoveryMetadata = R3Metadata.AddVocabularies(new JsonObject(), new Diction
 });
 var authoritativeOperations = supportedOperations.Select(R3OperationIdentity.OpenApi).ToArray();
 
-// Resource DI via the one-call helper: registers the AAuth verifier, the shared
+// Resource DI via the one-call helper: registers the AAuth verifier, the token verifier, the shared
 // discovery clients (MetadataClient + JwksClient) behind an SDK-owned pooled handler,
 // and the well-known metadata options — no manual HttpClient wiring (2026-06-27
-// server-api-surface). R3's r3_vocabularies (and the mission_aware flag) ride the
+// server-api-surface). R3's r3_vocabularies ride the
 // generic AdditionalMetadata seam, so Bookings uses the high-level MapAAuthWellKnown
 // instead of hand-rolling the well-known + JWKS.
 builder.Services.AddAAuthResource(o =>
 {
     o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
+    o.AccessServer = accessServerUrl;
     o.RevocationEndpoint = $"{resourceUrl}/revoke";
+    o.ConfigureRevocation = revocation =>
+        revocation.IsAcceptedIssuer = caller => caller == accessServerUrl || trustedPersonServers.Contains(caller);
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
     o.SigningKeys[ResourceKid] = resourceKey;
     o.Name = "Aria Reservations";
@@ -74,43 +83,49 @@ builder.Services.AddAAuthResource(o =>
     o.AuthorizationEndpoint = $"{resourceUrl}/authorize";
     o.AdditionalMetadata = new Dictionary<string, JsonNode?>
     {
-        // Bookings is deliberately not mission-aware (advertised for discovery only).
-        ["mission_aware"] = missionAware,
         ["r3_vocabularies"] = discoveryMetadata["r3_vocabularies"]!.DeepClone(),
     };
 });
-builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = SampleEgress.Policy });
 builder.Services.AddSingleton<R3ProposalStore>();
-builder.Services.AddAAuthEvents();
-
-var app = builder.Build();
-using var eventHttp = new SampleHttpClient();
-var eventProtocol = new EventsProtocol(eventHttp, app.Services.GetServices<ISignatureTokenVerifier>());
+builder.Services.AddSingleton<IR3AuthoritativeDefinitionProvider>(new StaticR3AuthoritativeDefinitionProvider(authoritativeOperations));
+builder.Services.AddSingleton<IR3OperationValidator>(sp => new R3OperationValidator(
+    sp.GetRequiredService<R3ProposalStore>(),
+    sp.GetRequiredService<IR3AuthoritativeDefinitionProvider>()));
+// Every R3Challenge mint entitles the token's aud (AS) and ps (PS) to read its document.
+builder.Services.AddAAuthR3Documents(_ => readerPolicy);
+// R3 per-call single use: a proposal-approved auth token executes once, and a repeat
+// of the same token (even freshly signed) gets the retained result.
+builder.Services.AddAAuthHeldInvocations();
 var eventStore = new SqliteEventStore(builder.Configuration["Events:Database"] ?? Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aauth", "bookings-events.db"));
-var bookingEvents = new BookingsEvents(resourceUrl, resourceKey, ResourceKid, eventProtocol, eventStore);
+builder.Services.AddSingleton<IResourceEventStore>(eventStore);
+builder.Services.AddAAuthEvents(options => options.EgressPolicy = SampleEgress.Policy);
+
+var app = builder.Build();
+var bookingEvents = new BookingsEvents(resourceUrl, resourceKey, ResourceKid, app.Services.GetRequiredService<EventsProtocol>(), eventStore);
 bookingEvents.Map(app);
+var perCallGrants = app.Services.GetRequiredService<IAAuthSingleUseGate>();
+var documentEntitlements = app.Services.GetRequiredService<IR3DocumentEntitlements>();
 
 // Resource well-known (aauth-resource.json + jwks.json) from the DI-registered
 // metadata options — including R3's r3_vocabularies via the AdditionalMetadata seam.
-// Bookings does not read or enforce AAuth-Mission; mission_aware is advertised false.
 app.MapAAuthWellKnown();
-var tokenInventory = app.MapAAuthIssuerRevocation(resourceUrl, ResourceTokenBuilder.ResourceDwk,
-    resourceKey, ResourceKid, "/revoke", SampleEgress.Policy, TimeProvider.System,
-    options => options.IsTrustedPersonServer = (caller, token) => caller == personServerUrl && token.Issuer == accessServerUrl);
+// The token inventory lets verification reject revoked tokens; revocations arrive as
+// signed POSTs from the PS or AS and are verified before the endpoint (§Token Revocation).
+app.MapAAuthResourceRevocation();
+var tokenInventory = app.Services.GetRequiredService<IJtiStore>();
 
 app.MapGet("/", () => Results.Ok(new
 {
     resource = "Aria Reservations",
     accessMode = "four-party-r3",
-    missionAware,
     authorization_endpoint = $"{resourceUrl}/authorize",
     r3_vocabularies = new Dictionary<string, string> { [Vocabulary.OpenApi] = $"{resourceUrl}/openapi.json" },
     flows = new[]
     {
         new { path = "/search_availability", operationId = SearchAvailability, grant = "r3_granted" },
         new { path = "/hold_reservation", operationId = HoldReservation, grant = "r3_granted" },
-        new { path = "/confirm_reservation", operationId = ConfirmReservation, grant = "r3_conditional + per-call proposal" },
+        new { path = "/confirm_reservation", operationId = ConfirmReservation, grant = "r3_per_call + per-call proposal" },
     },
 }));
 
@@ -123,15 +138,16 @@ app.MapGet("/openapi.json", () => Results.Json(openApiDocument, contentType: "ap
 
 app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
 {
-    SignedAgent agent;
+    SignedPresenter presenter;
     try
     {
-        agent = await VerifyAgentAsync(ctx);
+        presenter = await VerifyPresenterAsync(ctx);
     }
     catch (Exception ex) when (ex is R3FetchVerificationException or AAuthVerificationException or TokenVerificationException or InvalidOperationException)
     {
         return AAuth.Server.AAuthProblemDetails.Create("invalid_agent_signature", ex.Message, statusCode: StatusCodes.Status401Unauthorized);
     }
+    if (presenter.Person is null) return PersonTokenRequired(ctx);
 
     JsonObject? body;
     try
@@ -164,7 +180,7 @@ app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
     }
 
     var stored = StoreR3Document(documents, operations.Operations.Select(op => op.Id), account);
-    var resourceToken = BuildResourceToken(agent.AgentId, agent.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
+    var resourceToken = await BuildResourceTokenAsync(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
     ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
     return Results.Ok(new
     {
@@ -181,29 +197,29 @@ app.MapR3Document("/r3/proposals/{hash}", ctx =>
 {
     var hash = (string?)ctx.Request.RouteValues["hash"];
     return hash is not null && ctx.RequestServices.GetRequiredService<R3ProposalStore>().TryGet(hash, out var bytes) ? bytes : null;
-}, readerPolicy);
+});
 
 app.MapR3Document("/r3/{hash}", ctx =>
 {
     var hash = (string?)ctx.Request.RouteValues["hash"];
     return hash is not null && ctx.RequestServices.GetRequiredService<R3ProposalStore>().TryGet(hash, out var bytes) ? bytes : null;
-}, readerPolicy);
+});
 
 app.MapMethods("/search_availability", ["GET", "POST"], async (HttpContext ctx) =>
 {
     var auth = await VerifyAuthOrChallengeAsync(ctx, supportedOperations);
     if (auth.Result is not null) { return auth.Result; }
-    var decision = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
+    var decision = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload, egressPolicy: SampleEgress.Policy);
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, SearchAvailability);
     if (enforcement.Result is not null) return enforcement.Result;
-    return Results.Ok(new
+    return await CompleteAsync(enforcement.SingleUse, () => new
     {
         accessMode = "four-party-r3",
         operationId = HttpMethods.IsGet(ctx.Request.Method) ? SearchAvailability : SearchAvailability + "Post",
         account = auth.Verified!.Account,
         account_name = AccountName(auth.Verified.Account),
         subject = (string?)auth.Verified.Payload["sub"],
-        agent = (string?)auth.Verified.Payload["agent"],
+        ps = (string?)auth.Verified.Payload["ps"],
         source = "r3_granted",
         notifications = bookingEvents.IssueTicket(auth.Verified),
         options = new[]
@@ -220,10 +236,10 @@ app.MapMethods("/hold_reservation", ["GET", "POST"], async (HttpContext ctx) =>
 {
     var auth = await VerifyAuthOrChallengeAsync(ctx, supportedOperations);
     if (auth.Result is not null) { return auth.Result; }
-    var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
+    var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload, egressPolicy: SampleEgress.Policy);
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, HoldReservation);
     if (enforcement.Result is not null) return enforcement.Result;
-    return Results.Ok(new
+    return await CompleteAsync(enforcement.SingleUse, () => new
     {
         accessMode = "four-party-r3",
         operationId = HttpMethods.IsGet(ctx.Request.Method) ? HoldReservation : HoldReservation + "Post",
@@ -242,11 +258,11 @@ app.MapPost("/confirm_reservation", async (HttpContext ctx) =>
     var auth = await VerifyAuthOrChallengeAsync(ctx, supportedOperations);
     if (auth.Result is not null) { return auth.Result; }
 
-    var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
+    var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload, egressPolicy: SampleEgress.Policy);
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, ConfirmReservation);
     if (enforcement.Result is not null) return enforcement.Result;
     var parameters = enforcement.Parameters!;
-    return Results.Ok(new
+    return await CompleteAsync(enforcement.SingleUse, () => new
         {
             accessMode = "four-party-r3",
             operationId = ConfirmReservation,
@@ -266,6 +282,10 @@ app.MapPost("/confirm_reservation", async (HttpContext ctx) =>
 
 app.Run();
 
+async Task<IResult> CompleteAsync(R3SingleUse? singleUse, Func<object> execute) => singleUse is null
+    ? Results.Ok(execute())
+    : (await singleUse.ExecuteOnceAsync(_ => Task.FromResult(HeldInvocationResult.Json(execute())))).ToResult();
+
 StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requestedOperations, string? account)
 {
     var requested = requestedOperations.ToHashSet(StringComparer.Ordinal);
@@ -273,44 +293,48 @@ StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requ
     var doc = new R3Document
     {
         Account = account,
-        Version = "v02",
         Vocabulary = Vocabulary.OpenApi,
         Operations = ordered,
         Display = new R3Display
         {
             Summary = $"{AccountName(account)}: search and temporarily hold reservations. Confirming a reservation may charge a deposit.",
-            Implications = "Search and hold are low risk; confirmReservation is conditional because it commits a booking and may charge a deposit.",
+            Implications = "Search and hold are low risk; confirmReservation requires per-call approval because it commits a booking and may charge a deposit.",
             DataAccessed = "Reservation availability, venue, date, party size, deposit, and cancellation terms.",
             Irreversible = ordered.Any(op => string.Equals(op.Id, ConfirmReservation, StringComparison.Ordinal))
                 ? "Calling confirmReservation may charge a non-refundable deposit; cancellation and refundability depend on the selected venue's policy."
                 : null,
         },
         // The R3 document carries only spec fields (operations + display). The R3
-        // Access Server — not the resource — decides which operations are conditional
+        // Access Server — not the resource — decides which operations are per-call
         // (r3 §Auth Token Extensions); Bookings signals irreversibility via `display`.
     };
     return store.AddBytes(doc.ToUtf8Bytes(), new Uri(resourceUrl), "/r3");
 }
 
-string BuildResourceToken(string agentId, string agentJkt, string r3Uri, string r3S256, string? account) =>
-    new R3Challenge
-    {
-        EgressPolicy = SampleEgress.Policy,
-        ResourceIssuer = resourceUrl,
-        Audience = accessServerUrl,
-        Key = resourceKey,
-        KeyId = ResourceKid,
-    }.BuildResourceToken(agentId, agentJkt, r3Uri, r3S256, account: account);
-
-string BuildProposalResourceToken(TokenVerifier.VerifiedToken verifiedAuthToken, string proposalUri, string proposalS256)
+// Minting entitles the token's aud and ps to read the document it names.
+R3Challenge Challenger() => new()
 {
-    var payload = verifiedAuthToken.Payload;
-    var agentId = (string?)payload["agent"]
-        ?? throw new InvalidOperationException("auth token missing agent");
-    var cnf = payload["cnf"]?["jwk"] as JsonObject
-        ?? throw new InvalidOperationException("auth token missing cnf.jwk");
-    var agentJkt = KeyFactory.FromJwk(cnf).ComputeJwkThumbprint();
-    return BuildResourceToken(agentId, agentJkt, proposalUri, proposalS256, verifiedAuthToken.Account);
+    EgressPolicy = SampleEgress.Policy,
+    ResourceIssuer = resourceUrl,
+    Audience = accessServerUrl,
+    Key = resourceKey,
+    KeyId = ResourceKid,
+    Entitlements = documentEntitlements,
+    OperationValidator = app.Services.GetRequiredService<IR3OperationValidator>(),
+};
+
+// The resource token names the presented person token (draft-11 §Resource Token Structure).
+ValueTask<string> BuildResourceTokenAsync(TokenVerifier.VerifiedToken presented, string agentJkt, string r3Uri, string r3S256, string? account) =>
+    Challenger().BuildResourceTokenAsync(presented, agentJkt, r3Uri, r3S256, account: account);
+
+// Per-call proposals name the auth token the agent already presented.
+ValueTask<string> BuildProposalResourceTokenAsync(TokenVerifier.VerifiedToken verifiedAuthToken, string proposalUri, string proposalS256, CancellationToken ct) =>
+    Challenger().BuildResourceTokenAsync(verifiedAuthToken, proposalUri, proposalS256, cancellationToken: ct);
+
+IResult PersonTokenRequired(HttpContext ctx)
+{
+    ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatPersonToken();
+    return AAuthProblemDetails.Create("person_token_required", statusCode: StatusCodes.Status401Unauthorized);
 }
 
 async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCollection<string> fallbackTools)
@@ -330,6 +354,7 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
         var middleware = new AAuthVerificationMiddleware(_ => { authenticated = true; return Task.CompletedTask; },
             ctx.RequestServices.GetRequiredService<AAuthVerifier>(), new DefaultSignatureKeyResolver(discoveryKeys, discoveryMetadata), discoveryMetadata, discoveryKeys,
             new AAuthVerificationOptions { EgressPolicy = SampleEgress.Policy, AcceptedSchemes = ["jwt"], ResourceIdentifier = resourceUrl,
+                ExpectedAuthTokenDwk = AAuthConstants.DwkFiles.Access,
                 ExpectedAccount = _ => account });
         await middleware.InvokeAsync(ctx);
         if (!authenticated) throw new R3FetchVerificationException("Agent signature verification failed.");
@@ -348,13 +373,14 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
     }
 
     var typ = (string?)fetcher.ParsedKey.Header?["typ"];
-    if (typ == AgentTokenBuilder.TokenType)
+    if (typ is AgentTokenBuilder.TokenType or PersonTokenBuilder.TokenType)
     {
         try
         {
-            var agent = await VerifyAgentAsync(ctx, fetcher);
+            var presenter = await VerifyPresenterAsync(ctx, fetcher);
+            if (presenter.Person is null) return new AuthOutcome(null, PersonTokenRequired(ctx));
             var stored = StoreR3Document(ctx.RequestServices.GetRequiredService<R3ProposalStore>(), fallbackTools, account);
-            var resourceToken = BuildResourceToken(agent.AgentId, agent.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
+            var resourceToken = await BuildResourceTokenAsync(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
             ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
             return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("auth_token_required",
                 statusCode: StatusCodes.Status401Unauthorized,
@@ -362,7 +388,7 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
         }
         catch (Exception ex) when (ex is TokenVerificationException or InvalidOperationException)
         {
-            return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("invalid_agent_token", ex.Message, statusCode: StatusCodes.Status401Unauthorized));
+            return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("invalid_token", ex.Message, statusCode: StatusCodes.Status401Unauthorized));
         }
     }
 
@@ -374,10 +400,9 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
     var tokenVerifier = ctx.RequestServices.GetRequiredService<TokenVerifier>();
     var metadata = ctx.RequestServices.GetRequiredService<MetadataClient>();
     var jwks = ctx.RequestServices.GetRequiredService<JwksClient>();
-    var agentId = (string?)fetcher.ParsedKey.Payload["agent"];
-    if (string.IsNullOrWhiteSpace(agentId) || fetcher.ParsedKey.ConfirmationKey is null)
+    if (fetcher.ParsedKey.ConfirmationKey is null)
     {
-        return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("invalid_auth_token", "missing agent or cnf.jwk", statusCode: StatusCodes.Status401Unauthorized));
+        return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("invalid_auth_token", "missing cnf.jwk", statusCode: StatusCodes.Status401Unauthorized));
     }
 
     try
@@ -388,7 +413,7 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
             jwks,
             resourceUrl,
             fetcher.ParsedKey.ConfirmationKey,
-            agentId,
+            expectedDwk: AAuthConstants.DwkFiles.Access,
             cancellationToken: ctx.RequestAborted,
             accountExpectation: new AccountExpectation(account));
         var issuer = ((string?)verified.Payload["iss"])?.TrimEnd('/');
@@ -396,7 +421,7 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
         {
             return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("untrusted_auth_token_issuer", issuer, statusCode: StatusCodes.Status403Forbidden));
         }
-        R3ClaimReader.ReadAuthToken(verified.Payload);
+        R3ClaimReader.ReadAuthToken(verified.Payload, egressPolicy: SampleEgress.Policy);
         await TokenRegistration.RegisterAsync(tokenInventory, [TokenRegistration.FromVerified(verified)], ctx.RequestAborted);
         return new AuthOutcome(verified, null);
     }
@@ -406,7 +431,9 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
     }
 }
 
-async Task<SignedAgent> VerifyAgentAsync(HttpContext ctx, R3VerifiedFetcher? knownFetcher = null)
+// Verifies the signing token: an agent token yields no person token (the caller
+// answers with requirement=person-token); a person token is verified against its PS.
+async Task<SignedPresenter> VerifyPresenterAsync(HttpContext ctx, R3VerifiedFetcher? knownFetcher = null)
 {
     var fetcher = knownFetcher;
     if (fetcher is null)
@@ -416,7 +443,8 @@ async Task<SignedAgent> VerifyAgentAsync(HttpContext ctx, R3VerifiedFetcher? kno
         var authenticated = false;
         var middleware = new AAuthVerificationMiddleware(_ => { authenticated = true; return Task.CompletedTask; },
             ctx.RequestServices.GetRequiredService<AAuthVerifier>(), new DefaultSignatureKeyResolver(keys, metadataClient), metadataClient, keys,
-            new AAuthVerificationOptions { EgressPolicy = SampleEgress.Policy, AcceptedSchemes = ["jwt"], ResourceIdentifier = resourceUrl });
+            new AAuthVerificationOptions { EgressPolicy = SampleEgress.Policy, AcceptedSchemes = ["jwt"], ResourceIdentifier = resourceUrl,
+                ExpectedAuthTokenDwk = AAuthConstants.DwkFiles.Access });
         await middleware.InvokeAsync(ctx);
         if (!authenticated) throw new R3FetchVerificationException("Agent signature verification failed.");
         var parsed = ctx.GetAAuthParsedKey()!;
@@ -426,28 +454,20 @@ async Task<SignedAgent> VerifyAgentAsync(HttpContext ctx, R3VerifiedFetcher? kno
     {
         throw new InvalidOperationException("expected jwt Signature-Key with cnf.jwk");
     }
-    var verifier = ctx.RequestServices.GetRequiredService<TokenVerifier>();
-    var metadata = ctx.RequestServices.GetRequiredService<MetadataClient>();
-    var jwks = ctx.RequestServices.GetRequiredService<JwksClient>();
-    var verified = await verifier.VerifyWithJwksAsync(
+    var typ = (string?)fetcher.ParsedKey.Header?["typ"];
+    if (typ == AgentTokenBuilder.TokenType) return new SignedPresenter(null, fetcher.ParsedKey.ConfirmationKey);
+    if (typ != PersonTokenBuilder.TokenType) throw new InvalidOperationException("expected an agent token or a person token");
+    var verified = await ctx.RequestServices.GetRequiredService<TokenVerifier>().VerifyPersonTokenWithJwksAsync(
         fetcher.ParsedKey.Jwt,
-        metadata,
-        jwks,
-        AgentTokenBuilder.TokenType,
-        AgentTokenBuilder.AgentDwk,
-        expectedAudience: null,
-        cancellationToken: ctx.RequestAborted);
-    var cnf = verified.Payload["cnf"]?["jwk"] as JsonObject
-        ?? throw new TokenVerificationException("agent token missing cnf.jwk");
-    var tokenKey = KeyFactory.FromJwk(cnf);
-    if (tokenKey.ComputeJwkThumbprint() != fetcher.ParsedKey.ConfirmationKey.ComputeJwkThumbprint())
-    {
-        throw new TokenVerificationException("agent token cnf.jwk does not match the HTTP signature key");
-    }
-    var agentId = (string?)verified.Payload["sub"]
-        ?? throw new TokenVerificationException("agent token missing sub");
+        ctx.RequestServices.GetRequiredService<MetadataClient>(),
+        ctx.RequestServices.GetRequiredService<JwksClient>(),
+        resourceUrl,
+        fetcher.ParsedKey.ConfirmationKey,
+        ctx.RequestAborted);
+    if (!trustedPersonServers.Contains(verified.Issuer))
+        throw new InvalidOperationException("untrusted person token issuer");
     await TokenRegistration.RegisterAsync(tokenInventory, [TokenRegistration.FromVerified(verified)], ctx.RequestAborted);
-    return new SignedAgent(agentId, fetcher.ParsedKey.ConfirmationKey);
+    return new SignedPresenter(verified, fetcher.ParsedKey.ConfirmationKey);
 }
 
 void ValidateRequestedOperations(R3Operations operations)
@@ -529,38 +549,39 @@ async Task<IReadOnlyDictionary<string, R3Parameter>> ReadReservationParametersAs
 
 async Task<OperationOutcome> EnforceOperationAsync(HttpContext context, TokenVerifier.VerifiedToken token, string operation)
 {
-    var claims = R3ClaimReader.ReadAuthToken(token.Payload);
+    var claims = R3ClaimReader.ReadAuthToken(token.Payload, egressPolicy: SampleEgress.Policy);
     var proposals = context.RequestServices.GetRequiredService<R3ProposalStore>();
     try
     {
         var parameters = await ReadReservationParametersAsync(context, operation);
         if (!proposals.TryGet(claims.S256, out var stored))
-            return new(null, false, AAuthProblemDetails.Create("unknown_r3_document", statusCode: 403));
+            return new(null, false, AAuthProblemDetails.Create("unknown_r3_document", statusCode: 403), null);
         R3Hash.Verify(stored, claims.S256);
         if (!AccountBinding.Matches(AccountBinding.Read(JsonNode.Parse(stored)!.AsObject()), claims.Account))
-            return new(null, false, AAuthProblemDetails.Create("r3_account_mismatch", statusCode: 403));
+            return new(null, false, AAuthProblemDetails.Create("r3_account_mismatch", statusCode: 403), null);
         var isProposal = JsonNode.Parse(stored)!.AsObject().ContainsKey("parameters");
         var expectedUri = $"{resourceUrl}/r3/{(isProposal ? "proposals/" : string.Empty)}{claims.S256}";
-        if (claims.Uri != expectedUri) return new(null, false, AAuthProblemDetails.Create("r3_uri_mismatch", statusCode: 403));
-        var enforcement = new R3Enforcement(proposals, new Uri(resourceUrl));
+        if (claims.Uri != expectedUri) return new(null, false, AAuthProblemDetails.Create("r3_uri_mismatch", statusCode: 403), null);
+        var enforcement = new R3Enforcement(proposals, new Uri(resourceUrl), singleUseGate: perCallGrants);
         var operationId = operation != ConfirmReservation && HttpMethods.IsPost(context.Request.Method) ? operation + "Post" : operation;
         var decision = enforcement.Evaluate(claims, R3OperationIdentity.OpenApi(operationId), parameters,
             (_, values) => operation == ConfirmReservation ? ReservationDisplay(values, token.Account) :
                 new R3Display { Summary = $"{AccountName(token.Account)}: approve {operation}", Detail = JsonSerializer.Serialize(values, R3Json.Options) },
             approvedProposalS256: isProposal ? claims.S256 : null, expectedAccount: token.Account);
-        if (decision.Kind == R3EnforcementDecisionKind.Granted) return new(parameters, isProposal, null);
-        if (decision.Kind == R3EnforcementDecisionKind.Conditional)
+        if (decision.Kind == R3EnforcementDecisionKind.Granted) return new(parameters, isProposal, null, null);
+        if (decision.Kind == R3EnforcementDecisionKind.SingleUse) return new(parameters, true, null, decision.SingleUseGrant);
+        if (decision.Kind == R3EnforcementDecisionKind.PerCall)
         {
-            var resourceToken = BuildProposalResourceToken(token, decision.ProposalUri!, decision.ProposalS256!);
+            var resourceToken = await BuildProposalResourceTokenAsync(token, decision.ProposalUri!, decision.ProposalS256!, context.RequestAborted);
             context.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
             return new(parameters, false, AAuthProblemDetails.Create("r3_approval_required", statusCode: 401,
-                extensions: new Dictionary<string, object?> { ["operationId"] = operation, ["r3_uri"] = decision.ProposalUri, ["r3_s256"] = decision.ProposalS256 }));
+                extensions: new Dictionary<string, object?> { ["operationId"] = operation, ["r3_uri"] = decision.ProposalUri, ["r3_s256"] = decision.ProposalS256 }), null);
         }
-        return new(parameters, isProposal, decision.ToResult());
+        return new(parameters, isProposal, decision.ToResult(), null);
     }
     catch (Exception exception) when (exception is JsonException or InvalidOperationException or R3HashMismatchException)
     {
-        return new(null, false, AAuthProblemDetails.Create("invalid_r3_request", exception.Message, statusCode: 400));
+        return new(null, false, AAuthProblemDetails.Create("invalid_r3_request", exception.Message, statusCode: 400), null);
     }
 }
 
@@ -585,9 +606,9 @@ static decimal ParameterNumber(IReadOnlyDictionary<string, R3Parameter> paramete
         ? number
         : 0m;
 
-sealed record SignedAgent(string AgentId, IAAuthKey ConfirmationKey);
+sealed record SignedPresenter(TokenVerifier.VerifiedToken? Person, IAAuthKey ConfirmationKey);
 sealed record AuthOutcome(TokenVerifier.VerifiedToken? Verified, IResult? Result);
-sealed record OperationOutcome(IReadOnlyDictionary<string, R3Parameter>? Parameters, bool IsProposal, IResult? Result);
+sealed record OperationOutcome(IReadOnlyDictionary<string, R3Parameter>? Parameters, bool IsProposal, IResult? Result, R3SingleUse? SingleUse);
 
 namespace Bookings
 {

@@ -26,8 +26,7 @@ public interface IPersonPendingStore
         string agentId,
         IAAuthKey? agentConfirmationKey,
         DateTimeOffset agentTokenExpiresAt,
-        JsonObject? upstreamAct = null,
-        MissionClaim? mission = null,
+        string? missionS256 = null,
         DateTimeOffset? authorizationExpiresAt = null);
 
     /// <summary>Look up a pending entry by id, or <see langword="null"/>.</summary>
@@ -40,7 +39,8 @@ public interface IPersonPendingStore
     /// </summary>
     void MarkAllowed(
         string id,
-        string subject,
+        AAuthPersonKey personKey,
+        string? subject = null,
         string? tenant = null,
         IReadOnlyList<string>? roles = null,
         IReadOnlyList<string>? groups = null,
@@ -48,6 +48,41 @@ public interface IPersonPendingStore
 
     /// <summary>Mark the entry denied with a reason.</summary>
     void MarkDenied(string id, string reason);
+}
+
+/// <summary>
+/// Observes each request the Person Server parks for the person (§Deferred Responses), for
+/// example to list it on a consent dashboard. Register it in DI, keyed by the Person Server name
+/// or unkeyed; every registered observer sees every entry of that server, whichever
+/// <see cref="IPersonPendingStore"/> holds it. The entry is still being filled in when observed:
+/// read its state when it is needed, not at <see cref="OnParked"/>.
+/// </summary>
+public interface IPersonPendingObserver
+{
+    /// <summary>Called once, right after <paramref name="entry"/> is parked.</summary>
+    void OnParked(PersonPendingEntry entry);
+}
+
+internal sealed class ObservedPersonPendingStore(IPersonPendingStore inner, IReadOnlyList<IPersonPendingObserver> observers)
+    : IPersonPendingStore
+{
+    public PersonPendingEntry Add(string resourceUrl, string scope, string agentId, IAAuthKey? agentConfirmationKey,
+        DateTimeOffset agentTokenExpiresAt, string? missionS256 = null, DateTimeOffset? authorizationExpiresAt = null)
+    {
+        var entry = inner.Add(resourceUrl, scope, agentId, agentConfirmationKey, agentTokenExpiresAt, missionS256,
+            authorizationExpiresAt);
+        foreach (var observer in observers) observer.OnParked(entry);
+        return entry;
+    }
+
+    public PersonPendingEntry? Get(string id) => inner.Get(id);
+    public PersonPendingEntry? GetByCode(string code) => inner.GetByCode(code);
+
+    public void MarkAllowed(string id, AAuthPersonKey personKey, string? subject = null, string? tenant = null, IReadOnlyList<string>? roles = null,
+        IReadOnlyList<string>? groups = null, IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null)
+        => inner.MarkAllowed(id, personKey, subject, tenant, roles, groups, additionalClaims);
+
+    public void MarkDenied(string id, string reason) => inner.MarkDenied(id, reason);
 }
 
 /// <summary>The lifecycle state of a <see cref="PersonPendingEntry"/>.</summary>
@@ -84,7 +119,7 @@ public sealed class PersonPendingEntry
     public string? OwnerIssuer { get; set; }
     public string? OwnerSubject { get; set; }
     public string? OwnerKeyThumbprint { get; set; }
-    public IReadOnlyList<AAuth.Server.TokenKey> SourceTokens { get; set; } = [];
+    public IReadOnlyList<AAuth.Server.TokenRegistration> SourceTokens { get; set; } = [];
     public AAuth.Server.DeferredState Lifecycle { get; } = new();
     public AAuth.Server.BrowserInteraction Browser { get; } = new();
     public string? ResourceKeyThumbprint { get; set; }
@@ -117,13 +152,39 @@ public sealed class PersonPendingEntry
 
     public required DateTimeOffset AgentTokenExpiresAt { get; init; }
 
-    public DateTimeOffset? AuthorizationExpiresAt { get; init; }
+    internal DateTimeOffset IssuanceExpiresAt { get; set; }
+
+    private DateTimeOffset? _authorizationExpiresAt;
+
+    public DateTimeOffset? AuthorizationExpiresAt
+    {
+        get => _authorizationExpiresAt;
+        init => _authorizationExpiresAt = value;
+    }
 
     public DateTimeOffset ExpiresAt => AuthorizationExpiresAt is { } expiry && expiry < AgentTokenExpiresAt
         ? expiry : AgentTokenExpiresAt;
 
     public DateTimeOffset PendingExpiresAt => new[] { ExpiresAt, CreatedAt.AddMinutes(10),
         ClarificationDeadline ?? ExpiresAt }.Min();
+
+    internal void ReplaceActiveAuthorization(
+        DateTimeOffset authorizationExpiresAt,
+        IReadOnlyList<AAuth.Server.TokenRegistration> sourceTokens,
+        string resourceToken,
+        string presentedToken,
+        JsonObject resourceContext,
+        string scope,
+        PersonResourceInteraction? resourceInteraction)
+    {
+        _authorizationExpiresAt = authorizationExpiresAt;
+        SourceTokens = sourceTokens;
+        ResourceToken = resourceToken;
+        PresentedToken = presentedToken;
+        ResourceContext = resourceContext;
+        Scope = scope;
+        ResourceInteraction = resourceInteraction;
+    }
 
     /// <summary>
     /// The agent's confirmation key (<c>cnf.jwk</c> binding) — set for the
@@ -132,11 +193,20 @@ public sealed class PersonPendingEntry
     /// </summary>
     public IAAuthKey? AgentConfirmationKey { get; init; }
 
-    /// <summary>Optional upstream <c>act</c> context for call chaining.</summary>
-    public JsonObject? UpstreamAct { get; init; }
+    /// <summary><see langword="true"/> when the entry resolves to a person token rather than an auth token.</summary>
+    public bool PersonToken { get; set; }
 
-    /// <summary>The mission context governing the request, if any.</summary>
-    public MissionClaim? Mission { get; set; }
+    /// <summary>The verified directed <c>sub</c> the minted auth token carries (from the resource token).</summary>
+    public string? PersonSubject { get; set; }
+
+    /// <summary>The verified <c>tenant</c> the minted token carries.</summary>
+    public string? PersonTenant { get; set; }
+
+    /// <summary>The <c>presented_token</c> of an auth token request, forwarded to an AS in four-party.</summary>
+    public string? PresentedToken { get; set; }
+
+    /// <summary>The mission governing the request (<c>mission_s256</c>), if any.</summary>
+    public string? MissionS256 { get; set; }
 
     /// <summary>
     /// When set, this entry's out-of-scope decision (and any clarification
@@ -145,8 +215,11 @@ public sealed class PersonPendingEntry
     /// </summary>
     public bool MissionGate { get; set; }
 
-    /// <summary>The agent's justification (#aauth-prompt), captured for re-review.</summary>
+    /// <summary>The OIDC <c>prompt</c> value from the token request, captured for re-review.</summary>
     public string? Prompt { get; set; }
+
+    /// <summary>The agent-asserted content of the request (§Consent Presentation), captured for re-review.</summary>
+    public AgentAssertedContent? AgentAsserted { get; set; }
 
     /// <summary>The agent's declared capabilities (#aauth-capabilities), captured for re-review.</summary>
     public IReadOnlyList<string>? Capabilities { get; set; }
@@ -175,6 +248,12 @@ public sealed class PersonPendingEntry
 
     /// <summary>The directed <c>sub</c> the asserter supplied on approval.</summary>
     public string? Subject { get; set; }
+
+    /// <summary>The stable PS-internal person key approved for this entry.</summary>
+    public AAuthPersonKey? PersonKey { get; set; }
+
+    /// <summary>Resource metadata fetched before first issuance approval.</summary>
+    public JsonObject? ResourceMetadata { get; set; }
 
     /// <summary>The asserted tenant claim, if any.</summary>
     public string? Tenant { get; set; }
@@ -209,6 +288,9 @@ public sealed class PersonPendingEntry
 
     /// <summary>The HTTP status to surface for <see cref="Error"/>, if any.</summary>
     public int? ErrorStatus { get; set; }
+
+    /// <summary>Optional detail to surface alongside <see cref="Error"/>.</summary>
+    public string? ErrorDetail { get; set; }
 
     /// <summary>A <c>Location</c> to surface alongside <see cref="Error"/> (e.g. payment), if any.</summary>
     public string? ErrorLocation { get; set; }
@@ -245,8 +327,7 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
         string agentId,
         IAAuthKey? agentConfirmationKey,
         DateTimeOffset agentTokenExpiresAt,
-        JsonObject? upstreamAct = null,
-        MissionClaim? mission = null,
+        string? missionS256 = null,
         DateTimeOffset? authorizationExpiresAt = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(resourceUrl);
@@ -260,10 +341,10 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
             Scope = scope,
             AgentId = agentId,
             AgentTokenExpiresAt = agentTokenExpiresAt,
+            IssuanceExpiresAt = agentTokenExpiresAt,
             AuthorizationExpiresAt = authorizationExpiresAt,
             AgentConfirmationKey = agentConfirmationKey,
-            UpstreamAct = upstreamAct,
-            Mission = mission,
+            MissionS256 = missionS256,
             Status = PersonPendingStatus.Pending,
         };
         _entries[entry.Id] = entry;
@@ -287,7 +368,8 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
     /// <inheritdoc />
     public void MarkAllowed(
         string id,
-        string subject,
+        AAuthPersonKey personKey,
+        string? subject = null,
         string? tenant = null,
         IReadOnlyList<string>? roles = null,
         IReadOnlyList<string>? groups = null,
@@ -300,13 +382,14 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
             {
                 if (entry.Lifecycle.Delivered || entry.Lifecycle.Cancelled || entry.PendingExpiresAt <= DateTimeOffset.UtcNow
                     || entry.Status != PersonPendingStatus.Pending) return;
+                entry.PersonKey = personKey;
                 entry.Subject = subject;
                 entry.Tenant = tenant;
                 entry.Roles = roles;
                 entry.Groups = groups;
                 entry.AdditionalClaims = additionalClaims;
                 if (entry.FederationConsent is { } consent)
-                    consent.TrySetResult(IdentityAssertion.Assert(subject, tenant, roles, groups, additionalClaims));
+                    consent.TrySetResult(IdentityAssertion.Assert(personKey, subject, tenant, roles, groups, additionalClaims));
                 else
                     entry.Status = PersonPendingStatus.Allowed;
             }

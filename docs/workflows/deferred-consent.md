@@ -1,8 +1,8 @@
 # Deferred Consent (User Approval)
 
-> [PS-Asserted Demo](https://explorer.aauth.dev/access/ps-asserted)
+> [PS authorization demo](https://explorer.aauth.dev/access/ps-asserted)
 
-Overview: When the Person Server doesn't have standing consent for the requested access, it returns a 202 with an interaction URL and a pending URL. The agent must present the interaction to the user and poll the pending URL until the PS mints the auth token.
+Overview: When the Person Server doesn't have standing consent for the requested access, it returns a 202 with an interaction URL and a pending URL. The agent should avoid waiting for the user to open the link before polling: surface the interaction promptly and poll the pending URL while the user may approve from that URL or from a PS dashboard. In the GuidedTour, polling starts as soon as the consent step is reached, and the next poll observes the result when the PS mints the auth token.
 
 ```mermaid
 sequenceDiagram
@@ -10,16 +10,17 @@ sequenceDiagram
     participant Resource
     participant PS as Person Server
     participant User
-    Agent->>Resource: GET /data (signed)
+    Agent->>Resource: GET /data (signed, person token)
     Resource-->>Agent: 401 + resource token
-    Agent->>PS: POST /token (resource token)
-    Note over PS: Verifies resource token<br/>(typ/dwk/sig, exp/iat, aud, agent, agent_jkt)
-    PS-->>Agent: 202 + {interaction_url, pending_url, code}
+    Agent->>PS: POST /token (resource_token, presented_token)
+    Note over PS: Verifies resource token<br/>(typ/dwk/sig, exp/iat, aud, agent_jkt, ps)<br/>and the presented token it names
+    PS-->>Agent: 202 + Location + Retry-After + no-store + requirement=interaction
+    Agent->>PS: Start polling pending URL
     Agent->>User: Present interaction URL + code
     User->>PS: Approve at interaction page
     loop Poll pending URL
         Agent->>PS: GET /pending/<id>
-        PS-->>Agent: 202 (still pending)
+        PS-->>Agent: 202 + Retry-After + no-store
     end
     PS-->>Agent: 200 + auth token
     Agent->>Resource: GET /data (auth token)
@@ -27,6 +28,17 @@ sequenceDiagram
 ```
 
 ## Manual Polling
+
+A deferred response carries the poll target in `Location`, the interaction
+details in a structured `AAuth-Requirement`, and cache/poll controls:
+
+```http
+HTTP/1.1 202 Accepted
+Location: https://ps.example/pending/abc123
+Retry-After: 5
+Cache-Control: no-store
+AAuth-Requirement: requirement=interaction; url="https://ps.example/interaction"; code="abc123"
+```
 
 ```csharp
 using AAuth.Agent;
@@ -41,10 +53,12 @@ try
         resourceToken,
         new TokenExchangeRequest
         {
+            PresentedToken = heldToken, // the person or auth token the resource token names
             OnInteractionRequired = async (interaction, ct) =>
             {
-                // Present to user - open browser, show notification, etc.
-                Console.WriteLine($"Approve at: {interaction.Url}");
+                // Return promptly so polling can continue; open a browser, show
+                // a notification, link to a dashboard, etc.
+                Console.WriteLine($"Approve at: {interaction.BuildUserUrl()}");
                 Console.WriteLine($"Code: {interaction.Code}");
             },
             PollerOptions = new DeferredPollerOptions
@@ -90,7 +104,7 @@ using var client = AAuthClientBuilder.Enrolled(key)
         options.PreferWaitSeconds = 30; // long-poll (RFC 7240 §4.3)
         options.OnInteractionRequired = async (interaction, ct) =>
         {
-            Console.WriteLine($"Approve at: {interaction.Url}");
+            Console.WriteLine($"Approve at: {interaction.BuildUserUrl()}");
             Console.WriteLine($"Code: {interaction.Code}");
         };
     })
@@ -104,11 +118,11 @@ var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 
 builder.Services.AddAAuthAgent("deferred", options =>
 {
-    options.Key = key!;
+    options.Signer = key!;
     options.PersonServer = "https://ps.example";
     options.TokenRefresher = tokenRefresher;
-    options.PollingTimeout = TimeSpan.FromMinutes(5);
-    options.OnInteractionRequired = async (interaction, ct) =>
+    options.Challenge.PollingTimeout = TimeSpan.FromMinutes(5);
+    options.Challenge.OnInteractionRequired = async (interaction, ct) =>
     {
         // Present to user — push notification, SignalR, etc.
         await Surface(interaction.BuildUserUrl());
@@ -150,7 +164,7 @@ class BrowserPresenter : IInteractionPresenter
 {
     public Task PresentAsync(Interaction interaction, CancellationToken ct)
     {
-        Process.Start(new ProcessStartInfo(interaction.Url) { UseShellExecute = true });
+        Process.Start(new ProcessStartInfo(interaction.BuildUserUrl()) { UseShellExecute = true });
         return Task.CompletedTask;
     }
 }
@@ -162,16 +176,20 @@ class BrowserPresenter : IInteractionPresenter
 |----------|---------|-------------|
 | `MaxTotalWait` | 5 minutes | Maximum total polling time before timeout |
 | `DefaultPollInterval` | 5 seconds | Time between polls (server may override via Retry-After) |
-| `MinPollInterval` | 100ms | Floor for poll interval |
+| `MinPollInterval` | zero | Optional local floor; by default `Retry-After: 0` polls immediately |
 
 ## Error Scenarios
 
-- `AAuthInteractionDeniedException` — user clicked "Deny"
+- `AAuthInteractionDeniedException` — the user denied the request
 - `AAuthInteractionTimeoutException` — `MaxTotalWait` elapsed
-- PS returns `slow_down` — poller backs off automatically
+- PS returns `slow_down` — poller backs off automatically by 5 seconds
+- Polling terminal errors use registered codes: `invalid_code` (410 for an
+  unknown or consumed pending id), `expired` (408 before final consumption; a
+  consumed or evicted expired id is then `invalid_code` 410),
+  and `denied`/`abandoned`/`revoked` (403)
 
 ## Further Reading
 
-- [PS-Asserted Access](ps-asserted-access.md)
+- [PS authorization](ps-asserted-access.md)
 - [Interaction Chaining](../advanced/interaction-chaining.md) — what an intermediary does when *its* downstream hop returns this same `202` and there is no user attached to the inbound request.
 - [Error Handling](../advanced/error-handling.md)

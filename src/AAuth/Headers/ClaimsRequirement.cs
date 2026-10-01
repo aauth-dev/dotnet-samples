@@ -9,9 +9,9 @@ namespace AAuth.Headers;
 /// Typed projection of an <c>AAuth-Requirement: requirement=claims</c>
 /// response (AAuth protocol §Claims Required). Carries the list of claim
 /// names the server needs to process the request. The recipient (a Person
-/// Server) MUST supply these claims — including a directed user identifier as
-/// <c>sub</c> — by POSTing a signed request to the response's
-/// <c>Location</c> URL. See
+/// Server) MUST supply these claims by POSTing a signed request to the
+/// response's <c>Location</c> URL. The presented token already identifies the
+/// person, so <c>sub</c> is never requested or pushed. See
 /// <see href="https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/">draft-hardt-oauth-aauth-protocol §Claims Required</see>.
 /// </summary>
 /// <remarks>
@@ -26,6 +26,26 @@ public sealed record ClaimsRequirement(IReadOnlyList<string> RequiredClaims)
 
     /// <summary>The response-body field carrying the requested claim names.</summary>
     public const string RequiredClaimsField = "required_claims";
+
+    private static readonly HashSet<string> ProtocolOwnedClaims = new(StringComparer.Ordinal)
+    {
+        "iss", "aud", "jti", "iat", "nbf", "exp", "cnf", "dwk",
+        "ps", AAuth.AAuthConstants.Claims.Subject, "scope", "mission_s256",
+        "account", "agent", "act", "mission",
+    };
+
+    /// <summary>
+    /// Return true when an AS may request <paramref name="name"/> via
+    /// <c>requirement=claims</c>. Protocol-owned token fields, including
+    /// <c>sub</c>, are forbidden; identity attributes such as <c>tenant</c>,
+    /// <c>roles</c>, <c>groups</c>, and custom claim names are allowed.
+    /// </summary>
+    public static bool IsRequestableClaimName(string name)
+        => !string.IsNullOrWhiteSpace(name) && !ProtocolOwnedClaims.Contains(name);
+
+    /// <summary>Validate a collection of AS-requested claim names.</summary>
+    public static bool ContainsForbiddenClaimName(IEnumerable<string>? names)
+        => names?.Any(name => !IsRequestableClaimName(name)) == true;
 
     /// <summary>
     /// Project a <c>claims</c> requirement from a parsed

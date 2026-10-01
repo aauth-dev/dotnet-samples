@@ -24,3 +24,33 @@ internal sealed class InProcessHttpClient : HttpClient
         AAuthHttpTransport.AttachPolicy(this, policy ?? TestEgress.Policy, AAuthTransportContract.InProcessOnly);
     }
 }
+
+// Signs with only the base components, so negative tests can send a body that
+// is not covered by content-type/content-digest (the SDK signer covers them).
+internal sealed class UncoveredBodySigner(AAuth.HttpSig.AAuthSigningHandler signer) : DelegatingHandler
+{
+    protected override async System.Threading.Tasks.Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
+    {
+        await signer.SignHeadersAsync(request, cancellationToken);
+        return await base.SendAsync(request, cancellationToken);
+    }
+}
+
+// Placed after the signer: replaces the JSON body with a different one while
+// keeping the signed Content-Type and Content-Digest.
+internal sealed class BodySwapHandler : DelegatingHandler
+{
+    protected override async System.Threading.Tasks.Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
+    {
+        var original = request.Content!;
+        var body = System.Text.Json.Nodes.JsonNode.Parse(await original.ReadAsStringAsync(cancellationToken))!.AsObject();
+        body["justification"] = "swapped after signing";
+        var swapped = new StringContent(body.ToJsonString());
+        swapped.Headers.ContentType = original.Headers.ContentType;
+        swapped.Headers.TryAddWithoutValidation("Content-Digest", original.Headers.GetValues("Content-Digest"));
+        request.Content = swapped;
+        return await base.SendAsync(request, cancellationToken);
+    }
+}

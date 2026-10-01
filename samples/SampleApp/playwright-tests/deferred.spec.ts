@@ -4,28 +4,34 @@ import { readResponseJson, expectStatus, expectError } from '../../../tests/e2e/
 import { approveInPopup, denyInPopup, authenticateConsent } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
 import { directedSubject } from '../../../tests/e2e/helpers/consent';
+import { approveOnDashboard, denyOnDashboard, CONSENT_ACTION, CONSENT_DIRECT_LINK } from '../../../tests/e2e/helpers/dashboard';
 
 /**
  * Deferred — three-party user-consent flow. The page revokes consent first, so
- * POST /token returns 202 with an interaction URL. The user approves (or denies)
- * in a popup while the SDK polls. Extended timeout for the poll loop.
+ * POST /token returns 202 with an interaction URL. The SDK polls at once; the
+ * user decides on the PS dashboard (the primary action) or through the
+ * secondary per-request link. Extended timeout for the poll loop.
  */
 test.describe('Deferred', () => {
   test.describe.configure({ timeout: 150_000 });
 
-  test('approve path resolves to a three-party identity', async ({ page, context }) => {
+  test('direct link approval resolves to a three-party identity', async ({ page, context }) => {
     await page.goto('/calendar-deferred');
     await expect(page.locator('h2')).toContainText('Deferred');
     await waitForInteractive(page, 'button.btn-primary');
 
     // First clicking test on a cold circuit — confirm the click landed.
-    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
+    const link = page.locator(CONSENT_DIRECT_LINK);
     await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
 
-    // Interaction URL + polling spinner appear. First /token round-trip on a
+    // The prompt and polling spinner appear. First /token round-trip on a
     // cold-started backend can exceed the default 5s assertion timeout.
     await expect(link).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('.spinner-border')).toBeVisible();
+    await expect(page.locator('.ps-spinner')).toBeVisible();
+    await expect(page.locator('a.ps-dashboard')).toHaveAttribute('href', /:5100\/dashboard\?code=/);
+    // The SDK polls before anyone opens the dashboard or the link.
+    await expect(page.locator('.ps-waiting')).toContainText(/[1-9]\d* polls?/, { timeout: 10_000 });
+    await expect(page.locator('a.ps-dashboard')).toHaveCount(1);
 
     // Open the PS consent page and approve.
     const [popup] = await Promise.all([
@@ -59,11 +65,11 @@ test.describe('Deferred', () => {
     expect(json.act).toBeFalsy();
   });
 
-  test('deny path surfaces an access-denied error', async ({ page, context }) => {
+  test('deny on the dashboard surfaces an access-denied error', async ({ page, context }) => {
     await page.goto('/calendar-deferred');
     await waitForInteractive(page, 'button.btn-primary');
 
-    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
+    const link = page.locator(CONSENT_ACTION);
     await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
     await expect(link).toBeVisible({ timeout: 30_000 });
 
@@ -72,6 +78,39 @@ test.describe('Deferred', () => {
       link.click(),
     ]);
     await denyInPopup(popup);
+
+    await expectError(page, 'denied');
+  });
+
+  test('dashboard approval resolves the poll and retires the link', async ({ page, context }) => {
+    await page.goto('/calendar-deferred');
+    await waitForInteractive(page, 'button.btn-primary');
+    const link = page.locator(CONSENT_DIRECT_LINK);
+    await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
+    await expect(link).toBeVisible({ timeout: 30_000 });
+    const arrival = (await link.getAttribute('href'))!;
+
+    const dashboard = await approveOnDashboard(context, { agent: Agents.sampleApp, resource: Urls.calendar });
+    await expect(dashboard.locator('#history article.card').first()).toContainText('via dashboard');
+
+    await expectStatus(page, 200);
+    expect(((await readResponseJson(page)) as Record<string, unknown>).accessMode).toBe('three-party');
+    const stale = await context.newPage();
+    await stale.goto(arrival);
+    const signIn = stale.locator('button.demo-login');
+    if (await signIn.isVisible()) await signIn.click();
+    await expect(stale.locator('body')).toContainText('invalid_code');
+    await stale.close();
+  });
+
+  test('dashboard denial by match surfaces an access-denied error', async ({ page, context }) => {
+    await page.goto('/calendar-deferred');
+    await waitForInteractive(page, 'button.btn-primary');
+    const link = page.locator(CONSENT_ACTION);
+    await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
+    await expect(link).toBeVisible({ timeout: 30_000 });
+
+    await denyOnDashboard(context, { agent: Agents.sampleApp, resource: Urls.calendar });
 
     await expectError(page, 'denied');
   });

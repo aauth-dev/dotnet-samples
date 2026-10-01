@@ -12,10 +12,12 @@ public sealed class InteractionHandlingOptions
 {
     /// <summary>
     /// Callback invoked when the server returns <c>202</c> with
-    /// <c>requirement=interaction</c>. Receives the user-facing URL and code.
-    /// The agent should present these to the user (browser redirect, QR, etc.).
+    /// <c>requirement=interaction</c>. Receives the <see cref="AAuth.Headers.Interaction"/>
+    /// (<see cref="AAuth.Headers.InteractionSource.Resource"/>); show
+    /// <see cref="AAuth.Headers.Interaction.BuildUserUrl"/> to the user. A request's
+    /// <see cref="AAuth.Agent.AAuthRequestOptions.InteractionHandler"/> overrides it.
     /// </summary>
-    public Func<string, string, CancellationToken, Task>? OnInteractionRequired { get; set; }
+    public Func<AAuth.Headers.Interaction, CancellationToken, Task>? OnInteractionRequired { get; set; }
 
     /// <summary>
     /// Callback invoked when the server returns <c>202</c> with
@@ -44,9 +46,9 @@ public sealed class InteractionHandlingOptions
 
     /// <summary>
     /// Minimum delay between polls regardless of server's <c>Retry-After</c>.
-    /// Prevents runaway polling. Default: 100 ms.
+    /// Default: zero, so <c>Retry-After: 0</c> is immediate.
     /// </summary>
-    public TimeSpan MinPollInterval { get; set; } = TimeSpan.FromMilliseconds(100);
+    public TimeSpan MinPollInterval { get; set; } = TimeSpan.Zero;
 
     /// <summary>
     /// Optional callback invoked after each poll response.

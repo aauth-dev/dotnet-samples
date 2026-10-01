@@ -1,12 +1,15 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { approveInPopup, authenticateConsent, denyInPopup } from './consent';
+import { isDashboard, decideHighlighted } from './dashboard';
 import { waitForInteractive } from './blazor';
 
 /**
  * GuidedTour (Blazor Server) page-object helpers.
  *
  * The tour is a single page at `/` driven by two <select> pickers (flow +
- * signing mode), a primary action button that either steps or shows a consent
- * link, plus "Run all" / "Reset" buttons. Each executed step is recorded in the
+ * signing mode), a primary step button, plus "Run all" / "Reset" buttons. While
+ * the agent waits on the person, a `section.polling` banner shows the consent
+ * link. Each executed step is recorded in the
  * left step list; selecting a done step renders its captured request/response
  * payloads in the right `section.payload` inspector.
  *
@@ -27,10 +30,15 @@ export const TourMode = {
   Mission: 'Mission',
   MissionCallChain: 'MissionCallChain',
   SubAgent: 'SubAgent',
+  Events: 'Events',
+  WalletProtocol: 'WalletProtocol',
+  Documents: 'Documents',
+  Catalog: 'Catalog',
 } as const;
 export type TourMode = (typeof TourMode)[keyof typeof TourMode];
 
 export const SigningMode = {
+  Jwt: 'Jwt',
   Hwk: 'Hwk',
   Jwks: 'Jwks',
   JktJwt: 'JktJwt',
@@ -44,37 +52,56 @@ export async function openTour(page: Page): Promise<void> {
   await waitForInteractive(page, 'button.primary');
 }
 
-/** Planned step counts per flow (AP + PS + Concierge all configured). */
+/**
+ * Planned step counts per flow (AP + PS + Concierge all configured). Every
+ * Person Server flow includes the draft-11 person-token leg: signed GET → 401
+ * requirement=person-token, POST /person → person token, and the resource's
+ * requirement=auth-token challenge naming that token (presented_jti).
+ */
 const PLAN_STEPS: Record<TourMode, number> = {
   Bootstrap: 3,
   Identity: 2,
   // Resource-managed (two-party): signed GET → 202 → consent → poll → replay.
   ResourceManaged: 6,
-  Autonomous: 6,
-  Deferred: 9,
-  CallChain: 7,
-  // Four-party federated: the plan shows 7 steps at selection time; once the
-  // exchange returns 202 (the AS requires consent — its own stub screen or
-  // Keycloak) the plan expands to 10 (consent + poll), mirroring deferred.
-  Federated: 7,
-  // Rich Resource Requests (R3, four-party): a single, always-full 14-step
+  Autonomous: 8,
+  Deferred: 11,
+  // Call chain: 9 at selection time; the plan expands to 15 once the hop-1
+  // exchange returns 202 (two consent + poll cycles).
+  CallChain: 9,
+  // Four-party federated: the plan shows 9 steps at selection time; once the
+  // exchange returns 202 (PS and/or AS consent) the plan expands to 12
+  // (consent + poll), mirroring deferred.
+  Federated: 9,
+  // Rich Resource Requests (R3, four-party): a single, always-full 16-step
   // linear plan (no branch). The R3 Access Server sets RequireProposalConsent,
-  // so confirm_reservation always needs a per-call consent; the plan shows 14
+  // so confirm_reservation always needs a per-call consent; the plan shows 16
   // at selection time and never expands.
-  RichRequests: 14,
-  // Mission (PS-governed): 20 steps across three consent cycles — mission
-  // creation (4/5), the out-of-mission elevated scope token (12/13), and the
-  // out-of-scope cancel_booking permission (18/19).
-  Mission: 20,
+  RichRequests: 16,
+  // Mission (PS-governed): 21 steps across three consent cycles — mission
+  // creation (4/5), the out-of-mission elevated scope token (13/14), and the
+  // out-of-scope cancel_booking permission (19/20).
+  Mission: 21,
   // Mission + Call Chain: one mission governs a clarified elevated-scope
-  // grant (creation 4/5, elevated 10/11 with a clarification chat at 7/8) and
-  // a silent mission-forwarded call chain (Agent → Concierge → Trips).
-  MissionCallChain: 14,
-  // Sub-Agents (parent-mediated worker): 7 in-process steps — parent + worker
-  // identities, the worker's resource token, the parent-mediated exchange, the
-  // PS token return + handoff, and the worker's resource call. Runs entirely
-  // in-process (no live servers).
-  SubAgent: 7,
+  // grant (creation 4/5, elevated 11/12 with a clarification chat at 8/9) and
+  // a silent mission-governed call chain (Agent → Concierge → Trips).
+  MissionCallChain: 15,
+  // Sub-Agents (parent-mediated worker): 8 steps against the live PS, AS and
+  // Wallet — parent + worker identities, the upstream grant, the worker's
+  // person token (via the parent) and resource token, the parent-mediated
+  // exchange, the handoff, and the worker's resource call.
+  SubAgent: 8,
+  // Capability flows plan one consent cycle (direct user, decide, poll) after
+  // each exchange; the plan adapts at run time when a server grants at once
+  // (200) or asks again (a new interaction or a clarification).
+  // Events defaults to the protected channel: AP enrolment, the account-bound
+  // grant, subscribe, register, deliver, inbox, verify, acknowledge.
+  Events: 19,
+  // Wallet Protocol defaults to the AS clarification scenario: PS consent,
+  // the AS question, then PS and AS decisions.
+  WalletProtocol: 18,
+  Documents: 11,
+  // Two operation-bound grants; the PS remembers consent for the second.
+  Catalog: 16,
 };
 
 /** Select a flow in the `#flow-select` picker and wait for the timeline to reset. */
@@ -102,17 +129,51 @@ export async function selectSigningMode(page: Page, mode: SigningMode): Promise<
 }
 
 /**
- * Click "Run all" and wait until the flow either completes (Done) or parks on a
- * user-approval / aborted state. Returns when the primary button is no longer
- * "Running…".
+ * Click "Run all" and wait until the flow completes (Done), aborts, or waits on
+ * a consent prompt. Consent never parks the run: the agent polls on arrival,
+ * whoever hosts the page, and "Run all" continues once the person decides.
  */
 export async function runAll(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Run all' }).click();
-  // The flow is busy while any control shows "Running…"; it settles to Done /
-  // Aborted, or a consent link replaces the primary button. Wait until no
-  // "Running…" indicator remains anywhere, which is a single deterministic
-  // signal regardless of which control hosted it.
-  await expect(page.getByText('Running…')).toHaveCount(0, { timeout: 30_000 });
+  await expect.poll(async () =>
+    await page.getByText('Running…').count() === 0 || await page.locator('[data-consent-prompt]').first().isVisible(),
+    { timeout: 30_000 }).toBe(true);
+}
+
+/** The dashboard link of the tour's Person Server prompt (polling banner). */
+export function personServerPrompt(page: Page): Locator {
+  return page.locator('section.polling [data-consent-prompt="dashboard"] a.ps-direct-link');
+}
+
+/**
+ * Decide the next Person Server prompt on the dashboard it opens. Waits for a
+ * request other than `previous` (the href returned by the last call), asserts
+ * the agent is already polling and, when given, the executed step count. Returns
+ * this prompt's href.
+ */
+export async function decidePersonServerPrompt(
+  page: Page,
+  action: 'approve' | 'deny',
+  options: { previous?: string; done?: number } = {},
+): Promise<string> {
+  const link = personServerPrompt(page);
+  await expect(link).toBeVisible({ timeout: 60_000 });
+  if (options.previous) {
+    await expect.poll(async () => {
+      if (!await link.isVisible().catch(() => false)) return null;
+      return await link.getAttribute('href');
+    }, { timeout: 60_000 }).not.toBe(options.previous);
+    await expect(link).toBeVisible({ timeout: 60_000 });
+  }
+  const href = (await link.getAttribute('href'))!;
+  // Poll on arrival: the loop is live before the person does anything.
+  await expect(page.locator('section.polling .polling__detail')).toContainText(/[1-9]\d* polls? so far/, { timeout: 15_000 });
+  if (options.done !== undefined) await expect(doneSteps(page)).toHaveCount(options.done);
+  await expect(page.locator('header.topbar .error')).toHaveCount(0);
+  const [popup] = await Promise.all([page.context().waitForEvent('page'), link.click()]);
+  if (action === 'approve') await approveInPopup(popup);
+  else await denyInPopup(popup);
+  return href;
 }
 
 /** The left step-list <li> elements (one per planned step). */
@@ -191,4 +252,113 @@ export async function readResponseJson(page: Page): Promise<unknown> {
     throw new Error(`No JSON object found in Response panel:\n${text}`);
   }
   return JSON.parse(text.slice(start, end + 1));
+}
+
+/**
+ * Drive the selected flow to its end, answering every consent link it surfaces.
+ * "Run all" keeps running through every consent (the agent polls on arrival).
+ * `decide` handles each popup (PS dashboard, AS or resource page) once. Returns
+ * the number of decisions made.
+ */
+export async function driveTour(
+  page: Page,
+  decide: (popup: Page, round: number) => Promise<void>,
+  maxDecisions = 8,
+): Promise<number> {
+  const primary = page.locator('button.primary');
+  const links = page.locator('[data-consent-prompt] :is(a.ps-dashboard, a.ps-external-link), a.primary.approve');
+  const decided = new Set<string>();
+  const fresh = async (): Promise<Locator | null> => {
+    for (const link of await links.all()) {
+      const href = await link.getAttribute('href').catch(() => null);
+      if (href && !decided.has(href) && await link.isVisible().catch(() => false)) return link;
+    }
+    return null;
+  };
+  let rounds = 0;
+  for (let turn = 0; turn < 60; turn++) {
+    await expect.poll(async () => {
+      if (await fresh()) return 'consent';
+      if (await page.getByText('Running…').count()) return 'busy';
+      const label = await primary.innerText().catch(() => '');
+      if (label.trim() === 'Done' || label.trim() === 'Aborted') return 'ready';
+      return await primary.isVisible() && await primary.isEnabled() ? 'ready' : 'busy';
+    }, { timeout: 150_000 }).not.toBe('busy');
+    const consent = await fresh();
+    if (consent) {
+      if (++rounds > maxDecisions) throw new Error(`More than ${maxDecisions} user decisions were requested.`);
+      decided.add((await consent.getAttribute('href'))!);
+      const [popup] = await Promise.all([page.context().waitForEvent('page'), consent.click()]);
+      await decide(popup, rounds);
+      if (!popup.isClosed()) await popup.close();
+      continue;
+    }
+    const label = (await primary.innerText()).trim();
+    if (label === 'Done' || label === 'Aborted') return rounds;
+    await page.getByRole('button', { name: 'Run all' }).click();
+    await expect.poll(async () => await page.getByText('Running…').count() === 0 || await fresh() !== null,
+      { timeout: 150_000 }).toBe(true);
+  }
+  throw new Error('The flow did not finish.');
+}
+
+/**
+ * Decide on any consent popup the capability flows open: the Documents
+ * resource-permission interstitial and release page, then the PS or AS consent
+ * screen. `approve=false` declines at the first decision offered.
+ */
+export async function decideConsent(popup: Page, approve = true): Promise<void> {
+  if (await isDashboard(popup)) {
+    // A four-party request may re-advertise the PS while the AS works; that
+    // link has nothing to decide.
+    await decideHighlighted(popup, approve ? 'approve' : 'deny');
+    return;
+  }
+  for (let transition = 0; transition < 8; transition++) {
+    let state = 'pending';
+    await expect.poll(async () => {
+      if (await popup.getByRole('heading', { name: 'Authorization stopped', exact: true }).isVisible()) return state = 'stopped';
+      if (await popup.getByText(/^(Approved|Denied)/).first().isVisible()) return state = 'decided';
+      if (await popup.locator('button.demo-login').isVisible()) return state = 'login';
+      if (await popup.getByRole('button', { name: 'Continue to resource' }).isVisible()) return state = 'interstitial';
+      if (await popup.getByRole('button', { name: 'Release document' }).isVisible()) return state = 'release';
+      if (await popup.locator('button.approve').isVisible()) return state = 'consent';
+      return state = 'pending';
+    }, { timeout: 30_000 }).not.toBe('pending');
+    if (state === 'stopped' || state === 'decided') return;
+    if (state === 'login') await popup.locator('button.demo-login').click();
+    else if (state === 'interstitial') await popup.getByRole('button', { name: 'Continue to resource' }).click();
+    else if (state === 'release') {
+      await popup.getByRole('button', { name: approve ? 'Release document' : 'Decline release', exact: true }).click();
+      if (!approve) return;
+    } else {
+      await authenticateConsent(popup);
+      await popup.locator(approve ? 'button.approve' : 'button.deny').click();
+    }
+  }
+  throw new Error(`Consent popup did not settle: ${popup.url()}`);
+}
+
+/** Step-list titles of the executed steps, in order. */
+export async function doneTitles(page: Page): Promise<string[]> {
+  return (await doneSteps(page).locator('.step__title').allInnerTexts()).map((title) => title.trim());
+}
+
+/** Select the executed step whose title matches, and return its index. */
+export async function selectStepTitled(page: Page, title: RegExp): Promise<number> {
+  const titles = await doneTitles(page);
+  const index = titles.findIndex((entry) => title.test(entry));
+  if (index < 0) throw new Error(`No executed step matches ${title}: ${titles.join(' | ')}`);
+  await selectStep(page, index);
+  return index;
+}
+
+/** Parse the JSON payload rendered in the selected step's decoded-token panel. */
+export async function decodedTokenPayload(page: Page): Promise<Record<string, unknown>> {
+  const panel = page
+    .locator('section.payload article.inspector details.token')
+    .filter({ hasText: 'Decoded payload' });
+  await expect(panel).toBeVisible();
+  const text = await panel.locator('pre code').innerText();
+  return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) as Record<string, unknown>;
 }

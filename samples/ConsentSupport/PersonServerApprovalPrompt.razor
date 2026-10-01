@@ -1,0 +1,75 @@
+@using AAuth.Headers
+@namespace ConsentSupport
+
+<div class="ps-approval" role="status" data-consent-prompt="@(_hosted ? "dashboard" : "direct")">
+    @if (_hosted)
+    {
+        <p class="ps-lead">@Lead</p>
+        <div class="ps-actions">
+            <a class="ps-dashboard @LinkClass" href="@_dashboard"
+               target="aauth-ps-dashboard" rel="noopener">Open Person Server dashboard</a>
+            @if (ShowWaiting)
+            {
+                <span class="ps-waiting"><span class="ps-spinner" aria-hidden="true"></span>@WaitingText</span>
+            }
+        </div>
+        <p class="ps-direct">
+            The dashboard lists every request waiting for you. Or
+            <a class="ps-direct-link" href="@Interaction.BuildUserUrl()" target="_blank" rel="noopener">open this request directly</a>.
+        </p>
+    }
+    else
+    {
+        <div class="ps-actions">
+            <a class="ps-external-link @LinkClass" href="@Interaction.BuildUserUrl()" target="_blank" rel="noopener">@ExternalLabel</a>
+            @if (ShowWaiting)
+            {
+                <span class="ps-waiting"><span class="ps-spinner" aria-hidden="true"></span>@WaitingText</span>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>The PS the agent asked; decides whether the dashboard can complete this interaction.</summary>
+    [Parameter, EditorRequired] public string? PersonServer { get; set; }
+
+    [Parameter, EditorRequired] public Interaction Interaction { get; set; } = default!;
+
+    [Parameter] public int? PollCount { get; set; }
+
+    [Parameter] public string Lead { get; set; } = "The agent is already waiting for your decision. Approve or deny it on your Person Server.";
+
+    /// <summary>Link text when the interaction is hosted by an Access Server or a resource.</summary>
+    [Parameter] public string ExternalLabel { get; set; } = "Open the authorization page";
+
+    /// <summary>Extra class on the primary action, for host styling and tests.</summary>
+    [Parameter] public string? LinkClass { get; set; }
+
+    /// <summary>Show the prompt's own waiting indicator; off when the host already shows polling.</summary>
+    [Parameter] public bool ShowWaiting { get; set; } = true;
+
+    /// <summary>
+    /// Set when the host knows the Person Server decides this interaction although
+    /// another party issued its URL, for example an intermediary relaying a chained
+    /// interaction. Null decides from the URL.
+    /// </summary>
+    [Parameter] public bool? DecidedAtPersonServer { get; set; }
+
+    private bool _hosted;
+    private string? _dashboard;
+
+    private string WaitingText => PollCount is { } polls
+        ? $"Waiting for your decision · {polls} {(polls == 1 ? "poll" : "polls")}"
+        : "Waiting for your decision";
+
+    protected override void OnParametersSet()
+    {
+        var personServerUrl = PersonServerConsent.IsPersonServerHosted(PersonServer, Interaction);
+        _hosted = !string.IsNullOrEmpty(PersonServer) && (DecidedAtPersonServer ?? personServerUrl);
+        // A relayed code belongs to the intermediary, so the dashboard cannot highlight it.
+        _dashboard = _hosted
+            ? PersonServerConsent.DashboardUrl(PersonServer!, personServerUrl ? Interaction.Code : null)
+            : null;
+    }
+}

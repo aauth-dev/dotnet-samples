@@ -23,8 +23,8 @@ public sealed class AAuthEndpointRequirement
     /// <summary>Required role, enforced from the auth token's <c>roles</c> claim.</summary>
     public string? Role { get; init; }
 
-    /// <summary>Copy a signed <c>AAuth-Mission</c> header into the issued resource token.</summary>
-    public bool MissionAware { get; init; }
+    /// <summary>Trust policy for this endpoint, replacing the resource's <see cref="AAuthServerOptions.Trust"/>.</summary>
+    public IAAuthTrustPolicy? Trust { get; init; }
 }
 
 /// <summary>
@@ -36,31 +36,19 @@ public sealed class AAuthEndpointRequirement
 /// </summary>
 public sealed class AAuthServerOptions
 {
-    /// <summary>Allow-list of trusted PS/AS auth-token issuers. Null ⇒ accept any verifiable issuer; empty ⇒ deny all.</summary>
-    public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; set; }
-
-    /// <summary>Trust policy for PS/AS auth-token issuers, AND-composed with the allow-list.</summary>
-    public Func<string, bool>? IsTrustedAuthTokenIssuer { get; set; }
-
-    /// <summary>Allow-list of trusted Agent Provider issuers (for <c>aa-agent+jwt</c>).</summary>
-    public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; set; }
-
-    /// <summary>Trust policy for Agent Provider issuers, AND-composed with the allow-list.</summary>
-    public Func<string, bool>? IsTrustedAgentProviderIssuer { get; set; }
+    /// <summary>Trust for auth-token, person-token and agent-token issuers. Open by default.</summary>
+    public AAuthTrustOptions Trust { get; set; } = new();
 
     /// <summary>
-    /// Explicit resource-token audience for the challenge. Set to an Access Server
-    /// URL for four-party (federated) resources; when null the audience is the
-    /// agent token's <c>ps</c> claim (three-party).
+    /// Resource-token audience for four-party (federated) resources: the
+    /// resource's own Access Server. When null the audience is the PS that
+    /// issued the presented person token (three-party).
     /// </summary>
-    public string? PersonServerAudience { get; set; }
+    public string? AccessServer { get; set; }
 
     /// <summary>Override the resource identifier (default: DI metadata issuer).</summary>
     public string? ResourceIdentifier { get; set; }
 
-    /// <summary>Override the challenge signing key (default: DI metadata first key).</summary>
-    public IAAuthKey? ResourceSigningKey { get; set; }
-
-    /// <summary>Override the challenge key id (default: DI metadata first kid).</summary>
-    public string? ResourceKeyId { get; set; }
+    /// <summary>Override the challenge signing keys (default: the DI metadata signing keys).</summary>
+    public AAuthSigningKeySet? ResourceSigningKeys { get; set; }
 }

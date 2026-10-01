@@ -32,6 +32,13 @@ public static class AAuthHttpContextExtensions
         => context.Features.Get<AAuthVerificationResult>();
 
     /// <summary>
+    /// Gets the verified person/agent/auth token presented in <c>Signature-Key</c>
+    /// (the token a resource token's <c>presented_jti</c> names), or null.
+    /// </summary>
+    public static AAuthVerifiedAssertion? GetAAuthVerifiedAssertion(this HttpContext context)
+        => context.Features.Get<AAuthVerifiedAssertion>();
+
+    /// <summary>
     /// Gets the <see cref="SignatureKeyParser.ParsedSignatureKeyInfo"/> from <c>HttpContext.Items</c>.
     /// Returns null if verification middleware has not run.
     /// </summary>

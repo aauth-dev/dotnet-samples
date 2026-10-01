@@ -1,7 +1,7 @@
-# Inbox — Resource-Managed (Two-Party) Resource Server
+# Inbox — Resource-managed (Two-Party) Resource Server
 
 Aria's email service, on **`:5004`**. The **Inbox** demonstrates the
-**resource-managed** access mode (`access_mode: "aauth-access-token"`): the
+**resource-managed** access mode (`access_mode: "session-token"`): the
 resource manages authorization **itself**, via its **own** consent page, with no
 Person Server and no Access Server. After the user approves, the Inbox hands the
 agent an opaque access token (`AAuth-Access`) that the agent replays — bound to
@@ -10,7 +10,7 @@ its HTTP-message signature — on subsequent calls.
 > This is the AAuth mode for resources that authorize requests themselves — the
 > role a first-party OAuth deployment plays when a service runs its own
 > authorization server alongside its API
-> ([draft-hardt-oauth-aauth-protocol §Resource-Managed Access](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#resource-managed-authorization)):
+> ([draft-hardt-oauth-aauth-protocol §Resource-managed access](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#resource-managed-auth)):
 > the opaque token models a resource's existing OAuth access token, wrapped so it
 > is useless without a valid AAuth signature.
 
@@ -30,13 +30,12 @@ the user's Person Server. Two parties only: agent + resource.
 |------|------|---------|
 | `GET /` | none | Flow index (lists the two entry points) |
 | `GET /messages` | signed | **Reactive** entry point. Serves messages when a valid `Authorization: AAuth` token is presented; otherwise returns `202` + `AAuth-Requirement: requirement=interaction` pointing at `/consent` |
-| `POST /authorize` | signed | **Proactive** entry point (`{ "scope": "inbox.read" }`, §Authorization Endpoint Request) — same consent path |
 | `GET /pending/{code}` | signed | Deferred-response poll target: `202` while pending, then `200` + `AAuth-Access` once approved |
 | `GET /consent?code=…` | none | The Inbox's **own** consent page (the user approves here) |
 | `POST /consent/approve` | none | Records the user's approval |
 
-`/.well-known/aauth-resource.json` advertises `access_mode = "aauth-access-token"`
-and the `authorization_endpoint`. `/.well-known/jwks.json` serves the resource key.
+`/.well-known/aauth-resource.json` advertises `access_mode = "session-token"`.
+`/.well-known/jwks.json` serves the resource key.
 
 ## The flow
 
@@ -68,7 +67,7 @@ dotnet run --project samples/MockResourceServers/Inbox    # :5004
 Or as part of the full stack:
 
 ```bash
-make resources   # all seven Aria resource servers
+make resources   # all eight Aria resource servers
 make demo        # full stack + both UIs
 ```
 
@@ -81,7 +80,6 @@ Override the issuer: `--AAuth:Issuer https://my-inbox.example` (or the
   `WithInteractionHandling(...)` — captures `AAuth-Access`, replays
   `Authorization: AAuth`, drives the `202 → consent → 200` handshake.
 - Resource: `HttpContext.ResolveAAuthAccessAsync` / `IssueAAuthAccessAsync` /
-  `InteractionRequiredAAuth`, `MapAAuthAuthorizationEndpoint`, and
-  `IOpaqueTokenStore`.
+  `InteractionRequiredAAuth`, `MapAAuthInteractionPoll`, and `IOpaqueTokenStore`.
 
-See [Resource-Managed Access](../../../docs/workflows/resource-managed-access.md).
+See [Resource-managed access](../../../docs/workflows/resource-managed-access.md).

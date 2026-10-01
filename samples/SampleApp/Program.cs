@@ -17,18 +17,35 @@ builder.Services.AddRazorComponents()
 // Register enrollment as a singleton — needed only by the JWKS URI page
 // which demos AP-issued identity verified via the AP's JWKS endpoint.
 builder.Services.AddSingleton<EnrollmentService>();
-builder.Services.AddHttpClient();
+// Walkthrough agents are created per session; each owns its signed client and typed clients.
+builder.Services.AddAAuthAgentFactory();
 
 // -----------------------------------------------------------------------
-// Self-issued agent identity: SampleApp is a hosted service with a stable
-// URL, so it is its own AP (spec §Self-Hosted Agents). The signing key and
-// metadata are used by JWT, Deferred, and CallChain pages.
+// Aria, the self-issued agent: SampleApp is a hosted service with a stable
+// URL, so it is its own AP (spec §Self-Hosted Agents). Its identity, Person
+// Server and polling budgets bind from AAuth:Agents:aria; the key is
+// generated here. Pages resolve the agent by name and never build clients.
 // -----------------------------------------------------------------------
 var selfIssuedKey = AAuthKey.Generate();
-const string SelfIssuedKid = "sample-app-1";
-var sampleAppUrl = builder.Configuration["AAuth:SelfIssuer"] ?? "http://localhost:5240";
-var sampleAppAgentId = builder.Configuration["AAuth:SelfAgentId"] ?? "aauth:sample-app@localhost";
-builder.Services.AddSingleton(new SelfIssuedIdentity(selfIssuedKey, SelfIssuedKid, sampleAppUrl, sampleAppAgentId));
+var aria = builder.Configuration.GetSection("AAuth:Agents:" + SampleAgents.Aria);
+var selfIssuedKid = aria["SelfIssued:KeyId"]!;
+var sampleAppUrl = aria["SelfIssued:Issuer"]!;
+var sampleAppAgentId = aria["SelfIssued:Subject"]!;
+builder.Services.AddSingleton(new SelfIssuedIdentity(selfIssuedKey, selfIssuedKid, sampleAppUrl, sampleAppAgentId));
+builder.Services.AddAAuthAgent(SampleAgents.Aria, aria, options =>
+{
+    options.Signer = selfIssuedKey;
+    options.EgressPolicy = SampleEgress.Policy;
+});
+builder.Services.AddSingleton<SampleAgents>();
+// Resource metadata for the federated-worker scenario, published by MapAAuthWellKnown.
+builder.Services.AddAAuthResource(options =>
+{
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Issuer = sampleAppUrl;
+    options.SigningKeys[selfIssuedKid] = selfIssuedKey;
+    options.ScopeDescriptions = new(FederatedWorkerScenario.ScopeDescriptions);
+});
 
 var app = builder.Build();
 
@@ -38,21 +55,16 @@ if (!app.Environment.IsDevelopment())
 }
 
 // Publish agent metadata + JWKS so verifiers can discover our signing key.
-app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+app.MapAAuthAgentWellKnown(options =>
 {
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = sampleAppUrl,
-    Name = "SampleApp Demo",
-    SigningKeys = new Dictionary<string, IAAuthKey> { [SelfIssuedKid] = selfIssuedKey },
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Issuer = sampleAppUrl;
+    options.Name = "SampleApp Demo";
+    options.SigningKeys = new AAuthSigningKeySet { [selfIssuedKid] = selfIssuedKey };
 });
 
 app.UseAntiforgery();
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
-{
-    EgressPolicy = SampleEgress.Policy, Issuer = sampleAppUrl,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [SelfIssuedKid] = selfIssuedKey },
-    ScopeDescriptions = FederatedWorkerScenario.ScopeDescriptions,
-});
+app.MapAAuthWellKnown();
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()

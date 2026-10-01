@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Agent.Governance;
@@ -59,10 +60,37 @@ public class AAuthGovernanceDITests
         var relay = new DefaultInteractionRelay();
 
         var question = await relay.RelayAsync(new InteractionRequest(InteractionType.Question));
-        Assert.Equal(string.Empty, question.Answer);
+        Assert.True(question.Unavailable);
+
+        var interaction = await relay.RelayAsync(new InteractionRequest(InteractionType.Interaction));
+        Assert.True(interaction.Unavailable);
+
+        var payment = await relay.RelayAsync(new InteractionRequest(InteractionType.Payment));
+        Assert.True(payment.Unavailable);
 
         var completion = await relay.RelayAsync(new InteractionRequest(InteractionType.Completion));
         Assert.False(completion.Accepted);
+    }
+
+    [Fact]
+    public async Task DefaultAuditSink_DeepClonesParametersAndResult()
+    {
+        var log = new InMemoryMissionLog();
+        var sink = new DefaultAuditSink(log);
+        var parameters = new JsonObject { ["query"] = "flights" };
+        var result = new JsonObject { ["status"] = "done" };
+
+        await sink.RecordAsync(new AuditRecord("mission", new MissionAction("Search"))
+        {
+            Parameters = parameters,
+            Result = result,
+        });
+        parameters["query"] = "mutated";
+        result["status"] = "mutated";
+
+        var entry = Assert.Single(await log.ReadAsync("mission"));
+        Assert.Equal("flights", (string?)entry.Parameters?["query"]);
+        Assert.Equal("done", (string?)entry.Result?["status"]);
     }
 
     private sealed class CustomDecider : IPermissionDecider

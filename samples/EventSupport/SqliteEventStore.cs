@@ -43,9 +43,9 @@ public sealed class SqliteEventStore : IAgentProviderEventStore, IResourceEventS
             CREATE TABLE IF NOT EXISTS delivery_receipts (
                 provider TEXT NOT NULL, eid TEXT NOT NULL, agent TEXT NOT NULL, account TEXT NOT NULL,
                 response TEXT NOT NULL, PRIMARY KEY(provider,eid));
-            CREATE TABLE IF NOT EXISTS agent_events (
-                issuer TEXT NOT NULL, eid TEXT NOT NULL, agent TEXT NOT NULL, record TEXT NOT NULL,
-                PRIMARY KEY(issuer,eid));
+            CREATE TABLE IF NOT EXISTS received_events (
+                issuer TEXT NOT NULL, jti TEXT NOT NULL, agent TEXT NOT NULL, record TEXT NOT NULL,
+                PRIMARY KEY(issuer,jti));
             """);
     }
 
@@ -71,28 +71,29 @@ public sealed class SqliteEventStore : IAgentProviderEventStore, IResourceEventS
         long uses;
         using (var reader = lookup.ExecuteReader())
         {
-            if (!reader.Read()) return new(404);
+            if (!reader.Read()) return new(EventAcceptanceOutcome.Unknown);
             agent = reader.GetString(0); resource = reader.GetString(1); expires = reader.GetInt64(2);
             maximum = reader.IsDBNull(3) ? null : reader.GetInt64(3); uses = reader.GetInt64(4);
         }
-        if (expires <= now.ToUnixTimeSeconds()) return new(404);
-        if (resource != envelope.Issuer || agent != envelope.Agent) return new(403);
-        if (envelope.ExpiresAt <= now) return new(400);
-        var receipt = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(envelope.Token)));
+        if (expires <= now.ToUnixTimeSeconds()) return new(EventAcceptanceOutcome.Expired);
+        if (resource != envelope.Issuer || agent != envelope.Agent) return new(EventAcceptanceOutcome.Forbidden);
+        if (envelope.ExpiresAt <= now) return new(EventAcceptanceOutcome.Expired);
+        // (iss, jti) identifies one event (Events L363); a re-signed copy is the same delivery.
+        var receipt = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(envelope.Issuer + "\n" + envelope.Jti)));
         if (JsonSerializer.SerializeToUtf8Bytes(new PendingEvent(receipt, envelope), InboxJson).Length + 2 > InboxMaxBytes)
-            return new(413);
+            throw new InvalidOperationException("Event envelope exceeds the durable inbox size limit.");
         var bodyHash = Convert.ToHexString(SHA256.HashData(envelope.Body));
         var prior = Scalar(connection, transaction, "SELECT body_hash FROM event_outbox WHERE receipt=$receipt", ("$receipt", receipt));
         if (prior is string priorHash)
-            return priorHash == bodyHash ? new(202, maximum - uses) : new(400);
-        if (maximum is not null && uses >= maximum) return new(429);
+            return priorHash == bodyHash ? new(EventAcceptanceOutcome.Duplicate, maximum - uses) : new(EventAcceptanceOutcome.Forbidden);
+        if (maximum is not null && uses >= maximum) return new(EventAcceptanceOutcome.Exhausted);
         Execute(connection, transaction, "UPDATE provider_subscriptions SET uses=uses+1 WHERE eid=$eid", ("$eid", envelope.Eid));
         Execute(connection, transaction,
             "INSERT INTO event_outbox(receipt,eid,body_hash,agent,envelope) VALUES($receipt,$eid,$hash,$agent,$envelope)",
             ("$receipt", receipt), ("$eid", envelope.Eid), ("$hash", bodyHash), ("$agent", agent),
             ("$envelope", JsonSerializer.Serialize(envelope)));
         transaction.Commit();
-        return new(202, maximum - uses - 1);
+        return new(EventAcceptanceOutcome.Accepted, maximum - uses - 1);
     }
 
     public IReadOnlyList<PendingEvent> Pending(string agent, int limit = 100, string? after = null)
@@ -146,14 +147,14 @@ public sealed class SqliteEventStore : IAgentProviderEventStore, IResourceEventS
         return state;
     }
 
-    public EventEnvelope PrepareDelivery(string provider, string eid, Func<EventEnvelope> create)
+    public async Task<EventEnvelope> PrepareDeliveryAsync(string provider, string eid, Func<Task<EventEnvelope>> create)
     {
         using var connection = Open();
         using var transaction = connection.BeginTransaction(deferred: false);
         var existing = Scalar(connection, transaction, "SELECT envelope FROM resource_deliveries WHERE provider=$provider AND eid=$eid",
             ("$provider", provider), ("$eid", eid)) as string;
         if (existing is not null) return JsonSerializer.Deserialize<EventEnvelope>(existing)!;
-        var envelope = create();
+        var envelope = await create();
         Execute(connection, transaction, "INSERT INTO resource_deliveries(provider,eid,envelope) VALUES($provider,$eid,$envelope)",
             ("$provider", provider), ("$eid", eid), ("$envelope", JsonSerializer.Serialize(envelope)));
         transaction.Commit();
@@ -181,7 +182,7 @@ public sealed class SqliteEventStore : IAgentProviderEventStore, IResourceEventS
             if (json is null) return new(404);
             var authorization = JsonSerializer.Deserialize<SubscriptionTicket>(json)!;
             if (authorization.ExpiresAt <= now) return new(404);
-            if (authorization.Agent != subscription.Agent || authorization.Operation != subscription.Operation) return new(403);
+            if (authorization.KeyThumbprint != subscription.KeyThumbprint || authorization.Operation != subscription.Operation) return new(403);
             var state = Scalar(connection, transaction, "SELECT state FROM resource_states WHERE operation=$op AND account=$account",
                 ("$op", authorization.Operation), ("$account", authorization.Account ?? "")) as string;
             if (state != authorization.State) return new(409);
@@ -265,15 +266,15 @@ public sealed class SqliteEventStore : IAgentProviderEventStore, IResourceEventS
         if (received.Event.ExpiresAt <= now || received.Context.Agent != received.Event.Agent
             || received.Context.Resource != received.Event.Issuer || received.Context.Eid != received.Event.Eid) return false;
         using var connection = Open();
-        return Execute(connection, null, "INSERT OR IGNORE INTO agent_events(issuer,eid,agent,record) VALUES($issuer,$eid,$agent,$record)",
-            ("$issuer", received.Event.Issuer), ("$eid", received.Event.Eid), ("$agent", received.Event.Agent),
+        return Execute(connection, null, "INSERT OR IGNORE INTO received_events(issuer,jti,agent,record) VALUES($issuer,$jti,$agent,$record)",
+            ("$issuer", received.Event.Issuer), ("$jti", received.Event.Jti), ("$agent", received.Event.Agent),
             ("$record", JsonSerializer.Serialize(received))) == 1;
     }
 
     public IReadOnlyList<ProcessedEvent> ReadEvents(string agent)
     {
         using var connection = Open();
-        using var command = Command(connection, null, "SELECT record FROM agent_events WHERE agent=$agent ORDER BY rowid", ("$agent", agent));
+        using var command = Command(connection, null, "SELECT record FROM received_events WHERE agent=$agent ORDER BY rowid", ("$agent", agent));
         using var reader = command.ExecuteReader();
         var events = new List<ProcessedEvent>();
         while (reader.Read()) events.Add(JsonSerializer.Deserialize<ProcessedEvent>(reader.GetString(0))!);

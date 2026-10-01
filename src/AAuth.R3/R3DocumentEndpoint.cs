@@ -7,17 +7,50 @@ using AAuth.Server.Verification;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AAuth.R3;
 
 /// <summary>Maps signature-verified R3 document/proposal endpoints.</summary>
 public static class R3DocumentEndpoint
 {
-    public static IEndpointRouteBuilder MapR3Document(this IEndpointRouteBuilder endpoints,
-        string pattern, Func<HttpContext, byte[]?> getBytes, R3DocumentReaderPolicy readerPolicy)
+    /// <summary>
+    /// Register the R3 document reader policy and the in-memory <see cref="IR3DocumentEntitlements"/>
+    /// default (register your own first to share entitlements across instances).
+    /// </summary>
+    public static IServiceCollection AddAAuthR3Documents(this IServiceCollection services,
+        Func<IServiceProvider, R3DocumentReaderPolicy> readerPolicy)
     {
+        ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(readerPolicy);
-        return endpoints.MapR3Document(pattern, getBytes, readerPolicy.Allows);
+        services.TryAddSingleton(readerPolicy);
+        services.TryAddSingleton<IR3DocumentEntitlements, InMemoryR3DocumentEntitlements>();
+        return services;
+    }
+
+    /// <summary>
+    /// Map an R3 document using the DI-registered <see cref="R3DocumentReaderPolicy"/>. Any configured
+    /// AS or PS must also hold an unexpired entitlement for the exact URI/hash; others look absent.
+    /// </summary>
+    public static IEndpointRouteBuilder MapR3Document(this IEndpointRouteBuilder endpoints,
+        string pattern, Func<HttpContext, byte[]?> getBytes)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentNullException.ThrowIfNull(getBytes);
+        var readerPolicy = endpoints.ServiceProvider.GetService<R3DocumentReaderPolicy>()
+            ?? throw new InvalidOperationException("MapR3Document requires AddAAuthR3Documents.");
+        var entitlements = endpoints.ServiceProvider.GetService<IR3DocumentEntitlements>();
+        return endpoints.MapR3DocumentCore(pattern, async context =>
+        {
+            var bytes = getBytes(context);
+            if (bytes is null || context.GetAAuthParsedKey() is not { Identifier: { } reader })
+                return bytes;
+            if (entitlements is null) return null;
+            var entitled = await entitlements.IsEntitledAsync(AbsoluteUri(context), R3Hash.ComputeS256(bytes), reader,
+                context.RequestAborted).ConfigureAwait(false);
+            return entitled ? bytes : null;
+        }, readerPolicy.Allows);
     }
 
     public static IEndpointRouteBuilder MapR3Document(
@@ -26,9 +59,18 @@ public static class R3DocumentEndpoint
         Func<HttpContext, byte[]?> getBytes,
         Func<R3VerifiedFetcher, bool> isTrustedFetcher)
     {
+        ArgumentNullException.ThrowIfNull(getBytes);
+        return endpoints.MapR3DocumentCore(pattern, context => ValueTask.FromResult(getBytes(context)), isTrustedFetcher);
+    }
+
+    private static IEndpointRouteBuilder MapR3DocumentCore(
+        this IEndpointRouteBuilder endpoints,
+        string pattern,
+        Func<HttpContext, ValueTask<byte[]?>> getBytes,
+        Func<R3VerifiedFetcher, bool> isTrustedFetcher)
+    {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentException.ThrowIfNullOrEmpty(pattern);
-        ArgumentNullException.ThrowIfNull(getBytes);
         ArgumentNullException.ThrowIfNull(isTrustedFetcher);
 
         endpoints.MapGet(pattern, async (HttpContext context) =>
@@ -44,7 +86,15 @@ public static class R3DocumentEndpoint
             }
             catch (Exception ex) when (ex is R3FetchVerificationException or AAuthVerificationException)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", ex.Message, statusCode: StatusCodes.Status401Unauthorized);
+                var code = ex switch
+                {
+                    AAuthVerificationException signature => signature.Code,
+                    R3FetchVerificationException fetch => fetch.Code,
+                    _ => AAuth.Errors.SignatureErrorCode.InvalidSignature,
+                };
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(code,
+                    acceptedSchemes: code == AAuth.Errors.SignatureErrorCode.UnsupportedScheme
+                        ? [AAuthConstants.Schemes.JwksUri] : null);
             }
 
             if (!isTrustedFetcher(fetcher))
@@ -52,13 +102,16 @@ public static class R3DocumentEndpoint
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_fetcher", statusCode: StatusCodes.Status403Forbidden);
             }
 
-            var bytes = getBytes(context);
+            var bytes = await getBytes(context).ConfigureAwait(false);
             return bytes is null
                 ? Results.NotFound()
                 : Results.Bytes(bytes, "application/json");
         });
         return endpoints;
     }
+
+    private static string AbsoluteUri(HttpContext context)
+        => $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{context.Request.Path}";
 
     public static async Task<R3VerifiedFetcher> VerifyFetcherAsync(
         HttpContext context,
@@ -71,10 +124,25 @@ public static class R3DocumentEndpoint
         var authenticated = false;
         var middleware = new AAuthVerificationMiddleware(_ => { authenticated = true; return Task.CompletedTask; },
             verifier, new DefaultSignatureKeyResolver(jwks, metadata), metadata, jwks,
-            new AAuthVerificationOptions { EgressPolicy = metadata?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production, AcceptedSchemes = ["jwks_uri"] });
+            new AAuthVerificationOptions { EgressPolicy = metadata?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production, AcceptedSchemes = ["jwks_uri"],
+                RequireBodyCoverage = true });
         await middleware.InvokeAsync(context);
         if (!authenticated)
-            throw new R3FetchVerificationException("R3 fetch signature verification failed.");
+        {
+            if (!SignatureError.TryParse(context.Response.Headers[SignatureError.HeaderName].ToString(), out var code))
+                code = SignatureErrorCode.InvalidSignature;
+            if (code == SignatureErrorCode.InvalidSignature
+                && context.Request.Headers.TryGetValue(AAuthConstants.Headers.SignatureKey, out var signatureKey))
+            {
+                try
+                {
+                    if (SignatureKeyHeader.Parse(signatureKey.ToString()).Scheme != AAuthConstants.Schemes.JwksUri)
+                        code = SignatureErrorCode.UnsupportedScheme;
+                }
+                catch (AAuthVerificationException) { }
+            }
+            throw new R3FetchVerificationException("R3 fetch signature verification failed.", code);
+        }
         var parsed = context.GetAAuthParsedKey()!;
         var fetcher = new R3VerifiedFetcher(parsed.Scheme, parsed.Identifier!, parsed.Kid,
             context.Features.Get<AAuthVerificationResult>()!.Jkt, parsed);
@@ -116,8 +184,12 @@ public sealed record R3VerifiedFetcher(
 
 public class R3FetchVerificationException : Exception
 {
-    public R3FetchVerificationException(string message) : base(message) { }
-    public R3FetchVerificationException(string message, Exception inner) : base(message, inner) { }
+    internal SignatureErrorCode Code { get; }
+    public R3FetchVerificationException(string message) : this(message, null, SignatureErrorCode.InvalidSignature) { }
+    public R3FetchVerificationException(string message, Exception inner) : this(message, inner, SignatureErrorCode.InvalidSignature) { }
+    internal R3FetchVerificationException(string message, SignatureErrorCode code) : this(message, null, code) { }
+    private R3FetchVerificationException(string message, Exception? inner, SignatureErrorCode code) : base(message, inner)
+        => Code = code;
 }
 
 public sealed class R3UntrustedJwksUriException : R3FetchVerificationException

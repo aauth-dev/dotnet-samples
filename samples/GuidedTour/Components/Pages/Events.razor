@@ -1,8 +1,7 @@
 @page "/events"
-@rendermode InteractiveServer
-@inject IConfiguration Configuration
+@inject NavigationManager Navigation
 
-<PageTitle>AAuth Events Tour</PageTitle>
-<CapabilityTourChrome CurrentValue="/events" ResourceLabel="Bookings"
-	ResourceUrl="@(Configuration["AAuth:Bookings"] ?? "http://localhost:5005")" />
-<AAuth.Samples.Events.EventWalkthrough GuidedTour="true" />
+@* Flow Events now runs inside the standard tour; keep the old route as a redirect. *@
+@code {
+    protected override void OnInitialized() => Navigation.NavigateTo("/tour?flow=Events", replace: true);
+}

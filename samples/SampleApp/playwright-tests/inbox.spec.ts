@@ -17,8 +17,8 @@ test('inbox resource-managed flow: consent then replay returns messages', async 
   await page.goto('/inbox');
   await expect(page.locator('h2')).toHaveText('Resource-Managed (Two-Party) Access');
   await expect(page.locator('body')).toContainText('signed refresh endpoint');
-  await expect(page.locator('code.language-csharp').first()).toContainText('AAuthClientBuilder.Enrolled(Enrollment.Key)');
-  await expect(page.locator('code.language-csharp').first()).toContainText('.WithKeyStore(Enrollment.KeyStore)');
+  await expect(page.locator('code.language-csharp').first()).toContainText('factory.Create(new AAuthAgentDescriptor(');
+  await expect(page.locator('code.language-csharp').first()).toContainText('KeyHandle = Enrollment.LocalKeyHandle');
   await waitForInteractive(page, 'button.btn-primary');
 
   await clickAndConfirm(page, 'button.btn-primary', async () =>

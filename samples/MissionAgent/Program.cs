@@ -16,6 +16,9 @@ using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Tokens;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 // =============================================================================
 // MissionAgent — a console showcase of the AAuth *mission* model and the
@@ -61,6 +64,7 @@ string personServer = "http://localhost:5100";
 string resourceUrl = "http://localhost:5002/trips";
 string subject = "aauth:mission-demo@ap.example";
 bool interactive = true;
+var dashboardOpened = false;
 // Scopes declared as within the mission's intent up front (§Agent Token Request,
 // gate 2a). A seeded (resource, scope) pair lets that resource access resolve
 // *silently* (reason = InScope) instead of prompting. By default the mission
@@ -138,19 +142,30 @@ var enrolment = await apClient.EnrolWithKeyAsync(apUrl, null, enrolEndpoint, dur
 subject = enrolment.AgentId ?? throw new InvalidOperationException("AP did not return its assigned identity.");
 AAuthKey key = enrolment.Key;
 string localKeyHandle = enrolment.LocalKeyHandle;
-string agentToken = enrolment.AgentToken;
 Console.WriteLine($"   agent id        : {subject}");
 Console.WriteLine($"   key thumbprint  : {key.ComputeJwkThumbprint()}");
 Console.WriteLine($"   person server   : {personServer}");
 
-// Signed channel for agent-token requests: the resource challenge, the token
-// exchange, and every governance call (mission/permission/audit/interaction)
-// flow over this handler, which signs each request and carries the agent token
-// in the Signature-Key header (§HTTP Message Signatures).
-var agentHandler = new AAuthSigningHandler(key, () => agentToken) { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
-using var signedClient = new SampleHttpClient(agentHandler) { Timeout = Timeout.InfiniteTimeSpan };
-using var metadata = new MetadataClient(apHttp);
-var governance = new AAuthGovernanceClient(signedClient, metadata, personServer);
+// Register the enrolled agent in a generic host. The SDK refreshes its agent token at the
+// AP with the durable key (KeyHandle), handles every resource challenge, and exposes typed
+// Person Server clients signed as the agent. Governance calls share the challenge settings:
+// PromptUserAsync relays each consent, with a generous budget so a human has time to click.
+var hostBuilder = Host.CreateApplicationBuilder();
+hostBuilder.Logging.ClearProviders();
+hostBuilder.Services.AddSingleton(keyStore);
+hostBuilder.Services.AddAAuthAgent("mission-agent", options =>
+{
+    options.KeyHandle = localKeyHandle;
+    options.AgentProvider.RefreshEndpoint = refreshEndpoint;
+    options.PersonServer = personServer;
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Challenge.OnInteractionRequired = PromptUserAsync;
+    options.Challenge.PollingTimeout = TimeSpan.FromMinutes(5);
+});
+using var host = hostBuilder.Build();
+var agent = host.Services.GetRequiredService<IAAuthAgentFactory>().Get("mission-agent");
+var tokenCache = host.Services.GetRequiredKeyedService<IAAuthTokenCache>("mission-agent");
+var governance = agent.Governance;
 
 // Tell the mock PS how to resolve prompts. Interactive mode holds each prompt
 // open until you decide in the browser; --auto resolves via scripted defaults.
@@ -177,12 +192,9 @@ if (missionApprovedScopes.Count > 0)
     Console.WriteLine($"   mission-approved: {string.Join(", ", missionApprovedScopes.Select(s => $"{resourceOrigin} / {s}"))} (in scope — no prompt)");
 }
 
-// Generous polling budget so a human has time to click Approve.
-var poller = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(5) };
-
 Section("2. Propose a mission");
 // The user approves a durable statement of intent plus the tools the agent may
-// use. The PS returns the signed approval blob and its s256 thumbprint, which
+// use. The PS returns the mission blob plus its s256 digest, which
 // the agent quotes on every later request to bind it to this mission. In
 // interactive mode the PS shows a browser consent screen here; in --auto mode it
 // resolves the approval itself.
@@ -195,24 +207,24 @@ var session = await governance.ProposeMissionAsync(new MissionProposal(
         addToCalendarTool,
         new MissionTool("compare_options", "Compare flight and hotel options"),
     },
-}, GovernanceFor("Approve this mission and its tools"));
-// The session wraps the approved mission and auto-threads its claim
-// (approver + s256) and the bound PS into every later governed call.
+});
+// The session wraps the approved mission and auto-threads its mission_s256
+// and the bound PS into every later governed call.
 var mission = session.Mission;
 Console.WriteLine($"   description     : {mission.Description}");
-Console.WriteLine($"   approved by     : {mission.Approver}");
+Console.WriteLine($"   approved by     : {mission.PersonServer}");
 Console.WriteLine($"   approved tools  : {string.Join(", ", mission.ApprovedTools.Select(t => t.Name))}");
-// The s256 is an RFC 7638-style thumbprint of the signed approval blob, NOT the
-// text: tokens carry only {approver, s256} as a compact, verifiable reference
-// to the mission above (§Mission Approval). The description/tools stay with the
-// approver, so a leaked token never exposes the mission's prose.
+// The s256 is the SHA-256 of the approval blob's exact bytes, NOT the text:
+// tokens carry only mission_s256 as a compact, verifiable reference to the
+// mission above (#mission-approval). The description and tools stay with the
+// PS, so a leaked token never exposes the mission's prose.
 Console.WriteLine($"   mission s256    : {mission.S256}  (thumbprint reference to the description above)");
 
 Section(resourceScopeMissionApproved
     ? "3. Access a mission-aware resource — IN SCOPE (silent, no prompt)"
     : "3. Access a mission-aware resource — first call is OUT OF SCOPE");
-// The Trips /trips endpoint is mission-aware: it copies the mission claim
-// from the AAuth-Mission header into the resource token it issues (§Terminology).
+// The Trips /trips endpoint is mission-aware: the agent's person token names
+// the mission as mission_s256, and the resource token it issues copies it.
 // The PS reads that claim and governs the token request. When this (resource,
 // scope) is mission-approved as in-scope it resolves silently at gate 2a;
 // otherwise it falls outside the mission's approved scope and the PS prompts.
@@ -222,9 +234,9 @@ if (resourceScopeMissionApproved)
 }
 var first = await AccessMissionResourceAsync(resourceUrl);
 Console.WriteLine($"   resource said   : access={first?["access"]}, scope={first?["scope"]}");
-// The resource echoes only the {approver, s256} reference from the token — the
+// The resource echoes only the mission_s256 reference from the token — the
 // same s256 printed in step 2, which maps back to "{mission.Description}".
-Console.WriteLine($"   echoed mission  : {first?["mission"]?.ToJsonString()}");
+Console.WriteLine($"   echoed mission  : {first?["mission_s256"]}");
 Console.WriteLine($"                     (s256 references: \"{mission.Description}\")");
 
 Section(resourceScopeMissionApproved
@@ -272,9 +284,7 @@ Console.WriteLine($"   add_to_calendar : {(preApproved.IsGranted ? "granted" : "
 Section("7. Request a permission for a NON-pre-approved tool");
 // `cancel_booking` is not an approved tool, so the PS is consulted and the user
 // is prompted to decide. The session threads the mission claim automatically.
-var adHoc = await session.RequestPermissionAsync(
-    new MissionAction("cancel_booking"),
-    options: GovernanceFor("Permission to cancel an existing booking"));
+var adHoc = await session.RequestPermissionAsync(new MissionAction("cancel_booking"));
 Console.WriteLine($"   cancel_booking  : {(adHoc.IsGranted ? "granted" : "denied")} ({adHoc.Reason})");
 
 Section("8. Report an action to the audit endpoint");
@@ -287,14 +297,12 @@ Console.WriteLine("   recorded add_to_calendar = success");
 Section("9. Ask the user a question");
 var answer = await session.AskQuestionAsync(
     "Want me to keep going for another hour?",
-    description: "The mission's hour is nearly up.",
-    options: GovernanceFor("A question from your agent"));
+    description: "The mission's hour is nearly up.");
 Console.WriteLine($"   user answered   : {answer ?? "(no answer)"}");
 
 Section("10. Propose mission completion (terminates the mission)");
 var terminated = await session.ProposeCompletionAsync(
-    "Trip planned: 3 flights compared, 2 hotels shortlisted, 1 itinerary saved.",
-    GovernanceFor("Your agent says the mission is done"));
+    "Trip planned: 3 flights compared, 2 hotels shortlisted, 1 itinerary saved.");
 Console.WriteLine($"   mission ended   : {terminated}");
 
 Console.WriteLine();
@@ -302,66 +310,55 @@ Console.WriteLine("Done. The Person Server governed every step under the mission
 return 0;
 
 // ---------------------------------------------------------------------------
-// Resource access: one mission-aware client handles the whole leg.
+// Resource access: the registered agent handles the whole leg.
 // ---------------------------------------------------------------------------
 async Task<JsonObject?> AccessMissionResourceAsync(string url)
 {
-    // A real agent rotates its short-lived agent token; we refresh here to
-    // model that. Replay detection is keyed on the per-request signature, so the
-    // token itself stays reusable (§HTTP Message Signatures — replay).
-    agentToken = await apClient.RefreshAsync(refreshEndpoint, localKeyHandle);
-
-    // One mission-aware client does the whole resource-access leg:
-    //   • WithMission emits the AAuth-Mission header, which the signing handler
-    //     covers as the aauth-mission component (§Mission Context at Resources);
-    //   • WithChallengeHandling drives the 401 -> token-exchange -> retry cycle
-    //     and surfaces any out-of-scope consent prompt via OnInteractionRequired.
-    // An out-of-scope exchange the user denies throws
-    // AAuthInteractionDeniedException, exactly as the manual flow did.
-    using var client = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
-        .UseJwt(() => agentToken)
-        .WithPersonServer(personServer)
-        .WithMission(mission)
-        .WithChallengeHandling(o =>
-        {
-            o.OnInteractionRequired = PromptUserAsync;
-            o.PollingTimeout = poller.MaxTotalWait;
-        })
-        .Build();
-
-    using var ok = await client.GetAsync(url);
+    // The agent's client drives the 401 -> token-exchange -> retry cycle, refreshing its
+    // agent token at the AP as needed. Naming the mission on the request makes the person
+    // token carry its mission_s256, so resource and auth tokens carry it too (#missions);
+    // an out-of-scope consent reaches PromptUserAsync. A denied exchange throws
+    // AAuthInteractionDeniedException.
+    // Showcase only: forget earlier tokens so every step reaches the PS and prints its gate
+    // decision. A real agent keeps them; the step-5 scope would then need the resource to
+    // step up the cached trips.read token (the SDK's resources answer 403 today).
+    tokenCache.Clear();
+    using var request = new HttpRequestMessage(HttpMethod.Get, url);
+    request.Options.Set(AAuthRequestOptions.MissionS256, mission.S256);
+    using var ok = await agent.HttpClient.SendAsync(request);
     ok.EnsureSuccessStatusCode();
     return await ok.Content.ReadFromJsonAsync<JsonObject>();
 }
 
-// Build governance options that prompt interactively (or stay scripted).
-GovernanceOptions GovernanceFor(string _) => new()
-{
-    OnInteractionRequired = PromptUserAsync,
-    PollerOptions = poller,
-};
-
-// Invoked when the PS asks the user to decide. In interactive mode we surface
-// the consent URL (and try to open it) and return — polling proceeds while the
-// user acts. In --auto mode the PS resolves the prompt itself, so this is just
-// informational.
+// Invoked when the PS asks the user to decide. Polling proceeds while the user
+// acts. Interactive mode opens the PS dashboard once; it lists every request
+// waiting for the user, so later prompts only print where to decide. In --auto
+// mode the PS resolves the prompt itself, so this is just informational.
 Task PromptUserAsync(Interaction interaction, CancellationToken ct)
 {
     var url = interaction.BuildUserUrl();
+    var hosted = url.StartsWith(personServer + "/interaction?", StringComparison.OrdinalIgnoreCase);
+    var dashboard = $"{personServer}/dashboard?code={Uri.EscapeDataString(interaction.Code)}";
     Console.WriteLine();
     Console.WriteLine("   >> The Person Server needs your decision.");
-    Console.WriteLine($"      Open: {url}");
+    if (hosted) Console.WriteLine($"      Dashboard: {dashboard}");
+    Console.WriteLine($"      {(hosted ? "Or directly" : "Open")}: {url}");
     if (interactive)
     {
         Console.WriteLine("      Waiting for you to Approve or Deny in the browser...");
-        TryOpenBrowser(url);
+        if (!hosted) TryOpenBrowser(url);
+        else if (!dashboardOpened)
+        {
+            dashboardOpened = true;
+            TryOpenBrowser(dashboard);
+        }
     }
     return Task.CompletedTask;
 }
 
 async Task ScriptAsync(JsonObject body)
 {
-    using var resp = await signedClient.PostAsJsonAsync($"{personServer}/admin/mission-script", body);
+    using var resp = await agent.HttpClient.PostAsJsonAsync($"{personServer}/admin/mission-script", body);
     resp.EnsureSuccessStatusCode();
 }
 

@@ -11,8 +11,12 @@ namespace AAuth.Agent.Governance;
 
 /// <summary>
 /// Reaches the user through the PS's <c>interaction_endpoint</c> (§Interaction
-/// Endpoint): relay resource interactions, forward payments, ask questions, or
-/// propose mission completion. May be used with or without a mission.
+/// Endpoint): relay resource interactions, forward payments, or ask questions.
+/// Mission completion is proposed at the mission endpoint
+/// (<see cref="MissionClient.CompleteAsync"/>). For resource-hosted
+/// interactions, the resource's original pending URL remains authoritative; the
+/// PS relay result only reports relay progress or unavailability. May be used
+/// with or without a mission.
 /// </summary>
 /// <remarks>
 /// The supplied <see cref="HttpClient"/> MUST be wired with an
@@ -41,6 +45,8 @@ public sealed class InteractionClient
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (request.Type == InteractionType.Completion)
+            throw new ArgumentException("Mission completion is proposed at the mission endpoint (MissionClient.CompleteAsync).", nameof(request));
 
         var endpoint = await _exchange.ResolveEndpointAsync(
             _personServer, "interaction_endpoint", cancellationToken).ConfigureAwait(false);
@@ -114,7 +120,7 @@ public sealed class InteractionClient
         try
         {
             return JsonNode.Parse(raw) is JsonObject obj
-                && (string?)obj["error"] == "interaction_unavailable";
+                && (string?)obj["error"] == AAuthConstants.Governance.ErrorCodes.InteractionUnavailable;
         }
         catch (JsonException)
         {
@@ -125,58 +131,41 @@ public sealed class InteractionClient
     /// <summary>Relay a resource interaction (URL + code) to the user.</summary>
     public Task<InteractionResult> RelayInteractionAsync(
         string url, string code,
-        string? description = null, MissionClaim? mission = null,
+        string? description = null, string? missionS256 = null,
         GovernanceOptions? options = null, CancellationToken cancellationToken = default)
         => SendAsync(new InteractionRequest(InteractionType.Interaction)
         {
             Url = url,
             Code = code,
             Description = description,
-            Mission = mission,
+            MissionS256 = missionS256,
         }, options, cancellationToken);
 
     /// <summary>Forward a payment approval (URL + code) to the user.</summary>
     public Task<InteractionResult> RelayPaymentAsync(
         string url, string code,
-        string? description = null, MissionClaim? mission = null,
+        string? description = null, string? missionS256 = null,
         GovernanceOptions? options = null, CancellationToken cancellationToken = default)
         => SendAsync(new InteractionRequest(InteractionType.Payment)
         {
             Url = url,
             Code = code,
             Description = description,
-            Mission = mission,
+            MissionS256 = missionS256,
         }, options, cancellationToken);
 
     /// <summary>Ask the user a question and return the answer.</summary>
     public async Task<string?> AskQuestionAsync(
         string question,
-        string? description = null, MissionClaim? mission = null,
+        string? description = null, string? missionS256 = null,
         GovernanceOptions? options = null, CancellationToken cancellationToken = default)
     {
         var result = await SendAsync(new InteractionRequest(InteractionType.Question)
         {
             Question = question,
             Description = description,
-            Mission = mission,
+            MissionS256 = missionS256,
         }, options, cancellationToken).ConfigureAwait(false);
         return result.Answer;
-    }
-
-    /// <summary>
-    /// Propose mission completion with a summary. Returns <see langword="true"/>
-    /// when the user accepted and the PS terminated the mission.
-    /// </summary>
-    public async Task<bool> ProposeCompletionAsync(
-        string summary, MissionClaim mission,
-        GovernanceOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(mission);
-        var result = await SendAsync(new InteractionRequest(InteractionType.Completion)
-        {
-            Summary = summary,
-            Mission = mission,
-        }, options, cancellationToken).ConfigureAwait(false);
-        return result.Terminated;
     }
 }

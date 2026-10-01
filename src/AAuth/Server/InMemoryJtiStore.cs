@@ -18,14 +18,18 @@ public sealed class InMemoryJtiStore : IJtiStore
     private readonly TimeProvider _clock;
     private readonly int _capacity;
     private readonly TimeSpan _retention;
+    private readonly int _provenanceResourceQuota;
     private DateTimeOffset _nextCleanup;
 
-    public InMemoryJtiStore(TimeProvider? timeProvider = null, int capacity = 100_000, TimeSpan? retention = null)
+    public InMemoryJtiStore(TimeProvider? timeProvider = null, int capacity = 100_000, TimeSpan? retention = null,
+        int provenanceResourceQuota = 1_000)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(provenanceResourceQuota);
         _clock = timeProvider ?? TimeProvider.System;
         _capacity = capacity;
         _retention = retention ?? TimeSpan.FromHours(1);
+        _provenanceResourceQuota = provenanceResourceQuota;
         if (_retention < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(retention));
     }
 
@@ -59,16 +63,23 @@ public sealed class InMemoryJtiStore : IJtiStore
         }
     }
 
-    public Task<bool> RevokeAsync(TokenKey token, CancellationToken ct = default)
+    public Task RevokeAsync(TokenKey token, DateTimeOffset expiresAt, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(token);
         ct.ThrowIfCancellationRequested();
         lock (_gate)
         {
             MaybeCleanup();
-            if (!_tokens.TryGetValue(token, out var entry)) return Task.FromResult(false);
-            entry.Revoked = true;
-            return Task.FromResult(true);
+            if (_tokens.TryGetValue(token, out var entry))
+            {
+                entry.Revoked = true;
+            }
+            else if (expiresAt + _retention > _clock.GetUtcNow())
+            {
+                EnsureCapacity(_tokens.Count);
+                _tokens.Add(token, new Entry(expiresAt) { Revoked = true });
+            }
+            return Task.CompletedTask;
         }
     }
 
@@ -80,6 +91,17 @@ public sealed class InMemoryJtiStore : IJtiStore
         {
             MaybeCleanup();
             return Task.FromResult(HasRevokedAncestor(token));
+        }
+    }
+
+    public Task<bool> ContainsTokenAsync(TokenKey token, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            MaybeCleanup();
+            return Task.FromResult(_tokens.ContainsKey(token));
         }
     }
 
@@ -110,6 +132,8 @@ public sealed class InMemoryJtiStore : IJtiStore
             if (sources.Count == 0 || grant.ExpiresAt <= now || sources.Any(source =>
                 !_tokens.TryGetValue(source, out var entry) || HasRevokedAncestor(source) || entry.Expiration <= now
                 || grant.ExpiresAt > entry.Expiration || Ancestry(source).Contains(grant.Token))) return Task.FromResult(false);
+            if (grant.Provenance is { } provenance && !CheckProvenanceQuotaCore(provenance.Caller, grant.Resource))
+                return Task.FromResult(false);
             if (_tokens.TryGetValue(grant.Token, out var existing))
             {
                 if (HasRevokedAncestor(grant.Token) || existing.Expiration != grant.ExpiresAt
@@ -127,6 +151,18 @@ public sealed class InMemoryJtiStore : IJtiStore
         }
     }
 
+    public Task<bool> CheckProvenanceQuotaAsync(UpstreamCallerRecord caller, string resource, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentException.ThrowIfNullOrWhiteSpace(resource);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            MaybeCleanup();
+            return Task.FromResult(CheckProvenanceQuotaCore(caller, resource));
+        }
+    }
+
     public Task<IReadOnlyList<TokenGrant>> GetGrantsAsync(TokenKey source, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -141,8 +177,57 @@ public sealed class InMemoryJtiStore : IJtiStore
         }
     }
 
+    public Task<TokenGrant?> GetGrantAsync(TokenKey token, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            MaybeCleanup();
+            var now = _clock.GetUtcNow();
+            return Task.FromResult(_tokens.TryGetValue(token, out var entry)
+                && (entry.Expiration > now || entry.Grant?.Provenance is not null && entry.Expiration + _retention > now)
+                ? entry.Grant : null);
+        }
+    }
+
+    public Task RecordSubjectAsync(TokenKey token, string subject, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        ArgumentException.ThrowIfNullOrWhiteSpace(subject);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            MaybeCleanup();
+            if (!_tokens.TryGetValue(token, out var entry))
+                throw new InvalidOperationException("Register the token before recording its subject.");
+            entry.Subject = subject;
+            return Task.CompletedTask;
+        }
+    }
+
+    public Task<string?> GetSubjectAsync(TokenKey token, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            MaybeCleanup();
+            return Task.FromResult(_tokens.TryGetValue(token, out var entry) ? entry.Subject : null);
+        }
+    }
+
     private bool HasRevokedAncestor(TokenKey token) => Ancestry(token).Any(ancestor =>
         _tokens.TryGetValue(ancestor, out var entry) && entry.Revoked);
+
+    private bool CheckProvenanceQuotaCore(UpstreamCallerRecord caller, string resource)
+    {
+        var resources = _tokens.Values
+            .Where(entry => entry.Grant?.Provenance?.Caller == caller && entry.Expiration > _clock.GetUtcNow())
+            .Select(entry => entry.Grant!.Resource)
+            .ToHashSet(StringComparer.Ordinal);
+        return resources.Contains(resource) || resources.Count < _provenanceResourceQuota;
+    }
 
     private IEnumerable<TokenKey> Ancestry(TokenKey token)
     {
@@ -172,6 +257,7 @@ public sealed class InMemoryJtiStore : IJtiStore
     {
         public DateTimeOffset Expiration { get; } = expiration;
         public bool Revoked { get; set; }
+        public string? Subject { get; set; }
         public TokenGrant? Grant { get; set; }
         public HashSet<TokenKey> Sources { get; } = new();
     }

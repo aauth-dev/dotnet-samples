@@ -10,6 +10,7 @@ using AAuth.Server.Verification;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -19,9 +20,29 @@ namespace Microsoft.Extensions.DependencyInjection;
 /// </summary>
 public static class AAuthResourceServiceCollectionExtensions
 {
+    /// <summary>The configuration section a resource binds from by default.</summary>
+    public const string ConfigurationSection = "AAuth:Resource";
+
+    /// <summary>
+    /// Register AAuth resource server services bound from <paramref name="configuration"/>
+    /// (for example <c>AAuth:Resource</c>), then <paramref name="configure"/>.
+    /// </summary>
+    public static IServiceCollection AddAAuthResource(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        Action<AAuthResourceOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        return services.AddAAuthResource(options =>
+        {
+            configuration.Bind(options);
+            configure?.Invoke(options);
+        });
+    }
+
     /// <summary>
     /// Register AAuth resource server services: verifier, key resolver,
-    /// JTI store, and well-known metadata options.
+    /// JTI store, token verifier, and well-known metadata options.
     /// </summary>
     public static IServiceCollection AddAAuthResource(
         this IServiceCollection services,
@@ -35,13 +56,27 @@ public static class AAuthResourceServiceCollectionExtensions
 
         if (string.IsNullOrEmpty(options.Issuer))
             throw new InvalidOperationException("AAuthResourceOptions.Issuer must be set.");
+        if (!AAuthUrl.IsHttpsOrLoopback(options.Issuer, options.EgressPolicy))
+            throw new InvalidOperationException("AAuthResourceOptions.Issuer must be an absolute https URL (loopback http allowed for development).");
+        if (!string.IsNullOrEmpty(options.AccessServer)
+            && !AAuthUrl.IsHttpsOrLoopback(options.AccessServer, options.EgressPolicy))
+            throw new InvalidOperationException("AAuthResourceOptions.AccessServer must be an absolute https URL (loopback http allowed for development).");
+        services.TryAddSingleton(Microsoft.Extensions.Options.Options.Create(options));
+
+        // Identity once per role: the low-level UseAAuthVerification() pipeline takes its
+        // auth/person-token audience from this resource's issuer unless one is set explicitly.
+        services.PostConfigure<AAuthVerificationOptions>(verification => verification.ResourceIdentifier ??= options.Issuer);
 
         // Register AAuthVerifier as singleton.
         services.TryAddSingleton(sp => new AAuthVerifier
         {
             MaxAge = options.MaxSignatureAge,
-            MaxFutureSkew = options.MaxFutureSkew,
-            Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
+            TimeProvider = options.TimeProvider,
+        });
+        services.TryAddSingleton(sp => new AAuth.Tokens.TokenVerifier
+        {
+            EgressPolicy = options.EgressPolicy,
+            TimeProvider = options.TimeProvider,
         });
 
         // Register the shared discovery clients (MetadataClient + JwksClient) with
@@ -60,7 +95,8 @@ public static class AAuthResourceServiceCollectionExtensions
             {
                 var jwksClient = sp.GetRequiredService<JwksClient>();
                 return new DefaultSignatureKeyResolver(jwksClient, sp.GetRequiredService<MetadataClient>(),
-                    tokenVerifiers: sp.GetServices<ISignatureTokenVerifier>());
+                    tokenVerifiers: sp.GetServices<ISignatureTokenVerifier>(),
+                    services: sp);
             });
         }
 
@@ -83,17 +119,39 @@ public static class AAuthResourceServiceCollectionExtensions
         {
             EgressPolicy = options.EgressPolicy,
             Issuer = options.Issuer,
+            AccessServer = options.AccessServer,
             SigningKeys = options.SigningKeys,
             Name = options.Name,
             Description = options.Description,
+            LogoUri = options.LogoUri,
+            LogoDarkUri = options.LogoDarkUri,
+            DocumentationUri = options.DocumentationUri,
+            TosUri = options.TosUri,
+            PolicyUri = options.PolicyUri,
             ScopeDescriptions = options.ScopeDescriptions,
             SignatureWindow = options.SignatureWindow,
+            AdditionalSignatureComponents = options.AdditionalSignatureComponents,
             AccessMode = options.AccessMode,
             AuthorizationEndpoint = options.AuthorizationEndpoint,
             RevocationEndpoint = options.RevocationEndpoint,
             AdditionalMetadata = options.AdditionalMetadata,
         };
-        services.TryAddSingleton(metadataOptions);
+        services.TryAddSingleton(sp =>
+        {
+            AAuthServerRoles.RejectDevelopmentLoopbackInProduction(sp, "Resource", options.EgressPolicy);
+            AAuthServerRoles.LoadKeyHandle(options.SigningKeys, options.KeyHandle, options.KeyId, sp, nameof(AAuthResourceOptions));
+            metadataOptions.Validate();
+            return metadataOptions;
+        });
+        services.TryAddSingleton(sp =>
+        {
+            _ = sp.GetRequiredService<AAuthResourceMetadataOptions>();
+            var identity = new AAuthServerIdentity("Resource", options.Issuer, AAuth.Tokens.ResourceTokenBuilder.ResourceDwk,
+                options.SigningKeys, options.EgressPolicy);
+            return AAuthRevocationService.ForIdentity(sp, identity,
+                sp.GetService<IJtiStore>() ?? new InMemoryJtiStore(options.TimeProvider), options.TimeProvider, key: null);
+        });
+        services.TryAddSingleton<IAAuthRevocationService>(sp => sp.GetRequiredService<AAuthRevocationService>());
 
         return services;
     }

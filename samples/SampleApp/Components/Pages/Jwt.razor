@@ -2,6 +2,7 @@
 @using AAuth.Crypto
 @using AAuth.HttpSig
 @inject IJSRuntime JS
+@inject SampleAgents Agents
 @rendermode InteractiveServer
 
 <PageTitle>JWT — Agent Token</PageTitle>
@@ -17,18 +18,21 @@
 </details>
 
 <p>
-    PS-asserted access: SampleApp acts as its own Agent Provider and publishes
-    its metadata and signing key. The SDK locally issues and refreshes an
-    <code>aa-agent+jwt</code> using that identity, presented with the
-    <code>jwt</code> signature scheme. Challenge handling automates the Person
-    Server consent exchange. There is no external AP enrollment in this page.
+    Agent-token access followed by a PS auth-token exchange: SampleApp acts as
+    its own Agent Provider and publishes its metadata and signing key. The SDK
+    locally issues and refreshes an <code>aa-agent+jwt</code> using that identity,
+    presented with the <code>jwt</code> signature scheme. Challenge handling
+    automates the Person Server consent exchange. There is no external AP
+    enrollment in this page.
 </p>
 
 <div class="row">
 <div class="col-md-6">
 <h5>Client Code</h5>
 <pre><code class="language-csharp">// _identity is the injected SelfIssuedIdentity published by this host.
-var personServer = Config["AAuth:PersonServer"]!;
+// This page teaches the jwt signing primitive, so it builds its own client;
+// the app's agents are registered with AddAAuthAgent.
+var personServer = Agents.PersonServer;
 var calendar = Config["AAuth:Calendar"]!.TrimEnd('/');
 using var client = AAuthClientBuilder.SelfIssuing(_identity.Key)
     .WithEgressPolicy(SampleEgress.Policy)
@@ -67,7 +71,7 @@ app.MapAAuthWellKnown();
 // configured Person Servers (fail-closed).
 app.UseRouting();
 app.UseAAuth(o =&gt;
-    o.TrustedAuthTokenIssuers = trustedPersonServers);
+    o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -81,7 +85,7 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
     {
         accessMode = "three-party",
         scheme = "jwt",
-        agent = r.Agent,
+        ps = r.PersonServer,
         sub = r.Subject,
         scope = r.Scopes, // ["calendar.read"]
         iss = r.Issuer,
@@ -140,14 +144,15 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
 
         try
         {
-            var personServer = Config["AAuth:PersonServer"]!;
+            var personServer = Agents.PersonServer;
             var resourceUrl = Config["AAuth:Calendar"]!;
 
             // Pre-grant consent so the PS issues a token immediately
             // (autonomous / direct-grant mode — no user interaction)
             await GrantConsentAsync();
 
-            // Self-issued token refresh — no AP round-trip needed
+            // This page teaches the jwt signing primitive, so it builds its own client;
+            // the app's agents are registered with AddAAuthAgent.
             using var client = AAuthClientBuilder.SelfIssuing(_identity.Key).WithEgressPolicy(SampleEgress.Policy)
                 .As(_identity.Issuer, _identity.AgentId)
                 .WithKid(_identity.KeyId)
@@ -175,7 +180,7 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
 
     private async Task GrantConsentAsync()
     {
-        var personServer = Config["AAuth:PersonServer"];
+        var personServer = Agents.PersonServer;
         if (string.IsNullOrEmpty(personServer)) return;
 
         var agentId = _identity.AgentId;

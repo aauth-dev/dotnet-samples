@@ -23,6 +23,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Integration;
@@ -41,7 +42,7 @@ public class CalendarFlowTests : IAsyncLifetime
 {
     private const string CalendarHost = "calendar.test";
     private const string PsHost = "ps.test";
-    private const string ApHost = "ap.test";
+    private const string ApHost = "ap.example";
     private static readonly string CalendarIssuer = $"https://{CalendarHost}";
     private static readonly string PsIssuer = $"https://{PsHost}";
     private static readonly string ApIssuer = $"https://{ApHost}";
@@ -50,6 +51,12 @@ public class CalendarFlowTests : IAsyncLifetime
     // and verification discovers it via the AP's JWKS.
     private static readonly AAuthKey ApKey = AAuthKey.Generate();
     private const string ApKeyId = "ap-test-key";
+
+    // A second trusted PS whose key the test holds, to exercise revocation.
+    private const string RevokerHost = "revoker-ps.test";
+    private static readonly string RevokerIssuer = $"https://{RevokerHost}";
+    private static readonly AAuthKey RevokerKey = AAuthKey.Generate();
+    private const string RevokerKeyId = "revoker-key";
 
     private WebApplicationFactory<Calendar.Entry>? _calendar;
     private WebApplicationFactory<MockPersonServer.Entry>? _ps;
@@ -84,6 +91,7 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             b.UseSetting("AAuth:Issuer", CalendarIssuer);
             b.UseSetting("AAuth:TrustedPersonServers:0", PsIssuer);
+            b.UseSetting("AAuth:TrustedPersonServers:1", RevokerIssuer);
             b.ConfigureServices(services =>
             {
                 // Replace the metadata/JWKS clients with versions that can
@@ -95,6 +103,7 @@ public class CalendarFlowTests : IAsyncLifetime
                 {
                     [PsHost] = psHandler,
                     [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
+                    [RevokerHost] = new StubApHandler(RevokerKey, RevokerKeyId, RevokerIssuer),
                 });
                 services.AddSingleton(new MetadataClient(new InProcessHttpClient(discoveryHandler)));
                 services.AddSingleton(new JwksClient(new InProcessHttpClient(discoveryHandler)));
@@ -130,51 +139,84 @@ public class CalendarFlowTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ShippedResource_AdvertisesAndEnforcesIssuerQualifiedRevocation()
+    public async Task ShippedResource_AdvertisesRevocationAndAcceptsOnlyTrustedPersonServers()
     {
         var key = AAuthKey.Generate();
-        var token = new AgentTokenBuilder
+        var token = await new AgentTokenBuilder
         {
-            EgressPolicy = TestEgress.Policy, Issuer = ApIssuer, Subject = "aauth:revocation@ap.test",
+            EgressPolicy = TestEgress.Policy, Issuer = ApIssuer, Subject = "aauth:revocation@ap.example",
             Key = ApKey, KeyId = ApKeyId, ConfirmationKey = key, PersonServer = PsIssuer,
             TokenId = "calendar-revocation",
-        }.Build();
+        }.BuildAsync();
         using var agent = new InProcessHttpClient(new AAuthSigningHandler(key, () => token,
-            () => DateTimeOffset.UtcNow.AddSeconds(-2)) { InnerHandler = _calendar!.Server.CreateHandler() });
+            new FakeTimeProvider(DateTimeOffset.UtcNow.AddSeconds(-2))) { InnerHandler = _calendar!.Server.CreateHandler() });
         using var initial = await agent.GetAsync(CalendarIssuer + "/events");
         Assert.Equal(HttpStatusCode.Unauthorized, initial.StatusCode);
         Assert.True(initial.Headers.Contains("AAuth-Requirement"));
         using var metadataClient = _calendar.CreateClient();
         var metadata = await metadataClient.GetFromJsonAsync<JsonObject>("/.well-known/aauth-resource.json");
         Assert.Equal(CalendarIssuer + "/revoke", (string?)metadata!["revocation_endpoint"]);
+
+        // §Token Revocation: agent tokens are revoked at the PS only; the Calendar accepts its trusted PSes.
         using var provider = new AAuthClientBuilder(ApKey)
             .UseJwksUri(ApIssuer, AAuthConstants.DwkFiles.Agent, ApKeyId)
             .WithEgressPolicy(TestEgress.Policy)
             .WithInnerHandler(_calendar.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
-        Assert.Equal(HttpStatusCode.OK, await new RevocationClient(provider).RevokeAsync(
-            new Uri(CalendarIssuer + "/revoke"), new TokenKey(ApIssuer, "calendar-revocation")));
-        using var freshSignature = new InProcessHttpClient(new AAuthSigningHandler(key, () => token,
-            () => DateTimeOffset.UtcNow.AddSeconds(-1)) { InnerHandler = _calendar.Server.CreateHandler() });
-        using var denied = await freshSignature.GetAsync(CalendarIssuer + "/events");
+        var refused = await new RevocationClient(provider).RevokeAsync(
+            new Uri(CalendarIssuer + "/revoke"), "calendar-revocation", DateTimeOffset.UtcNow.AddHours(1));
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Equal("unsupported_iss", refused.Error);
+        Assert.Equal(AAuth.Errors.RevocationDownstreamError.RevocationUnsupported, refused.Failure);
+        using var stillValid = await new InProcessHttpClient(new AAuthSigningHandler(key, () => token,
+            new FakeTimeProvider(DateTimeOffset.UtcNow.AddSeconds(-1))) { InnerHandler = _calendar.Server.CreateHandler() }).GetAsync(CalendarIssuer + "/events");
+        Assert.True(stillValid.Headers.Contains("AAuth-Requirement"));
+        Assert.False(stillValid.Headers.Contains("Signature-Error"));
+
+        // A trusted PS revokes a person token the Calendar has never seen; its later presentation is refused.
+        ValueTask<string> PersonTokenAsync() => new PersonTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy, Issuer = RevokerIssuer, Audience = CalendarIssuer, Subject = "person",
+            ConfirmationKey = key, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            Key = RevokerKey, KeyId = RevokerKeyId,
+        }.BuildAsync();
+        var revokedPersonToken = await PersonTokenAsync();
+        var livePersonToken = await PersonTokenAsync();
+        var payload = TokenVerifier.DecodeJsonSegment(revokedPersonToken.Split('.')[1], "payload");
+        using var personServer = new AAuthClientBuilder(RevokerKey)
+            .UseJwksUri(RevokerIssuer, AAuthConstants.DwkFiles.Person, RevokerKeyId)
+            .WithEgressPolicy(TestEgress.Policy)
+            .WithInnerHandler(_calendar.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+        var recorded = await new RevocationClient(personServer).RevokeAsync(new Uri(CalendarIssuer + "/revoke"),
+            (string)payload["jti"]!, DateTimeOffset.FromUnixTimeSeconds((long)payload["exp"]!));
+        Assert.Equal(HttpStatusCode.OK, recorded.StatusCode);
+        Assert.Null(recorded.Failure);
+        Assert.Empty(recorded.Downstream);
+
+        using var denied = await new InProcessHttpClient(new AAuthSigningHandler(key, () => revokedPersonToken)
+            { InnerHandler = _calendar.Server.CreateHandler() }).GetAsync(CalendarIssuer + "/events");
         Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
-        Assert.True(denied.Headers.Contains("Signature-Error"));
-        Assert.False(denied.Headers.Contains("AAuth-Requirement"));
+        Assert.Contains("revoked_jwt", denied.Headers.GetValues("Signature-Error").Single());
+        using var live = await new InProcessHttpClient(new AAuthSigningHandler(key, () => livePersonToken)
+            { InnerHandler = _calendar.Server.CreateHandler() }).GetAsync(CalendarIssuer + "/events");
+        Assert.Equal(HttpStatusCode.Unauthorized, live.StatusCode);
+        Assert.True(live.Headers.Contains("AAuth-Requirement"));
+        Assert.False(live.Headers.Contains("Signature-Error"));
     }
 
     [Fact]
     public async Task ThreePartyFlow_ExchangesAndReturnsClaims()
     {
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
+            Subject = "aauth:demo@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
         using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
@@ -183,7 +225,8 @@ public class CalendarFlowTests : IAsyncLifetime
         var rawBody = await response.Content.ReadAsStringAsync();
         Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode}, Body={rawBody}");
         var body = JsonNode.Parse(rawBody) as JsonObject;
-        Assert.Equal("aauth:demo@ap.test", (string?)body!["agent"]);
+        Assert.Equal(PsIssuer, (string?)body!["ps"]);
+        Assert.Null(body["agent"]);
         Assert.Equal(MockPersonServer.SampleIdentityClaimsAsserter.DirectedSubject(CalendarIssuer), (string?)body["sub"]);
         Assert.Contains("calendar.read", body["scope"]!.AsArray().Select(s => (string?)s));
 
@@ -241,16 +284,16 @@ public class CalendarFlowTests : IAsyncLifetime
         negCalendar = calendar;
 
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
+            Subject = "aauth:demo@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
 
@@ -267,7 +310,8 @@ public class CalendarFlowTests : IAsyncLifetime
         };
         var exchange = new TokenExchangeClient(
             new InProcessHttpClient(exchangeSigning),
-            new MetadataClient(new InProcessHttpClient(RoutingHandler())));
+            new MetadataClient(new InProcessHttpClient(RoutingHandler())),
+            new TokenExchangeClientOptions { JwksClient = new JwksClient(new InProcessHttpClient(RoutingHandler())) });
         var resourceSigning = new AAuthSigningHandler(agentKey, () => holder.Current)
         {
             InnerHandler = RoutingHandler(),
@@ -289,16 +333,16 @@ public class CalendarFlowTests : IAsyncLifetime
     public async Task AdminScopeFlow_IssuesElevatedScope()
     {
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
+            Subject = "aauth:demo@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
         using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
@@ -315,16 +359,16 @@ public class CalendarFlowTests : IAsyncLifetime
     public async Task RoleFlow_ReturnsAssertedRoles()
     {
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
+            Subject = "aauth:demo@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
         using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
@@ -341,21 +385,21 @@ public class CalendarFlowTests : IAsyncLifetime
     public async Task RoleFlow_Returns403_WhenAgentLacksRole()
     {
         // A non-admin demo agent (the mock PS only asserts the calendar.owner
-        // role for `aauth:demo@...` agents) completes the three-party flow
+        // role for the exact agent `aauth:demo@ap.example`) completes the three-party flow
         // and receives a valid auth token WITHOUT the role. The role policy
         // on /events/admin must therefore reject it with 403 — exercising
         // role-based DENIAL, not just the success path.
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:guest@ap.test",
+            Subject = "aauth:guest@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
         using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
@@ -369,51 +413,65 @@ public class CalendarFlowTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ThreePartyChallenge_Returns401WithResourceToken()
+    public async Task ThreePartyChallenge_PersonTokenThenResourceTokenNamingIt()
     {
         // Send only through the signing pipeline (no ChallengeHandler) so we
-        // can inspect the raw 401 + AAuth-Requirement response that Calendar
-        // emits before the agent would retry. This guards against silent
-        // regressions in the 401 shape that the happy-path three-party test
-        // would mask.
+        // can inspect each raw 401 + AAuth-Requirement response Calendar emits.
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
+            Subject = "aauth:demo@ap.example",
             KeyId = ApKeyId,
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         var holder = new AAuthTokenHolder(agentToken);
         // BuildAgentClient with personServer:null gives us the signing
         // pipeline without the auto-retry challenge handler.
         using var client = BuildAgentClient(agentKey, holder, personServer: null);
 
-        var response = await client.GetAsync($"{CalendarIssuer}/events");
+        using var first = await client.GetAsync($"{CalendarIssuer}/events");
+        Assert.Equal(HttpStatusCode.Unauthorized, first.StatusCode);
+        Assert.Equal(AAuthRequirementHeader.PersonTokenRequirement, Requirement(first).Requirement);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.True(response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values),
-            "401 response is missing the AAuth-Requirement header.");
-        var requirement = AAuthRequirementHeader.Parse(string.Join(", ", values!));
+        var psHandler = new MultiHostHandler(new Dictionary<string, HttpMessageHandler> { [PsHost] = _ps!.Server.CreateHandler() });
+        using var exchangeHttp = new InProcessHttpClient(new AAuthSigningHandler(agentKey, () => agentToken) { InnerHandler = psHandler });
+        var exchange = new TokenExchangeClient(exchangeHttp, new MetadataClient(new InProcessHttpClient(psHandler)),
+            new TokenExchangeClientOptions { JwksClient = new JwksClient(new InProcessHttpClient(psHandler)) });
+        var personToken = await exchange.RequestPersonTokenAsync(PsIssuer, CalendarIssuer);
+        holder.Update(personToken);
+
+        using var second = await client.GetAsync($"{CalendarIssuer}/events");
+        Assert.Equal(HttpStatusCode.Unauthorized, second.StatusCode);
+        var requirement = Requirement(second);
         Assert.Equal(AAuthRequirementHeader.AuthTokenRequirement, requirement.Requirement);
-        Assert.NotNull(requirement.ResourceToken);
 
-        // Decode the resource_token payload and assert the spec-mandated
-        // claim shape: iss=resource, aud=ps, agent + agent_jkt bound to the
-        // signing key.
-        var payloadSegment = requirement.ResourceToken!.Split('.')[1];
+        // The resource token names the presented person token (ps, sub,
+        // presented_jti) and binds the signing key (agent_jkt).
+        var person = (JsonObject)JsonNode.Parse(
+            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(personToken.Split('.')[1]))!;
         var payload = (JsonObject)JsonNode.Parse(
-            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(payloadSegment))!;
+            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(requirement.ResourceToken!.Split('.')[1]))!;
         Assert.Equal(CalendarIssuer, (string?)payload["iss"]);
         Assert.Equal(PsIssuer, (string?)payload["aud"]);
-        Assert.Equal("aauth:demo@ap.test", (string?)payload["agent"]);
+        Assert.Equal(PsIssuer, (string?)payload["ps"]);
+        Assert.Equal((string?)person["sub"], (string?)payload["sub"]);
+        Assert.Equal((string?)person["jti"], (string?)payload["presented_jti"]);
+        Assert.Null(payload["agent"]);
         Assert.Equal(agentKey.ComputeJwkThumbprint(), (string?)payload["agent_jkt"]);
         Assert.Equal(ResourceTokenBuilder.ResourceDwk, (string?)payload["dwk"]);
         Assert.Equal("calendar.read", (string?)payload["scope"]);
+
+        static AAuthRequirementHeader.ParsedRequirement Requirement(HttpResponseMessage response)
+        {
+            Assert.True(response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values),
+                "401 response is missing the AAuth-Requirement header.");
+            return AAuthRequirementHeader.Parse(string.Join(", ", values!));
+        }
     }
 
     [Fact]
@@ -470,8 +528,8 @@ public class CalendarFlowTests : IAsyncLifetime
         consentCalendar = calendar;
 
         var agentKey = AAuthKey.Generate();
-        const string AgentId = "aauth:consent@ap.test";
-        var agentToken = new AgentTokenBuilder
+        const string AgentId = "aauth:consent@ap.example";
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -480,7 +538,7 @@ public class CalendarFlowTests : IAsyncLifetime
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         // Routing handler so the agent's single signed pipeline can reach
         // both the consent-PS and the consent-aware Calendar by host name.
@@ -519,7 +577,8 @@ public class CalendarFlowTests : IAsyncLifetime
         };
         var exchangeHttp = new InProcessHttpClient(exchangeSigning);
         var metadata = new MetadataClient(new InProcessHttpClient(RoutingHandler()));
-        var exchange = new TokenExchangeClient(exchangeHttp, metadata);
+        var exchange = new TokenExchangeClient(exchangeHttp, metadata,
+            new TokenExchangeClientOptions { JwksClient = new JwksClient(new InProcessHttpClient(RoutingHandler())) });
 
         var pollerOptions = new DeferredPollerOptions
         {
@@ -543,7 +602,7 @@ public class CalendarFlowTests : IAsyncLifetime
         Assert.True(response.IsSuccessStatusCode,
             $"Status={(int)response.StatusCode}, Body={rawBody}");
         var body = JsonNode.Parse(rawBody) as JsonObject;
-        Assert.Equal(AgentId, (string?)body!["agent"]);
+        Assert.Equal(PsIssuer, (string?)body!["ps"]);
         Assert.Equal(MockPersonServer.SampleIdentityClaimsAsserter.DirectedSubject(CalendarIssuer), (string?)body["sub"]);
 
         // Carrier swapped to the post-exchange auth token, just like the
@@ -587,6 +646,7 @@ public class CalendarFlowTests : IAsyncLifetime
         using var calendar = new WebApplicationFactory<Calendar.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", CalendarIssuer);
+            b.UseSetting("AAuth:TrustedPersonServers:0", PsIssuer);
             b.ConfigureServices(services =>
             {
                 services.RemoveAll<MetadataClient>();
@@ -604,8 +664,8 @@ public class CalendarFlowTests : IAsyncLifetime
         consentCalendar = calendar;
 
         var agentKey = AAuthKey.Generate();
-        const string AgentId = "aauth:denier@ap.test";
-        var agentToken = new AgentTokenBuilder
+        const string AgentId = "aauth:denier@ap.example";
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -614,7 +674,7 @@ public class CalendarFlowTests : IAsyncLifetime
             Key = ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
 
         HttpMessageHandler RoutingHandler() => new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
         {
@@ -641,7 +701,8 @@ public class CalendarFlowTests : IAsyncLifetime
         };
         var exchangeHttp = new InProcessHttpClient(exchangeSigning);
         var metadata = new MetadataClient(new InProcessHttpClient(RoutingHandler()));
-        var exchange = new TokenExchangeClient(exchangeHttp, metadata);
+        var exchange = new TokenExchangeClient(exchangeHttp, metadata,
+            new TokenExchangeClientOptions { JwksClient = new JwksClient(new InProcessHttpClient(RoutingHandler())) });
 
         var pollerOptions = new DeferredPollerOptions
         {
@@ -663,8 +724,10 @@ public class CalendarFlowTests : IAsyncLifetime
         await Assert.ThrowsAsync<AAuthInteractionDeniedException>(
             () => client.GetAsync($"{CalendarIssuer}/events"));
 
-        // Carrier did NOT swap — the agent never received an auth token.
-        Assert.Equal(agentToken, holder.Current);
+        // The carrier holds the person token from the first leg; the denied
+        // auth token request never replaced it.
+        Assert.Equal(PersonTokenBuilder.TokenType, (string?)JsonNode.Parse(
+            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Decode(holder.Current.Split('.')[0]))!["typ"]);
     }
 
     // -------------------------------------------------------------------
@@ -697,7 +760,8 @@ public class CalendarFlowTests : IAsyncLifetime
             };
             var exchangeHttp = new InProcessHttpClient(exchangeSigning);
             var metadata = new MetadataClient(new InProcessHttpClient(RoutingHandler()));
-            var exchange = new TokenExchangeClient(exchangeHttp, metadata);
+            var exchange = new TokenExchangeClient(exchangeHttp, metadata,
+                new TokenExchangeClientOptions { JwksClient = new JwksClient(new InProcessHttpClient(RoutingHandler())) });
             resourceInner = new ChallengeHandler(exchange, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy },
                 metadata, new JwksClient(new InProcessHttpClient(RoutingHandler())), personServer)
             {
@@ -788,7 +852,7 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             var path = request.RequestUri!.AbsolutePath;
             string json;
-            if (path == "/.well-known/aauth-agent.json")
+            if (path is "/.well-known/aauth-agent.json" or "/.well-known/aauth-person.json")
                 json = _metadataJson;
             else if (path == "/.well-known/jwks.json")
                 json = _jwksJson;

@@ -7,8 +7,9 @@ public class EventPersistenceTests : IDisposable
 {
     private readonly string _path = Path.Combine(Path.GetTempPath(), "events-" + Guid.NewGuid().ToString("N") + ".db");
     private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
+    private const string Jkt = "agent-key-thumbprint";
     private SqliteEventStore Store() => new(_path);
-    private static EventEnvelope Envelope(string token = "token") => new(token, "eid", "https://resource.example",
+    private static EventEnvelope Envelope(string token = "token", string? jti = null) => new(token, "eid", jti ?? token, "https://resource.example",
         "aauth:agent@ap.example", Now.AddMinutes(5), [1, 2, 3]);
 
     [Fact]
@@ -16,11 +17,11 @@ public class EventPersistenceTests : IDisposable
     {
         Store().Create(new("eid", "aauth:agent@ap.example", "https://resource.example", Now.AddHours(1), 3));
         var results = await Task.WhenAll(Enumerable.Range(0, 30).Select(index => Task.Run(() => Store().Accept(Envelope("token-" + index), Now))));
-        Assert.Equal(3, results.Count(result => result.StatusCode == 202));
-        Assert.Equal(27, results.Count(result => result.StatusCode == 429));
+        Assert.Equal(3, results.Count(result => result.Outcome == EventAcceptanceOutcome.Accepted));
+        Assert.Equal(27, results.Count(result => result.Outcome == EventAcceptanceOutcome.Exhausted));
         var pending = Store().Pending("aauth:agent@ap.example");
         Assert.Equal(3, pending.Count);
-        Assert.Equal(new EventAcceptance(202, 0), Store().Accept(pending[0].Event, Now));
+        Assert.Equal(new EventAcceptance(EventAcceptanceOutcome.Duplicate, 0), Store().Accept(pending[0].Event, Now));
         Assert.False(Store().Acknowledge("aauth:other@ap.example", pending[0].Receipt));
         Assert.True(Store().Acknowledge("aauth:agent@ap.example", pending[0].Receipt));
         Assert.Equal(2, Store().Pending("aauth:agent@ap.example").Count);
@@ -39,28 +40,29 @@ public class EventPersistenceTests : IDisposable
         Assert.Empty(Store().Pending("aauth:agent@ap.example"));
         command.CommandText = "DROP TRIGGER fail_outbox";
         command.ExecuteNonQuery();
-        Assert.Equal(new EventAcceptance(202, 0), Store().Accept(Envelope(), Now));
+        Assert.Equal(new EventAcceptance(EventAcceptanceOutcome.Accepted, 0), Store().Accept(Envelope(), Now));
     }
 
     [Fact]
     public void UnlimitedAndBindingAndExpiry()
     {
         Store().Create(new("eid", "aauth:agent@ap.example", "https://resource.example", Now.AddHours(1), null));
-        for (var index = 0; index < 8; index++) Assert.Equal(new EventAcceptance(202), Store().Accept(Envelope("token" + index), Now));
-        Assert.Equal(403, Store().Accept(Envelope() with { Issuer = "https://other.example" }, Now).StatusCode);
-        Assert.Equal(403, Store().Accept(Envelope() with { Agent = "aauth:other@ap.example" }, Now).StatusCode);
-        Assert.Equal(404, Store().Accept(Envelope() with { Eid = "unknown" }, Now).StatusCode);
-        Assert.Equal(404, Store().Accept(Envelope(), Now.AddHours(2)).StatusCode);
-        Assert.Equal(400, Store().Accept(Envelope() with { ExpiresAt = Now }, Now).StatusCode);
+        for (var index = 0; index < 8; index++) Assert.Equal(new EventAcceptance(EventAcceptanceOutcome.Accepted), Store().Accept(Envelope("token" + index), Now));
+        Assert.Equal(EventAcceptanceOutcome.Forbidden, Store().Accept(Envelope() with { Issuer = "https://other.example" }, Now).Outcome);
+        Assert.Equal(EventAcceptanceOutcome.Forbidden, Store().Accept(Envelope() with { Agent = "aauth:other@ap.example" }, Now).Outcome);
+        Assert.Equal(EventAcceptanceOutcome.Unknown, Store().Accept(Envelope() with { Eid = "unknown" }, Now).Outcome);
+        Assert.Equal(EventAcceptanceOutcome.Expired, Store().Accept(Envelope(), Now.AddHours(2)).Outcome);
+        Assert.Equal(EventAcceptanceOutcome.Expired, Store().Accept(Envelope() with { ExpiresAt = Now }, Now).Outcome);
     }
 
     [Fact]
     public async Task TicketRedemptionIsAtomicAndPreservesAccount()
     {
         Store().SetState("receive", "work", "state-1");
-        Store().IssueTicket(new("ticket", "aauth:agent@ap.example", "receive", "work", "state-1", Now.AddMinutes(2)));
-        ResourceSubscription Subscription(int index) => new("eid" + index, "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddDays(1));
-        Assert.Equal(403, Store().Register(Subscription(0) with { Agent = "aauth:other@ap.example" }, "ticket", Now).StatusCode);
+        Store().IssueTicket(new("ticket", Jkt, "receive", "work", "state-1", Now.AddMinutes(2)));
+        ResourceSubscription Subscription(int index) => new("eid" + index, "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddDays(1), Jkt);
+        Assert.Equal(403, Store().Register(Subscription(0) with { KeyThumbprint = "other-key" }, "ticket", Now).StatusCode);
+        Assert.Equal(403, Store().Register(Subscription(0) with { KeyThumbprint = null }, "ticket", Now).StatusCode);
         Assert.Equal(403, Store().Register(Subscription(0) with { Operation = "other" }, "ticket", Now).StatusCode);
         var results = await Task.WhenAll(Enumerable.Range(0, 16).Select(index => Task.Run(() => Store().Register(Subscription(index), "ticket", Now))));
         var success = Assert.Single(results, result => result.StatusCode == 200);
@@ -72,9 +74,9 @@ public class EventPersistenceTests : IDisposable
     public void StaleAndExpiredTicketsAndDuplicateRegistrationsFail()
     {
         Store().SetState("receive", "work", "new-state");
-        Store().IssueTicket(new("stale", "aauth:agent@ap.example", "receive", "work", "old-state", Now.AddMinutes(2)));
-        Store().IssueTicket(new("expired", "aauth:agent@ap.example", "receive", "work", "new-state", Now));
-        var subscription = new ResourceSubscription("eid", "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddDays(1));
+        Store().IssueTicket(new("stale", Jkt, "receive", "work", "old-state", Now.AddMinutes(2)));
+        Store().IssueTicket(new("expired", Jkt, "receive", "work", "new-state", Now));
+        var subscription = new ResourceSubscription("eid", "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddDays(1), Jkt);
         Assert.Equal(409, Store().Register(subscription, "stale", Now).StatusCode);
         Assert.Equal(404, Store().Register(subscription, "expired", Now).StatusCode);
         Assert.Equal(200, Store().Register(subscription, null, Now).StatusCode);
@@ -82,23 +84,35 @@ public class EventPersistenceTests : IDisposable
     }
 
     [Fact]
-    public void AgentContextAndLiteralIssuerEidDedupPersist()
+    public void AgentContextPersistsAndEventsDedupeOnIssuerAndJti()
     {
         var context = new AgentEventContext("eid", "https://resource.example", "aauth:agent@ap.example", "work reservation");
         Store().Remember(context);
         Assert.Equal(context, Store().FindContext("eid"));
         Assert.True(Store().RecordOnce(new(context, Envelope()), Now));
-        Assert.False(Store().RecordOnce(new(context, Envelope("different-token")), Now));
-        Assert.False(Store().RecordOnce(new(context, Envelope() with { ExpiresAt = Now }), Now));
-        Assert.Single(Store().ReadEvents(context.Agent));
+        Assert.False(Store().RecordOnce(new(context, Envelope("re-signed", jti: "token")), Now));
+        // Every event on a subscription shares its eid; a new jti is a new event (Events L363).
+        Assert.True(Store().RecordOnce(new(context, Envelope("second")), Now));
+        Assert.False(Store().RecordOnce(new(context, Envelope("third") with { ExpiresAt = Now }), Now));
+        Assert.Equal(2, Store().ReadEvents(context.Agent).Count);
     }
 
     [Fact]
-    public void ResourceFailureRollsBackTicketAndPreparedDeliverySurvivesRestart()
+    public void ProviderAcceptsEachJtiOnceWithoutSpendingQuotaOnDuplicates()
+    {
+        Store().Create(new("eid", "aauth:agent@ap.example", "https://resource.example", Now.AddHours(1), 2));
+        Assert.Equal(new EventAcceptance(EventAcceptanceOutcome.Accepted, 1), Store().Accept(Envelope("first"), Now));
+        Assert.Equal(new EventAcceptance(EventAcceptanceOutcome.Duplicate, 1), Store().Accept(Envelope("first-re-signed", jti: "first"), Now));
+        Assert.Equal(new EventAcceptance(EventAcceptanceOutcome.Accepted, 0), Store().Accept(Envelope("second"), Now));
+        Assert.Equal(2, Store().Pending("aauth:agent@ap.example").Count);
+    }
+
+    [Fact]
+    public async Task ResourceFailureRollsBackTicketAndPreparedDeliverySurvivesRestart()
     {
         Store().SetState("receive", "work", "state");
-        Store().IssueTicket(new("ticket", "aauth:agent@ap.example", "receive", "work", "state", Now.AddMinutes(5)));
-        var subscription = new ResourceSubscription("eid", "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddHours(1));
+        Store().IssueTicket(new("ticket", Jkt, "receive", "work", "state", Now.AddMinutes(5)));
+        var subscription = new ResourceSubscription("eid", "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddHours(1), Jkt);
         using var connection = new SqliteConnection("Data Source=" + _path);
         connection.Open();
         using var command = connection.CreateCommand();
@@ -108,8 +122,8 @@ public class EventPersistenceTests : IDisposable
         command.CommandText = "DROP TRIGGER fail_registration";
         command.ExecuteNonQuery();
         Assert.Equal(200, Store().Register(subscription, "ticket", Now).StatusCode);
-        var first = Store().PrepareDelivery(subscription.Provider, subscription.Eid, () => Envelope());
-        var retry = Store().PrepareDelivery(subscription.Provider, subscription.Eid, () => throw new InvalidOperationException("must not reissue"));
+        var first = await Store().PrepareDeliveryAsync(subscription.Provider, subscription.Eid, () => Task.FromResult(Envelope()));
+        var retry = await Store().PrepareDeliveryAsync(subscription.Provider, subscription.Eid, () => throw new InvalidOperationException("must not reissue"));
         Assert.Equal(first.Token, retry.Token);
         Assert.Equal(first.Body, retry.Body);
     }
@@ -118,9 +132,9 @@ public class EventPersistenceTests : IDisposable
     public void RetryCannotReplacePersistedBodyOrReconsumeQuota()
     {
         Store().Create(new("eid", "aauth:agent@ap.example", "https://resource.example", Now.AddHours(1), 2));
-        Assert.Equal(new EventAcceptance(202, 1), Store().Accept(Envelope(), Now));
-        Assert.Equal(400, Store().Accept(Envelope() with { Body = [9] }, Now).StatusCode);
-        Assert.Equal(new EventAcceptance(202, 1), Store().Accept(Envelope(), Now));
+        Assert.Equal(new EventAcceptance(EventAcceptanceOutcome.Accepted, 1), Store().Accept(Envelope(), Now));
+        Assert.Equal(EventAcceptanceOutcome.Forbidden, Store().Accept(Envelope() with { Body = [9] }, Now).Outcome);
+        Assert.Equal(new EventAcceptance(EventAcceptanceOutcome.Duplicate, 1), Store().Accept(Envelope(), Now));
         Assert.Equal(new byte[] { 1, 2, 3 }, Assert.Single(Store().Pending("aauth:agent@ap.example")).Event.Body);
     }
 

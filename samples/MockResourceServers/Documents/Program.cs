@@ -3,6 +3,7 @@ using AAuth;
 using AAuth.Crypto;
 using AAuth.Headers;
 using AAuth.Server;
+using AAuth.Server.Challenge;
 using AAuth.Server.Verification;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.WebUtilities;
@@ -18,45 +19,58 @@ builder.Services.AddAAuthResource(options =>
 {
     options.EgressPolicy = SampleEgress.Policy;
     options.Issuer = issuer;
+    options.RevocationEndpoint = $"{issuer}/revoke";
+    options.ConfigureRevocation = revocation =>
+        revocation.IsAcceptedIssuer = caller => caller == person;
     options.Name = "Document Release";
     options.SigningKeys[kid] = key;
     options.ScopeDescriptions = scopes;
 });
 var app = builder.Build();
 app.MapAAuthWellKnown();
+app.MapAAuthResourceRevocation();
 var permissions = new ConcurrentDictionary<string, Permission>();
 var callbacks = new ConcurrentDictionary<string, string>();
 var sessions = new BrowserConsentSessions("AAuth.Documents.Consent",
     builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "document-owner-demo" : null);
-app.UseWhen(context => context.Request.Path == "/document", branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+app.UseWhen(context => context.Request.Path == "/document", branch => branch.UseAAuthVerification(options =>
 {
-    EgressPolicy = SampleEgress.Policy, ResourceIdentifier = issuer, AcceptedSchemes = ["jwt"],
-    ExpectedAccount = _ => "work",
-    TrustedAuthTokenIssuers = new HashSet<string> { person },
+    options.EgressPolicy = SampleEgress.Policy;
+    options.ResourceIdentifier = issuer;
+    options.AcceptedSchemes = ["jwt"];
+    options.ExpectedAccount = _ => "work";
+    options.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { person };
 }));
-app.MapGet("/document", (HttpContext context) =>
+var challenge = new ChallengeOptions
+{
+    EgressPolicy = SampleEgress.Policy, ResourceIdentifier = issuer, ResourceSigningKeys = new AAuthSigningKeySet(kid, key),
+};
+app.MapGet("/document", async (HttpContext context) =>
 {
     foreach (var expired in permissions.Where(pair => pair.Value.ExpiresAt <= DateTimeOffset.UtcNow)) permissions.TryRemove(expired.Key, out _);
     var identity = context.GetAAuthVerification()!;
+    // §Person Token Required: learn who the agent acts for before issuing anything.
     if (identity.TokenType == AAuthTokenType.AgentToken)
     {
-        var permission = new Permission(identity.Agent!, identity.Jkt!);
+        context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatPersonToken();
+        return AAuthProblemDetails.Create("person_token_required", statusCode: 401);
+    }
+    var personKey = $"{identity.PersonServer}|{identity.Subject}";
+    if (identity.TokenType == AAuthTokenType.PersonToken)
+    {
+        var permission = new Permission(personKey, identity.Jkt!);
         permissions[permission.Id] = permission;
-        var token = new ResourceTokenBuilder
-        {
-            EgressPolicy = SampleEgress.Policy, Issuer = issuer, Audience = person,
-            Agent = identity.Agent!, AgentJkt = identity.Jkt!, Key = key, KeyId = kid,
-            Scope = "documents.read", ScopeDescriptions = scopes, Account = "work",
-            Interaction = new Interaction(issuer + "/permission", permission.Browser.Code),
-        }.Build();
+        var token = await AAuthChallengeMiddleware.BuildResourceTokenAsync(challenge, context.GetAAuthVerifiedAssertion()!,
+            "documents.read", account: "work", scopeDescriptions: scopes,
+            interaction: new Interaction(issuer + "/permission", permission.Browser.Code), cancellationToken: context.RequestAborted);
         context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatAuthToken(token);
         return AAuthProblemDetails.Create("auth_token_required", statusCode: 401);
     }
     var payload = context.GetAAuthParsedKey()!.Payload!;
     if ((string?)payload["scope"] != "documents.read" || (string?)payload["account"] != "work"
-        || !permissions.Values.Any(permission => permission.Allowed && permission.Agent == identity.Agent && permission.Key == identity.Jkt))
+        || !permissions.Values.Any(permission => permission.Allowed && permission.Person == personKey && permission.Key == identity.Jkt))
         return AAuthProblemDetails.Create("denied", statusCode: 403);
-    return Results.Json(new { title = "Travel document", released = true, account = "work", content = "Confirmed itinerary: Kyoto, 14 September.", agent = identity.Agent });
+    return Results.Json(new { title = "Travel document", released = true, account = "work", content = "Confirmed itinerary: Kyoto, 14 September.", sub = identity.Subject });
 });
 app.MapMethods("/permission", ["GET", "POST"], async (HttpContext context) =>
 {
@@ -95,10 +109,10 @@ foreach (var action in new[] { "approve", "deny" })
     }).DisableAntiforgery();
 app.Run();
 
-sealed class Permission(string agent, string key)
+sealed class Permission(string person, string key)
 {
     public string Id { get; } = Guid.NewGuid().ToString("N");
-    public string Agent { get; } = agent;
+    public string Person { get; } = person;
     public string Key { get; } = key;
     public bool Allowed { get; set; }
     public DateTimeOffset ExpiresAt { get; } = DateTimeOffset.UtcNow.AddMinutes(5);

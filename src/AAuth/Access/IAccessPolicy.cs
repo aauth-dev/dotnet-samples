@@ -101,8 +101,7 @@ public sealed class AccessDecision
         string? reason = null,
         string? interactionUrl = null,
         IReadOnlyList<string>? requiredClaims = null,
-        string? paymentUrl = null,
-        string? subject = null,
+        AAuthPaymentChallenge? paymentChallenge = null,
         string? tenant = null,
         IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null)
     {
@@ -110,8 +109,7 @@ public sealed class AccessDecision
         Reason = reason;
         InteractionUrl = interactionUrl;
         RequiredClaims = requiredClaims;
-        PaymentUrl = paymentUrl;
-        Subject = subject;
+        PaymentChallenge = paymentChallenge;
         Tenant = tenant;
         AdditionalClaims = additionalClaims;
     }
@@ -136,32 +134,23 @@ public sealed class AccessDecision
     /// </summary>
     public IReadOnlyList<string>? RequiredClaims { get; }
 
-    /// <summary>
-    /// The payment URL advertised in the <c>Location</c> header
-    /// (<see cref="AccessDecisionKind.NeedsPayment"/>, §Payment Required).
-    /// </summary>
-    public string? PaymentUrl { get; }
+    /// <summary>Payment-protocol details for <see cref="AccessDecisionKind.NeedsPayment"/>.</summary>
+    public AAuthPaymentChallenge? PaymentChallenge { get; }
 
     /// <summary>
-    /// Optional directed (pairwise) user identifier the policy asserts on an
-    /// <see cref="AccessDecisionKind.Allow"/>. When the principal's identity
-    /// arrives via a §Claims Required push instead, the host uses the pushed
-    /// <c>sub</c>.
+    /// Optional <c>tenant</c> claim asserted on an allow, used only when the
+    /// presented token carried none. The token's <c>sub</c> is always the resource token's.
     /// </summary>
-    public string? Subject { get; }
-
-    /// <summary>Optional <c>tenant</c> claim asserted on an allow.</summary>
     public string? Tenant { get; }
 
     /// <summary>Optional extra identity claims asserted on an allow.</summary>
     public IReadOnlyDictionary<string, JsonNode?>? AdditionalClaims { get; }
 
-    /// <summary>Grant access. Optionally assert a directed identity on the token.</summary>
+    /// <summary>Grant access, optionally asserting extra identity claims.</summary>
     public static AccessDecision Allow(
-        string? subject = null,
         string? tenant = null,
         IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null)
-        => new(AccessDecisionKind.Allow, subject: subject, tenant: tenant, additionalClaims: additionalClaims);
+        => new(AccessDecisionKind.Allow, tenant: tenant, additionalClaims: additionalClaims);
 
     /// <summary>Deny access with a reason.</summary>
     public static AccessDecision Deny(string reason)
@@ -175,9 +164,12 @@ public sealed class AccessDecision
     public static AccessDecision NeedsClaims(IReadOnlyList<string> requiredClaims)
         => new(AccessDecisionKind.NeedsClaims, requiredClaims: requiredClaims);
 
-    /// <summary>Require payment, advertising a payment URL in the <c>Location</c> header.</summary>
-    public static AccessDecision NeedsPayment(string paymentUrl)
-        => new(AccessDecisionKind.NeedsPayment, paymentUrl: paymentUrl);
+    /// <summary>
+    /// Require payment. The endpoint supplies the polling <c>Location</c>;
+    /// <paramref name="challenge"/> carries payment-protocol details.
+    /// </summary>
+    public static AccessDecision NeedsPayment(AAuthPaymentChallenge challenge)
+        => new(AccessDecisionKind.NeedsPayment, paymentChallenge: challenge);
 
     public static AccessDecision NeedsClarification(string question, int? timeoutSeconds = null,
         IReadOnlyList<string>? options = null)

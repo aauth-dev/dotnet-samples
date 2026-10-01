@@ -70,7 +70,7 @@ internal static class DocumentationSnippetContext
         private string scope = "read", mode = "jwt", dwk = "aauth-agent.json", headerS256 = "held-digest", proposalHash = "held-digest";
         private Uri pendingUrl = null!, subscriptionUrl = null!;
         private byte[] approvalBodyBytes = [], payloadBytes = [], subscriptionParameters = [];
-        private Dictionary<string, IAAuthKey> signingKeys = [];
+        private AAuthSigningKeySet signingKeys = new();
         private HashSet<string> trustedAccessServers = [];
         private JsonObject claims = null!, upstreamAct = null!, upstreamActNode = null!, validatedUpstreamAct = null!, parameters = null!;
         private object reservation = null!;
@@ -78,6 +78,9 @@ internal static class DocumentationSnippetContext
         private R3Enforcement enforcement = null!;
         private string auditPath = "/configured-private-data/r3-audit.sqlite";
         private ILogger logger = null!;
+        private PersonPendingEntry entry = null!;
+        private IPersonPendingStore pending = null!;
+        private CancellationToken cancellationToken;
         private IAgentProviderEventStore durableProviderStore = null!, providerStore = null!;
         private IResourceEventStore durableResourceStore = null!;
         private IAgentEventStore durableAgentStore = null!, agentStore = null!;
@@ -113,6 +116,7 @@ internal static class DocumentationSnippetContext
         private Func<JsonObject, bool> validateSubscriptionParameters = null!;
         private TokenExchangeClient originalExchange = null!;
         private string intermediaryResourceToken = "held-resource-token", workerToken = "held-child-token", parentToken = "held-parent-token";
+        private string personToken = "held-person-token", workerPersonToken = "held-person-token";
         private AAuthKey parentKey = null!;
         private TokenExchangeRequest consentOptions = null!;
         private HttpClient workerClient = null!;

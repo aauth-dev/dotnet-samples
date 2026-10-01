@@ -69,6 +69,8 @@ internal sealed class DeferredExchange
         _metadata = metadata;
     }
 
+    internal MetadataClient Metadata => _metadata;
+
     /// <summary>
     /// Fetch PS metadata and resolve the endpoint named <paramref name="field"/>,
     /// pinned to the same origin as <paramref name="personServer"/> and required
@@ -163,9 +165,26 @@ internal sealed class DeferredExchange
 
                     clarificationExchange ??= new ClarificationExchange(
                         _signedClient, pendingUrl, options.MaxClarificationRounds);
-                    var decision = await options.OnClarificationRequired(clarification!, cancellationToken).WaitAsync(cancellationToken)
-                        .ConfigureAwait(false);
-                    await clarificationExchange.ApplyAsync(decision, cancellationToken).ConfigureAwait(false);
+                    using var roundDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    if (clarification!.TimeoutSeconds is int timeoutSeconds)
+                    {
+                        roundDeadline.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+                    }
+
+                    ClarificationResponse decision;
+                    try
+                    {
+                        decision = await options.OnClarificationRequired(clarification, roundDeadline.Token)
+                            .WaitAsync(roundDeadline.Token).ConfigureAwait(false);
+                        roundDeadline.Token.ThrowIfCancellationRequested();
+                        await clarificationExchange.ApplyAsync(decision, roundDeadline.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException exception)
+                        when (!cancellationToken.IsCancellationRequested && roundDeadline.IsCancellationRequested)
+                    {
+                        throw new AAuthInteractionTimeoutException(
+                            "Clarification response exceeded the server deadline.", exception);
+                    }
 
                     // After answering, the PS may escalate to a user-interaction
                     // gate (§Clarification Chat then §User Interaction). Stop the
@@ -224,10 +243,10 @@ internal sealed class DeferredExchange
             // mission referenced by the request is no longer active.
             if (response.StatusCode == HttpStatusCode.Forbidden
                 && await TryReadMissionTerminatedAsync(response, cancellationToken).ConfigureAwait(false)
-                    is var (terminated, missionStatus) && terminated)
+                    is var (terminated, missionStatus, terminationReason) && terminated)
             {
                 response.Dispose();
-                throw new AAuthMissionTerminatedException(missionStatus);
+                throw new AAuthMissionTerminatedException(missionStatus, terminationReason);
             }
 
             ownsResponse = false;
@@ -295,7 +314,7 @@ internal sealed class DeferredExchange
             : baseOptions with { StopWhenAccepted = Stop };
     }
 
-    private static (bool Terminated, string? MissionStatus) ReadMissionTerminated(string body)
+    private static (bool Terminated, string? MissionStatus, string? TerminationReason) ReadMissionTerminated(string body)
     {
         try
         {
@@ -304,17 +323,20 @@ internal sealed class DeferredExchange
                 && errorValue.TryGetValue<string>(out var error)
                 && error == AAuthMissionTerminatedException.ErrorCode)
             {
-                return (true, (string?)json?["mission_status"]);
+                return (true, Text(json["mission_status"]), Text(json["termination_reason"]));
             }
         }
         catch (JsonException)
         {
             // Not a mission-terminated body.
         }
-        return (false, null);
+        return (false, null, null);
+
+        static string? Text(JsonNode? node)
+            => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
     }
 
-    internal static async Task<(bool Terminated, string? MissionStatus)> TryReadMissionTerminatedAsync(
+    internal static async Task<(bool Terminated, string? MissionStatus, string? TerminationReason)> TryReadMissionTerminatedAsync(
         HttpResponseMessage response, CancellationToken cancellationToken)
     {
         var body = await BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);

@@ -7,22 +7,24 @@ import {
   expectResponse,
   readResponseJson,
   doneSteps,
+  decidePersonServerPrompt,
   TourMode,
 } from '../../../tests/e2e/helpers/tour';
 import { decideAccessConsent } from '../../../tests/e2e/helpers/consent';
-import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
-import { approvePersonConsent } from '../../../tests/e2e/helpers/consent';
+import { Urls } from '../../../tests/e2e/helpers/agents';
+import { directedSubject } from '../../../tests/e2e/helpers/consent';
 
 /**
  * Federated (four-party) — Guided Tour, interactive consent path.
  *
  * Runs against a **stub** Access Server with `RequireConsent=true` (no Keycloak
- * / Docker). The resource's /wallet branch challenges with a resource_token
- * whose `aud` is the Access Server; the PS federates to the AS, which returns
- * `202 requirement=interaction`. The PS relays it, the tour parks on the
- * user-approval step and surfaces the AS interaction link, and the user clicks
+ * / Docker). The agent first gets a person token for the Wallet and presents
+ * it; the Wallet's /wallet branch then challenges with a resource_token whose
+ * `aud` is the Access Server. The PS asks for its own consent first, then
+ * federates to the AS, which returns `202 requirement=interaction`. The PS
+ * relays it, the tour surfaces the AS interaction link, and the user clicks
  * **Approve** on the Access Server's own consent screen — exactly like the
- * three-party deferred flow, but the consent screen is the AS's (badged
+ * three-party deferred flow, but the final consent screen is the AS's (badged
  * *Access Server*) rather than the Person Server's.
  *
  * From the agent's perspective the stub AS and Keycloak are identical (same
@@ -42,15 +44,17 @@ test.describe('Federated (Guided Tour)', () => {
     await expect(page.locator('.lanes .lane.ps')).toContainText('Person Server');
     await expect(page.locator('.lanes .lane.as')).toContainText('Access Server');
 
-    // Run all: the exchange returns 202, the plan expands to 10 steps and parks
-    // on the user-approval step (6 done) with the AS interaction link shown.
+    // Run all: the exchange returns 202, the plan expands to 12 steps and the
+    // agent polls from the waiting step (9 done). The PS consent comes first
+    // (decided on the PS dashboard), then the PS relays the AS interaction and
+    // the polling banner switches to the Access Server link.
     await runAll(page);
-    await approvePersonConsent(page, 'a.primary.approve');
+    await decidePersonServerPrompt(page, 'approve', { done: 9 });
     const link = page.locator('a.worker-consent');
     await expect(link).toBeVisible();
+    await expect(link).toHaveText('Open Access Server consent page');
 
-    // Opening the link starts the background poll loop and opens the Access
-    // Server's consent page in a new tab.
+    // The link opens the Access Server's consent page; the poll keeps running.
     const [popup] = await Promise.all([
       context.waitForEvent('page'),
       link.click(),
@@ -58,25 +62,33 @@ test.describe('Federated (Guided Tour)', () => {
     // The AS consent screen is unmistakably badged "Access Server".
     await decideAccessConsent(popup);
 
-    // The poll loop resolves and records the auth_token step (8 of 10). Running
-    // again finishes the replay (9) and inspect (10) steps.
-    await expect(doneSteps(page)).toHaveCount(8, { timeout: 120_000 });
-    await runAll(page);
-    await expect(doneSteps(page)).toHaveCount(10, { timeout: 30_000 });
+    // The poll loop resolves the auth_token step (10) and "Run all" finishes
+    // the replay (11) and inspect (12) steps. Opening the link records nothing.
+    await expect(doneSteps(page)).toHaveCount(12, { timeout: 120_000 });
+    await expect(page.locator('header.topbar .error')).toHaveCount(0);
 
-    // Step 9 ("Replay GET /wallet with auth_token → 200") holds the result.
-    await selectStep(page, 8);
+    // Step 5 ("GET /wallet with person token → 401"): the Wallet verified the
+    // person token and issued a resource token for the Access Server.
+    await selectStep(page, 4);
+    await expectResponse(page, 401);
+    await expect(page.locator('section.payload')).toContainText('requirement=auth-token');
+
+    // Step 11 ("Replay GET /wallet with auth_token → 200") holds the result.
+    await selectStep(page, 10);
     await expectResponse(page, 200, ['four-party']);
 
     const json = (await readResponseJson(page)) as Record<string, unknown>;
     expect(json.accessMode).toBe('four-party');
     expect(json.scheme).toBe('jwt');
-    expect(json.agent).toBe(Agents.tour);
+    // The AS copied the person (ps, sub) from the resource token; no agent claim.
+    expect(json.ps).toBe(Urls.personServer);
+    expect(json.sub).toBe(directedSubject(Urls.wallet));
+    expect(json.userKey).toBe(`${Urls.personServer}|${directedSubject(Urls.wallet)}`);
     expect(json.scope).toEqual(['wallet.read']);
     // The auth token is issued by the Access Server, not the Person Server.
     expect(json.iss).toBe(Urls.accessServer);
-    // Four-party direct authorization — no act chain.
-    expect(json.act).toBeFalsy();
+    expect(json).not.toHaveProperty('agent');
+    expect(json).not.toHaveProperty('act');
   });
 
   test('deny at the AS consent page aborts the flow', async ({ page, context }) => {
@@ -84,7 +96,7 @@ test.describe('Federated (Guided Tour)', () => {
     await selectFlow(page, TourMode.Federated);
 
     await runAll(page);
-    await approvePersonConsent(page, 'a.primary.approve');
+    await decidePersonServerPrompt(page, 'approve');
     const link = page.locator('a.worker-consent');
     await expect(link).toBeVisible();
 

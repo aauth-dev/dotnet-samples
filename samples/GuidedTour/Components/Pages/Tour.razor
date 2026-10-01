@@ -4,6 +4,7 @@
 @inject TourSession Session
 @inject Microsoft.Extensions.Options.IOptions<TourOptions> Options
 @inject TourAgentIdentity AgentIdentity
+@using AAuth.Samples.Capabilities
 
 <PageTitle>AAuth Guided Tour</PageTitle>
 
@@ -12,15 +13,15 @@
     <h1>AAuth Guided Tour</h1>
     <div class="config">
         <span class="hl-resource"><strong>@Session.ResourceDisplayName:</strong> @Session.ResourceBaseUrl</span>
-        @if (Session.IsCallChainMode)
+        @if (Session.IsCallChainMode || (Session.IsWalletProtocolMode && Session.WalletScenario == WalletFlow.AsGrantChaining))
         {
             <span class="hl-resource"><strong>Concierge:</strong> @Options.Value.ConciergeUrl</span>
         }
-        @if (Session.IsFederatedMode)
+        @if (Session.IsFederatedMode || Session.IsWalletProtocolMode)
         {
             <span class="hl-as"><strong>Access Server:</strong> @Options.Value.AccessServerUrl</span>
         }
-        @if (Session.IsRichRequestsMode)
+        @if (Session.IsRichRequestsMode || Session.IsCatalogMode || (Session.IsEventsMode && Session.EventsProtected))
         {
             <span class="hl-as"><strong>R3 Access Server:</strong> @Options.Value.R3AccessServerUrl</span>
         }
@@ -28,7 +29,7 @@
         {
             <span class="hl-ps"><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none)" : Options.Value.PersonServerUrl)</span>
         }
-        @if (Session.Mode is TourMode.Bootstrap or TourMode.SubAgent)
+        @if (Session.Mode is TourMode.Bootstrap or TourMode.SubAgent or TourMode.Events)
         {
             <span class="hl-agent"><strong>Agent Provider:</strong> @Options.Value.AgentProviderUrl</span>
         }
@@ -50,15 +51,57 @@
         <label class="flow-picker__label" for="signing-mode-select">
             <span class="flow-picker__title">Signature scheme</span>
             <select id="signing-mode-select" value="@Session.SigningMode" @onchange="OnSigningModeChanged" disabled="@_busy">
-                <option value="@SigningMode.Hwk">Pseudonymous (hwk) — key only, no identity</option>
-                <option value="@SigningMode.Jwks">Direct JWKS (jwks) - URL identity</option>
-                <option value="@SigningMode.JktJwt">Key Rotation (jkt-jwt) — ephemeral keys</option>
+                <option value="@SigningMode.Jwt">AAuth agent-token identity (jwt)</option>
+                <option value="@SigningMode.Hwk">Generic Signature-Key primitive (non-AAuth): hwk</option>
+                <option value="@SigningMode.Jwks">Generic Signature-Key primitive (non-AAuth): jwks</option>
+                <option value="@SigningMode.JktJwt">AP key-refresh ceremony only (non-AAuth resource access): jkt-jwt</option>
+            </select>
+        </label>
+    }
+    @if (Session.IsEventsMode)
+    {
+        <label class="flow-picker__label" for="events-channel-select">
+            <span class="flow-picker__title">Subscription channel</span>
+            <select id="events-channel-select" value="@(Session.EventsProtected ? "protected" : "public")" @onchange="OnEventsChannelChanged" disabled="@_busy">
+                <option value="protected">Protected reservations — account-bound ticket</option>
+                <option value="public">Public availability — no person, no grant</option>
+            </select>
+        </label>
+        @if (Session.EventsProtected)
+        {
+            <label class="flow-picker__label" for="events-account-select">
+                <span class="flow-picker__title">Bookings account</span>
+                <select id="events-account-select" value="@Session.EventsAccount" @onchange="OnEventsAccountChanged" disabled="@_busy">
+                    <option value="personal">Personal reservations</option>
+                    <option value="work">Work reservations</option>
+                </select>
+            </label>
+        }
+    }
+    @if (Session.IsWalletProtocolMode)
+    {
+        <label class="flow-picker__label" for="wallet-scenario-select">
+            <span class="flow-picker__title">Wallet scenario</span>
+            <select id="wallet-scenario-select" value="@Session.WalletScenario" @onchange="OnWalletScenarioChanged" disabled="@_busy">
+                <option value="@WalletFlow.Clarification">AS clarification — explain, then approve</option>
+                <option value="@WalletFlow.AsGrantChaining">Chaining an AS-issued grant — Concierge</option>
+                <option value="@WalletFlow.Revocation">Federated revocation — cascade and recover</option>
+            </select>
+        </label>
+    }
+    @if (Session.IsCatalogMode)
+    {
+        <label class="flow-picker__label" for="catalog-service-select">
+            <span class="flow-picker__title">Catalog operation</span>
+            <select id="catalog-service-select" value="@Session.CatalogService" @onchange="OnCatalogServiceChanged" disabled="@_busy">
+                <option value="destinations">Destinations — listDestinations first</option>
+                <option value="experiences">Experiences — listExperiences first</option>
             </select>
         </label>
     }
     @if (Session.IsRichRequestsMode)
     {
-        <a href="/events">Optional booking notifications: Events walkthrough</a>
+        <a href="/tour?flow=Events">Optional booking notifications: Events flow</a>
         <label class="flow-picker__label" for="bookings-account">
             <span class="flow-picker__title">Bookings account</span>
             <select id="bookings-account" value="@Session.BookingsAccount" @onchange="OnAccountChanged" disabled="@(_busy || Session.IsPolling)">
@@ -76,33 +119,11 @@
         }
     }
     <div class="flow-picker__actions">
-        @if (Session.WorkerConsentUrl is { } workerConsent)
-        {
-            <a @key="workerConsent" class="primary approve worker-consent" href="@workerConsent" target="_blank" rel="noopener">
-                @(Session.IsSubAgentMode ? WorkerConsentAction() : "Open consent page")
-            </a>
-            @if (Session.IsSubAgentMode)
-            {
-                <span class="flow-picker__action-hint">
-                    Consent @Session.WorkerConsentRound of @TourSession.WorkerConsentRounds. Complete it in the new tab, then return here for the next decision.
-                </span>
-            }
-        }
-        else if (Session.AwaitingUserApproval)
-        {
-            <a class="primary approve" href="@Session.UserInteractionUrl" target="_blank" rel="noopener"
-               @onclick="MarkInteractionOpenedAsync" @onclick:preventDefault="false">
-                Open consent page
-            </a>
-        }
-        else
-        {
-            <button class="primary" @onclick="NextAsync" disabled="@(Session.IsComplete || _busy)">
-                @(_busy ? "Running…" : Session.IsAborted ? "Aborted" : Session.IsComplete ? "Done" : StepButtonLabel())
-            </button>
-        }
+        <button class="primary" @onclick="NextAsync" disabled="@(Session.IsComplete || _busy)">
+            @(_busy ? "Running…" : Session.IsAborted ? "Aborted" : Session.IsComplete ? "Done" : StepButtonLabel())
+        </button>
         <button @onclick="RunAllAsync" disabled="@(Session.IsComplete || _busy)">Run all</button>
-        <button @onclick="ResetAsync" disabled="@_busy">Reset</button>
+        <button @onclick="ResetAsync" disabled="@(_busy && !IsWaitingForDecision)">Reset</button>
     </div>
     <details class="flow-picker__desc" open>
         <summary>📖 What Aria is trying to do — and how</summary>
@@ -130,26 +151,33 @@
                     These are generic Signature Keys demonstrations, not the
                     AAuth identity-based resource access mode, which requires an agent JWT.
                     Aria (your AI travel assistant) wants to read something from
-                    your <strong>Profile</strong> server, and the server decides access purely from the
-                    signature on the request — no Person Server and no consent screen.<br /><br />
-                    The resource verifies the agent's signature and applies its own access
-                    control — granting or denying based on who (or what key) signed the request.
+                    your <strong>Profile</strong> server. By default this is AAuth
+                    <code>jwt</code> agent-token identity: Profile verifies the agent token
+                    plus HTTP signature and decides access locally — no Person Server and no
+                    consent screen.<br /><br />
+                    The other selector values are generic Signature-Key primitives
+                    admitted only by Profile's <code>RequireGenericSignature()</code> lesson.
+                    They are not AAuth resource, PS, or AS request modes.
                     The signed request hits the mode's dedicated endpoint
                     (<code>/pseudonymous</code>, <code>/anchored</code>, or <code>/identified</code>) and returns
                     <code>200</code> on the first call — no Person Server involved.
                     @switch (Session.SigningMode)
                     {
+                        case SigningMode.Jwt:
+                            <strong>AAuth agent identity:</strong>
+                            <text> resource sees the verified agent id and bound signing key from <code>sig=jwt</code>.</text>
+                            break;
                         case SigningMode.Hwk:
-                            <strong>Pseudonymous:</strong>
+                            <strong>Generic pseudonymous (non-AAuth):</strong>
                             <text> resource sees a key thumbprint only — no agent identity disclosed.</text>
                             break;
                         case SigningMode.Jwks:
-                            <strong>Direct JWKS:</strong>
+                            <strong>Generic direct JWKS (non-AAuth):</strong>
                             <text> the exact key URL identifies the signer. This is a generic signing demonstration.</text>
                             break;
                         case SigningMode.JktJwt:
-                            <strong>Key Rotation:</strong>
-                            <text> durable key signs a naming JWT binding an ephemeral signing key — enables rotation without re-enrolment.</text>
+                            <strong>AP key-refresh ceremony (non-AAuth resource access):</strong>
+                            <text> durable key signs a naming JWT binding an ephemeral signing key — this illustrates the key-refresh primitive only.</text>
                             break;
                     }
                 </text>
@@ -181,9 +209,14 @@
                     consent earlier, it never has to interrupt you.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — required for all
                     Person Server flows.
-                    The agent already has standing consent at the Person Server. <code>POST /token</code>
-                    returns <code>200</code> immediately with an <code>auth_token</code>; the agent retries the
-                    resource and gets <code>200</code>. <strong>No human in the loop.</strong>
+                    The Calendar first asks <em>which person</em> the agent acts for
+                    (<code>requirement=person-token</code>); the agent gets an <code>aa-person+jwt</code>
+                    from <code>POST /person</code> and presents it, and the Calendar answers with a
+                    resource token. The agent already has standing consent at the Person Server, so
+                    <code>POST /token</code> (resource token + <code>presented_token</code>)
+                    returns <code>200</code> immediately with an <code>auth_token</code> naming the person
+                    (<code>ps</code>, <code>sub</code>); the agent retries the resource and gets
+                    <code>200</code>. <strong>No human in the loop.</strong>
                 </text>
                 break;
             case TourMode.Deferred:
@@ -193,7 +226,9 @@
                     yet — so it pauses and waits for your one-time approval.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — required for all
                     Person Server flows.
-                    The agent has <em>no</em> consent yet. <code>POST /token</code> returns <code>202 Accepted</code>
+                    The agent gets a person token from <code>POST /person</code>, presents it, and receives
+                    a resource token — but it has <em>no</em> consent yet. <code>POST /token</code> returns
+                    <code>202 Accepted</code>
                     with an interaction URL; the user signs in and submits <strong>Approve</strong> at the PS's consent page in
                     a new tab; the agent polls a pending URL until the PS mints the <code>auth_token</code>.
                     <strong>Human approval required.</strong>
@@ -206,16 +241,16 @@
                     service that reads it on Aria's behalf, so you consent once for each hop.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — multi-agent delegation.
                     The agent calls a <strong>Concierge</strong> (an intermediate service) which itself calls
-                    a downstream resource (Calendar). The Concierge passes the agent's auth_token as
-                    <code>upstream_token</code> during its own PS exchange, producing a <strong>nested <code>act</code>
-                    claim</strong> that records the full delegation chain. The final resource sees exactly who
-                    acted on whose behalf. <strong>Human approval required — two consents:</strong> first
+                    a downstream resource (Calendar). The agent presents a person token for the Concierge,
+                    then an auth token. The Concierge, acting as an agent, passes that auth_token as
+                    <code>upstream_token</code> when it requests its own Calendar person token and auth token,
+                    so the PS issues them for the <strong>same person</strong>: the same <code>ps</code>, with a
+                    <code>sub</code> directed at Calendar. Auth tokens name the person, not the agents — there
+                    is no <code>act</code> chain. <strong>Human approval required — two consents:</strong> first
                     for <em>Agent → Concierge</em>, then for the Concierge's chained
                     <em>Concierge → Calendar</em> hop. Each surfaces its own interaction URL and pending poll.
-                    This demo uses the upstream PS. A no-mission AS-issued upstream instead
-                    uses access-server metadata and a direct agent-signed AS exchange.
-                    A mission routes through its PS, whose shared mission gate runs before federation
-                    or claims release. Changing upstream authorization cannot reuse a previous caller's grant.
+                    A mission in the upstream token governs the downstream hop at the same PS.
+                    Changing upstream authorization cannot reuse a previous caller's grant.
                 </text>
                 break;
             case TourMode.Federated:
@@ -225,12 +260,14 @@
                     financial provider that makes the final call on the payment.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — four-party
                     federation.
-                    The resource's <code>/wallet</code> branch challenges with a resource_token
+                    The Wallet first requires a person token; presented with one, its <code>/wallet</code>
+                    branch challenges with a resource_token
                     whose <code>aud</code> is an <strong>Access Server</strong> (not the Person Server).
-                    The agent forwards it to its PS unchanged; the PS notices <code>aud ≠ self</code>,
-                    federates to the AS, and the <strong>Access Server</strong> evaluates policy and
-                    mints the <code>aa-auth+jwt</code> (<code>dwk=aauth-access.json</code>). The resource
-                    verifies it against the AS's JWKS. <strong>Interactive consent at the Access
+                    The agent forwards it (with the person token as <code>presented_token</code>) to its PS;
+                    the PS notices <code>aud ≠ self</code>, federates to the AS, and the <strong>Access Server</strong>
+                    evaluates policy and mints the <code>aa-auth+jwt</code> (<code>dwk=aauth-access.json</code>)
+                    naming the person by <code>ps</code> + <code>sub</code>. The resource verifies it against the
+                    AS's JWKS and trusts the PS only for person tokens. <strong>Interactive consent at the PS, then the Access
                     Server</strong> — you'll either approve at the stub AS's own Approve/Deny
                     screen (<code>make demo</code>) or sign in at a Keycloak login
                     (<code>make demo-keycloak</code>).
@@ -246,10 +283,10 @@
                     <strong>Rich Resource Requests (R3)</strong>. Bookings publishes a
                     content-addressed <strong>R3 document</strong> (in the <strong>OpenAPI</strong>
                     vocabulary) describing its operations; the auth token then carries
-                    <code>r3_granted</code> and <code>r3_conditional</code> instead of scopes.
+                    <code>r3_granted</code> and <code>r3_per_call</code> instead of scopes.
                     <strong>searchAvailability</strong> is <code>r3_granted</code> — served
                     outright, no prompt. <strong>confirmReservation</strong> charges a deposit, so
-                    the AS makes it <code>r3_conditional</code>: on that call Bookings returns a
+                    the AS makes it <code>r3_per_call</code>: on that call Bookings returns a
                     <strong>per-call proposal</strong> carrying the concrete reservation (venue,
                     date, party size, deposit), and the R3 Access Server asks <strong>you</strong>
                     to approve that specific booking at its own consent screen before it mints a
@@ -266,7 +303,9 @@
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — the Person Server
                     acts as the <strong>policy-enforcement point</strong>. The agent first proposes a durable
                     <strong>mission</strong> (description + pre-approved tools) which the user approves once;
-                    every later request is then checked against it. An <em>in-scope</em> token (<code>trips.read</code>)
+                    it then names the mission's <code>mission_s256</code> when it requests its person token, and
+                    the resource token and auth token carry it, so every later request is checked against it.
+                    An <em>in-scope</em> token (<code>trips.read</code>)
                     is minted <strong>silently</strong>; an <em>out-of-mission</em> scope (<code>trips.book</code>)
                     <strong>prompts</strong>; a <em>pre-approved</em> tool (<code>add_to_calendar</code>) is
                     resolved <strong>locally</strong> with no PS call; and an <em>out-of-scope</em> action
@@ -283,10 +322,11 @@
                     <strong>mission</strong> governs two very different kinds of access. An
                     <em>out-of-mission</em> elevated scope (<code>trips.book</code>) first triggers a
                     <strong>clarification chat</strong> — the PS asks <em>why</em>, the agent answers — and only
-                    then prompts the user to approve. After that, a <strong>mission-forwarded call chain</strong>
-                    (Agent → Concierge → Trips) flows <strong>silently</strong>: because both hops
-                    (<code>concierge</code>, <code>trips.read</code>) are in the mission's scope, the Concierge
-                    forwards the <code>AAuth-Mission</code> header downstream and no prompt is needed.
+                    then prompts the user to approve. After that, a <strong>mission-governed call chain</strong>
+                    (Agent → Concierge → Trips) flows <strong>silently</strong>: the agent's person token and
+                    auth token for the Concierge carry <code>mission_s256</code>, the Concierge chains with that
+                    auth token as <code>upstream_token</code>, and both hops (<code>concierge</code>,
+                    <code>trips.read</code>) are in the mission's scope, so no prompt is needed.
                     <strong>Two human approvals</strong> (mission creation, the clarified elevated scope) frame an
                     otherwise-silent multi-agent chain, and the PS's <strong>mission log</strong> records it all.
                 </text>
@@ -303,38 +343,119 @@
                     Aria can impersonate it), but it never talks to your Person Server directly:
                     <strong>Aria mediates</strong> on its behalf.<br /><br />
                     The worker's agent token carries a <code>parent_agent</code> claim naming Aria. The
-                    worker obtains a <code>resource_token</code> bound to <em>its own</em> key and hands it up
-                    to the parent; Aria then signs <code>POST /token</code> with the <strong>parent's</strong>
-                    key, including <code>subagent_token</code> and the original caller's <code>upstream_token</code>. The Access Server binds
-                    the issued <code>auth_token</code> to the <strong>worker</strong> (nesting the
-                    <code>act</code> claim <code>{ agent: parent, act: { agent: original } }</code> for audit) and
-                    returns it to the <strong>parent</strong> — which <strong>hands it down</strong> to the
-                    worker, the only party whose key can use it.
+                    Wallet asks the worker for a person token; Aria requests it at <code>POST /person</code>
+                    with <code>subagent_token</code> (so its <code>cnf</code> is the <em>worker's</em> key), and
+                    the worker presents it to obtain a <code>resource_token</code> bound to <em>its own</em> key,
+                    which it hands up to the parent. Aria then signs <code>POST /token</code> with the
+                    <strong>parent's</strong> key, including the worker's person token as
+                    <code>presented_token</code>, <code>subagent_token</code> and the original caller's
+                    <code>upstream_token</code>. The Access Server binds the issued <code>auth_token</code> to the
+                    <strong>worker</strong> — it names the person (<code>ps</code>, <code>sub</code>), not the
+                    agents — and returns it to the <strong>parent</strong>, which <strong>hands it down</strong>
+                    to the worker, the only party whose key can use it.
                     Delegation stays <strong>one level deep</strong> — a sub-agent can't spawn its own
                     sub-agents.<br /><br />
                     <em>Live PS, AS and Wallet endpoints.</em> Consent is evaluated independently
                     of AS claims requests. The final step checks worker success and parent-key rejection.
                 </text>
                 break;
+            case TourMode.Events:
+                <text>
+                    A reservation you wanted was unavailable, so Aria asks <strong>Bookings</strong> to
+                    notify it when a place opens. Because an agent cannot receive a public webhook, its
+                    <strong>Agent Provider</strong> acts as a durable inbox.<br /><br />
+                    Aria discovers the AsyncAPI channels and the AP's <code>event_endpoint</code>, then enrols
+                    with the AP. On the <strong>protected</strong> channel it first obtains an account-bound
+                    grant (person token, resource token, PS consent) so Bookings hands out a subscription ticket
+                    bound to its key; the <strong>public</strong> channel skips straight to the channel address.
+                    Aria then gets a single-use <code>aa-subscribe+jwt</code> from its AP, registers the
+                    subscription, and Bookings delivers a signed self-jwt event to the AP. Aria polls its inbox,
+                    verifies the event, ignores a resent copy, and acknowledges receipt.
+                    <em>AP token acquisition, inbox polling, acknowledgement and the notification trigger are
+                    local sample APIs, not standard endpoints.</em>
+                </text>
+                break;
+            case TourMode.WalletProtocol:
+                <text>
+                    Aria is finalizing a trip and needs to use your <strong>Wallet</strong> safely. Pick a
+                    scenario: the <strong>Access Server asks for clarification</strong> before it will grant a
+                    wallet review; the <strong>Concierge chains an AS-issued grant</strong> to reach the Wallet on
+                    your behalf; or you <strong>revoke</strong> a federated grant and Aria must recover with a
+                    fresh one.<br /><br />
+                    Each scenario starts from Aria's signed request and shows which authority makes the next
+                    decision — the Person Server, the Wallet's Access Server, or the Concierge — what goes over the
+                    wire, and why a denied, cancelled or revoked grant cannot be silently reused. Consent and
+                    clarification steps adapt to what each server actually answers.
+                </text>
+                break;
+            case TourMode.Documents:
+                <text>
+                    Aria needs a work travel brief from <strong>Documents</strong> to finish your itinerary. The
+                    document owner must first decide that this specific file may be released; only then may your
+                    Person Server ask you to authorize the download.<br /><br />
+                    The resource token carries <code>account=work</code> and an <code>interaction</code> URL for the
+                    owner's permission page. The PS sends you there <strong>before</strong> its own consent, so
+                    person consent can never override the resource owner's decision. Try both
+                    <strong>Release</strong> and <strong>Decline</strong>: no auth token or document is released
+                    when either authority says no.
+                </text>
+                break;
+            case TourMode.Catalog:
+                <text>
+                    Aria is comparing where to go and what to do there. The <strong>Travel Catalog</strong> serves a
+                    <strong>Destinations</strong> backend and an <strong>Experiences</strong> backend, and both
+                    expose an operation called <code>list</code>.<br /><br />
+                    R3 draft-11 removed the gateway vocabulary, so the Catalog publishes <strong>one</strong> merged
+                    OpenAPI definition and renames the colliding operations to <code>listDestinations</code> and
+                    <code>listExperiences</code>. Aria authorizes one operation through the <strong>R3 Access
+                    Server</strong>, proves the sibling rejects that grant, then obtains authorization for the sibling.
+                </text>
+                break;
         }
     </details>
 </section>
 
-@if (Session.IsPolling)
+@if (IsWaitingForDecision)
 {
     <section class="polling">
         <span class="polling__spinner" aria-hidden="true"></span>
         <div class="polling__body">
-            <div class="polling__title">Step @Session.PollStepNumber — polling pending URL…</div>
-            <div class="polling__detail">
-                Signed <code>GET @Session.PendingUrlPath</code> ·
-                <strong>@Session.PollCount</strong> @(Session.PollCount == 1 ? "poll" : "polls") so far ·
-                elapsed <strong>@ElapsedPolling()</strong>
-            </div>
-            <div class="polling__hint">
-                Waiting for you to complete the @(Session.IsFederatedMode ? "Access Server consent" : Session.IsRichRequestsMode ? "R3 Access Server consent" : Session.IsResourceManagedMode ? "Approve on the Inbox consent" : "Approve or Deny on the PS consent")
-                tab. You can come back here anytime — the poll loop is live.
-            </div>
+            @if (Session.IsPolling)
+            {
+                <div class="polling__title">Step @Session.PollStepNumber — polling pending URL…</div>
+                <div class="polling__detail">
+                    Signed <code>GET @Session.PendingUrlPath</code> ·
+                    <strong>@Session.PollCount</strong> @(Session.PollCount == 1 ? "poll" : "polls") so far ·
+                    elapsed <strong>@ElapsedPolling()</strong>
+                </div>
+            }
+            else
+            {
+                <div class="polling__title">Step @(Session.Steps.Count + 1) — waiting for your decision…</div>
+                <div class="polling__detail">The SDK polls the pending URL inside this step and continues as soon as you decide.</div>
+            }
+            @if (Session.ConsentInteraction is { } interaction)
+            {
+                <ConsentSupport.PersonServerApprovalPrompt @key="interaction.Code" PersonServer="@Session.PersonServer" Interaction="interaction"
+                                                           DecidedAtPersonServer="@Session.ConsentDecidedAtPersonServer"
+                                                           ExternalLabel="@ConsentLinkLabel(interaction)"
+                                                           LinkClass="@(Session.WorkerConsent is null ? "primary approve" : "primary approve worker-consent")"
+                                                           ShowWaiting="false" />
+                @if (Session.IsSubAgentMode && Session.WorkerConsent is not null)
+                {
+                    <div class="polling__hint">
+                        <span class="worker-round">@WorkerConsentAction()</span>.
+                        Consent @Session.WorkerConsentRound of @TourSession.WorkerConsentRounds;
+                        @(Session.WorkerConsentRound < TourSession.WorkerConsentRounds ? "the next decision appears here once you finish." : "the flow continues once you finish.")
+                    </div>
+                }
+                else if (!Session.ConsentDecidedAtPersonServer)
+                {
+                    <div class="polling__hint">
+                        Decide in the new tab. You can come back here anytime — the agent is already polling.
+                    </div>
+                }
+            }
         </div>
     </section>
 }
@@ -350,8 +471,8 @@
                          Lanes="@ActiveLanes"
                          IsPolling="@Session.IsPolling"
                          PollCount="@Session.PollCount"
-                         LoopGhostStep="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode || Session.IsResourceManagedMode) ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
-                         LoopAroundStepNumber="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode || Session.IsResourceManagedMode) ? Session.PollStepNumber : 0)"
+                         LoopGhostStep="@(HasPollLoop ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
+                         LoopAroundStepNumber="@(HasPollLoop ? Session.PollStepNumber : 0)"
                          CompletedLoopLabel="@CompletedLoopLabel()"
                          LoopCompletedKind="@CompletedLoopKind()" />
     </section>
@@ -371,6 +492,8 @@
 @code {
     private int _selected = -1;
     private bool _busy;
+    private int _run;
+    private CancellationTokenSource? _runCts;
     private string? _error;
     private bool _initialized;
 
@@ -464,7 +587,63 @@
         new("Access Server", "as", Actor.AccessServer),
     };
 
+    private static readonly SequenceDiagram.LaneDefinition[] EventsLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Bookings", "resource", Actor.Resource),
+        new("Agent Provider", "ap", Actor.AgentProvider),
+        new("Person Server", "ps", Actor.PersonServer),
+        new("R3 Access Server", "as", Actor.AccessServer),
+    };
+
+    private static readonly SequenceDiagram.LaneDefinition[] PublicEventsLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Bookings", "resource", Actor.Resource),
+        new("Agent Provider", "ap", Actor.AgentProvider),
+    };
+
+    private static readonly SequenceDiagram.LaneDefinition[] WalletProtocolLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Wallet", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+        new("Access Server", "as", Actor.AccessServer),
+    };
+
+    private static readonly SequenceDiagram.LaneDefinition[] WalletChainingLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Concierge", "resource2", Actor.Concierge),
+        new("Wallet", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+        new("Access Server", "as", Actor.AccessServer),
+    };
+
+    private static readonly SequenceDiagram.LaneDefinition[] DocumentsLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Documents", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+    };
+
+    private static readonly SequenceDiagram.LaneDefinition[] CatalogLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Catalog", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+        new("R3 Access Server", "as", Actor.AccessServer),
+    };
+
+    private bool HasPollLoop =>
+        Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode
+        || Session.IsMissionCallChainMode || Session.IsResourceManagedMode || Session.IsCapabilityMode;
+
     private SequenceDiagram.LaneDefinition[]? ActiveLanes =>
+        Session.IsEventsMode ? (Session.EventsProtected ? EventsLanes : PublicEventsLanes) :
+        Session.IsWalletProtocolMode ? (Session.WalletScenario == WalletFlow.AsGrantChaining ? WalletChainingLanes : WalletProtocolLanes) :
+        Session.IsDocumentsMode ? DocumentsLanes :
+        Session.IsCatalogMode ? CatalogLanes :
         Session.IsBootstrapMode ? BootstrapLanes :
         Session.IsSubAgentMode ? SubAgentLanes :
         Session.IsResourceManagedMode ? ResourceManagedLanes :
@@ -499,6 +678,7 @@
     public void Dispose()
     {
         Session.StateChanged -= OnSessionStateChanged;
+        _runCts?.Dispose();
     }
 
     private void OnSessionStateChanged()
@@ -518,7 +698,7 @@
     }
 
     private StepRecord? PollStepRecord =>
-        (Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsResourceManagedMode)
+        (Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsResourceManagedMode || Session.IsCapabilityMode)
             ? Session.Steps.FirstOrDefault(s => s.Number == Session.PollStepNumber)
             : null;
 
@@ -561,36 +741,44 @@
         _ => "Open consent page",
     };
 
-    private async Task NextAsync()
+    /// <summary>True while the agent waits on the person: a background poll or an in-step consent.</summary>
+    private bool IsWaitingForDecision => Session.IsPolling || Session.WorkerConsent is not null;
+
+    /// <summary>Names the page a non-Person-Server consent link opens.</summary>
+    private string ConsentLinkLabel(AAuth.Headers.Interaction interaction)
     {
-        _busy = true;
-        _error = null;
-        try
-        {
-            await Session.RunNextAsync();
-            _selected = Session.Steps.Count - 1;
-        }
-        catch (Exception ex)
-        {
-            _error = $"{ex.GetType().Name}: {ex.Message}";
-        }
-        finally { _busy = false; }
+        if (Session.IsSubAgentMode && Session.WorkerConsent is not null) return WorkerConsentAction();
+        var url = interaction.BuildUserUrl();
+        static bool Under(string url, string? baseUrl) =>
+            !string.IsNullOrWhiteSpace(baseUrl) && url.StartsWith(baseUrl.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase);
+        var options = Options.Value;
+        if (Under(url, options.R3AccessServerUrl)) return "Open R3 Access Server consent page";
+        if (Under(url, options.AccessServerUrl)) return "Open Access Server consent page";
+        if (Under(url, options.InboxUrl)) return "Open Inbox consent page";
+        if (url.Contains("/interaction/resource", StringComparison.Ordinal)) return "Open document permission page";
+        return "Open consent page";
     }
 
-    private async Task MarkInteractionOpenedAsync()
+    private CancellationToken BeginRun()
     {
+        _runCts?.Dispose();
+        _runCts = new CancellationTokenSource();
+        return _runCts.Token;
+    }
+
+    private async Task NextAsync()
+    {
+        var ct = BeginRun();
         _busy = true;
         _error = null;
         try
         {
-            // The <a target="_blank"> element opens the PS's interaction
-            // page natively (no popup-blocker friction). This handler
-            // records the user-approval step in the timeline and immediately kicks off
-            // the background poll so the spinner is live while the
-            // user is in the other tab.
-            await Session.RecordUserApprovalOpenedAsync();
-            _ = Session.StartPendingPollAsync();
+            await Session.RunNextAsync(ct);
             _selected = Session.Steps.Count - 1;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Reset cancelled a step waiting on the person.
         }
         catch (Exception ex)
         {
@@ -601,27 +789,23 @@
 
     private async Task RunAllAsync()
     {
+        var run = ++_run;
+        var ct = BeginRun();
         _busy = true;
         _error = null;
         try
         {
-            while (!Session.IsComplete)
+            // Consent never stops the run: each decision step starts polling on
+            // arrival and the next step awaits that poll.
+            while (!Session.IsComplete && run == _run)
             {
-                if (Session.AwaitingUserApproval)
-                {
-                    // "Run all" cannot do user interaction on the user's
-                    // behalf — surface the URL and stop so the user can
-                    // click the consent link themselves.
-                    _error = Session.IsFederatedMode
-                        ? "Stopped: the next step requires you to open the Access Server login (Keycloak) and sign in. Click the green link above."
-                        : Session.IsRichRequestsMode
-                        ? "Stopped: the next step requires you to open the R3 Access Server consent screen and approve this reservation. Click the green link above."
-                        : "Stopped: the next step requires you to open the PS consent page and click Approve. Click the green link above.";
-                    break;
-                }
-                await Session.RunNextAsync();
+                await Session.RunNextAsync(ct);
+                if (run == _run) _selected = Session.Steps.Count - 1;
             }
-            _selected = Session.Steps.Count - 1;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Reset cancelled a step waiting on the person.
         }
         catch (Exception ex)
         {
@@ -632,6 +816,10 @@
 
     private async Task ResetAsync()
     {
+        // A Run all awaiting a poll stops at its next iteration; a step waiting
+        // on an in-step consent is cancelled.
+        _run++;
+        _runCts?.Cancel();
         Session.Reset();
         _selected = -1;
         _error = null;
@@ -672,6 +860,37 @@
         catch (Exception exception) { _error = exception.Message; }
         finally { _busy = false; }
     }
+
+    private async Task OnCapabilityOptionChangedAsync(Action change)
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            change(); // the option setters reset the timeline
+            await Session.PrepareConsentStateAsync();
+            _selected = -1;
+        }
+        catch (Exception ex)
+        {
+            _error = $"{ex.GetType().Name}: {ex.Message}";
+        }
+        finally { _busy = false; }
+    }
+
+    private Task OnEventsChannelChanged(ChangeEventArgs e) =>
+        OnCapabilityOptionChangedAsync(() => Session.EventsProtected = e.Value?.ToString() != "public");
+
+    private Task OnEventsAccountChanged(ChangeEventArgs e) =>
+        OnCapabilityOptionChangedAsync(() => Session.EventsAccount = e.Value?.ToString() ?? "personal");
+
+    private Task OnWalletScenarioChanged(ChangeEventArgs e) =>
+        Enum.TryParse<WalletFlow>(e.Value?.ToString(), out var scenario)
+            ? OnCapabilityOptionChangedAsync(() => Session.WalletScenario = scenario)
+            : Task.CompletedTask;
+
+    private Task OnCatalogServiceChanged(ChangeEventArgs e) =>
+        OnCapabilityOptionChangedAsync(() => Session.CatalogService = e.Value?.ToString() ?? "destinations");
 
     private void OnSigningModeChanged(ChangeEventArgs e)
     {

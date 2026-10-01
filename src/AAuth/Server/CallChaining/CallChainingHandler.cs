@@ -8,21 +8,14 @@ using AAuth.Headers;
 namespace AAuth.Server.CallChaining;
 
 /// <summary>
-/// <see cref="DelegatingHandler"/> that enables a resource to act as an
-/// agent for downstream resources (call-chaining). Extracts the upstream
-/// auth token from the current request context and exchanges it (with
-/// <c>upstream_token</c>) at the appropriate downstream PS/AS to obtain
-/// a chained auth token.
+/// Enables a resource to act as an agent for downstream resources
+/// (call-chaining): exchanges a downstream resource token at the person server
+/// the upstream token names, carrying the upstream token as <c>upstream_token</c>
+/// and the token presented downstream as <c>presented_token</c>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Routing logic (per spec §Call Chaining):
-/// <list type="bullet">
-/// <item><c>mission.approver</c> present → PS at approver URL</item>
-/// <item>No mission, <c>iss</c> is PS (three-party) → PS at <c>iss</c></item>
-/// <item>No mission, <c>iss</c> is AS (four-party) → AS at <c>iss</c></item>
-/// </list>
-/// </para>
+/// Routing (§Call Chaining): the upstream person token's <c>iss</c>, or the
+/// upstream auth token's <c>ps</c>.
 /// </remarks>
 public sealed class CallChainingHandler
 {
@@ -41,39 +34,43 @@ public sealed class CallChainingHandler
     }
 
     /// <summary>
-    /// Exchange the <paramref name="resourceToken"/> at the downstream PS/AS,
-    /// including the <paramref name="upstreamAuthToken"/> to preserve the
-    /// delegation chain.
+    /// Exchange the <paramref name="resourceToken"/> at the upstream token's
+    /// person server, including <paramref name="upstreamToken"/>.
     /// </summary>
-    /// <param name="upstreamAuthToken">
-    /// The auth token received by this resource from its caller. Included as
-    /// <c>upstream_token</c> in the POST body so the downstream PS/AS can
-    /// construct a nested <c>act</c> chain.
+    /// <param name="upstreamToken">
+    /// The person or auth token this resource's caller presented. Included as
+    /// <c>upstream_token</c>; it also selects the person server.
     /// </param>
     /// <param name="resourceToken">
     /// The resource token issued by the downstream resource's challenge.
     /// </param>
+    /// <param name="presentedToken">
+    /// The token this intermediary presented to the downstream resource (the
+    /// resource token's <c>presented_jti</c>), sent as <c>presented_token</c>.
+    /// </param>
     /// <param name="onInteractionRequired">
-    /// Optional callback invoked when the downstream PS/AS returns <c>202</c>
+    /// Optional callback invoked when the downstream PS returns <c>202</c>
     /// with an interaction requirement. When <see langword="null"/> and a 202
     /// is received, the call throws.
     /// </param>
     /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The chained auth token for the downstream resource.</returns>
+    /// <param name="account">Optional account the downstream request is for.</param>
+    /// <returns>The auth token for the downstream resource.</returns>
     public async Task<string> ExchangeForDownstreamAsync(
-        string upstreamAuthToken,
+        string upstreamToken,
         string resourceToken,
+        string presentedToken,
         Func<Interaction, CancellationToken, Task>? onInteractionRequired = null,
         DeferredPollerOptions? pollerOptions = null,
         CancellationToken cancellationToken = default,
         string? account = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(upstreamAuthToken);
+        ArgumentException.ThrowIfNullOrEmpty(upstreamToken);
         ArgumentException.ThrowIfNullOrEmpty(resourceToken);
+        ArgumentException.ThrowIfNullOrEmpty(presentedToken);
 
-        // Determine the downstream PS/AS endpoint from the upstream auth token.
-        var targetServer = CallChainingRouter.ResolveDownstreamServer(upstreamAuthToken, _exchangeClient.EgressPolicy);
+        var targetServer = CallChainingRouter.ResolveDownstreamServer(upstreamToken, _exchangeClient.EgressPolicy);
 
         return await _exchangeClient.ExchangeAsync(
             targetServer,
@@ -82,16 +79,14 @@ public sealed class CallChainingHandler
             {
                 OnInteractionRequired = onInteractionRequired,
                 PollerOptions = pollerOptions,
-                UpstreamToken = upstreamAuthToken,
+                UpstreamToken = upstreamToken,
+                PresentedToken = presentedToken,
                 Account = account,
             },
             cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Determine which PS/AS to send the downstream token request to,
-    /// based on the upstream auth token's claims.
-    /// </summary>
-    internal static string ResolveDownstreamServer(string upstreamAuthToken)
-        => CallChainingRouter.ResolveDownstreamServer(upstreamAuthToken);
+    /// <summary>Determine the downstream person server from the upstream token.</summary>
+    internal static string ResolveDownstreamServer(string upstreamToken)
+        => CallChainingRouter.ResolveDownstreamServer(upstreamToken);
 }

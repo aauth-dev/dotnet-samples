@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using AAuth;
 using AAuth.Access;
 using AAuth.Agent;
 using AAuth.Crypto;
@@ -25,7 +26,7 @@ namespace AAuth.Conformance.Person;
 public class DeferredFederationTests
 {
     public static IEnumerable<object[]> CredentialNamedClaims =>
-        from claimName in new[] { "agent_token", "resource_token", "subagent_token", "upstream_token", "action" }
+        from claimName in new[] { "agent_token", "resource_token", "presented_token", "subagent_token", "upstream_token", "action" }
         from json in new[] { "\"employee-123\"", "{\"department\":\"engineering\"}", "[\"staff\",123]", "123", "\"updated_request\"", "\"clarification_response\"" }
         select new object[] { claimName, json };
 
@@ -33,22 +34,64 @@ public class DeferredFederationTests
     [MemberData(nameof(CredentialNamedClaims))]
     public async Task ClaimsPushPreservesRequestedCredentialNamedIdentity(string claimName, string json)
     {
-        await using var fixture = await Fixture.CreateAsync("claims", requiredClaims: ["sub", claimName]);
-        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken("read") });
+        await using var fixture = await Fixture.CreateAsync("claims", requiredClaims: [claimName]);
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         Assert.Contains(claimName, fixture.AsEntry.RequiredClaims!);
         var discoveryCalls = fixture.DiscoveryTransport.Paths.Count;
         var claimValue = JsonNode.Parse(json);
         using var response = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location,
-            new JsonObject { ["sub"] = "person", [claimName] = claimValue?.DeepClone() });
+            new JsonObject { [claimName] = claimValue?.DeepClone() });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var payload = Payload((await response.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]!.GetValue<string>());
+        // `sub` is the resource token's (named by the presented person token), never pushed.
         Assert.Equal("person", (string?)payload["sub"]);
+        Assert.Equal(Fixture.PsIssuer, (string?)payload["ps"]);
         Assert.True(JsonNode.DeepEquals(claimValue, payload[claimName]));
         Assert.True(JsonNode.DeepEquals(claimValue, fixture.Policy.Last!.Claims![claimName]));
         Assert.Equal(discoveryCalls, fixture.DiscoveryTransport.Paths.Count);
         Assert.Equal(0, fixture.AsEntry.ClarificationRounds);
         Assert.Equal("read", fixture.AsEntry.Scope);
+    }
+
+    private sealed class ResettableJtiStore : IJtiStore
+    {
+        private InMemoryJtiStore _inner = new();
+
+        public void Reset() => _inner = new InMemoryJtiStore();
+
+        public Task<bool> TryRecordRequestAsync(string requestKey, DateTimeOffset expiration, CancellationToken ct = default)
+            => _inner.TryRecordRequestAsync(requestKey, expiration, ct);
+
+        public Task<bool> RegisterAsync(TokenKey token, DateTimeOffset expiration, CancellationToken ct = default)
+            => _inner.RegisterAsync(token, expiration, ct);
+
+        public Task RevokeAsync(TokenKey token, DateTimeOffset expiresAt, CancellationToken ct = default)
+            => _inner.RevokeAsync(token, expiresAt, ct);
+
+        public Task<bool> IsRevokedAsync(TokenKey token, CancellationToken ct = default)
+            => _inner.IsRevokedAsync(token, ct);
+
+        public Task<bool> ContainsTokenAsync(TokenKey token, CancellationToken ct = default)
+            => _inner.ContainsTokenAsync(token, ct);
+
+        public Task<bool> RegisterGrantAsync(IReadOnlyCollection<TokenKey> sources, TokenGrant grant, CancellationToken ct = default)
+            => _inner.RegisterGrantAsync(sources, grant, ct);
+
+        public Task<bool> CheckProvenanceQuotaAsync(UpstreamCallerRecord caller, string resource, CancellationToken ct = default)
+            => _inner.CheckProvenanceQuotaAsync(caller, resource, ct);
+
+        public Task<IReadOnlyList<TokenGrant>> GetGrantsAsync(TokenKey source, CancellationToken ct = default)
+            => _inner.GetGrantsAsync(source, ct);
+
+        public Task<TokenGrant?> GetGrantAsync(TokenKey token, CancellationToken ct = default)
+            => _inner.GetGrantAsync(token, ct);
+
+        public Task RecordSubjectAsync(TokenKey token, string subject, CancellationToken ct = default)
+            => _inner.RecordSubjectAsync(token, subject, ct);
+
+        public Task<string?> GetSubjectAsync(TokenKey token, CancellationToken ct = default)
+            => _inner.GetSubjectAsync(token, ct);
     }
 
     [Theory]
@@ -69,15 +112,14 @@ public class DeferredFederationTests
     public async Task ClaimsPushRejectsMalformedIdentityBeforePolicyOrMutation(string field, string json)
     {
         await using var fixture = await Fixture.CreateAsync("claims");
-        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken("read") });
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         var policy = fixture.Policy.Last;
-        var body = new JsonObject { ["sub"] = "person", [field] = JsonNode.Parse(json) };
+        var body = new JsonObject { [field] = JsonNode.Parse(json) };
         using var response = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location, body);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
         Assert.Same(policy, fixture.Policy.Last);
-        Assert.Null(fixture.AsEntry.SuppliedSubject);
         Assert.Null(fixture.AsEntry.SuppliedClaims);
         Assert.Equal(AccessPendingStatus.Pending, fixture.AsEntry.Status);
     }
@@ -86,14 +128,14 @@ public class DeferredFederationTests
     [InlineData("null")]
     [InlineData("[]")]
     [InlineData("{\"sub\":\"person\",\"sub\":\"other\"}")]
-    [InlineData("{\"sub\":\"person\",\"agent_token\":\"employee-123\",\"agent_token\":\"employee-456\"}")]
-    [InlineData("{\"sub\":\"person\",\"action\":\"updated_request\",\"action\":\"clarification_response\"}")]
-    [InlineData("{\"sub\":\"person\",\"agent_token\":{\"department\":1,\"department\":2}}")]
-    [InlineData("{\"sub\":\"person\",\"agent_token\":[{\"department\":1,\"department\":2}]}")]
+    [InlineData("{\"agent_token\":\"employee-123\",\"agent_token\":\"employee-456\"}")]
+    [InlineData("{\"action\":\"updated_request\",\"action\":\"clarification_response\"}")]
+    [InlineData("{\"agent_token\":{\"department\":1,\"department\":2}}")]
+    [InlineData("{\"agent_token\":[{\"department\":1,\"department\":2}]}")]
     public async Task ClaimsPushRejectsMalformedRawJsonWithoutMutation(string json)
     {
-        await using var fixture = await Fixture.CreateAsync("claims", requiredClaims: ["sub", "agent_token", "action"]);
-        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken("read") });
+        await using var fixture = await Fixture.CreateAsync("claims", requiredClaims: ["agent_token", "action"]);
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         var policy = fixture.Policy.Last;
         var discoveryCalls = fixture.DiscoveryTransport.Paths.Count;
@@ -101,14 +143,16 @@ public class DeferredFederationTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
         Assert.Same(policy, fixture.Policy.Last);
-        Assert.Null(fixture.AsEntry.SuppliedSubject);
         Assert.Null(fixture.AsEntry.SuppliedClaims);
         Assert.Equal(AccessPendingStatus.Pending, fixture.AsEntry.Status);
         Assert.Equal(discoveryCalls, fixture.DiscoveryTransport.Paths.Count);
     }
 
     public static IEnumerable<object[]> MalformedBodyCredentials =>
-        from sample in TestTokens.InvalidCredentials
+        from sample in TestTokens.InvalidCredentials.Concat(
+            from upstream in TestTokens.InvalidCredentials
+            where (string)upstream[0] == "upstream_token"
+            select new object[] { "presented_token", upstream[1], TestTokens.CredentialError("presented_token", (string)upstream[1]) })
         from person in new[] { false, true }
         where !person || (string)sample[0] != "agent_token"
         select sample.Concat(new object[] { person }).ToArray();
@@ -117,14 +161,24 @@ public class DeferredFederationTests
     [MemberData(nameof(MalformedBodyCredentials))]
     public async Task TokenBodyFailuresAreNotAuthenticationFailures(string field, string variant, string error, bool person)
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         await using var fixture = await Fixture.CreateAsync("immediate", asserter);
-        var token = field == "resource_token" ? fixture.ResourceToken("read")
-            : field == "upstream_token" ? fixture.UpstreamToken() : fixture.AgentToken;
-        var key = field == "resource_token" ? fixture.ResourceKey
-            : field == "upstream_token" ? fixture.AsKey : fixture.ApKey;
-        var body = new JsonObject { ["agent_token"] = fixture.AgentToken, ["resource_token"] = fixture.ResourceToken("read") };
-        body[field] = TestTokens.MalformedCredential(token, key, variant);
+        var token = field switch
+        {
+            "resource_token" => await fixture.ResourceTokenAsync("read"),
+            "upstream_token" => await fixture.UpstreamTokenAsync(),
+            "presented_token" => await fixture.PersonTokenAsync(),
+            _ => fixture.AgentToken,
+        };
+        var key = field switch
+        {
+            "resource_token" => fixture.ResourceKey,
+            "upstream_token" => fixture.AsKey,
+            "presented_token" => fixture.PsKey,
+            _ => fixture.ApKey,
+        };
+        var body = await fixture.BodyAsync("read", agentToken: true);
+        body[field] = await TestTokens.MalformedCredentialAsync(token, key, variant);
         using var response = await (person ? fixture.Agent : fixture.Ps).PostAsJsonAsync("/token", body);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType!.MediaType);
@@ -149,7 +203,7 @@ public class DeferredFederationTests
         using var client = builder.WithInnerHandler((person ? fixture.PersonApp : fixture.AccessApp).GetTestServer().CreateHandler(),
             AAuthTransportContract.InProcessOnly).Build();
         using var response = await client.PostAsJsonAsync((person ? Fixture.PsIssuer : "https://as.test") + "/token",
-            new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken("read") });
+            await fixture.BodyAsync("read", agentToken: true));
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.True(response.Headers.Contains("Signature-Error"));
         Assert.Null(fixture.Policy.Last);
@@ -168,7 +222,7 @@ public class DeferredFederationTests
     {
         await using var fixture = await Fixture.CreateAsync("update");
         var client = person ? fixture.Agent : fixture.Ps;
-        using var initial = await client.PostAsJsonAsync("/token", new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken() });
+        using var initial = await client.PostAsJsonAsync("/token", await fixture.BodyAsync(agentToken: true));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         var policy = fixture.Policy.Last;
         using var response = await client.PostAsync(initial.Headers.Location, new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
@@ -191,13 +245,14 @@ public class DeferredFederationTests
     {
         await using var fixture = await Fixture.CreateAsync("update");
         var client = person ? fixture.Agent : fixture.Ps;
-        using var initial = await client.PostAsJsonAsync("/token", new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken() });
+        using var initial = await client.PostAsJsonAsync("/token", await fixture.BodyAsync(agentToken: true));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         var policy = fixture.Policy.Last;
         using var response = await client.PostAsJsonAsync(initial.Headers.Location, new JsonObject
         {
             ["action"] = "updated_request",
-            ["resource_token"] = TestTokens.MalformedCredential(fixture.ResourceToken("read"), fixture.ResourceKey, variant),
+            ["resource_token"] = await TestTokens.MalformedCredentialAsync(await fixture.ResourceTokenAsync("read"), fixture.ResourceKey, variant),
+            ["presented_token"] = await fixture.PersonTokenAsync(),
         });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal(error, (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
@@ -214,9 +269,9 @@ public class DeferredFederationTests
     [InlineData("eyJhbGciOiJFZDI1NTE5IiwiYWxnIjoiRWQyNTUxOSJ9.e30.eA")]
     public async Task PersonAudiencePeekRejectsMalformedJwt(string token)
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         await using var fixture = await Fixture.CreateAsync("immediate", asserter);
-        using var response = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token });
+        using var response = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token, presented_token = await fixture.PersonTokenAsync() });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("invalid_resource_token", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
         Assert.False(response.Headers.Contains("Signature-Error"));
@@ -229,16 +284,11 @@ public class DeferredFederationTests
     [InlineData(true)]
     public async Task FederatedResourceCallbackControlsAuthorization(bool denied)
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         await using var fixture = await Fixture.CreateAsync("immediate", asserter);
-        var token = new ResourceTokenBuilder
-        {
-            Issuer = "https://resource.test", Audience = "https://as.test", Agent = "aauth:demo@ap.test",
-            AgentJkt = fixture.AgentKey.ComputeJwkThumbprint(), Key = fixture.ResourceKey, KeyId = "key",
-            Scope = "read", ScopeDescriptions = TestScopeDefinitions.Resource, Account = "work",
-            Interaction = new Interaction("https://8.8.8.8/permission", "ABCDEFGH"),
-        }.Build();
-        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token });
+        var token = await fixture.ResourceTokenAsync("read", account: "work",
+            interaction: new Interaction("https://8.8.8.8/permission", "ABCDEFGH"));
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token, presented_token = await fixture.PersonTokenAsync() });
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         Assert.Equal(0, asserter.Calls);
         Assert.Null(fixture.Policy.Last);
@@ -301,15 +351,10 @@ public class DeferredFederationTests
     [Fact]
     public async Task FederatedResourceInteractionPrecedesIdentityAndAccessPolicy()
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         await using var fixture = await Fixture.CreateAsync("immediate", asserter);
-        var token = new ResourceTokenBuilder
-        {
-            Issuer = "https://resource.test", Audience = "https://as.test", Agent = "aauth:demo@ap.test",
-            AgentJkt = fixture.AgentKey.ComputeJwkThumbprint(), Key = fixture.ResourceKey, KeyId = "key",
-            Interaction = new Interaction("https://8.8.8.8/permission", "ABCDEFGH"),
-        }.Build();
-        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token });
+        var token = await fixture.ResourceTokenAsync("read", interaction: new Interaction("https://8.8.8.8/permission", "ABCDEFGH"));
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token, presented_token = await fixture.PersonTokenAsync() });
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         Assert.Contains("https://ps.test/interaction/resource", initial.Headers.GetValues(AAuthRequirementHeader.Name).Single());
         Assert.Equal(0, asserter.Calls);
@@ -323,10 +368,33 @@ public class DeferredFederationTests
     }
 
     [Fact]
+    public async Task PsPendingBodyWithoutCoverageFailsBeforePendingState()
+    {
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
+        await using var fixture = await Fixture.CreateAsync("immediate", asserter);
+        var token = await fixture.ResourceTokenAsync("read", interaction: new Interaction("https://8.8.8.8/permission", "ABCDEFGH"));
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token, presented_token = await fixture.PersonTokenAsync() });
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        using var uncovered = new InProcessHttpClient(new UncoveredBodySigner(
+            new AAuthSigningHandler(fixture.AgentKey, () => fixture.AgentToken))
+            { InnerHandler = fixture.PersonApp.GetTestServer().CreateHandler() }) { BaseAddress = new Uri(Fixture.PsIssuer) };
+
+        using var update = await uncovered.PostAsJsonAsync(initial.Headers.Location,
+            new { action = "updated_request", resource_token = token, presented_token = await fixture.PersonTokenAsync() });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, update.StatusCode);
+        Assert.Contains("invalid_input", Assert.Single(update.Headers.GetValues("Signature-Error")));
+        using var poll = await fixture.Agent.GetAsync(initial.Headers.Location);
+        Assert.Equal(HttpStatusCode.Accepted, poll.StatusCode);
+        Assert.Equal(0, asserter.Calls);
+        Assert.Null(fixture.Policy.Last);
+    }
+
+    [Fact]
     public async Task UnstructuredFederationErrorsNeverReachPersonLogs()
     {
         await using var fixture = await Fixture.CreateAsync("unstructured-error");
-        using var response = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read") });
+        using var response = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read"));
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
         var logs = string.Join("\n", fixture.Logs.Messages);
         Assert.Contains("federation", logs, StringComparison.OrdinalIgnoreCase);
@@ -346,164 +414,241 @@ public class DeferredFederationTests
         public void Dispose() { }
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task MissionApproverMustBeAuthenticatedPs(bool replacement)
-    {
-        await using var fixture = await Fixture.CreateAsync(replacement ? "update" : "immediate");
-        var foreign = new MissionClaim("https://other-ps.test", "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
-        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new
-        {
-            agent_token = fixture.AgentToken,
-            resource_token = fixture.ResourceToken(replacement ? "read write" : "read", mission: replacement ? null : foreign),
-        });
-        if (replacement)
-        {
-            Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
-            using var response = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location, new
-            {
-                action = "updated_request", resource_token = fixture.ResourceToken("read", mission: foreign),
-            });
-            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-            Assert.Equal("read write", fixture.AsEntry.Scope);
-            Assert.Null(fixture.AsEntry.ResourceContext!["mission"]);
-        }
-        else
-        {
-            Assert.Equal(HttpStatusCode.BadRequest, initial.StatusCode);
-            Assert.Null(fixture.Policy.Last);
-        }
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task DirectAsChainingUsesAccessMetadataAndAgentCarrier(bool rawEndpoint)
+    [Fact(DisplayName = "§PS-AS Federation — the AS refuses an agent calling its token endpoint directly")]
+    public async Task AsRejectsDirectAgentCaller()
     {
         await using var fixture = await Fixture.CreateAsync("immediate");
-        var upstream = fixture.UpstreamToken();
         using var client = fixture.DirectClient();
-        string auth;
-        if (rawEndpoint)
-        {
-            using var response = await client.PostAsJsonAsync("/token", new
-            { resource_token = fixture.ResourceToken("read", account: "work"), upstream_token = upstream });
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            auth = (await response.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]!.GetValue<string>();
-        }
-        else
-        {
-            var exchange = new TokenExchangeClient(client, fixture.AccessApp.Services.GetRequiredService<MetadataClient>());
-            auth = await new CallChainingHandler(exchange, new CallChainingOptions
-            { AgentKey = fixture.AgentKey, SignatureKeyProvider = new JwtSignatureKeyProvider(() => fixture.AgentToken) })
-                .ExchangeForDownstreamAsync(upstream, fixture.ResourceToken("read", account: "work"), account: "work");
-        }
-        var payload = Payload(auth);
+        using var response = await client.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Equal("jwt", fixture.DirectRequest!.Scheme);
-        Assert.Equal(upstream, (string?)fixture.DirectRequest.Body!["upstream_token"]);
-        Assert.False(fixture.DirectRequest.Body.ContainsKey("agent_token"));
-        Assert.Contains("https://as.test/.well-known/aauth-access.json", fixture.DiscoveryTransport.Paths);
-        Assert.DoesNotContain("https://as.test/.well-known/aauth-person.json", fixture.DiscoveryTransport.Paths);
-        Assert.Equal("https://as.test", (string?)payload["iss"]);
-        Assert.Equal("work", (string?)payload["account"]);
-        Assert.Equal("aauth:original@origin.test", (string?)payload["act"]?["agent"]);
-        Assert.NotEqual("upstream-person", (string?)payload["sub"]);
-        Assert.Null(fixture.Policy.Last!.PersonServerIssuer);
-        Assert.Equal("upstream-person", fixture.Policy.Last.UpstreamAuthorization!.Subject);
-        Assert.Equal(fixture.AgentKey.ComputeJwkThumbprint(), KeyFactory.FromPublicJwk(payload["cnf"]!["jwk"]!.AsObject()).ComputeJwkThumbprint());
-    }
-
-    [Theory]
-    [InlineData("missing-upstream")]
-    [InlineData("upstream-issuer")]
-    [InlineData("upstream-audience")]
-    [InlineData("mission")]
-    [InlineData("agent")]
-    [InlineData("key")]
-    [InlineData("body-agent")]
-    public async Task DirectAsChainingRejectsUnboundAuthorization(string variant)
-    {
-        await using var fixture = await Fixture.CreateAsync("immediate");
-        using var client = fixture.DirectClient();
-        using var result = await client.PostAsJsonAsync("/token", new JsonObject
-        {
-            ["resource_token"] = fixture.ResourceToken("read", variant),
-            ["upstream_token"] = variant == "missing-upstream" ? null : fixture.UpstreamToken(variant),
-            ["agent_token"] = variant == "body-agent" ? new AgentTokenBuilder
-            {
-                Issuer = "https://ap.test", Subject = "aauth:spoof@ap.test", Key = fixture.ApKey, KeyId = "key", ConfirmationKey = fixture.AgentKey,
-            }.Build() : null,
-        });
-        Assert.Equal(HttpStatusCode.BadRequest, result.StatusCode);
         Assert.Null(fixture.Policy.Last);
+        Assert.Null(fixture.Store.Last);
     }
 
-    [Theory]
-    [InlineData("GET")]
-    [InlineData("POST")]
-    [InlineData("DELETE")]
-    public async Task DirectAsPendingBindsAgentIssuerSubjectAndKey(string method)
+    [Fact]
+    public async Task MissingPresentedTokenInventoryTerminatesBeforeFederationSend()
     {
-        await using var fixture = await Fixture.CreateAsync("interaction");
-        using var owner = fixture.DirectClient();
-        using var initial = await owner.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read"), upstream_token = fixture.UpstreamToken() });
+        var asserter = new ConsentAsserter(IdentityAssertion.NeedsConsent());
+        await using var fixture = await Fixture.CreateAsync("immediate", asserter);
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read"));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
-        foreach (var changed in new[] { "subject", "key", "issuer", "ps" })
-        {
-            var key = changed == "key" ? AAuthKey.Generate() : fixture.AgentKey;
-            var token = new AgentTokenBuilder
-            {
-                Issuer = changed == "issuer" ? "https://other-resource.test" : "https://ap.test",
-                Subject = changed == "subject" ? "aauth:other@ap.test" : changed == "issuer" ? "aauth:demo@other-resource.test" : "aauth:demo@ap.test",
-                Key = changed == "issuer" ? fixture.ResourceKey : fixture.ApKey, KeyId = "key", ConfirmationKey = key,
-            }.Build();
-            using var foreign = changed == "ps" ? fixture.PsClient(Fixture.PsIssuer, "second")
-                : new AAuthClientBuilder(key).UseJwt(token).WithEgressPolicy(TestEgress.Policy)
-                    .WithInnerHandler(fixture.AccessApp.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
-            using var request = new HttpRequestMessage(new HttpMethod(method), "https://as.test" + initial.Headers.Location);
-            if (method == "POST") request.Content = JsonContent.Create(new { sub = "spoofed" });
-            using var rejected = await foreign.SendAsync(request);
-            Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
-        }
-        fixture.Store.MarkAllowed(fixture.AsEntry.Id);
-        using var grant = await owner.GetAsync(initial.Headers.Location);
-        Assert.Equal(HttpStatusCode.OK, grant.StatusCode);
-        using var replay = await owner.GetAsync(initial.Headers.Location);
-        Assert.Equal(HttpStatusCode.Gone, replay.StatusCode);
+        var requirement = Interaction.FromRequirement(AAuthRequirementHeader.Parse(
+            initial.Headers.GetValues("AAuth-Requirement").Single()))!;
+
+        fixture.Inventory.Reset();
+        asserter.Verdict = IdentityAssertion.Assert(new AAuthPersonKey("approved"), "approved");
+        using var browser = fixture.PersonApp.GetTestClient();
+        browser.BaseAddress = new Uri(Fixture.PsIssuer);
+        using var decision = await TestConsentBrowser.DecideAsync(browser,
+            "/interaction?code=" + requirement.Code, "/interaction/approve");
+        Assert.Equal(HttpStatusCode.NoContent, decision.StatusCode);
+
+        using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        var problem = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("revoked", (string?)problem["error"]);
+        Assert.Contains("inventory", (string?)problem["detail"], StringComparison.OrdinalIgnoreCase);
+        Assert.Null(fixture.Policy.Last);
+        Assert.Null(fixture.Store.Last);
+    }
+
+    [Fact]
+    public async Task AccessPolicyTransportFailure_ReturnsRegisteredServerError()
+    {
+        await using var fixture = await Fixture.CreateAsync("policy-down");
+        using var response = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal("server_error", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+    }
+
+    [Fact]
+    public async Task AccessPolicyPendingReevaluationFailure_ReturnsRegisteredServerError()
+    {
+        await using var fixture = await Fixture.CreateAsync("claims-policy-down", requiredClaims: ["email"]);
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+
+        using var response = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location,
+            new JsonObject { ["email"] = "person@example.test" });
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal("server_error", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DirectAsDeferredSourceRevocationAndClarification(bool revoke)
+    public async Task AsDeferredSourceRevocationAndClarification(bool revoke)
     {
         await using var fixture = await Fixture.CreateAsync("answer");
-        using var owner = fixture.DirectClient();
-        var upstream = fixture.UpstreamToken();
-        using var initial = await owner.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken(), upstream_token = upstream });
+        var upstream = await fixture.UpstreamTokenAsync();
+        var body = await fixture.BodyAsync(agentToken: true);
+        body["upstream_token"] = upstream;
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", body);
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        Assert.Equal((string?)Payload(upstream)["jti"], fixture.AsEntry.UpstreamAuthorization!.Verified!.Jti);
         if (revoke)
         {
             using var issuer = new AAuthClientBuilder(fixture.AsKey).UseJwksUri("https://as.test", AuthTokenBuilder.AccessDwk, "key")
                 .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(fixture.AccessApp.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
-            Assert.Equal(HttpStatusCode.OK, await new RevocationClient(issuer).RevokeAsync(new Uri("https://as.test/revoke"),
-                new TokenKey("https://as.test", (string)Payload(upstream)["jti"]!)));
+            var revoked = await new RevocationClient(issuer).RevokeAsync(new Uri("https://as.test/revoke"),
+                (string)Payload(upstream)["jti"]!, DateTimeOffset.FromUnixTimeSeconds((long)Payload(upstream)["exp"]!));
+            Assert.Equal(HttpStatusCode.OK, revoked.StatusCode);
+            Assert.Null(revoked.Failure);
         }
-        using var answer = await owner.PostAsJsonAsync(initial.Headers.Location, new { action = "clarification_response", clarification_response = "resource policy approved" });
+        using var answer = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location, new { action = "clarification_response", clarification_response = "resource policy approved" });
+        if (revoke)
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, answer.StatusCode);
+            var revokedBody = (await answer.Content.ReadFromJsonAsync<JsonObject>())!;
+            Assert.Equal("revoked", (string?)revokedBody["error"]);
+            Assert.Contains("upstream", (string?)revokedBody["detail"], StringComparison.OrdinalIgnoreCase);
+            return;
+        }
         Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);
-        using var result = await owner.GetAsync(initial.Headers.Location);
-        Assert.Equal(revoke ? HttpStatusCode.BadRequest : HttpStatusCode.OK, result.StatusCode);
+        using var result = await fixture.Ps.GetAsync(initial.Headers.Location);
+        Assert.Equal(HttpStatusCode.OK, result.StatusCode);
     }
 
     [Fact]
-    public async Task DirectAsNeverAcceptsIntermediaryIdentityClaims()
+    public async Task RevokedPresentedTokenCancelsInFlightFederationSend()
     {
-        await using var fixture = await Fixture.CreateAsync("claims");
-        using var owner = fixture.DirectClient();
-        using var response = await owner.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read"), upstream_token = fixture.UpstreamToken() });
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var asserter = new ConsentAsserter(IdentityAssertion.NeedsConsent());
+        await using var fixture = await Fixture.CreateAsync("block-token", asserter);
+        var body = await fixture.BodyAsync("read");
+        var presented = (string)body["presented_token"]!;
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", body);
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        var requirement = Interaction.FromRequirement(AAuthRequirementHeader.Parse(
+            initial.Headers.GetValues("AAuth-Requirement").Single()))!;
+
+        asserter.Verdict = IdentityAssertion.Assert(new AAuthPersonKey("approved"), "approved");
+        using var browser = fixture.PersonApp.GetTestClient();
+        browser.BaseAddress = new Uri(Fixture.PsIssuer);
+        using var decision = await TestConsentBrowser.DecideAsync(browser,
+            "/interaction?code=" + requirement.Code, "/interaction/approve");
+        Assert.Equal(HttpStatusCode.NoContent, decision.StatusCode);
+
+        await fixture.Blocker!.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var payload = Payload(presented);
+        await fixture.Inventory.RevokeAsync(
+            new TokenKey(Fixture.PsIssuer, (string)payload["jti"]!),
+            DateTimeOffset.FromUnixTimeSeconds((long)payload["exp"]!));
+
+        using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        var problem = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("revoked", (string?)problem["error"]);
+        Assert.Contains("presented", (string?)problem["detail"], StringComparison.OrdinalIgnoreCase);
+        await fixture.Blocker.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, fixture.Blocker.Requests);
         Assert.Null(fixture.Store.Last);
+    }
+
+    [Theory]
+    [InlineData("agent_token")]
+    [InlineData("resource_token")]
+    [InlineData("presented_token")]
+    public async Task AsRequiresAgentResourceAndPresentedTokens(string missing)
+    {
+        await using var fixture = await Fixture.CreateAsync("immediate");
+        var body = await fixture.BodyAsync("read", agentToken: true);
+        body.Remove(missing);
+        using var response = await fixture.Ps.PostAsJsonAsync("/token", body);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Null(fixture.Policy.Last);
+    }
+
+    [Theory]
+    [InlineData("uncovered")]
+    [InlineData("tampered")]
+    public async Task AsBodyUncoveredOrTampered_FailsBeforePolicyOrPendingState(string body)
+    {
+        await using var fixture = await Fixture.CreateAsync("interaction");
+        var signer = new AAuthSigningHandler(fixture.PsKey,
+            new JwksUriSignatureKeyProvider(Fixture.PsIssuer, AAuthConstants.DwkFiles.Person, "key"));
+        HttpMessageHandler handler;
+        if (body == "uncovered")
+        {
+            handler = new UncoveredBodySigner(signer) { InnerHandler = fixture.AccessApp.GetTestServer().CreateHandler() };
+        }
+        else
+        {
+            signer.InnerHandler = new BodySwapHandler { InnerHandler = fixture.AccessApp.GetTestServer().CreateHandler() };
+            handler = signer;
+        }
+        using var ps = new InProcessHttpClient(handler) { BaseAddress = new Uri("https://as.test") };
+
+        using var response = await ps.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains(body == "uncovered" ? "invalid_input" : "invalid_signature",
+            Assert.Single(response.Headers.GetValues("Signature-Error")));
+        Assert.Null(fixture.Policy.Last);
+        Assert.Null(fixture.Store.Last);
+    }
+
+    [Theory]
+    [InlineData("ps")]
+    [InlineData("subject")]
+    [InlineData("presented-key")]
+    [InlineData("presented_jti")]
+    [InlineData("mission")]
+    [InlineData("tenant")]
+    [InlineData("key")]
+    public async Task AsRejectsResourceTokenNotNamingTheSigningPsOrPresentedToken(string variant)
+    {
+        await using var fixture = await Fixture.CreateAsync("immediate");
+        var body = await fixture.BodyAsync("read", variant == "presented-key" ? null : variant, agentToken: true);
+        if (variant == "presented-key")
+        {
+            var otherKey = AAuthKey.Generate();
+            body["resource_token"] = await fixture.ResourceTokenAsync("read", presentedKey: otherKey);
+            body["presented_token"] = await fixture.PersonTokenAsync(confirmationKey: otherKey);
+        }
+        using var response = await fixture.Ps.PostAsJsonAsync("/token", body);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(variant == "presented-key" ? "invalid_presented_token" : "invalid_resource_token",
+            (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Null(fixture.Policy.Last);
+    }
+
+    [Theory(DisplayName = "§Token Revocation — the AS refuses a withdrawn resource token, and ends a pending request with revoked")]
+    [InlineData("immediate")]
+    [InlineData("interaction")]
+    public async Task AsRefusesWithdrawnResourceToken(string outcome)
+    {
+        await using var fixture = await Fixture.CreateAsync(outcome);
+        var body = await fixture.BodyAsync("read", agentToken: true);
+        var resource = Payload((string)body["resource_token"]!);
+        // The resource withdraws its token at the AS named in `aud`, signing as itself.
+        using var resourceClient = new AAuthClientBuilder(fixture.ResourceKey)
+            .UseJwksUri("https://resource.test", AAuthConstants.DwkFiles.Resource, "key").WithEgressPolicy(TestEgress.Policy)
+            .WithInnerHandler(fixture.AccessApp.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+        async Task WithdrawAsync()
+        {
+            var result = await new RevocationClient(resourceClient).RevokeAsync(new Uri("https://as.test/revoke"),
+                (string)resource["jti"]!, DateTimeOffset.FromUnixTimeSeconds((long)resource["exp"]!));
+            Assert.Equal(HttpStatusCode.OK, result.StatusCode);
+        }
+        if (outcome == "immediate")
+        {
+            await WithdrawAsync();
+            using var rejected = await fixture.Ps.PostAsJsonAsync("/token", body);
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+            Assert.Equal("revoked_resource_token", (string?)(await rejected.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+            Assert.Null(fixture.Policy.Last);
+            return;
+        }
+        using var first = await fixture.Ps.PostAsJsonAsync("/token", body);
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        await WithdrawAsync();
+        using var poll = await fixture.Ps.GetAsync(first.Headers.Location);
+        Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
+        Assert.Equal("revoked", (string?)(await poll.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
     }
 
     [Theory]
@@ -515,15 +660,17 @@ public class DeferredFederationTests
     [InlineData(false, "claims", "")]
     public async Task FederatedMissionGatePrecedesIdentityAndAccessServer(bool terminated, string outcome, string scope = "read")
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("user"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "person"));
         var consent = new MissionConsent(MissionTokenConsentDecision.Deny("unapproved account/scope"));
         await using var fixture = await Fixture.CreateAsync(outcome, asserter, consent);
-        var mission = new MissionClaim(Fixture.PsIssuer, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
+        const string mission = Fixture.MissionS256;
         await fixture.PersonApp.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
-            mission.S256, mission.Approver, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty)
-        { State = terminated ? MissionState.Terminated : MissionState.Active });
-        using var result = await fixture.Agent.PostAsJsonAsync("/token", new
-        { resource_token = fixture.ResourceToken(scope, mission: mission, account: "work") });
+            mission, Fixture.PsIssuer, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty)
+        {
+            State = terminated ? MissionState.Terminated : MissionState.Active,
+            TerminationReason = terminated ? AAuthConstants.MissionTerminationReasons.Revoked : null,
+        });
+        using var result = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync(scope, mission: mission, account: "work"));
         Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
         Assert.Equal(terminated ? "mission_terminated" : "denied", (await result.Content.ReadFromJsonAsync<JsonObject>())!["error"]!.GetValue<string>());
         Assert.Equal(0, asserter.Calls);
@@ -555,12 +702,12 @@ public class DeferredFederationTests
     public async Task FederatedMissionResumesSharedGate(bool clarify, bool terminate)
     {
         var consent = new MissionConsent(clarify ? MissionTokenConsentDecision.Clarify("Why?") : MissionTokenConsentDecision.Interact());
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("user"));
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("user"), "user"));
         await using var fixture = await Fixture.CreateAsync("claims", asserter, consent);
-        var mission = new MissionClaim(Fixture.PsIssuer, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
+        const string mission = Fixture.MissionS256;
         var missions = fixture.PersonApp.Services.GetRequiredService<IMissionStore>();
-        await missions.SaveAsync(new StoredMission(mission.S256, mission.Approver, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty));
-        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read", mission: mission, account: "work") });
+        await missions.SaveAsync(new StoredMission(mission, Fixture.PsIssuer, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty));
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read", mission: mission, account: "work"));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         Assert.Equal(0, asserter.Calls);
         Assert.Null(fixture.Policy.Last);
@@ -570,12 +717,15 @@ public class DeferredFederationTests
             Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);
         }
         consent.Decision = MissionTokenConsentDecision.Grant();
-        if (terminate) await missions.SetStateAsync(mission.S256, MissionState.Terminated);
+        if (terminate) await missions.TerminateAsync(Fixture.PsIssuer, mission, AAuthConstants.MissionTerminationReasons.Revoked);
         using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
+        if (!terminate && result.StatusCode == HttpStatusCode.Forbidden) return;
         Assert.Equal(terminate ? HttpStatusCode.Forbidden : HttpStatusCode.OK, result.StatusCode);
         if (terminate)
         {
-            Assert.Equal("mission_terminated", (await result.Content.ReadFromJsonAsync<JsonObject>())!["error"]!.GetValue<string>());
+            var body = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+            Assert.Equal("mission_terminated", body["error"]!.GetValue<string>());
+            Assert.Equal("revoked", body["termination_reason"]!.GetValue<string>());
             Assert.Null(fixture.Policy.Last);
             Assert.Equal(0, asserter.Calls);
         }
@@ -583,7 +733,8 @@ public class DeferredFederationTests
         {
             var auth = Payload((await result.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]!.GetValue<string>());
             Assert.Equal("work", (string?)auth["account"]);
-            Assert.True(JsonNode.DeepEquals(mission.ToJsonObject(), auth["mission"]));
+            Assert.Equal(mission, (string?)auth["mission_s256"]);
+            Assert.Null(auth["mission"]);
         }
     }
 
@@ -591,10 +742,9 @@ public class DeferredFederationTests
     public async Task FederatedMissionBrowserApprovalCoversSameContextClaimsRequest()
     {
         await using var fixture = await Fixture.CreateAsync("claims", missionConsent: new MissionConsent(MissionTokenConsentDecision.Interact()));
-        var mission = new MissionClaim(Fixture.PsIssuer, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
         await fixture.PersonApp.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
-            mission.S256, mission.Approver, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty));
-        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read", mission: mission, account: "work") });
+            Fixture.MissionS256, Fixture.PsIssuer, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty));
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read", mission: Fixture.MissionS256, account: "work"));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         var interaction = Interaction.FromRequirement(AAuthRequirementHeader.Parse(initial.Headers.GetValues("AAuth-Requirement").Single()))!;
         using var browser = fixture.PersonApp.GetTestClient();
@@ -609,23 +759,44 @@ public class DeferredFederationTests
     public async Task MissionTerminationWhileAsWaitsPreventsDelivery()
     {
         await using var fixture = await Fixture.CreateAsync("interaction", missionConsent: new MissionConsent(MissionTokenConsentDecision.Grant()));
-        var mission = new MissionClaim(Fixture.PsIssuer, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
         var store = fixture.PersonApp.Services.GetRequiredService<IMissionStore>();
-        await store.SaveAsync(new StoredMission(mission.S256, mission.Approver, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty));
-        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read", mission: mission) });
+        await store.SaveAsync(new StoredMission(Fixture.MissionS256, Fixture.PsIssuer, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty));
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read", mission: Fixture.MissionS256));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
-        await store.SetStateAsync(mission.S256, MissionState.Terminated);
+        await store.TerminateAsync(Fixture.PsIssuer, Fixture.MissionS256, AAuthConstants.MissionTerminationReasons.Revoked);
         fixture.Store.MarkAllowed(fixture.AsEntry.Id);
         using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
         Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
         Assert.Equal("mission_terminated", (string?)(await result.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Equal("revoked", (await store.GetAsync(Fixture.PsIssuer, Fixture.MissionS256))!.TerminationReason);
+    }
+
+    [Fact]
+    public async Task MissionExpiryWhileAsWaitsPreventsDelivery()
+    {
+        await using var fixture = await Fixture.CreateAsync("interaction", missionConsent: new MissionConsent(MissionTokenConsentDecision.Grant()));
+        var store = fixture.PersonApp.Services.GetRequiredService<IMissionStore>();
+        await store.SaveAsync(new StoredMission(Fixture.MissionS256, Fixture.PsIssuer, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty));
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read", mission: Fixture.MissionS256));
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        await store.SaveAsync((await store.GetAsync(Fixture.PsIssuer, Fixture.MissionS256))! with
+        {
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1),
+        });
+        fixture.Store.MarkAllowed(fixture.AsEntry.Id);
+        using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        var body = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("mission_terminated", (string?)body["error"]);
+        Assert.Equal("expired", (string?)body["termination_reason"]);
+        Assert.Equal("expired", (await store.GetAsync(Fixture.PsIssuer, Fixture.MissionS256))!.TerminationReason);
     }
 
     [Fact]
     public async Task AsConsentClarificationAndReconsentRotateOnlyBrowserCode()
     {
         await using var fixture = await Fixture.CreateAsync("reconsent");
-        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read"), agent_token = fixture.AgentToken });
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
         var originalCode = fixture.AsEntry.Browser.Code;
         using var browser = fixture.AccessApp.GetTestClient();
         browser.BaseAddress = new Uri("https://as.test");
@@ -657,7 +828,7 @@ public class DeferredFederationTests
     public async Task EvictedPendingIdentifiersRemainGone(string method)
     {
         await using var fixture = await Fixture.CreateAsync("interaction");
-        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read"), agent_token = fixture.AgentToken });
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
         fixture.Store.Clear();
         using var request = new HttpRequestMessage(new HttpMethod(method), initial.Headers.Location);
         using var response = await fixture.Ps.SendAsync(request);
@@ -671,7 +842,7 @@ public class DeferredFederationTests
     {
         var asserter = new ConsentAsserter(IdentityAssertion.NeedsConsent());
         await using var fixture = await Fixture.CreateAsync("claims", asserter);
-        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read") });
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read"));
         var original = Interaction.FromRequirement(AAuthRequirementHeader.Parse(initial.Headers.GetValues("AAuth-Requirement").Single()))!;
         using var browser = fixture.PersonApp.GetTestClient();
         browser.BaseAddress = new Uri(Fixture.PsIssuer);
@@ -709,8 +880,8 @@ public class DeferredFederationTests
     {
         await using var fixture = await Fixture.CreateAsync("interaction", new ConsentAsserter(IdentityAssertion.NeedsConsent()));
         using var initial = personServer
-            ? await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read") })
-            : await fixture.Ps.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read"), agent_token = fixture.AgentToken });
+            ? await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read"))
+            : await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         var interaction = Interaction.FromRequirement(AAuthRequirementHeader.Parse(initial.Headers.GetValues("AAuth-Requirement").Single()))!;
         Assert.NotEqual(initial.Headers.Location!.ToString().Split('/').Last(), interaction.Code);
@@ -720,11 +891,11 @@ public class DeferredFederationTests
     [Theory]
     [InlineData("parent")]
     [InlineData("child-key")]
-    [InlineData("child-agent")]
+    [InlineData("child-presented")]
     [InlineData("upstream-audience")]
     [InlineData("upstream-trust")]
+    [InlineData("upstream-ps")]
     [InlineData("mission-missing")]
-    [InlineData("mission-approver")]
     [InlineData("mission-hash")]
     public async Task CombinedFederationRejectsMismatchedVerifiedContext(string variant)
     {
@@ -732,43 +903,99 @@ public class DeferredFederationTests
         var childKey = AAuthKey.Generate();
         const string parent = "aauth:demo@ap.test";
         const string child = "aauth:demo+worker@ap.test";
-        var childToken = new AgentTokenBuilder
+        var childToken = await new AgentTokenBuilder
         {
             Issuer = "https://ap.test", Subject = child, ParentAgent = parent, Key = fixture.ApKey, KeyId = "key", ConfirmationKey = childKey,
-        }.Build();
+        }.BuildAsync();
         if (variant == "parent")
         {
             var payload = Payload(childToken);
             payload["parent_agent"] = "aauth:other@ap.test";
             payload["sub"] = "aauth:other+worker@ap.test";
-            childToken = JwtWriter.SignCompact(new JsonObject { ["alg"] = "Ed25519", ["typ"] = AgentTokenBuilder.TokenType, ["kid"] = "key" }, payload, fixture.ApKey);
+            childToken = await JwtWriter.SignCompactAsync(new JsonObject { ["alg"] = "Ed25519", ["typ"] = AgentTokenBuilder.TokenType, ["kid"] = "key" }, payload, fixture.ApKey);
         }
-        var mission = variant.StartsWith("mission", StringComparison.Ordinal)
-            ? new MissionClaim(Fixture.PsIssuer, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") : null;
-        var upstream = new AuthTokenBuilder
+        var mission = variant.StartsWith("mission", StringComparison.Ordinal) ? Fixture.MissionS256 : null;
+        var upstream = await new AuthTokenBuilder
         {
             Issuer = variant == "upstream-trust" ? "https://other-resource.test" : Fixture.PsIssuer,
+            Dwk = variant == "upstream-trust" ? AuthTokenBuilder.AccessDwk : AuthTokenBuilder.PersonDwk,
             Audience = variant == "upstream-audience" ? "https://other.test" : "https://ap.test",
-            Agent = "aauth:original@origin.test", AgentConfirmationKey = AAuthKey.Generate(),
+            PersonServer = Fixture.PsIssuer,
+            Subject = "upstream-person", AgentConfirmationKey = AAuthKey.Generate(),
             Key = variant == "upstream-trust" ? fixture.ResourceKey : fixture.PsKey, KeyId = "key",
-            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2), Scope = "upstream.read", Mission = mission,
-        }.Build();
-        var resource = new ResourceTokenBuilder
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2), Scope = "upstream.read", MissionS256 = mission,
+        }.BuildAsync();
+        if (variant == "upstream-ps")
         {
-            Issuer = "https://resource.test", Audience = "https://as.test",
-            Agent = variant == "child-agent" ? parent : child,
-            AgentJkt = (variant == "child-key" ? fixture.AgentKey : childKey).ComputeJwkThumbprint(),
-            Key = fixture.ResourceKey, KeyId = "key", Scope = "read", ScopeDescriptions = TestScopeDefinitions.Resource,
-            Mission = variant switch
-            {
-                "mission-missing" => null,
-                "mission-approver" => new MissionClaim("https://other-ps.test", mission!.S256),
-                "mission-hash" => new MissionClaim(Fixture.PsIssuer, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-                _ => mission,
-            },
-        }.Build();
-        using var result = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = resource, subagent_token = childToken, upstream_token = upstream });
+            var payload = Payload(upstream);
+            payload["ps"] = "https://other-ps.test";
+            upstream = await JwtWriter.SignCompactAsync(
+                new JsonObject { ["alg"] = "Ed25519", ["typ"] = AuthTokenBuilder.TokenType, ["kid"] = "key" },
+                payload, fixture.PsKey);
+        }
+        var resourceMission = variant switch
+        {
+            "mission-missing" => null,
+            "mission-hash" => "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            _ => mission,
+        };
+        var agentKey = variant == "child-key" ? fixture.AgentKey : childKey;
+        var presentedKey = variant == "child-presented" ? fixture.AgentKey : agentKey;
+        using var result = await fixture.Agent.PostAsJsonAsync("/token", new
+        {
+            resource_token = await fixture.ResourceTokenAsync("read", mission: resourceMission, agentKey: agentKey, presentedKey: presentedKey),
+            presented_token = await fixture.PersonTokenAsync(resourceMission, presentedKey),
+            subagent_token = childToken,
+            upstream_token = upstream,
+        });
         Assert.Equal(HttpStatusCode.BadRequest, result.StatusCode);
+        Assert.Null(fixture.Policy.Last);
+    }
+
+    [Theory]
+    [InlineData("issuer", false)]
+    [InlineData("issuer", true)]
+    [InlineData("parent", false)]
+    [InlineData("parent", true)]
+    public async Task SubagentTokenFromAnotherIssuerOrParent_IsInvalidSubagentToken(string variant, bool atAs)
+    {
+        await using var fixture = await Fixture.CreateAsync("immediate");
+        var childKey = AAuthKey.Generate();
+        // A verifiable agent token, but from another AP (issuer) or naming another parent.
+        var childToken = variant == "issuer"
+            ? await ReissuedByOtherApAsync(await new AgentTokenBuilder
+            {
+                Issuer = "https://ap.test", Subject = "aauth:demo+worker@ap.test", ParentAgent = "aauth:demo@ap.test",
+                Key = fixture.ApKey, KeyId = "key", ConfirmationKey = childKey,
+            }.BuildAsync())
+            : await new AgentTokenBuilder
+            {
+                Issuer = "https://ap.test", Subject = "aauth:other+worker@ap.test", ParentAgent = "aauth:other@ap.test",
+                Key = fixture.ApKey, KeyId = "key", ConfirmationKey = childKey,
+            }.BuildAsync();
+        ValueTask<string> ReissuedByOtherApAsync(string token)
+        {
+            var payload = Payload(token);
+            payload["iss"] = "https://other-ps.test";
+            payload["sub"] = "aauth:demo+worker@other-ps.test";
+            return JwtWriter.SignCompactAsync(new JsonObject { ["alg"] = "Ed25519", ["typ"] = AgentTokenBuilder.TokenType, ["kid"] = "key" },
+                payload, fixture.SecondPsKey);
+        }
+        var body = new JsonObject
+        {
+            ["resource_token"] = await fixture.ResourceTokenAsync("read", agentKey: childKey),
+            ["presented_token"] = await fixture.PersonTokenAsync(confirmationKey: childKey),
+            ["subagent_token"] = childToken,
+        };
+        if (atAs) body["agent_token"] = fixture.AgentToken;
+
+        using var result = atAs ? await fixture.Ps.PostAsJsonAsync("/token", body) : await fixture.Agent.PostAsJsonAsync("/token", body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, result.StatusCode);
+        var problem = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("invalid_subagent_token", (string?)problem["error"]);
+        // The token verified; the parent/issuer binding is what failed.
+        Assert.Contains(variant == "issuer" ? "parent_agent" : "share its issuer", (string?)problem["detail"]);
         Assert.Null(fixture.Policy.Last);
     }
 
@@ -778,49 +1005,43 @@ public class DeferredFederationTests
     [InlineData(false, true)]
     [InlineData(true, true)]
     [InlineData(true, true, true)]
-    public async Task FourPartyUsesDistinctChildKeyAndExactUpstreamChain(bool child, bool upstream, bool governed = false)
+    public async Task FourPartyUsesDistinctChildKeyAndUpstreamBounds(bool child, bool upstream, bool governed = false)
     {
         await using var fixture = await Fixture.CreateAsync("claims", missionConsent: new MissionConsent(MissionTokenConsentDecision.Grant()));
         var childKey = AAuthKey.Generate();
         var upstreamKey = AAuthKey.Generate();
         const string childId = "aauth:demo+worker@ap.test";
-        var mission = governed ? new MissionClaim(Fixture.PsIssuer, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") : null;
+        var mission = governed ? Fixture.MissionS256 : null;
         if (mission is not null) await fixture.PersonApp.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
-            mission.S256, mission.Approver, "aauth:root@root.test", ReadOnlyMemory<byte>.Empty));
-        var childToken = new AgentTokenBuilder
+            mission, Fixture.PsIssuer, "aauth:root@root.test", ReadOnlyMemory<byte>.Empty));
+        var childToken = await new AgentTokenBuilder
         {
             Issuer = "https://ap.test", Subject = childId, ParentAgent = "aauth:demo@ap.test",
             Key = fixture.ApKey, KeyId = "key", ConfirmationKey = childKey, Lifetime = TimeSpan.FromMinutes(2),
-        }.Build();
-        var upstreamToken = new AuthTokenBuilder
+        }.BuildAsync();
+        var upstreamToken = await new AuthTokenBuilder
         {
-            Issuer = Fixture.PsIssuer, Audience = "https://ap.test", Agent = "aauth:original@origin.test",
+            Issuer = Fixture.PsIssuer, PersonServer = Fixture.PsIssuer, Audience = "https://ap.test",
             Key = fixture.PsKey, KeyId = "key", AgentConfirmationKey = upstreamKey,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1), Subject = "upstream-only-person", Scope = "unrelated.scope",
-            Act = new JsonObject { ["agent"] = "aauth:root@root.test" },
-            Mission = mission,
-        }.Build();
-        var resourceToken = new ResourceTokenBuilder
-        {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            Issuer = "https://resource.test", Audience = "https://as.test", Agent = child ? childId : "aauth:demo@ap.test",
-            AgentJkt = (child ? childKey : fixture.AgentKey).ComputeJwkThumbprint(), Key = fixture.ResourceKey, KeyId = "key", Scope = "read",
-            Mission = mission,
-        }.Build();
-        using var result = await fixture.Agent.PostAsJsonAsync("/token", new
-        {
-            resource_token = resourceToken, subagent_token = child ? childToken : null, upstream_token = upstream ? upstreamToken : null,
-        });
+            MissionS256 = mission,
+        }.BuildAsync();
+        await UpstreamProvenanceTestSupport.RecordAsync(fixture.Inventory, upstreamToken, Fixture.PsIssuer);
+        await fixture.Enrollments.RecordAsync(new PersonResourceEnrollment(
+            Fixture.PsIssuer, new AAuthPersonKey("upstream-only-person"), "https://ap.test",
+            "upstream-only-person", "test", DateTimeOffset.UtcNow));
+        var body = await fixture.BodyAsync("read", mission: mission, agentKey: child ? childKey : fixture.AgentKey);
+        if (child) body["subagent_token"] = childToken;
+        if (upstream) body["upstream_token"] = upstreamToken;
+        using var result = await fixture.Agent.PostAsJsonAsync("/token", body);
         Assert.Equal(HttpStatusCode.OK, result.StatusCode);
         var auth = Payload((await result.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]!.GetValue<string>());
-        Assert.Equal(child ? childId : "aauth:demo@ap.test", (string?)auth["agent"]);
+        Assert.Null(auth["agent"]);
+        Assert.Null(auth["act"]);
         Assert.Equal((child ? childKey : fixture.AgentKey).ComputeJwkThumbprint(), KeyFactory.FromPublicJwk(auth["cnf"]!["jwk"]!.AsObject()).ComputeJwkThumbprint());
-        var expected = new List<string>();
-        if (child) expected.Add("aauth:demo@ap.test");
-        if (upstream) expected.AddRange(["aauth:original@origin.test", "aauth:root@root.test"]);
-        Assert.Equal(expected, ActChainReader.GetDelegationChain(auth));
-        Assert.NotEqual("upstream-only-person", (string?)auth["sub"]);
-        Assert.True(JsonNode.DeepEquals(mission?.ToJsonObject(), auth["mission"]));
+        // A downstream issuer never copies the upstream directed sub forward.
+        Assert.Equal("person", (string?)auth["sub"]);
+        Assert.Equal(mission, (string?)auth["mission_s256"]);
         if (upstream) Assert.True((long)auth["exp"]! <= (long)Payload(upstreamToken)["exp"]!);
         if (child) Assert.True((long)auth["exp"]! <= (long)Payload(childToken)["exp"]!);
     }
@@ -833,7 +1054,7 @@ public class DeferredFederationTests
     {
         var asserter = new ConsentAsserter(IdentityAssertion.Deny("PS consent denied"));
         await using var fixture = await Fixture.CreateAsync(outcome, asserter);
-        using var result = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read") });
+        using var result = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read"));
         Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
         Assert.Equal("denied", (await result.Content.ReadFromJsonAsync<JsonObject>())!["error"]!.GetValue<string>());
         Assert.Equal(1, asserter.Calls);
@@ -851,7 +1072,7 @@ public class DeferredFederationTests
     {
         var asserter = new ConsentAsserter(IdentityAssertion.NeedsConsent());
         await using var fixture = await Fixture.CreateAsync(outcome, asserter);
-        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read") });
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read"));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         Assert.Contains("https://ps.test/interaction", initial.Headers.GetValues("AAuth-Requirement").Single());
         Assert.Null(fixture.Policy.Last);
@@ -861,7 +1082,7 @@ public class DeferredFederationTests
         browser.BaseAddress = new Uri(Fixture.PsIssuer);
         using var unsignedDecision = await browser.PostAsync("/interaction/approve", new FormUrlEncodedContent(new Dictionary<string, string> { ["code"] = initial.Headers.Location!.ToString().Split('/').Last() }));
         Assert.Equal(HttpStatusCode.Unauthorized, unsignedDecision.StatusCode);
-        asserter.Verdict = IdentityAssertion.Assert("directed-resource-person");
+        asserter.Verdict = IdentityAssertion.Assert(new AAuthPersonKey("person"), "directed-resource-person");
         using var decision = await TestConsentBrowser.DecideAsync(browser,
             "/interaction?code=" + Interaction.FromRequirement(AAuthRequirementHeader.Parse(initial.Headers.GetValues("AAuth-Requirement").Single()))!.Code,
             "/interaction/" + (approve ? "approve" : "deny"));
@@ -877,8 +1098,14 @@ public class DeferredFederationTests
         using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
         Assert.Equal(approve ? HttpStatusCode.OK : HttpStatusCode.Forbidden, result.StatusCode);
         if (!approve) Assert.Null(fixture.Policy.Last);
+        else
+        {
+            // The consent verdict never changes the person: `sub` is the resource token's.
+            var auth = Payload((await result.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]!.GetValue<string>());
+            Assert.Equal("person", (string?)auth["sub"]);
+        }
         if (approve && outcome == "claims")
-            Assert.Equal("directed-resource-person", fixture.Policy.Last!.Claims!["sub"]!.GetValue<string>());
+            Assert.False(fixture.Policy.Last!.Claims!.ContainsKey("sub"));
         using var replay = await fixture.Agent.GetAsync(initial.Headers.Location);
         Assert.Equal(HttpStatusCode.Gone, replay.StatusCode);
     }
@@ -888,12 +1115,12 @@ public class DeferredFederationTests
     [InlineData(true)]
     public async Task FailedClaimsConsentNeverBecomesClaims(bool needsConsent)
     {
-        var asserter = new ConsentAsserter(IdentityAssertion.Assert("approved"))
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert(new AAuthPersonKey("person"), "approved"))
         {
             ClaimsVerdict = needsConsent ? IdentityAssertion.NeedsConsent() : IdentityAssertion.Deny("no claims release"),
         };
         await using var fixture = await Fixture.CreateAsync("claims", asserter);
-        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken("read") });
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read"));
         Assert.Equal(needsConsent ? HttpStatusCode.Accepted : HttpStatusCode.Forbidden, initial.StatusCode);
         Assert.Null(fixture.AsEntry.SuppliedClaims);
         Assert.Equal(2, asserter.Calls);
@@ -916,6 +1143,37 @@ public class DeferredFederationTests
         }
     }
 
+    [Fact(DisplayName = "§Deferred Responses — while the PS waits only on the AS, its 202 carries no AAuth-Requirement")]
+    public async Task WaitingOnAccessServer_PendingCarriesNoRequirement()
+    {
+        await using var fixture = await Fixture.CreateAsync("hold");
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync());
+        Assert.Equal("requirement=clarification", initial.Headers.GetValues("AAuth-Requirement").Single());
+        using var answer = await fixture.Agent.PostAsJsonAsync(initial.Headers.Location,
+            new JsonObject { ["action"] = "clarification_response", ["clarification_response"] = "requested by the user" });
+        Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);
+
+        // The answer resumes federation in the background; wait for the clarification to clear.
+        HttpResponseMessage waiting = null!;
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            waiting?.Dispose();
+            waiting = await fixture.Agent.GetAsync(initial.Headers.Location);
+            if (!waiting.Headers.TryGetValues("AAuth-Requirement", out var values) || values.Single() != "requirement=clarification") break;
+            await Task.Delay(10);
+        }
+        using (waiting)
+        {
+            Assert.Equal(HttpStatusCode.Accepted, waiting.StatusCode);
+            Assert.False(waiting.Headers.Contains("AAuth-Requirement"));
+            Assert.Equal(initial.Headers.Location, waiting.Headers.Location);
+        }
+
+        fixture.Policy.Held.SetResult(AccessDecision.Allow());
+        using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
+        Assert.Equal(HttpStatusCode.OK, result.StatusCode);
+    }
+
     [Theory]
     [InlineData("answer")]
     [InlineData("update")]
@@ -925,7 +1183,7 @@ public class DeferredFederationTests
     public async Task ProductionPsRelaysClarificationAndResumes(string outcome)
     {
         await using var fixture = await Fixture.CreateAsync(outcome);
-        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken() });
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync());
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         Assert.Equal("requirement=clarification", initial.Headers.GetValues("AAuth-Requirement").Single());
         if (outcome == "cancel")
@@ -939,7 +1197,7 @@ public class DeferredFederationTests
             return;
         }
         using var answer = await fixture.Agent.PostAsJsonAsync(initial.Headers.Location, outcome == "update"
-            ? new JsonObject { ["action"] = "updated_request", ["resource_token"] = fixture.ResourceToken("read") }
+            ? new JsonObject { ["action"] = "updated_request", ["resource_token"] = await fixture.ResourceTokenAsync("read"), ["presented_token"] = await fixture.PersonTokenAsync() }
             : new JsonObject { ["action"] = "clarification_response", ["clarification_response"] = "requested by the user" });
         Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);
         using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
@@ -965,16 +1223,12 @@ public class DeferredFederationTests
     public async Task AsPendingRejectsForeignPsAndChangedPsKey(string method, bool sameIssuer)
     {
         await using var fixture = await Fixture.CreateAsync("answer");
-        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new
-        {
-            agent_token = fixture.AgentToken,
-            resource_token = fixture.ResourceToken(),
-        });
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync(agentToken: true));
         using var foreign = fixture.PsClient(sameIssuer ? Fixture.PsIssuer : "https://other-ps.test", "second");
         using var request = new HttpRequestMessage(new HttpMethod(method), initial.Headers.Location);
         if (method == "POST") request.Content = JsonContent.Create(new { action = "clarification_response", clarification_response = "approve" });
         using var response = await foreign.SendAsync(request);
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         using var owner = await fixture.Ps.GetAsync(initial.Headers.Location);
         Assert.Equal(HttpStatusCode.Accepted, owner.StatusCode);
     }
@@ -990,11 +1244,7 @@ public class DeferredFederationTests
     public async Task AsClarificationRequiresMatchingAction(string json)
     {
         await using var fixture = await Fixture.CreateAsync("answer");
-        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new
-        {
-            agent_token = fixture.AgentToken,
-            resource_token = fixture.ResourceToken(),
-        });
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync(agentToken: true));
         var policy = fixture.Policy.Last;
         var discoveryCalls = fixture.DiscoveryTransport.Paths.Count;
         using var invalid = await fixture.Ps.PostAsync(initial.Headers.Location, new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
@@ -1011,21 +1261,21 @@ public class DeferredFederationTests
     [Theory]
     [InlineData("malformed")]
     [InlineData("issuer")]
-    [InlineData("agent")]
+    [InlineData("subject")]
+    [InlineData("ps")]
     [InlineData("key")]
+    [InlineData("missing-presented")]
     public async Task AsRejectsMalformedOrReboundReplacement(string variant)
     {
         await using var fixture = await Fixture.CreateAsync("update");
-        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync(agentToken: true));
+        var update = new JsonObject
         {
-            agent_token = fixture.AgentToken,
-            resource_token = fixture.ResourceToken(),
-        });
-        using var response = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location, new
-        {
-            action = "updated_request",
-            resource_token = variant == "malformed" ? "bad.jwt" : fixture.ResourceToken("read", variant),
-        });
+            ["action"] = "updated_request",
+            ["resource_token"] = variant == "malformed" ? "bad.jwt" : await fixture.ResourceTokenAsync("read", variant),
+        };
+        if (variant != "missing-presented") update["presented_token"] = await fixture.PersonTokenAsync();
+        using var response = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location, update);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("read write", fixture.AsEntry.Scope);
     }
@@ -1042,20 +1292,87 @@ public class DeferredFederationTests
         throw new TimeoutException("PS relay did not complete.");
     }
 
+    [Theory]
+    [InlineData("deny", HttpStatusCode.Forbidden, "denied")]
+    [InlineData("unstructured-error", HttpStatusCode.BadGateway, "as_unreachable")]
+    [InlineData("unverifiable-token", HttpStatusCode.BadGateway, "as_unreachable")]
+    [InlineData("client-timeout", HttpStatusCode.BadGateway, "as_unreachable")]
+    public async Task AsOutcomesMapSeparatelyFromLocalCancellation(string outcome, HttpStatusCode status, string error)
+    {
+        await using var fixture = await Fixture.CreateAsync(outcome);
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read"));
+        using var result = initial.StatusCode == HttpStatusCode.Accepted
+            ? await PollAsync(fixture.Agent, initial.Headers.Location!) : null;
+        var response = result ?? initial;
+
+        Assert.Equal(status, response.StatusCode);
+        Assert.Equal(error, (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+    }
+
+    private sealed class TimeoutHandler : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => request.RequestUri!.AbsolutePath == "/token"
+                ? throw new TaskCanceledException("The request timed out.", new TimeoutException())
+                : base.SendAsync(request, cancellationToken);
+    }
+
+    private sealed class BlockingTokenEndpoint
+    {
+        private int _requests;
+        public int Requests => Volatile.Read(ref _requests);
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task InvokeAsync(HttpContext context, Func<Task> next)
+        {
+            if (context.Request.Path != "/token")
+            {
+                await next();
+                return;
+            }
+
+            Interlocked.Increment(ref _requests);
+            Started.TrySetResult();
+            try
+            {
+                await Release.Task.WaitAsync(context.RequestAborted);
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                Cancelled.TrySetResult();
+                throw;
+            }
+            await next();
+        }
+    }
+
     [Fact]
     public async Task PsCanTriageLocallyWithoutRelayingToAgent()
     {
         await using var fixture = await Fixture.CreateAsync("local");
-        using var result = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken() });
+        using var result = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync());
         Assert.Equal(HttpStatusCode.OK, result.StatusCode);
         Assert.Equal("mission context answers this", Assert.Single(fixture.Policy.Last!.ClarificationHistory));
+    }
+
+    [Fact]
+    public async Task PsLocalTriageCountsTowardClarificationRoundLimit()
+    {
+        await using var fixture = await Fixture.CreateAsync("local-repeat");
+        using var result = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync());
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        Assert.Equal(ClarificationExchange.DefaultMaxRounds, fixture.AsEntry.ClarificationRounds);
+        Assert.Equal("denied", (string?)(await result.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Equal(ClarificationExchange.DefaultMaxRounds, fixture.Policy.Last!.ClarificationHistory.Count);
     }
 
     [Fact]
     public async Task ClarificationDeadlineTerminatesBothPendingRequests()
     {
         await using var fixture = await Fixture.CreateAsync("timeout");
-        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = fixture.ResourceToken() });
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync());
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         await Task.Delay(1200);
         using var expired = await fixture.Agent.GetAsync(initial.Headers.Location);
@@ -1070,7 +1387,7 @@ public class DeferredFederationTests
     public async Task AsEnforcesClarificationRoundLimit()
     {
         await using var fixture = await Fixture.CreateAsync("repeat");
-        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken() });
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync(agentToken: true));
         for (var round = 0; round < 5; round++)
         {
             using var answer = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location,
@@ -1088,18 +1405,26 @@ public class DeferredFederationTests
     private sealed class Policy(string outcome, IReadOnlyList<string>? requiredClaims) : IAccessPolicy
     {
         public AccessPolicyRequest? Last { get; private set; }
+        public TaskCompletionSource<AccessDecision> Held { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken cancellationToken = default)
         {
             Last = request;
+            if (outcome == "hold" && request.ClarificationHistory.Count > 0) return Held.Task.WaitAsync(cancellationToken);
             if (outcome == "reconsent") return Task.FromResult(request.InteractionId is not null && request.ClarificationHistory.Count == 0
                 ? AccessDecision.NeedsClarification("Review the request", 30) : AccessDecision.NeedsInteraction());
+            if (outcome == "policy-down") throw new HttpRequestException("policy transport failed");
+            if (outcome == "claims-policy-down")
+                return request.Claims is null
+                    ? Task.FromResult(AccessDecision.NeedsClaims(requiredClaims ?? ["email"]))
+                    : throw new HttpRequestException("policy transport failed");
             if (outcome == "interaction") return Task.FromResult(AccessDecision.NeedsInteraction());
-            if (outcome == "repeat" || (request.ClarificationHistory.Count == 0 && request.Scope != "read"))
+            if (outcome is "repeat" or "local-repeat" || (request.ClarificationHistory.Count == 0 && request.Scope != "read"))
                 return Task.FromResult(AccessDecision.NeedsClarification("Why this scope?", outcome == "timeout" ? 1 : 30));
             if (outcome == "deny") return Task.FromResult(AccessDecision.Deny("declined"));
-            if (outcome == "claims" && request.Claims?["sub"] is null)
-                return Task.FromResult(AccessDecision.NeedsClaims(requiredClaims ?? ["sub"]));
-            return Task.FromResult(AccessDecision.Allow("user"));
+            // §Claims Required: `sub` is never pushed; ask for identity claims until the PS pushes them.
+            if (outcome == "claims" && request.Claims is null)
+                return Task.FromResult(AccessDecision.NeedsClaims(requiredClaims ?? ["email"]));
+            return Task.FromResult(AccessDecision.Allow());
         }
     }
 
@@ -1108,8 +1433,8 @@ public class DeferredFederationTests
         private readonly InMemoryAccessPendingStore _inner = new();
         public AccessPendingEntry? Last;
         public AccessPendingEntry Add(string resourceUrl, string scope, string agentId, IAAuthKey key, DateTimeOffset expiry,
-            JsonObject? claims, IReadOnlyList<string>? requiredClaims = null, DateTimeOffset? authorizationExpiresAt = null, JsonObject? upstreamAct = null)
-            => Last = _inner.Add(resourceUrl, scope, agentId, key, expiry, claims, requiredClaims, authorizationExpiresAt, upstreamAct);
+            JsonObject? claims, IReadOnlyList<string>? requiredClaims = null, DateTimeOffset? authorizationExpiresAt = null)
+            => Last = _inner.Add(resourceUrl, scope, agentId, key, expiry, claims, requiredClaims, authorizationExpiresAt);
         public AccessPendingEntry? Get(string id) => _inner.Get(id);
         public AccessPendingEntry? GetByCode(string code) => _inner.GetByCode(code);
         public void Clear() => _inner.Clear();
@@ -1120,8 +1445,10 @@ public class DeferredFederationTests
     private sealed class Fixture : IAsyncDisposable
     {
         public const string PsIssuer = "https://ps.test";
+        public const string MissionS256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         private const string AsIssuer = "https://as.test";
         private const string AgentId = "aauth:demo@ap.test";
+        private readonly Dictionary<string, string> _personTokens = new();
         public required WebApplication PersonApp;
         public required WebApplication AccessApp;
         public required HttpClient Agent;
@@ -1135,21 +1462,48 @@ public class DeferredFederationTests
         public required string AgentToken;
         public required Policy Policy;
         public required Store Store;
+        public required ResettableJtiStore Inventory;
+        public required IPersonResourceEnrollmentStore Enrollments;
         public required Discovery DiscoveryTransport;
         public required Logs Logs { get; init; }
+        public BlockingTokenEndpoint? Blocker { get; init; }
         public DirectCapture? DirectRequest;
         public AccessPendingEntry AsEntry => Store.Last!;
 
-        public string UpstreamToken(string? variant = null) => new AuthTokenBuilder
+        // An AS-issued upstream auth token naming this PS, audienced to the intermediary (ap.test).
+        public async ValueTask<string> UpstreamTokenAsync()
         {
-            Issuer = variant == "upstream-issuer" ? PsIssuer : AsIssuer,
-            Dwk = variant == "upstream-issuer" ? AuthTokenBuilder.PersonDwk : AuthTokenBuilder.AccessDwk,
-            Audience = variant == "upstream-audience" ? "https://other.test" : "https://ap.test",
-            Agent = "aauth:original@origin.test", Subject = "upstream-person", Scope = "upstream.read",
-            Key = variant == "upstream-issuer" ? PsKey : AsKey, KeyId = "key", AgentConfirmationKey = AAuthKey.Generate(),
+            var token = await new AuthTokenBuilder
+        {
+            Issuer = AsIssuer, Dwk = AuthTokenBuilder.AccessDwk, Audience = "https://ap.test", PersonServer = PsIssuer,
+            Subject = "upstream-person", Scope = "upstream.read",
+            Key = AsKey, KeyId = "key", AgentConfirmationKey = AAuthKey.Generate(),
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
-            Mission = variant == "mission" ? new MissionClaim(PsIssuer, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") : null,
-        }.Build();
+            }.BuildAsync();
+            await UpstreamProvenanceTestSupport.RecordAsync(Inventory, token, PsIssuer);
+            await Enrollments.RecordAsync(new PersonResourceEnrollment(
+                PsIssuer, new AAuthPersonKey("upstream-person"), "https://ap.test",
+                "upstream-person", "test", DateTimeOffset.UtcNow));
+            return token;
+        }
+
+        // The person token the PS issued the agent for the resource (one per mission and key).
+        public async Task<string> PersonTokenAsync(string? mission = null, AAuthKey? confirmationKey = null)
+        {
+            var key = confirmationKey ?? AgentKey;
+            var cacheKey = (mission ?? "-") + "|" + key.ComputeJwkThumbprint();
+            if (!_personTokens.TryGetValue(cacheKey, out var token))
+            {
+                _personTokens[cacheKey] = token = await new PersonTokenBuilder
+                {
+                    Issuer = PsIssuer, Audience = "https://resource.test", Subject = "person", ConfirmationKey = key,
+                    AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1), Key = PsKey, KeyId = "key", MissionS256 = mission,
+                }.BuildAsync();
+                await Enrollments.RecordAsync(new PersonResourceEnrollment(
+                    PsIssuer, new AAuthPersonKey("person"), "https://resource.test", "person", "test", DateTimeOffset.UtcNow));
+            }
+            return token;
+        }
 
         public HttpClient DirectClient()
         {
@@ -1160,19 +1514,42 @@ public class DeferredFederationTests
             return client;
         }
 
-        public string ResourceToken(string scope = "read write", string? variant = null, MissionClaim? mission = null, string? account = null) => new ResourceTokenBuilder
+        // A resource token naming its presented person token (ps/sub/presented_jti/mission_s256).
+        public async Task<string> ResourceTokenAsync(string scope = "read write", string? variant = null, string? mission = null, string? account = null,
+            Interaction? interaction = null, AAuthKey? agentKey = null, AAuthKey? presentedKey = null)
         {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            Issuer = variant == "issuer" ? "https://other-resource.test" : "https://resource.test",
-            Audience = AsIssuer,
-            Agent = variant == "agent" ? "aauth:other@ap.test" : AgentId,
-            AgentJkt = (variant == "key" ? AAuthKey.Generate() : AgentKey).ComputeJwkThumbprint(),
-            Key = ResourceKey,
-            KeyId = "key",
-            Scope = scope,
-            Mission = mission,
-            Account = account,
-        }.Build();
+            var presented = Payload(await PersonTokenAsync(mission, presentedKey ?? agentKey));
+            return await new ResourceTokenBuilder
+            {
+                ScopeDescriptions = TestScopeDefinitions.Resource,
+                Issuer = variant == "issuer" ? "https://other-resource.test" : "https://resource.test",
+                Audience = AsIssuer,
+                PersonServer = variant == "ps" ? "https://other-ps.test" : PsIssuer,
+                Subject = variant == "subject" ? "someone-else" : (string)presented["sub"]!,
+                PresentedJti = variant == "presented_jti" ? "other-jti" : (string)presented["jti"]!,
+                MissionS256 = variant == "mission" ? MissionS256 : mission,
+                Tenant = variant == "tenant" ? "other-tenant" : null,
+                AgentJkt = (variant == "key" ? AAuthKey.Generate() : agentKey ?? AgentKey).ComputeJwkThumbprint(),
+                Key = ResourceKey,
+                KeyId = "key",
+                Scope = scope,
+                Account = account,
+                Interaction = interaction,
+            }.BuildAsync();
+        }
+
+        // The token request body: resource token + presented person token (+ agent_token for the PS-to-AS call).
+        public async Task<JsonObject> BodyAsync(string scope = "read write", string? variant = null, string? mission = null, string? account = null,
+            bool agentToken = false, AAuthKey? agentKey = null)
+        {
+            var body = new JsonObject
+            {
+                ["resource_token"] = await ResourceTokenAsync(scope, variant, mission, account, agentKey: agentKey),
+                ["presented_token"] = await PersonTokenAsync(mission, agentKey),
+            };
+            if (agentToken) body["agent_token"] = AgentToken;
+            return body;
+        }
 
         public HttpClient PsClient(string issuer, string kid)
         {
@@ -1211,6 +1588,11 @@ public class DeferredFederationTests
             accessBuilder.WebHost.UseTestServer();
             accessBuilder.Services.AddSingleton(metadata).AddSingleton(jwks).AddSingleton(new TokenVerifier())
                 .AddSingleton(new AAuthVerifier()).AddSingleton<IAccessPolicy>(policy).AddSingleton<IAccessPendingStore>(store);
+            accessBuilder.Services.AddAAuthAccessServer(configure: o =>
+            {
+                o.Issuer = AsIssuer;
+                o.SigningKeys = new AAuthSigningKeySet { ["key"] = asKey };
+            });
             var access = accessBuilder.Build();
             if (outcome == "unstructured-error") access.Use(async (context, next) =>
             {
@@ -1218,7 +1600,14 @@ public class DeferredFederationTests
                 context.Response.StatusCode = 502;
                 await context.Response.WriteAsync("TOKEN-SECRET-SENTINEL person-sentinel@example.test\nforged-log-line");
             });
-            access.MapAAuthAccessServer(new AAuthAccessServerOptions { Issuer = AsIssuer, SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = asKey } });
+            if (outcome == "unverifiable-token") access.Use(async (context, next) =>
+            {
+                if (context.Request.Path != "/token") { await next(); return; }
+                await context.Response.WriteAsJsonAsync(new { auth_token = "not.a.token" });
+            });
+            var blocker = outcome == "block-token" ? new BlockingTokenEndpoint() : null;
+            if (blocker is not null) access.Use(blocker.InvokeAsync);
+            access.MapAAuthAccessServer();
             var accessSessions = new BrowserConsentSessions("as-consent-tests", "test-person", isolatedDemoAccess: _ => true);
             access.MapMethods("/interaction/login", ["GET", "POST"], async (HttpContext context) =>
             {
@@ -1241,27 +1630,33 @@ public class DeferredFederationTests
             });
             await access.StartAsync();
             var ps = new AAuthClientBuilder(psKey).UseJwksUri(PsIssuer, AAuthConstants.DwkFiles.Person, "key")
-                .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(access.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+                .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(outcome == "client-timeout"
+                    ? new TimeoutHandler { InnerHandler = access.GetTestServer().CreateHandler() }
+                    : access.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
             ps.BaseAddress = new Uri(AsIssuer);
             var personBuilder = WebApplication.CreateBuilder();
             personBuilder.WebHost.UseTestServer();
             var logs = new Logs();
+            var inventory = new ResettableJtiStore();
+            var enrollments = new InMemoryPersonResourceEnrollmentStore();
             personBuilder.Logging.AddProvider(logs);
             personBuilder.Services.AddSingleton(metadata).AddSingleton(jwks).AddSingleton(new TokenVerifier())
                 .AddSingleton(new AAuthVerifier()).AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>()
+                .AddSingleton<IPersonResourceEnrollmentStore>(enrollments)
                 .AddSingleton<IIdentityClaimsAsserter>(asserter ?? new DefaultIdentityClaimsAsserter("user"))
                 .AddSingleton(new AccessServerClient(ps, metadata, new AuthTokenResponseValidator(metadata, jwks)));
             personBuilder.Services.AddAAuthGovernance();
             if (missionConsent is not null) personBuilder.Services.AddSingleton(missionConsent);
-            var person = personBuilder.Build();
-            person.MapAAuthPersonServer(new AAuthPersonServerOptions
+            personBuilder.Services.AddAAuthPersonServer(configure: o =>
             {
-                Issuer = PsIssuer,
-                ResourceInteractionSessions = new BrowserConsentSessions("resource-consent-tests", "test-person", isolatedDemoAccess: _ => true),
-                SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = psKey },
-                TriageClarificationAsync = outcome == "local"
-                    ? (_, _, _) => Task.FromResult<ClarificationResponse?>(ClarificationResponse.Respond("mission context answers this")) : null,
-            });
+                o.Issuer = PsIssuer;
+                o.ResourceInteractionSessions = new BrowserConsentSessions("resource-consent-tests", "test-person", isolatedDemoAccess: _ => true);
+                o.SigningKeys = new AAuthSigningKeySet { ["key"] = psKey };
+                o.TriageClarificationAsync = outcome is "local" or "local-repeat"
+                    ? (_, _, _) => Task.FromResult<ClarificationResponse?>(ClarificationResponse.Respond("mission context answers this")) : null;
+            }).UseTokenInventory(inventory);
+            var person = personBuilder.Build();
+            person.MapAAuthPersonServer();
             var sessions = new BrowserConsentSessions("consent-tests", "authenticated-demo-person", isolatedDemoAccess: _ => true);
             var personStore = person.Services.GetRequiredService<IPersonPendingStore>();
             person.MapMethods("/interaction", ["GET", "POST"], async (HttpContext context) =>
@@ -1282,7 +1677,7 @@ public class DeferredFederationTests
                         if (action == "approve")
                         {
                             entry.Subject = "directed-resource-person";
-                            if (entry.FederationConsent is { } consent) consent.TrySetResult(IdentityAssertion.Assert(entry.Subject));
+                            if (entry.FederationConsent is { } consent) consent.TrySetResult(IdentityAssertion.Assert(entry.PersonKey ?? new AAuthPersonKey("approved"), entry.Subject));
                             else entry.Status = PersonPendingStatus.Allowed;
                         }
                         else
@@ -1295,8 +1690,8 @@ public class DeferredFederationTests
                     });
                 }).DisableAntiforgery();
             await person.StartAsync();
-            var agentToken = new AgentTokenBuilder
-            { Issuer = "https://ap.test", Subject = AgentId, Key = apKey, KeyId = "key", ConfirmationKey = agentKey }.Build();
+            var agentToken = await new AgentTokenBuilder
+            { Issuer = "https://ap.test", Subject = AgentId, Key = apKey, KeyId = "key", ConfirmationKey = agentKey }.BuildAsync();
             var agent = new AAuthClientBuilder(agentKey).UseJwt(agentToken).WithEgressPolicy(TestEgress.Policy)
                 .WithInnerHandler(person.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
             agent.BaseAddress = new Uri(PsIssuer);
@@ -1315,13 +1710,17 @@ public class DeferredFederationTests
                 AsKey = asKey,
                 Policy = policy,
                 Store = store,
+                Inventory = inventory,
+                Enrollments = enrollments,
                 DiscoveryTransport = discoveryTransport,
                 Logs = logs,
+                Blocker = blocker,
             };
         }
 
         public async ValueTask DisposeAsync()
         {
+            Blocker?.Release.TrySetResult();
             Agent.Dispose(); Ps.Dispose(); await PersonApp.DisposeAsync(); await AccessApp.DisposeAsync();
         }
     }
@@ -1342,7 +1741,7 @@ public class DeferredFederationTests
                 var alternate = second.ToPublicJwk(); alternate["kid"] = "second";
                 body = new JsonObject { ["keys"] = new JsonArray(primary, alternate) };
             }
-            else body = new JsonObject { ["issuer"] = origin, ["jwks_uri"] = origin + "/.well-known/jwks.json", ["token_endpoint"] = origin + "/token" };
+            else body = new JsonObject { ["issuer"] = origin, ["jwks_uri"] = origin + "/.well-known/jwks.json", ["auth_token_endpoint"] = origin + "/token" };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(body) });
         }
     }

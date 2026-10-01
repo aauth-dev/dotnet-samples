@@ -18,6 +18,7 @@ namespace AAuth.Conformance.Missions;
 public class GovernanceServerTests
 {
     private const string S256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    private const string Ps = "https://ps.example";
 
     // ---- §Request parsers ----
 
@@ -29,7 +30,7 @@ public class GovernanceServerTests
             ["action"] = "SendEmail",
             ["description"] = "Send the itinerary",
             ["parameters"] = new JsonObject { ["to"] = "user@example.com" },
-            ["mission"] = new JsonObject { ["approver"] = "https://ps.example", ["s256"] = S256 },
+            ["mission_s256"] = S256,
         };
 
         var request = GovernanceEndpoints.ParsePermission(body);
@@ -37,8 +38,18 @@ public class GovernanceServerTests
         Assert.Equal("SendEmail", request.Action.Name);
         Assert.Equal("Send the itinerary", request.Description);
         Assert.Equal("user@example.com", (string?)request.Parameters!["to"]);
-        Assert.Equal(S256, request.Mission!.S256);
+        Assert.Equal(S256, request.MissionS256);
     }
+
+    [Theory(DisplayName = "§Permission Request — a malformed mission_s256 throws")]
+    [InlineData("not-a-digest")]
+    [InlineData("object")]
+    public void ParsePermission_MalformedMission_Throws(string variant)
+        => Assert.Throws<FormatException>(() => GovernanceEndpoints.ParsePermission(new JsonObject
+        {
+            ["action"] = "SendEmail",
+            ["mission_s256"] = variant == "object" ? new JsonObject { ["s256"] = S256 } : variant,
+        }));
 
     [Fact(DisplayName = "§Permission Request — missing action throws")]
     public void ParsePermission_MissingAction_Throws()
@@ -50,14 +61,14 @@ public class GovernanceServerTests
     {
         var body = new JsonObject
         {
-            ["mission"] = new JsonObject { ["approver"] = "https://ps.example", ["s256"] = S256 },
+            ["mission_s256"] = S256,
             ["action"] = "WebSearch",
             ["result"] = new JsonObject { ["status"] = "completed" },
         };
 
         var record = GovernanceEndpoints.ParseAudit(body);
 
-        Assert.Equal(S256, record.Mission.S256);
+        Assert.Equal(S256, record.MissionS256);
         Assert.Equal("WebSearch", record.Action.Name);
         Assert.Equal("completed", (string?)record.Result!["status"]);
     }
@@ -71,17 +82,18 @@ public class GovernanceServerTests
     [InlineData("interaction", InteractionType.Interaction)]
     [InlineData("payment", InteractionType.Payment)]
     [InlineData("question", InteractionType.Question)]
-    [InlineData("completion", InteractionType.Completion)]
     public void ParseInteraction_MapsType(string wire, InteractionType expected)
     {
         var request = GovernanceEndpoints.ParseInteraction(new JsonObject { ["type"] = wire });
         Assert.Equal(expected, request.Type);
     }
 
-    [Fact(DisplayName = "§Interaction Request — unknown type throws")]
-    public void ParseInteraction_UnknownType_Throws()
+    [Theory(DisplayName = "§Interaction Request — unknown type throws; completion belongs at the mission endpoint")]
+    [InlineData("bogus")]
+    [InlineData("completion")]
+    public void ParseInteraction_UnknownType_Throws(string type)
         => Assert.Throws<FormatException>(() =>
-            GovernanceEndpoints.ParseInteraction(new JsonObject { ["type"] = "bogus" }));
+            GovernanceEndpoints.ParseInteraction(new JsonObject { ["type"] = type }));
 
     [Fact(DisplayName = "§Interaction Request — parser maps max_wait when present")]
     public void ParseInteraction_MapsMaxWait()
@@ -129,15 +141,34 @@ public class GovernanceServerTests
         Assert.Equal("WebSearch", proposal.Tools[0].Name);
     }
 
+    [Fact(DisplayName = "§Mission Creation — loopback resources parse only under an explicit development egress policy")]
+    public void ParseMissionProposal_LoopbackResourcesNeedDevelopmentPolicy()
+    {
+        var body = new JsonObject
+        {
+            ["description"] = "# Plan a trip",
+            ["resources"] = new JsonArray { "http://localhost:5002" },
+        };
+
+        Assert.Throws<FormatException>(() => GovernanceEndpoints.ParseMissionProposal(body));
+        var proposal = GovernanceEndpoints.ParseMissionProposal(body, AAuth.Testing.TestEgress.Policy);
+        Assert.Equal(new[] { "http://localhost:5002" }, proposal.Resources);
+    }
+
     // ---- §Mission Status Errors ----
 
-    [Fact(DisplayName = "§Mission Status Errors — helper emits the spec 403 body")]
+    [Fact(DisplayName = "§Mission Status Errors — helper emits the spec 403 body; status stays terminated and the reason is separate")]
     public void MissionTerminatedBody_MatchesSpec()
     {
         var body = GovernanceEndpoints.MissionTerminatedBody();
         Assert.Equal(403, GovernanceEndpoints.MissionTerminatedStatus);
         Assert.Equal("mission_terminated", (string?)body["error"]);
         Assert.Equal("terminated", (string?)body["mission_status"]);
+        Assert.False(body.ContainsKey("termination_reason"));
+
+        var expired = GovernanceEndpoints.MissionTerminatedBody("expired");
+        Assert.Equal("terminated", (string?)expired["mission_status"]);
+        Assert.Equal("expired", (string?)expired["termination_reason"]);
     }
 
     // ---- §Mission Approval / §Mission Management (store) ----
@@ -149,19 +180,74 @@ public class GovernanceServerTests
         var blob = System.Text.Encoding.UTF8.GetBytes("{\"approver\":\"https://ps.example\"}");
         await store.SaveAsync(new StoredMission(S256, "https://ps.example", "aauth:a@x.example", blob));
 
-        var loaded = await store.GetAsync(S256);
+        var loaded = await store.GetAsync(Ps, S256);
         Assert.NotNull(loaded);
         Assert.Equal(MissionState.Active, loaded!.State);
         Assert.True(blob.AsSpan().SequenceEqual(loaded.Blob.Span));
 
-        await store.SetStateAsync(S256, MissionState.Terminated);
-        var terminated = await store.GetAsync(S256);
+        await store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Administrative);
+        var terminated = await store.GetAsync(Ps, S256);
         Assert.Equal(MissionState.Terminated, terminated!.State);
     }
 
     [Fact(DisplayName = "§Mission store — absent mission returns null")]
     public async Task MissionStore_Absent_ReturnsNull()
-        => Assert.Null(await new InMemoryMissionStore().GetAsync("nope"));
+        => Assert.Null(await new InMemoryMissionStore().GetAsync(Ps, "nope"));
+
+    [Fact(DisplayName = "§Mission Management — a terminated mission never returns to active, by transition or replacement")]
+    public async Task MissionStore_TerminatedIsFinal()
+    {
+        var store = new InMemoryMissionStore();
+        var mission = new StoredMission(S256, "https://ps.example", "aauth:a@x.example", new byte[] { 1 });
+        await store.SaveAsync(mission);
+        await store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Administrative);
+
+        await store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Revoked);
+        Assert.Equal(MissionState.Terminated, (await store.GetAsync(Ps, S256))!.State);
+
+        await store.SaveAsync(mission);
+        Assert.Equal(MissionState.Terminated, (await store.GetAsync(Ps, S256))!.State);
+    }
+
+    [Fact(DisplayName = "§Mission Approval — replacing a mission never extends its expires_at")]
+    public async Task MissionStore_ReplacementKeepsEarliestExpiry()
+    {
+        var store = new InMemoryMissionStore();
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(1);
+        var mission = new StoredMission(S256, "https://ps.example", "aauth:a@x.example", new byte[] { 1 }) { ExpiresAt = expiresAt };
+        await store.SaveAsync(mission);
+
+        await store.SaveAsync(mission with { ExpiresAt = null });
+        Assert.Equal(expiresAt, (await store.GetAsync(Ps, S256))!.ExpiresAt);
+        await store.SaveAsync(mission with { ExpiresAt = expiresAt.AddDays(1) });
+        Assert.Equal(expiresAt, (await store.GetAsync(Ps, S256))!.ExpiresAt);
+        await store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Administrative);
+        Assert.Equal(expiresAt, (await store.GetAsync(Ps, S256))!.ExpiresAt);
+    }
+
+    [Fact(DisplayName = "§Mission Management — concurrent transitions and replacements cannot revive a terminated mission")]
+    public async Task MissionStore_ConcurrentMutationKeepsTerminal()
+    {
+        for (var round = 0; round < 50; round++)
+        {
+            var store = new InMemoryMissionStore();
+            var mission = new StoredMission(S256, "https://ps.example", "aauth:a@x.example", new byte[] { 1 });
+            await store.SaveAsync(mission);
+            var tasks = new List<Task>();
+            for (var i = 0; i < 16; i++)
+            {
+                var n = i;
+                tasks.Add(Task.Run(() => n switch
+                {
+                    0 => store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Administrative),
+                    _ when n % 2 == 0 => store.TerminateAsync(Ps, S256, AAuthConstants.MissionTerminationReasons.Revoked),
+                    _ => store.SaveAsync(mission),
+                }));
+            }
+            await Task.WhenAll(tasks);
+            Assert.Equal(MissionState.Terminated, (await store.GetAsync(Ps, S256))!.State);
+        }
+    }
 
     // ---- §Mission Log ----
 
@@ -228,9 +314,9 @@ public class GovernanceServerTests
         var decider = new StubDecider();
         var request = new PermissionRequest(new MissionAction("SendEmail"))
         {
-            Mission = new AAuth.Tokens.MissionClaim("https://ps.example", S256),
+            MissionS256 = S256,
         };
-        var mission = await store.GetAsync(S256);
+        var mission = await store.GetAsync(Ps, S256);
         var entries = await log.ReadAsync(S256);
 
         var decision = await decider.DecideAsync(new PermissionDecisionContext(request, mission, entries));

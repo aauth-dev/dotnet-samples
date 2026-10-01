@@ -42,8 +42,11 @@ public sealed class ServerMetadata
     /// <summary>Optional privacy-policy URL (<c>policy_uri</c>).</summary>
     public string? PolicyUri { get; init; }
 
-    /// <summary>Token endpoint (required for PS/AS).</summary>
-    public string? TokenEndpoint { get; init; }
+    /// <summary>Auth token endpoint (<c>auth_token_endpoint</c>, required for PS/AS).</summary>
+    public string? AuthTokenEndpoint { get; init; }
+
+    /// <summary>Person token endpoint (<c>person_token_endpoint</c>, required for PS).</summary>
+    public string? PersonTokenEndpoint { get; init; }
 
     /// <summary>Revocation endpoint (optional).</summary>
     public string? RevocationEndpoint { get; init; }
@@ -81,7 +84,8 @@ public sealed class ServerMetadata
             DocumentationUri = (string?)doc["documentation_uri"],
             TosUri = (string?)doc["tos_uri"],
             PolicyUri = (string?)doc["policy_uri"],
-            TokenEndpoint = (string?)doc["token_endpoint"],
+            AuthTokenEndpoint = (string?)doc["auth_token_endpoint"],
+            PersonTokenEndpoint = (string?)doc["person_token_endpoint"],
             RevocationEndpoint = (string?)doc["revocation_endpoint"],
             MissionEndpoint = (string?)doc["mission_endpoint"],
             PermissionEndpoint = (string?)doc["permission_endpoint"],
@@ -108,11 +112,11 @@ public sealed class ResourceMetadata
 
     /// <summary>
     /// The credential flow the resource expects — one of <c>agent-token</c>,
-    /// <c>aauth-access-token</c>, or <c>auth-token</c> (see
+    /// <c>person-token</c>, <c>session-token</c>, <c>auth-token</c>, or R3's <c>per-call</c> (see
     /// <see cref="AAuthConstants.AccessModes"/>). Advisory: the runtime
     /// <c>AAuth-Requirement</c> remains authoritative. <see langword="null"/> when
-    /// the document omits it, which the spec treats as the <c>agent-token</c>
-    /// default (§Resource Metadata).
+    /// the document omits it or carries an unrecognized value, both of which
+    /// agents treat as no declaration (§Resource Metadata).
     /// </summary>
     public string? AccessMode { get; init; }
 
@@ -146,6 +150,12 @@ public sealed class ResourceMetadata
     /// <summary>Signature window in seconds.</summary>
     public int? SignatureWindow { get; init; }
 
+    /// <summary>
+    /// Additional HTTP message components that agents must cover when signing
+    /// requests to this resource (<c>additional_signature_components</c>).
+    /// </summary>
+    public IReadOnlyList<string>? AdditionalSignatureComponents { get; init; }
+
     /// <summary>Resource-owned proactive authorization endpoint, not the PS/AS resource-token recipient.</summary>
     public string? AuthorizationEndpoint { get; init; }
 
@@ -160,7 +170,7 @@ public sealed class ResourceMetadata
         {
             Issuer = (string?)doc["issuer"] ?? throw new InvalidOperationException("Metadata missing 'issuer'."),
             JwksUri = (string?)doc["jwks_uri"],
-            AccessMode = (string?)doc["access_mode"],
+            AccessMode = (string?)doc["access_mode"] is { } mode && IsKnownAccessMode(mode) ? mode : null,
             Name = (string?)doc["name"],
             Description = (string?)doc["description"],
             LogoUri = (string?)doc["logo_uri"],
@@ -170,10 +180,62 @@ public sealed class ResourceMetadata
             PolicyUri = (string?)doc["policy_uri"],
             ScopeDescriptions = doc["scope_descriptions"] as JsonObject,
             SignatureWindow = (int?)doc["signature_window"],
+            AdditionalSignatureComponents = ParseAdditionalSignatureComponents(doc),
             AuthorizationEndpoint = (string?)doc["authorization_endpoint"],
             RevocationEndpoint = (string?)doc["revocation_endpoint"],
         };
     }
+
+    private static IReadOnlyList<string>? ParseAdditionalSignatureComponents(JsonObject doc)
+    {
+        if (!doc.TryGetPropertyValue(AAuthConstants.MetadataFields.AdditionalSignatureComponents, out var node)
+            || node is null)
+        {
+            return null;
+        }
+        if (node is not JsonArray array)
+        {
+            throw new InvalidOperationException("Metadata 'additional_signature_components' must be an array of strings.");
+        }
+
+        var components = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in array)
+        {
+            if (item is null)
+            {
+                throw new InvalidOperationException("Metadata 'additional_signature_components' must contain only strings.");
+            }
+
+            string? raw;
+            try
+            {
+                raw = item.GetValue<string>();
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException(
+                    "Metadata 'additional_signature_components' must contain only strings.", ex);
+            }
+
+            var component = raw.Trim().ToLowerInvariant();
+            if (component.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    "Metadata 'additional_signature_components' must not contain blank values.");
+            }
+            if (seen.Add(component))
+            {
+                components.Add(component);
+            }
+        }
+
+        return components;
+    }
+
+    private static bool IsKnownAccessMode(string mode) => mode is AAuthConstants.AccessModes.AgentToken
+        or AAuthConstants.AccessModes.PersonToken or AAuthConstants.AccessModes.SessionToken
+        or AAuthConstants.AccessModes.AuthToken or AAuthConstants.AccessModes.PerCall;
 }
 
 /// <summary>

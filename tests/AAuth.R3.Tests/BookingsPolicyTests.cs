@@ -22,21 +22,27 @@ public class BookingsPolicyTests
     [InlineData("searchAvailabilityPost", "/search_availability", "POST")]
     [InlineData("holdReservationPost", "/hold_reservation", "POST")]
     [InlineData("confirmReservation", "/confirm_reservation", "POST")]
-    public async Task EveryRoute_EnforcesGrantedConditionalRejectedAndApprovedParameters(string operation, string path, string method)
+    public async Task EveryRoute_EnforcesGrantedPerCallRejectedAndApprovedParameters(string operation, string path, string method)
     {
-        using var fixture = new Fixture();
+        using var fixture = await Fixture.CreateAsync();
         var document = await fixture.AuthorizeAsync(R3Operations.OpenApi(operation));
         var parameters = Parameters(operation);
-        using var granted = await fixture.CallAsync(fixture.AuthToken(document, R3Grant.OpenApi(operation)), path, method, parameters);
+        using var granted = await fixture.CallAsync(await fixture.AuthTokenAsync(document, R3Grant.OpenApi(operation)), path, method, parameters);
         Assert.Equal(HttpStatusCode.OK, granted.StatusCode);
-        using var denied = await fixture.CallAsync(fixture.AuthToken(document, R3Grant.OpenApi()), path, method, parameters);
+        using var denied = await fixture.CallAsync(await fixture.AuthTokenAsync(document, R3Grant.OpenApi()), path, method, parameters);
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
-        using var conditional = await fixture.CallAsync(fixture.AuthToken(document, R3Grant.OpenApi(), R3Grant.OpenApi(operation)), path, method, parameters);
-        Assert.Equal(HttpStatusCode.Unauthorized, conditional.StatusCode);
-        var proposal = Fixture.ResourceClaims(conditional);
-        var approved = fixture.AuthToken(proposal, R3Grant.OpenApi(operation));
+        using var perCall = await fixture.CallAsync(await fixture.AuthTokenAsync(document, R3Grant.OpenApi(), R3Grant.OpenApi(operation)), path, method, parameters);
+        Assert.Equal(HttpStatusCode.Unauthorized, perCall.StatusCode);
+        var proposal = Fixture.ResourceClaims(perCall);
+        var approved = await fixture.AuthTokenAsync(proposal, R3Grant.OpenApi(operation));
         using var retry = await fixture.CallAsync(approved, path, method, parameters);
         Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        // R3 per-call single use: the same grant, freshly signed, gets the retained result, not a second execution.
+        var executed = await retry.Content.ReadAsStringAsync();
+        await Task.Delay(1100);
+        using var repeat = await fixture.CallAsync(approved, path, method, parameters);
+        Assert.Equal(HttpStatusCode.OK, repeat.StatusCode);
+        Assert.Equal(executed, await repeat.Content.ReadAsStringAsync());
         var changed = parameters.DeepClone().AsObject();
         changed[operation.StartsWith("searchAvailability", StringComparison.Ordinal) ? "venue" : "reservation_id"] = "different";
         using var tampered = await fixture.CallAsync(approved, path, method, changed);
@@ -54,18 +60,31 @@ public class BookingsPolicyTests
     [InlineData("{\"vocabulary\":\"urn:aauth:vocabulary:openapi\",\"operations\":[null]}")]
     public async Task Authorize_RejectsNonAuthoritativeShapes(string json)
     {
-        using var fixture = new Fixture();
+        using var fixture = await Fixture.CreateAsync();
         using var response = await fixture.PostAuthorizationAsync(new JsonObject { ["r3_operations"] = JsonNode.Parse(json), ["account"] = "work" });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.False(response.Headers.Contains("AAuth-Requirement"));
     }
 
     [Fact]
+    public async Task OpenApi_AnnotatesOnlyConfirmationAsPerCall()
+    {
+        using var fixture = await Fixture.CreateAsync();
+        using var client = fixture.Anonymous();
+        var paths = (await client.GetFromJsonAsync<JsonObject>("/openapi.json"))!["paths"]!.AsObject();
+        Assert.Equal(new R3OperationAccess(AAuthConstants.AccessModes.PerCall),
+            R3AccessAnnotations.Read(paths["/confirm_reservation"]!["post"]!.AsObject(), Vocabulary.OpenApi));
+        Assert.Null(R3AccessAnnotations.Read(paths["/search_availability"]!["get"]!.AsObject(), Vocabulary.OpenApi));
+        Assert.Equal(AAuthConstants.AccessModes.AuthToken, R3AccessAnnotations.EffectiveAccessMode(
+            R3AccessAnnotations.Read(paths["/hold_reservation"]!["get"]!.AsObject(), Vocabulary.OpenApi), AAuthConstants.AccessModes.AuthToken));
+    }
+
+    [Fact]
     public async Task ValidButWrongVocabulary_CannotGainSameIdGrant()
     {
-        using var fixture = new Fixture();
+        using var fixture = await Fixture.CreateAsync();
         var document = await fixture.AuthorizeAsync(R3Operations.OpenApi("searchAvailability"));
-        using var response = await fixture.CallAsync(fixture.AuthToken(document, R3Grant.Mcp("searchAvailability")),
+        using var response = await fixture.CallAsync(await fixture.AuthTokenAsync(document, R3Grant.Mcp("searchAvailability")),
             "/search_availability", "GET", new JsonObject());
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -77,9 +96,9 @@ public class BookingsPolicyTests
     [InlineData("{\"reservation_id\":false}")]
     public async Task Confirmation_RejectsIncompleteOrMalformedParameters(string json)
     {
-        using var fixture = new Fixture();
+        using var fixture = await Fixture.CreateAsync();
         var document = await fixture.AuthorizeAsync(R3Operations.OpenApi("confirmReservation"));
-        using var response = await fixture.CallAsync(fixture.AuthToken(document, R3Grant.OpenApi("confirmReservation")),
+        using var response = await fixture.CallAsync(await fixture.AuthTokenAsync(document, R3Grant.OpenApi("confirmReservation")),
             "/confirm_reservation", "POST", JsonNode.Parse(json)!.AsObject());
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -87,7 +106,7 @@ public class BookingsPolicyTests
     [Fact]
     public async Task DocumentReaders_DefaultToDesignatedAsAndRejectWrongRole()
     {
-        using var fixture = new Fixture();
+        using var fixture = await Fixture.CreateAsync();
         var document = await fixture.AuthorizeAsync(R3Operations.OpenApi("searchAvailability"));
         using var access = fixture.SignedServer(fixture.AsKey, R3TestData.AsIssuer, AAuthConstants.DwkFiles.Access, R3TestData.AsKid);
         using var allowed = await access.GetAsync(document.Uri);
@@ -101,6 +120,48 @@ public class BookingsPolicyTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await agent.GetAsync(document.Uri)).StatusCode);
     }
 
+    [Fact]
+    public async Task PersonServerEvaluator_ReadsOnlyDocumentsItIsEntitledTo()
+    {
+        // Both PSes are configured evaluators and both are valid signers.
+        using var fixture = await Fixture.CreateAsync(R3TestData.PsIssuer, Fixture.ForeignPs);
+        var document = await fixture.AuthorizeAsync(R3Operations.OpenApi("searchAvailability"));
+
+        using var entitled = fixture.SignedServer(fixture.PsKey, R3TestData.PsIssuer, AAuthConstants.DwkFiles.Person, R3TestData.PsKid);
+        using var own = await entitled.GetAsync(document.Uri);
+        Assert.Equal(HttpStatusCode.OK, own.StatusCode);
+
+        // The resource token for this document names the other PS, so the foreign PS cannot read it.
+        using var foreign = fixture.SignedServer(fixture.ForeignPsKey, Fixture.ForeignPs, AAuthConstants.DwkFiles.Person, R3TestData.PsKid);
+        using var denied = await foreign.GetAsync(document.Uri);
+        Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+
+        using var access = fixture.SignedServer(fixture.AsKey, R3TestData.AsIssuer, AAuthConstants.DwkFiles.Access, R3TestData.AsKid);
+        Assert.Equal(HttpStatusCode.OK, (await access.GetAsync(document.Uri)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Authorize_AgentTokenGetsPersonTokenRequirement_PersonTokenGetsResourceTokenNamingIt()
+    {
+        using var fixture = await Fixture.CreateAsync();
+        var body = R3Request.CreateBody(R3Operations.OpenApi("searchAvailability"), "work");
+        using var agent = fixture.SignedAgent(fixture.AgentToken);
+        using var challenged = await agent.PostAsJsonAsync(R3TestData.ResourceIssuer + "/authorize", body);
+        Assert.Equal(HttpStatusCode.Unauthorized, challenged.StatusCode);
+        Assert.Equal(AAuthRequirementHeader.PersonTokenRequirement,
+            AAuthRequirementHeader.Parse(challenged.Headers.GetValues("AAuth-Requirement").Single()).Requirement);
+
+        using var authorized = await fixture.PostAuthorizationAsync(body);
+        Assert.Equal(HttpStatusCode.OK, authorized.StatusCode);
+        var resourceToken = AAuthRequirementHeader.Parse(authorized.Headers.GetValues("AAuth-Requirement").Single()).ResourceToken!;
+        var payload = JsonNode.Parse(Base64UrlEncoder.DecodeBytes(resourceToken.Split('.')[1]))!.AsObject();
+        var person = JsonNode.Parse(Base64UrlEncoder.DecodeBytes(fixture.PersonToken.Split('.')[1]))!.AsObject();
+        Assert.Equal(R3TestData.PsIssuer, (string?)payload["ps"]);
+        Assert.Equal(R3TestData.PersonSubject, (string?)payload["sub"]);
+        Assert.Equal((string?)person["jti"], (string?)payload["presented_jti"]);
+        Assert.Equal("work", (string?)payload["account"]);
+    }
+
     private static JsonObject Parameters(string operation) => operation.StartsWith("searchAvailability", StringComparison.Ordinal) ? new JsonObject { ["venue"] = "Dinner" } : new()
     {
         ["reservation_id"] = "reservation-1", ["venue"] = "Dinner", ["date"] = "2026-10-01T19:00",
@@ -111,14 +172,24 @@ public class BookingsPolicyTests
     {
         public AAuthKey AsKey { get; } = AAuthKey.Generate();
         public AAuthKey PsKey { get; } = AAuthKey.Generate();
+        public AAuthKey ForeignPsKey { get; } = AAuthKey.Generate();
+        public const string ForeignPs = "https://foreign-ps.test";
         private AAuthKey ApKey { get; } = AAuthKey.Generate();
         private AAuthKey AgentKey { get; } = AAuthKey.Generate();
         private WebApplicationFactory<Bookings.Entry> App { get; }
-        public string AgentToken { get; }
+        public string AgentToken { get; private set; } = "";
+        public string PersonToken { get; private set; } = "";
 
-        public Fixture()
+        public static async Task<Fixture> CreateAsync(params string[] personServerEvaluators)
         {
-            AgentToken = R3TestData.AgentToken(ApKey, AgentKey);
+            var fixture = new Fixture(personServerEvaluators);
+            fixture.AgentToken = await R3TestData.AgentTokenAsync(fixture.ApKey, fixture.AgentKey);
+            fixture.PersonToken = await R3TestData.PersonTokenAsync(fixture.PsKey, fixture.AgentKey);
+            return fixture;
+        }
+
+        private Fixture(string[] personServerEvaluators)
+        {
             var discovery = new StaticJsonHandler()
                 .AddJson(R3TestData.ApIssuer + "/.well-known/aauth-agent.json", R3TestData.Metadata(R3TestData.ApIssuer, AgentTokenBuilder.AgentDwk))
                 .AddJson(R3TestData.ApIssuer + "/.well-known/jwks.json", R3TestData.Jwks(R3TestData.ApKid, ApKey))
@@ -126,13 +197,17 @@ public class BookingsPolicyTests
                 .AddJson(R3TestData.AsIssuer + "/.well-known/aauth-person.json", R3TestData.Metadata(R3TestData.AsIssuer, AuthTokenBuilder.PersonDwk))
                 .AddJson(R3TestData.AsIssuer + "/.well-known/jwks.json", R3TestData.Jwks(R3TestData.AsKid, AsKey))
                 .AddJson(R3TestData.PsIssuer + "/.well-known/aauth-person.json", R3TestData.Metadata(R3TestData.PsIssuer, AuthTokenBuilder.PersonDwk))
-                .AddJson(R3TestData.PsIssuer + "/.well-known/jwks.json", R3TestData.Jwks(R3TestData.PsKid, PsKey));
+                .AddJson(R3TestData.PsIssuer + "/.well-known/jwks.json", R3TestData.Jwks(R3TestData.PsKid, PsKey))
+                .AddJson(ForeignPs + "/.well-known/aauth-person.json", R3TestData.Metadata(ForeignPs, AuthTokenBuilder.PersonDwk))
+                .AddJson(ForeignPs + "/.well-known/jwks.json", R3TestData.Jwks(R3TestData.PsKid, ForeignPsKey));
+            var evaluators = personServerEvaluators.Length == 0 ? ["https://disabled.test"] : personServerEvaluators;
             App = new WebApplicationFactory<Bookings.Entry>().WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("AAuth:Issuer", R3TestData.ResourceIssuer);
                 builder.UseSetting("AAuth:AccessServer", R3TestData.AsIssuer);
                 builder.UseSetting("AAuth:PersonServer", R3TestData.PsIssuer);
-                builder.UseSetting("Bookings:PersonServerEvaluators:0", "https://disabled.test");
+                for (var i = 0; i < evaluators.Length; i++)
+                    builder.UseSetting($"Bookings:PersonServerEvaluators:{i}", evaluators[i]);
                 builder.ConfigureServices(services =>
                 {
                     services.RemoveAll<MetadataClient>();
@@ -144,6 +219,8 @@ public class BookingsPolicyTests
             App.CreateClient();
         }
 
+        public HttpClient Anonymous() => App.CreateClient();
+
         public HttpClient SignedAgent(string token) => new AAuthClientBuilder(AgentKey).UseJwt(() => token)
             .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(App.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
 
@@ -153,7 +230,7 @@ public class BookingsPolicyTests
 
         public async Task<HttpResponseMessage> PostAuthorizationAsync(JsonObject body)
         {
-            using var client = SignedAgent(AgentToken);
+            using var client = SignedAgent(PersonToken);
             return await client.PostAsJsonAsync(R3TestData.ResourceIssuer + "/authorize", body);
         }
 
@@ -170,14 +247,14 @@ public class BookingsPolicyTests
             return R3ClaimReader.ReadResourceDocument(JsonNode.Parse(Base64UrlEncoder.DecodeBytes(resourceToken.Split('.')[1]))!.AsObject())!;
         }
 
-        public string AuthToken(R3ClaimReader.ResourceDocumentClaims document, R3Grant granted, R3Grant? conditional = null) => new AuthTokenBuilder
+        public ValueTask<string> AuthTokenAsync(R3ClaimReader.ResourceDocumentClaims document, R3Grant granted, R3Grant? perCall = null) => new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy, Issuer = R3TestData.AsIssuer, Audience = R3TestData.ResourceIssuer,
-            Agent = R3TestData.AgentId, AgentConfirmationKey = AgentKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+            PersonServer = R3TestData.PsIssuer, AgentConfirmationKey = AgentKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
             Key = AsKey, KeyId = R3TestData.AsKid, Dwk = AuthTokenBuilder.AccessDwk, Account = document.Account,
             Subject = "bookings-test-person",
-            AdditionalClaims = R3AuthClaims.AuthToken(document.Uri, document.S256, granted, conditional),
-        }.Build();
+            AdditionalClaims = R3AuthClaims.AuthToken(document.Uri, document.S256, granted, perCall),
+        }.BuildAsync();
 
         public async Task<HttpResponseMessage> CallAsync(string token, string path, string method, JsonObject parameters, string account = "work")
         {

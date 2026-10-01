@@ -1,14 +1,15 @@
 using AAuth;
 using AAuth.Crypto;
+using AAuth.Server;
 using AAuth.Server.Verification;
 
 // ---------------------------------------------------------------------------
 // Trips — Aria's mission-governed resource server (three-party, mission-aware).
 //
-// The Trips service lets Aria plan and book travel. It is *mission-aware*: when
-// the agent sends a signed AAuth-Mission header, the resource token it issues
-// carries the mission object (approver + s256), so the agent's Person Server
-// can govern the exchange against the human-approved mission.
+// The Trips service lets Aria plan and book travel. It is *mission-aware*: the
+// agent's person token names the mission as mission_s256, the resource token it
+// issues copies it, so the agent's Person Server can govern the exchange
+// against the human-approved mission.
 //
 //   PATH          SCOPE          DEMONSTRATES
 //   /trips        trips.read      in-mission scope — granted silently when the
@@ -63,18 +64,16 @@ var app = builder.Build();
 
 // Well-known metadata + JWKS from the DI-registered resource metadata.
 app.MapAAuthWellKnown();
-AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
-    app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options =>
-    {
-        options.AllowTokenIssuer = true;
-        options.TrustedPersonServers = trustedPersonServers;
-    });
+// Revocations are keyed by (verified caller, jti); only the trusted PSes issue
+// the tokens this resource accepts, so only they may revoke here.
+app.MapAAuthRevocationEndpoint(configure: options =>
+    options.IsAcceptedIssuer = trustedPersonServers.Contains);
 
-// One declarative pipeline. Mission-aware: when the agent sends a signed
-// AAuth-Mission header, the issued resource token carries the mission object so
-// the PS governs the exchange. Trust only the configured Person Servers.
+// One declarative pipeline. Mission-aware: the issued resource token copies the
+// presented person token's mission_s256, so the PS governs the exchange. Trust
+// only the configured Person Servers.
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -92,29 +91,25 @@ app.MapGet("/", () => Results.Ok(new
 }));
 
 // GET /trips — mission-aware read. With a mission, the issued resource token
-// carries the mission object and the PS governs the exchange; the resulting
-// auth token echoes the mission claim back, surfaced here. An agent without a
-// mission still gets baseline `trips.read` access (mission = null).
+// carries mission_s256 and the PS governs the exchange; the resulting auth
+// token carries it back, surfaced here. An agent without a mission still gets
+// baseline `trips.read` access (mission_s256 = null).
 app.MapGet("/trips", (HttpContext ctx) =>
 {
     var result = ctx.GetAAuthVerification()!;
-    var parsed = ctx.GetAAuthParsedKey()!;
-    var mission = parsed.Payload?["mission"];
 
     return Results.Ok(new
     {
         accessMode = "three-party",
         scheme = "jwt",
         access = "mission",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         iss = result.Issuer,
-        mission,
-        missionAware = true,
-        act = parsed.Payload?["act"],
+        mission_s256 = result.MissionS256,
     });
-}).RequireAAuth(scope: ScopeRead, missionAware: true);
+}).RequireAAuth(scope: ScopeRead);
 
 // GET /trips/book — out-of-mission elevated scope. Identical mission mechanics,
 // but it requires `trips.book`. When the agent operates under a mission whose
@@ -123,23 +118,19 @@ app.MapGet("/trips", (HttpContext ctx) =>
 app.MapGet("/trips/book", (HttpContext ctx) =>
 {
     var result = ctx.GetAAuthVerification()!;
-    var parsed = ctx.GetAAuthParsedKey()!;
-    var mission = parsed.Payload?["mission"];
 
     return Results.Ok(new
     {
         accessMode = "three-party",
         scheme = "jwt",
         access = "mission-elevated",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         iss = result.Issuer,
-        mission,
-        missionAware = true,
-        act = parsed.Payload?["act"],
+        mission_s256 = result.MissionS256,
     });
-}).RequireAAuth(scope: ScopeBook, missionAware: true);
+}).RequireAAuth(scope: ScopeBook);
 
 app.Run();
 

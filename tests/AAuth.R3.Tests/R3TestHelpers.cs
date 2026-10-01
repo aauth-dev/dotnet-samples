@@ -25,7 +25,7 @@ internal static class R3TestData
     {
         ["issuer"] = issuer,
         ["jwks_uri"] = $"{issuer}/.well-known/jwks.json",
-        ["token_endpoint"] = $"{issuer}/token",
+        ["auth_token_endpoint"] = $"{issuer}/token",
     };
 
     public static JsonObject Jwks(string kid, AAuthKey key)
@@ -37,7 +37,7 @@ internal static class R3TestData
         return new JsonObject { ["keys"] = new JsonArray(jwk) };
     }
 
-    public static string AgentToken(AAuthKey apKey, AAuthKey agentKey) => new AgentTokenBuilder
+    public static ValueTask<string> AgentTokenAsync(AAuthKey apKey, AAuthKey agentKey) => new AgentTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = ApIssuer,
@@ -45,21 +45,43 @@ internal static class R3TestData
         Key = apKey,
         ConfirmationKey = agentKey,
         KeyId = ApKid,
-    }.Build();
+    }.BuildAsync();
 
-    public static string ResourceToken(AAuthKey resourceKey, AAuthKey agentKey, string r3Uri, string r3S256) =>
-        new R3Challenge
+    public const string PersonSubject = "person-1";
+
+    public static ValueTask<string> PersonTokenAsync(AAuthKey psKey, AAuthKey agentKey, string? missionS256 = null, DateTimeOffset? agentTokenExpiresAt = null) =>
+        new PersonTokenBuilder
         {
-            ResourceIssuer = ResourceIssuer,
-            Audience = AsIssuer,
-            Key = resourceKey,
-            KeyId = ResourceKid,
-            Clock = () => DateTimeOffset.UtcNow,
-        }.BuildResourceToken(AgentId, agentKey.ComputeJwkThumbprint(), r3Uri, r3S256);
+            EgressPolicy = TestEgress.Policy,
+            Issuer = PsIssuer,
+            Audience = ResourceIssuer,
+            Subject = PersonSubject,
+            ConfirmationKey = agentKey,
+            AgentTokenExpiresAt = agentTokenExpiresAt ?? DateTimeOffset.UtcNow.AddHours(1),
+            Key = psKey,
+            KeyId = PsKid,
+            MissionS256 = missionS256,
+        }.BuildAsync();
+
+    public static TokenVerifier.VerifiedToken VerifyPersonToken(string personToken, AAuthKey psKey, AAuthKey agentKey) =>
+        new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyPersonToken(personToken, psKey, ResourceIssuer, agentKey);
+
+    public static R3Challenge Challenge(AAuthKey resourceKey) => new()
+    {
+        EgressPolicy = TestEgress.Policy,
+        ResourceIssuer = ResourceIssuer,
+        Audience = AsIssuer,
+        Key = resourceKey,
+        KeyId = ResourceKid,
+        OperationValidator = NoopOperationValidator.Instance,
+    };
+
+    public static ValueTask<string> ResourceTokenAsync(AAuthKey resourceKey, TokenVerifier.VerifiedToken presented, AAuthKey agentKey,
+        string r3Uri, string r3S256, string? scope = null, string? account = null) =>
+        Challenge(resourceKey).BuildResourceTokenAsync(presented, agentKey.ComputeJwkThumbprint(), r3Uri, r3S256, scope, account);
 
     public static R3Document Document() => new()
     {
-        Version = "v02",
         Vocabulary = Vocabulary.OpenApi,
         Operations =
         [
@@ -73,6 +95,14 @@ internal static class R3TestData
             Irreversible = "Booking a trip may charge the payment method on file.",
         },
     };
+}
+
+internal sealed class NoopOperationValidator : IR3OperationValidator
+{
+    public static readonly NoopOperationValidator Instance = new();
+    public ValueTask ValidateReferenceAsync(string r3Uri, string r3S256, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+    public ValueTask ValidateDocumentAsync(R3Document document, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+    public ValueTask ValidateProposalAsync(R3ProposalDocument proposal, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 }
 
 internal sealed class StaticJsonHandler : HttpMessageHandler

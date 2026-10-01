@@ -21,9 +21,6 @@ public static class AAuthConstants
         /// <summary>AAuth requirement challenge header.</summary>
         public const string AAuthRequirement = "AAuth-Requirement";
 
-        /// <summary>AAuth mission header.</summary>
-        public const string AAuthMission = "AAuth-Mission";
-
         /// <summary>AAuth capabilities header.</summary>
         public const string AAuthCapabilities = "AAuth-Capabilities";
 
@@ -64,12 +61,126 @@ public static class AAuthConstants
         /// <summary>Identity-only: the agent signs with its agent token.</summary>
         public const string AgentToken = "agent-token";
 
+        /// <summary>Person identity: the agent presents a person token from its PS.</summary>
+        public const string PersonToken = "person-token";
+
         /// <summary>Resource-managed: the agent completes the resource's interaction/
         /// consent flow and receives an opaque token via <c>AAuth-Access</c>.</summary>
-        public const string AAuthAccessToken = "aauth-access-token";
+        public const string SessionToken = "session-token";
 
-        /// <summary>The agent obtains an auth token from its PS using a resource token.</summary>
+        /// <summary>The agent presents a person token first, then an auth token from its PS or the resource's AS.</summary>
         public const string AuthToken = "auth-token";
+
+        /// <summary>R3 extension value: each invocation is authorized individually from a per-call proposal.</summary>
+        public const string PerCall = "per-call";
+    }
+
+    /// <summary>Values from the AAuth Platform Value Registry.</summary>
+    public static class Platforms
+    {
+        /// <summary>Browser-hosted web application.</summary>
+        public const string Web = "web";
+
+        /// <summary>Native mobile application.</summary>
+        public const string Mobile = "mobile";
+
+        /// <summary>Native desktop application.</summary>
+        public const string Desktop = "desktop";
+
+        /// <summary>Headless server-class workload.</summary>
+        public const string Workload = "workload";
+
+        /// <summary>User-controlled deployment under a domain the user controls.</summary>
+        public const string SelfHosted = "self-hosted";
+    }
+
+    /// <summary>Known AAuth capability tokens.</summary>
+    public static class Capabilities
+    {
+        /// <summary>Agent can handle interaction flows.</summary>
+        public const string Interaction = "interaction";
+
+        /// <summary>Agent can engage in clarification chat.</summary>
+        public const string Clarification = "clarification";
+
+        /// <summary>Agent can handle payment flows.</summary>
+        public const string Payment = "payment";
+    }
+
+    /// <summary>Governance endpoint wire values defined by the AAuth protocol.</summary>
+    public static class Governance
+    {
+        /// <summary>Interaction endpoint request <c>type</c> values.</summary>
+        public static class InteractionTypes
+        {
+            /// <summary>Relay a resource-hosted interaction to the user.</summary>
+            public const string Interaction = "interaction";
+
+            /// <summary>Relay a payment approval to the user.</summary>
+            public const string Payment = "payment";
+
+            /// <summary>Ask the user a question.</summary>
+            public const string Question = "question";
+        }
+
+        /// <summary>Governance endpoint error codes.</summary>
+        public static class ErrorCodes
+        {
+            /// <summary>The PS has no channel available to relay the interaction.</summary>
+            public const string InteractionUnavailable = "interaction_unavailable";
+        }
+
+        /// <summary>Deferred governance response status values.</summary>
+        public static class Status
+        {
+            /// <summary>The deferred governance result is still pending.</summary>
+            public const string Pending = "pending";
+
+            /// <summary>The PS relay has reached the user for a resource-hosted interaction.</summary>
+            public const string Interacting = "interacting";
+
+            /// <summary>The relayed interaction completed successfully.</summary>
+            public const string Ok = "ok";
+        }
+    }
+
+    /// <summary>Metadata member names defined by the AAuth protocol.</summary>
+    public static class MetadataFields
+    {
+        /// <summary>
+        /// Resource metadata field listing extra HTTP signature covered components.
+        /// </summary>
+        public const string AdditionalSignatureComponents = "additional_signature_components";
+    }
+
+    /// <summary>Common JWT/identity claim names used by the AAuth protocol.</summary>
+    public static class Claims
+    {
+        /// <summary>The directed subject claim. It is never requested with <c>requirement=claims</c>.</summary>
+        public const string Subject = "sub";
+    }
+
+    /// <summary>
+    /// Mission termination reasons (#mission-management). The set is open: a recipient
+    /// that does not recognize a reason keeps the <c>terminated</c> state and treats the
+    /// reason as an opaque audit value, so reasons stay plain strings.
+    /// </summary>
+    public static class MissionTerminationReasons
+    {
+        /// <summary>The person accepted the agent's completion proposal.</summary>
+        public const string Completed = "completed";
+
+        /// <summary>The person, the owning agent, or an authorized administrator withdrew the mission.</summary>
+        public const string Revoked = "revoked";
+
+        /// <summary>The mission reached its <c>expires_at</c>.</summary>
+        public const string Expired = "expired";
+
+        /// <summary>Another approved mission replaced this one.</summary>
+        public const string Superseded = "superseded";
+
+        /// <summary>An authorized administrator ended the mission under local policy.</summary>
+        public const string Administrative = "administrative";
     }
 
     /// <summary>Token type (<c>typ</c> header) values.</summary>
@@ -80,6 +191,9 @@ public static class AAuthConstants
 
         /// <summary>Auth token type.</summary>
         public const string AuthToken = "aa-auth+jwt";
+
+        /// <summary>Person token type.</summary>
+        public const string PersonToken = "aa-person+jwt";
 
         /// <summary>Resource token type.</summary>
         public const string ResourceToken = "aa-resource+jwt";

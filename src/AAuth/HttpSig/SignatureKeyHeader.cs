@@ -35,9 +35,9 @@ public static class SignatureKeyHeader
 
     public static (string Scheme, IReadOnlyDictionary<string, object> Parameters) Parse(string headerValue, string label = "sig")
     {
-        var member = StructuredFields.Member(headerValue, label);
+        var member = StructuredFields.Member(headerValue, label, SignatureErrorCode.InvalidKey);
         if (member.Value is not Token scheme)
-            throw new AAuthVerificationException(SignatureErrorCode.InvalidRequest, "Signature-Key scheme must be a structured token.");
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidKey, "Signature-Key scheme must be a structured token.");
         return ((string)scheme, member.Parameters);
     }
 

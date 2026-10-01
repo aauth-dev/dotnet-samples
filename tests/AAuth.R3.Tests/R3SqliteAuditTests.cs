@@ -9,7 +9,7 @@ public class R3SqliteAuditTests
     [Fact]
     public async Task Commit_SurvivesRestartAndConcurrentIssuance()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "r3-audit-" + Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine(Directory.GetCurrentDirectory(), ".test-results", "r3-audit-" + Guid.NewGuid().ToString("N"));
         var path = Path.Combine(directory, "audit.sqlite");
         try
         {
@@ -28,7 +28,7 @@ public class R3SqliteAuditTests
     [Fact]
     public async Task AuditInsertFailure_RollsBackTokenAssociationAndAllowsRecovery()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "r3-audit-" + Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine(Directory.GetCurrentDirectory(), ".test-results", "r3-audit-" + Guid.NewGuid().ToString("N"));
         var path = Path.Combine(directory, "audit.sqlite");
         try
         {
@@ -58,5 +58,6 @@ public class R3SqliteAuditTests
 
     private static R3TokenIssuanceAuditRecord Record(string id) => new(
         "https://resource.test/r3/doc", "document-hash", "agent", "https://resource.test", "https://as.test",
+        "https://ps.test", "person-1", "agent-jkt",
         DateTimeOffset.UtcNow, R3TokenIssuanceKind.Class) { TokenId = id, TokenS256 = "token-hash-" + id };
 }

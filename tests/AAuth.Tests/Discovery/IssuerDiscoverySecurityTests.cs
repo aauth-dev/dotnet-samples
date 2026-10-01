@@ -9,6 +9,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Tokens;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.Tokens;
 using Xunit;
 
@@ -27,7 +28,7 @@ public class IssuerDiscoverySecurityTests
     {
         using var scenario = new Scenario();
         Assert.True(await scenario.Verify(path));
-        scenario.Time = scenario.Start.AddSeconds(61);
+        scenario.Time.SetUtcNow(scenario.Start.AddSeconds(61));
         scenario.Handler.Key = AAuthKey.Generate();
         scenario.Handler.PublishKey = false;
         var exception = await Assert.ThrowsAsync<TokenVerificationException>(() => scenario.Verify(path));
@@ -47,11 +48,11 @@ public class IssuerDiscoverySecurityTests
     {
         using var scenario = new Scenario();
         Assert.True(await scenario.Verify(path));
-        scenario.Time = scenario.Start.AddSeconds(299);
+        scenario.Time.SetUtcNow(scenario.Start.AddSeconds(299));
         scenario.Handler.Kid = "second";
         Assert.True(await scenario.Verify(path));
         Assert.Equal(2, scenario.Handler.KeyCalls);
-        scenario.Time = scenario.Start.AddSeconds(301);
+        scenario.Time.SetUtcNow(scenario.Start.AddSeconds(301));
         scenario.Handler.Location = "keys-b";
         scenario.Handler.Kid = "third";
         var accepted = false;
@@ -61,7 +62,7 @@ public class IssuerDiscoverySecurityTests
         Assert.False(accepted);
         Assert.Equal(2, scenario.Handler.KeyCalls);
         Assert.Equal(2, scenario.Handler.MetadataCalls);
-        scenario.Time = scenario.Start.AddSeconds(359);
+        scenario.Time.SetUtcNow(scenario.Start.AddSeconds(359));
         Assert.True(await scenario.Verify(path));
         Assert.Equal(3, scenario.Handler.KeyCalls);
     }
@@ -74,7 +75,7 @@ public class IssuerDiscoverySecurityTests
         using var scenario = new Scenario();
         Assert.True(await scenario.Verify("upstream"));
         scenario.Handler.Key = AAuthKey.Generate();
-        scenario.Time = scenario.Start.AddSeconds(elapsedSeconds);
+        scenario.Time.SetUtcNow(scenario.Start.AddSeconds(elapsedSeconds));
         Assert.Equal(accepted, await scenario.Verify("upstream"));
         Assert.Equal(accepted ? 2 : 1, scenario.Handler.KeyCalls);
     }
@@ -82,7 +83,7 @@ public class IssuerDiscoverySecurityTests
     private sealed class Scenario : IDisposable
     {
         public DateTimeOffset Start { get; } = DateTimeOffset.UtcNow;
-        public DateTimeOffset Time { get; set; }
+        public FakeTimeProvider Time { get; }
         public Handler Handler { get; } = new();
         private readonly AAuthKey _agent = AAuthKey.Generate();
         private readonly HttpClient _http;
@@ -92,22 +93,22 @@ public class IssuerDiscoverySecurityTests
 
         public Scenario()
         {
-            Time = Start;
+            Time = new FakeTimeProvider(Start);
             _http = AAuthHttpTransport.AttachPolicy(new HttpClient(Handler), AAuthEgressPolicy.Production,
                 AAuthTransportContract.InProcessOnly);
-            _metadata = new(_http, clock: () => Time);
-            _jwks = new(_http, clock: () => Time);
-            _verifier = new() { Clock = () => Time };
+            _metadata = new(_http, timeProvider: Time);
+            _jwks = new(_http, timeProvider: Time);
+            _verifier = new() { TimeProvider = Time };
         }
 
         public async Task<bool> Verify(string path)
         {
-            var jwt = new AuthTokenBuilder
+            var jwt = await new AuthTokenBuilder
             {
-                Issuer = Issuer, Audience = Audience, Agent = Agent, Scope = "read",
+                Issuer = Issuer, Audience = Audience, PersonServer = Issuer, Subject = "person", Scope = "read",
                 AgentConfirmationKey = _agent, AgentTokenExpiresAt = Start.AddHours(1),
                 Key = Handler.Key, KeyId = Handler.Kid, Dwk = AuthTokenBuilder.AccessDwk,
-            }.Build();
+            }.BuildAsync();
             switch (path)
             {
                 case "generic":
@@ -115,14 +116,14 @@ public class IssuerDiscoverySecurityTests
                         AuthTokenBuilder.AccessDwk, Audience);
                     return true;
                 case "auth":
-                    await _verifier.VerifyAuthTokenWithJwksAsync(jwt, _metadata, _jwks, Audience, _agent, Agent);
+                    await _verifier.VerifyAuthTokenWithJwksAsync(jwt, _metadata, _jwks, Audience, _agent);
                     return true;
                 case "upstream":
                     return (await new UpstreamTokenValidator(_metadata, _jwks, _verifier)
-                        .ValidateAsync(jwt, Audience, issuer => issuer == Issuer)).IsValid;
+                        .ValidateAsync(jwt, Audience, Issuer, (issuer, _) => ValueTask.FromResult(issuer == Issuer))).IsValid;
                 case "delivery":
                     return (await new AuthTokenResponseValidator(_metadata, _jwks, _verifier)
-                        .ValidateAsync(jwt, Issuer, Audience, Agent, _agent)).IsValid;
+                        .ValidateAsync(jwt, Issuer, Audience, "person", Issuer, _agent, Start.AddHours(2))).IsValid;
                 default:
                     var segments = jwt.Split('.');
                     if (path == "self-jwt")
@@ -154,9 +155,10 @@ public class IssuerDiscoverySecurityTests
     {
         public string Scheme => "self-jwt";
         public string TokenType => "cache-test+jwt";
-        public Task<TokenVerifier.VerifiedToken> VerifyAsync(string jwt, IAAuthKey issuerKey,
-            TokenVerifier verifier, CancellationToken cancellationToken) =>
-            Task.FromResult(verifier.Verify(jwt, issuerKey, TokenType, AuthTokenBuilder.AccessDwk));
+        public ValueTask<IAAuthKey?> ResolveIssuerKeyAsync(SignatureTokenIssuerKeyContext context, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IAAuthKey?>(null);
+        public Task<TokenVerifier.VerifiedToken> VerifyAsync(SignatureTokenVerificationContext context, CancellationToken cancellationToken) =>
+            Task.FromResult(context.TokenVerifier.Verify(context.Jwt, context.IssuerKey, TokenType, AuthTokenBuilder.AccessDwk));
     }
 
     private sealed class Handler : HttpMessageHandler

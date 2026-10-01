@@ -3,17 +3,32 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Headers;
+using AAuth.Protocol;
 
 namespace AAuth.Agent;
 
 /// <summary>
-/// Optional parameters for <see cref="TokenExchangeClient.ExchangeAsync(string, string, TokenExchangeRequest, CancellationToken)"/>.
+/// Optional parameters for <see cref="TokenExchangeClient.ExchangeAsync(string, string, TokenExchangeRequest, CancellationToken)"/>
+/// and <see cref="TokenExchangeClient.RequestPersonTokenAsync"/>.
 /// Groups the deferred-consent, call-chaining, and capability/prompt options so
 /// the public surface stays stable as new exchange parameters are added.
 /// </summary>
 public sealed class TokenExchangeRequest
 {
     public string? Account { get; init; }
+
+    /// <summary>
+    /// The person token or auth token presented to the resource that issued the
+    /// resource token (<c>presented_token</c>). REQUIRED for an auth token request;
+    /// ignored when requesting a person token.
+    /// </summary>
+    public string? PresentedToken { get; init; }
+
+    /// <summary>
+    /// The mission to request a person token under (<c>mission_s256</c>). The PS
+    /// copies it into the person token and the resource copies it from there.
+    /// </summary>
+    public string? MissionS256 { get; init; }
     /// <summary>
     /// Invoked when the PS returns <c>202</c> with an interaction requirement,
     /// before polling begins. Callers display the user-facing URL/code via
@@ -27,18 +42,15 @@ public sealed class TokenExchangeRequest
     public DeferredPollerOptions? PollerOptions { get; init; }
 
     /// <summary>
-    /// Optional upstream auth token for call-chaining scenarios. When provided,
-    /// included as <c>upstream_token</c> in the POST body so the PS/AS can
-    /// construct nested <c>act</c> claims preserving the delegation chain.
+    /// Optional upstream token for call chaining: the person token or auth token
+    /// the calling agent presented to this intermediary (<c>upstream_token</c>).
     /// </summary>
     public string? UpstreamToken { get; init; }
 
     /// <summary>
     /// Optional sub-agent agent token (<c>subagent_token</c>) for parent-mediated
-    /// authorization (§Sub-Agents). When set, the signing agent is the parent and
-    /// the PS/AS issues an auth token bound to the sub-agent's key, recording the
-    /// parent in the <c>act</c> chain. The parent MUST be named by the
-    /// <c>subagent_token</c>'s <c>parent_agent</c> claim.
+    /// authorization (§Sub-Agents). The signing agent is the parent; the issued
+    /// token is bound to the sub-agent's key and names neither agent.
     /// </summary>
     public string? SubagentToken { get; init; }
 
@@ -48,7 +60,13 @@ public sealed class TokenExchangeRequest
     /// flow: <c>"interaction"</c> is sent when <see cref="OnInteractionRequired"/>
     /// is non-null. An explicit (possibly empty) list overrides inference.
     /// </summary>
-    public IReadOnlyList<string>? Capabilities { get; init; }
+    public IReadOnlyList<string>? Capabilities
+    {
+        get => _capabilities;
+        init => _capabilities = value is null
+            ? null
+            : AAuthProtocolInput.ValidateCapabilities(value, nameof(Capabilities));
+    }
 
     /// <summary>
     /// Optional OIDC <c>prompt</c> value (e.g. <c>"consent"</c>, <c>"login"</c>,
@@ -87,7 +105,11 @@ public sealed class TokenExchangeRequest
     /// MUST be a value from the AAuth Platform Value Registry; used for display
     /// at the PS consent screen / connected-agents dashboard (§Agent Token Request).
     /// </summary>
-    public string? Platform { get; init; }
+    public string? Platform
+    {
+        get => _platform;
+        init => _platform = AAuthProtocolInput.ValidatePlatform(value, nameof(Platform));
+    }
 
     /// <summary>
     /// Optional <c>device</c> string identifying the device/browser for display
@@ -97,39 +119,12 @@ public sealed class TokenExchangeRequest
     public string? Device
     {
         get => _device;
-        init => _device = ValidateDevice(value);
+        init => _device = AAuthProtocolInput.ValidateDevice(value, nameof(Device));
     }
 
+    private readonly IReadOnlyList<string>? _capabilities;
+    private readonly string? _platform;
     private readonly string? _device;
-
-    // §Agent Token Request: `device` MUST be printable (no control characters) and
-    // ≤ 64 characters. Reject anything outside printable ASCII (32–126) so display
-    // surfaces never receive control characters; allow null/empty (the field is optional).
-    private static string? ValidateDevice(string? value)
-    {
-        if (value is null)
-        {
-            return null;
-        }
-
-        if (value.Length > 64)
-        {
-            throw new ArgumentException(
-                $"device must be at most 64 characters (was {value.Length}).", nameof(Device));
-        }
-
-        foreach (var ch in value)
-        {
-            if (ch < ' ' || ch > '~')
-            {
-                throw new ArgumentException(
-                    "device must contain only printable ASCII characters (no control characters).",
-                    nameof(Device));
-            }
-        }
-
-        return value;
-    }
 
     /// <summary>
     /// Invoked when the PS returns <c>202</c> with

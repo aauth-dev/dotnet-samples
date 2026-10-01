@@ -341,8 +341,8 @@ P2, R; pre-existing structural gap, with a v10 actor prohibition.
 [UpstreamTokenValidator L219](../../../src/AAuth/Tokens/UpstreamTokenValidator.cs#L219)
 uses generic JWT verification without all those checks. Trust and audience
 checks exist. [P1809] (`#directed-sub-chaining`) prohibits person
-identifiers inside `act`; [ActChainBuilder L32](../../../src/AAuth/Tokens/ActChainBuilder.cs#L32)
-clones upstream objects and [L55](../../../src/AAuth/Tokens/ActChainBuilder.cs#L55)
+identifiers inside `act`; [ActChainBuilder L32](https://github.com/aauth-dev/dotnet-samples/blob/v0.10.0-alpha.1/src/AAuth/Tokens/ActChainBuilder.cs#L32)
+clones upstream objects and [L55](https://github.com/aauth-dev/dotnet-samples/blob/v0.10.0-alpha.1/src/AAuth/Tokens/ActChainBuilder.cs#L55)
 only checks agent presence/depth. Direct top-level upstream `sub` copying was
 not found. [AuthTokenBuilder L211](../../../src/AAuth/Tokens/AuthTokenBuilder.cs#L211)
 blocks only already-populated extra claims, allowing unset reserved fields such

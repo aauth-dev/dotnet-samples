@@ -20,8 +20,9 @@
 <p>
     Key rotation without re-enrolment. The enrolled <strong>durable key</strong> signs a
     naming JWT that binds a fresh <strong>ephemeral key</strong>. The ephemeral key signs
-    HTTP requests. When the ephemeral key needs rotating, the agent builds a new
-    naming JWT — the AP never needs to re-enrol the agent.
+    the AP refresh request and any generic Signature-Key calls that opt into
+    <code>jkt-jwt</code>. When the ephemeral key needs rotating, the agent asks the AP
+    for a fresh two-key result and rebuilds the client with the returned key and token.
 </p>
 
 <div class="row">
@@ -34,7 +35,7 @@ var result = await apClient.RefreshTwoKeyAsync(
 // Durable key signs a self-issued naming JWT (jkt-s256+jwt):
 // durable jwk in the header, iss = its thumbprint URN,
 // ephemeral key bound via cnf.jwk
-var namingJwt = NamingJwtBuilder.Build(durableKey, result.EphemeralKey);
+var namingJwt = await NamingJwtBuilder.BuildAsync(durableKey, result.EphemeralKey);
 
 // Ephemeral key signs HTTP requests
 using var client = new AAuthClientBuilder(result.EphemeralKey).WithEgressPolicy(SampleEgress.Policy)
@@ -53,11 +54,11 @@ using var client = new AAuthClientBuilder(result.EphemeralKey).WithEgressPolicy(
     <li>AP verifies naming JWT signature against enrolled durable key,
         verifies HTTP sig against ephemeral key</li>
 </ol>
-<p class="fw-bold small text-secondary mb-1">Resource access (2-party, no AP)</p>
+<p class="fw-bold small text-secondary mb-1">Generic Signature-Key access (no AAuth resource mode)</p>
 <ol start="5">
     <li>Agent signs resource requests with ephemeral key + naming JWT
-        (<code>sig=jkt-jwt</code>). Resource verifies the HTTP signature
-        against <code>cnf.jwk</code> and identifies the agent by
+        (<code>sig=jkt-jwt</code>). A generic verifier checks the HTTP signature
+        against <code>cnf.jwk</code> and identifies the signer by
         the durable key's <code>jkt</code> thumbprint.</li>
 </ol>
 </div>
@@ -122,7 +123,7 @@ else
     private bool _enrolled;
     private string? _durableThumbprint;
     private string? _ephemeralThumbprint;
-    private IAAuthKey? _ephemeralKey;
+    private IAAuthSigner? _ephemeralKey;
     private string? _namingJwt;
     private string? _response;
     private string? _error;
@@ -179,10 +180,10 @@ else
             _ephemeralKey = result.EphemeralKey;
             _ephemeralThumbprint = ((AAuthKey)_ephemeralKey).ComputeJwkThumbprint();
 
-            // Build the naming JWT for generic resource requests (Signature Keys draft-08 section 3.5): the
+            // Build the naming JWT for generic resource requests (Signature Keys draft-09 section 3.5): the
             // durable key signs it, embeds its own public key in the header, and
             // binds the ephemeral key via cnf.jwk.
-            _namingJwt = NamingJwtBuilder.Build(_enrollment.Key, _ephemeralKey);
+            _namingJwt = await NamingJwtBuilder.BuildAsync(_enrollment.Key, _ephemeralKey);
         }
         catch (Exception ex)
         {
@@ -204,6 +205,8 @@ else
         {
             // Ephemeral key signs the HTTP request; naming JWT proves delegation from durable key.
             var namingJwt = _namingJwt!;
+            // This page teaches the jkt-jwt signing primitive, so it builds its own client;
+            // the app's agents are registered with AddAAuthAgent.
             using var client = new AAuthClientBuilder(_ephemeralKey!).WithEgressPolicy(SampleEgress.Policy)
                 .UseJktJwt(() => namingJwt)
                 .Build();

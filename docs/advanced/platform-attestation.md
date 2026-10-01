@@ -108,15 +108,19 @@ Typical scenarios:
 
 ## Attestation and the `jkt-jwt` signing mode
 
-Attestation is what makes the [`jkt-jwt`](../signing-modes/key-rotation-jkt-jwt.md)
-key-rotation scheme trustworthy in the enclave-backed mobile case it was designed
-for. The pattern, in the scheme designer's words — *"on first use, the AP drives a
-platform attestation in addition to the jkt-jwt, and then the jkt-jwt is all that
-is needed for future agent tokens"*:
+Attestation can anchor the durable key used by the
+[`jkt-jwt`](../signing-modes/key-rotation-jkt-jwt.md) key-refresh scheme in
+enclave-backed deployments. The generic Signature-Key scheme is otherwise
+self-anchored and pseudonymous; AP trust comes from the AP's enrollment record
+and any deployment-specific attestation policy. The pattern, in the scheme
+designer's words — *"on first use, the AP drives a platform attestation in
+addition to the jkt-jwt, and then the jkt-jwt is all that is needed for future
+agent tokens"*:
 
 1. **At enrolment (once):** the agent's durable key is generated inside a secure
-   enclave. The AP sends an `attestation_challenge`; the agent returns an App
-   Attest / Play Integrity / WebAuthn statement proving the durable key is genuine
+   enclave. In deployments that implement an AP challenge/retry ceremony, the AP
+   supplies an attestation challenge and the agent returns an App Attest / Play
+   Integrity / WebAuthn statement proving the durable key is genuine
    enclave-resident material. This is the strong, one-time trust anchor.
 2. **At every refresh thereafter:** the enclave signs a short-lived **naming JWT**
    (`jkt-s256+jwt`) delegating to a fast ephemeral software key (the `jkt-jwt`
@@ -125,10 +129,11 @@ is needed for future agent tokens"*:
    key is demonstrably making the request.
 
 So the enclave key signs rarely (once per agent-token lifetime), while the
-ephemeral key signs every HTTP request. Attestation anchors the durable key at
-enrolment; `jkt-jwt` carries that established trust forward cheaply. This is why
-the AP-side `jkt-jwt` verification is **not** pure trust-on-first-use even though
-the wire format is self-anchored — see
+ephemeral key signs every HTTP request. When the AP has attested and enrolled
+the durable key, `jkt-jwt` carries that established trust forward cheaply; in
+generic use, it remains a self-anchored pseudonymous scheme. This is why AP-side
+`jkt-jwt` refresh can be more than pure trust-on-first-use even though the wire
+format is self-anchored — see
 [Bootstrap & Enrollment § Two-Key Refresh](../workflows/bootstrap-enrollment.md).
 
 ## Further Reading

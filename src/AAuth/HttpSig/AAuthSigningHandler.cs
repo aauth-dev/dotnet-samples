@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
+using AAuth.Errors;
+using AAuth.Protocol;
 
 namespace AAuth.HttpSig;
 
@@ -52,10 +54,62 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     public static readonly HttpRequestOptionsKey<IReadOnlyList<string>> AdditionalComponentsKey
         = new("AAuth.AdditionalSignatureComponents");
 
-    private readonly IAAuthKey _key;
-    internal static readonly HttpRequestOptionsKey<IAAuthKey> SigningKeyContext = new("AAuth.LocalSigningKey");
+    private readonly IAAuthSigner _key;
+    internal static readonly HttpRequestOptionsKey<IAAuthSigner> SigningKeyContext = new("AAuth.LocalSigningKey");
     private readonly ISignatureKeyProvider _signatureKeyProvider;
-    private readonly Func<DateTimeOffset> _clock;
+    private readonly TimeProvider _time;
+
+    // §Freshness and Replay: a verifier MAY reject a second signature with the same key, created,
+    // @method, @authority and @path, and the profile defines no nonce. Requests that would collide
+    // (a cached token re-sent within the same second, concurrent identical calls) therefore wait
+    // until the next free wall-clock second. The SDK never future-dates `created`.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IAAuthSigner, Dictionary<string, long>> LastCreated = new();
+
+    private async Task<long> WaitForCurrentCreatedAsync(
+        string method, string authority, string path, CancellationToken cancellationToken)
+    {
+        var issued = LastCreated.GetOrCreateValue(_key);
+        var target = method + " " + authority + path;
+        var started = _time.GetUtcNow();
+        var waited = false;
+
+        while (true)
+        {
+            var now = _time.GetUtcNow();
+            var nowUnix = now.ToUnixTimeSeconds();
+            long last;
+            lock (issued)
+            {
+                if (!issued.TryGetValue(target, out last) || last < nowUnix)
+                {
+                    issued[target] = nowUnix;
+                    if (issued.Count > 1024)
+                    {
+                        foreach (var stale in issued.Where(entry => entry.Value < nowUnix).Select(entry => entry.Key).ToList())
+                        {
+                            issued.Remove(stale);
+                        }
+                    }
+                    if (waited)
+                    {
+                        AAuthDiagnostics.RecordSigningCreatedWait(now - started, method, authority, path);
+                    }
+                    return nowUnix;
+                }
+            }
+
+            waited = true;
+            var next = DateTimeOffset.FromUnixTimeSeconds(last + 1);
+            var delay = next - now;
+            if (delay <= TimeSpan.Zero)
+            {
+                await Task.Yield();
+                cancellationToken.ThrowIfCancellationRequested();
+                continue;
+            }
+            await Task.Delay(delay, _time, cancellationToken).ConfigureAwait(false);
+        }
+    }
 
     /// <summary>
     /// Optional observability hook. When set, the canonical RFC 9421
@@ -72,16 +126,24 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// <c>AAuth-Capabilities</c> header (§AAuth-Capabilities). When set, the header is
     /// emitted on every signed request.
     /// </summary>
-    public IReadOnlyList<string>? Capabilities { get; init; }
+    public IReadOnlyList<string>? Capabilities
+    {
+        get => _capabilities;
+        init => _capabilities = value is null
+            ? null
+            : AAuthProtocolInput.ValidateCapabilities(value, nameof(Capabilities));
+    }
+
+    private readonly IReadOnlyList<string>? _capabilities;
 
     /// <summary>Create a signing handler with a strategy-based key provider.</summary>
     /// <param name="key">The agent's signing key (must have private component).</param>
     /// <param name="signatureKeyProvider">Strategy that produces the Signature-Key header value.</param>
-    /// <param name="clock">Optional clock for deterministic tests.</param>
+    /// <param name="timeProvider">Time source for the <c>created</c> parameter.</param>
     public AAuthSigningHandler(
-        IAAuthKey key,
+        IAAuthSigner key,
         ISignatureKeyProvider signatureKeyProvider,
-        Func<DateTimeOffset>? clock = null)
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(signatureKeyProvider);
@@ -92,7 +154,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
 
         _key = key;
         _signatureKeyProvider = signatureKeyProvider;
-        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _time = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>Create a signing handler (convenience for the <c>jwt</c> scheme).</summary>
@@ -104,12 +166,12 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// out of <see cref="SendAsync"/>; callers are responsible for handling
     /// token-acquisition failures.
     /// </param>
-    /// <param name="clock">Optional clock for deterministic tests.</param>
+    /// <param name="timeProvider">Time source for the <c>created</c> parameter.</param>
     public AAuthSigningHandler(
-        IAAuthKey key,
+        IAAuthSigner key,
         Func<string> tokenFactory,
-        Func<DateTimeOffset>? clock = null)
-        : this(key, new JwtSignatureKeyProvider(tokenFactory), clock)
+        TimeProvider? timeProvider = null)
+        : this(key, new JwtSignatureKeyProvider(tokenFactory), timeProvider)
     {
     }
 
@@ -123,8 +185,22 @@ public sealed class AAuthSigningHandler : DelegatingHandler
 
     public async Task SignAsync(HttpRequestMessage request, CancellationToken cancellationToken = default)
     {
+        CoverBody(request);
         await EnsureRequiredContentDigestAsync(request, cancellationToken).ConfigureAwait(false);
-        Sign(request);
+        await SignHeadersAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    // §Covered Components: a body-bearing request to a PS or AS MUST cover
+    // content-type and content-digest. The signer cannot tell a PS or AS from a
+    // resource, so it covers both on every request with a body; covering more
+    // than a server requires is always accepted.
+    private static void CoverBody(HttpRequestMessage request)
+    {
+        if (request.Content is null)
+            return;
+        request.Options.TryGetValue(AdditionalComponentsKey, out var requested);
+        request.Options.Set(AdditionalComponentsKey,
+            (requested ?? []).Concat(["content-type", "content-digest"]).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
     }
 
     // When a resource requires `content-digest` as an additional covered
@@ -133,7 +209,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     // SHA-256 is emitted. Requests without a body, or that already carry the
     // header, are left untouched. This buffering only happens when a resource
     // has actually demanded `content-digest`, so the common no-digest path is
-    // unaffected. Direct callers of the synchronous <see cref="Sign"/> must
+    // unaffected. Direct callers of <see cref="SignHeadersAsync"/> must
     // pre-populate Content-Digest themselves.
     private static async Task EnsureRequiredContentDigestAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
@@ -172,8 +248,12 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         request.Content.Headers.TryAddWithoutValidation("Content-Digest", value);
     }
 
-    /// <summary>Apply AAuth signature headers to <paramref name="request"/>.</summary>
-    public void Sign(HttpRequestMessage request)
+    /// <summary>
+    /// Apply AAuth signature headers to <paramref name="request"/> without adding body
+    /// coverage. <see cref="SignAsync"/> is the normal entry point; callers of this
+    /// method must request and pre-populate any body components themselves.
+    /// </summary>
+    public async Task SignHeadersAsync(HttpRequestMessage request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.RequestUri is null)
@@ -181,10 +261,21 @@ public sealed class AAuthSigningHandler : DelegatingHandler
             throw new InvalidOperationException("Request must have a RequestUri.");
         }
 
+        var label = SignatureKeyHeader.Label(Label);
         var signatureKey = _signatureKeyProvider is JwtSignatureKeyProvider jwtProvider
             ? jwtProvider.GetSignatureKeyHeader(request) : _signatureKeyProvider.GetSignatureKeyHeader();
+        try
+        {
+            SignatureKeyHeader.Parse(signatureKey, Label);
+        }
+        catch (Exception ex) when (ex is AAuthVerificationException or ArgumentException)
+        {
+            throw new InvalidOperationException(
+                $"The Signature-Key provider did not emit a member for the handler label '{Label}'. "
+                + "The provider label and AAuthSigningHandler.Label must match.",
+                ex);
+        }
         request.Options.Set(SigningKeyContext, _key);
-        var created = _clock().ToUnixTimeSeconds();
 
         var method = request.Method.Method;
         // RFC 9421 §2.2.3 / RFC 3986 §3.2.2: @authority MUST be lowercase.
@@ -196,6 +287,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         // UriFormat.UriEscaped guarantees the wire form. GetComponents omits
         // the leading '/', so re-add it.
         var path = "/" + request.RequestUri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
+        var created = await WaitForCurrentCreatedAsync(method, authority, path, cancellationToken).ConfigureAwait(false);
 
         // Additional covered components required by the resource (from its
         // metadata or a prior invalid_input error). Resolve each to its
@@ -227,13 +319,6 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         {
             AppendComponent(sb, "authorization", request.Headers.Authorization.ToString());
         }
-        // §Mission context: when the agent operates in a mission context it
-        // includes the AAuth-Mission header and adds aauth-mission to the
-        // signed components. Auto-cover it so callers need not opt in.
-        if (TryGetMissionComponent(request, out var missionValue))
-        {
-            AppendComponent(sb, "aauth-mission", missionValue);
-        }
         foreach (var (name, value) in additional)
         {
             AppendComponent(sb, name, value);
@@ -245,45 +330,37 @@ public sealed class AAuthSigningHandler : DelegatingHandler
             throw new InvalidOperationException("Signature base must be ASCII.");
         OnSignatureBase?.Invoke(request, signatureBase);
 
-        var signature = _key.Sign(Encoding.ASCII.GetBytes(signatureBase));
+        var signature = await _key.SignAsync(Encoding.ASCII.GetBytes(signatureBase), cancellationToken).ConfigureAwait(false);
 
         request.Headers.Remove(AAuthConstants.Headers.SignatureKey);
         request.Headers.Remove(AAuthConstants.Headers.SignatureInput);
         request.Headers.Remove(AAuthConstants.Headers.Signature);
 
         request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.SignatureKey, signatureKey);
-        request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.SignatureInput, $"{SignatureKeyHeader.Label(Label)}={paramsLine}");
+        request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.SignatureInput, $"{label}={paramsLine}");
         request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.Signature, $"{Label}=:{Convert.ToBase64String(signature)}:");
 
         // Emit capabilities header if configured
-        if (Capabilities is { Count: > 0 })
+        IReadOnlyList<string>? capabilities = request.Options.TryGetValue(RequestCapabilitiesKey, out var added)
+            ? AAuthCapabilitiesHeader.Union(added, Capabilities)
+            : Capabilities;
+        if (capabilities is { Count: > 0 })
         {
             request.Headers.Remove(AAuthCapabilitiesHeader.Name);
             request.Headers.TryAddWithoutValidation(
                 AAuthCapabilitiesHeader.Name,
-                AAuthCapabilitiesHeader.Format(Capabilities));
+                AAuthCapabilitiesHeader.Format(capabilities));
         }
     }
+
+    // Capabilities an outer handler declares for this request only, e.g. `interaction` when a handler resolves.
+    internal static readonly HttpRequestOptionsKey<IReadOnlyList<string>> RequestCapabilitiesKey = new("AAuth.RequestCapabilities");
 
     private static void AppendComponent(StringBuilder sb, string name, string value)
     {
         value = AAuthVerifier.NormalizeField(value);
         if (value.Contains('\r') || value.Contains('\n')) throw new InvalidOperationException("Invalid signature component value.");
         sb.Append('"').Append(name).Append("\": ").Append(value).Append('\n');
-    }
-
-    // Resolve the AAuth-Mission header to its on-the-wire field value so it can
-    // be covered as the `aauth-mission` component (§Mission context). Returns
-    // false when the header is absent or empty.
-    private static bool TryGetMissionComponent(HttpRequestMessage request, out string value)
-    {
-        value = string.Empty;
-        if (!request.Headers.TryGetValues(AAuthMissionHeader.Name, out var values))
-        {
-            return false;
-        }
-        value = string.Join(", ", values);
-        return !string.IsNullOrWhiteSpace(value);
     }
 
     private static string BuildSignatureParams(
@@ -303,11 +380,6 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         if (request.Headers.Authorization is not null)
         {
             sb.Append(" \"authorization\"");
-        }
-        // §Mission context: aauth-mission is covered when the header is present.
-        if (TryGetMissionComponent(request, out _))
-        {
-            sb.Append(" \"aauth-mission\"");
         }
         foreach (var (name, _) in additional)
         {
@@ -340,8 +412,6 @@ public sealed class AAuthSigningHandler : DelegatingHandler
             seen.Add(baseComponent);
         }
         seen.Add("authorization");
-        // aauth-mission is auto-covered from the header; never add it twice.
-        seen.Add("aauth-mission");
 
         var resolved = new List<(string, string)>();
         foreach (var raw in requested)
@@ -362,11 +432,11 @@ public sealed class AAuthSigningHandler : DelegatingHandler
                         UriComponents.Scheme | UriComponents.Host | UriComponents.Port,
                         UriFormat.UriEscaped)
                     : "(unknown origin)";
+                var reason = request.Content is not null && name == "content-type"
+                    ? "Body-bearing AAuth requests must set Content-Type so the signer can cover it."
+                    : "Components AAuth can compute automatically (e.g. 'content-digest' on a body-bearing request) are added before signing; any other required component must be set on the request by the caller.";
                 throw new InvalidOperationException(
-                    $"Resource at {origin} requires signature component '{name}', but the request "
-                    + "has no such header to sign over. Components AAuth can compute automatically "
-                    + "(e.g. 'content-digest' on a body-bearing request) are added before signing; "
-                    + "any other required component must be set on the request by the caller.");
+                    $"Resource at {origin} requires signature component '{name}', but the request has no such header to sign over. {reason}");
             }
             resolved.Add((name, value));
         }
@@ -376,6 +446,11 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     private static bool TryResolveFieldValue(
         HttpRequestMessage request, string name, out string value)
     {
+        if (name.StartsWith('@'))
+        {
+            return TryResolveDerivedComponent(request, name, out value);
+        }
+
         // Content headers (content-type, content-digest, content-length, ...)
         // live on request.Content; everything else on request.Headers. RFC
         // 9421 §2.1: multiple field values are combined with ", ".
@@ -393,6 +468,32 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         return false;
     }
 
+    private static bool TryResolveDerivedComponent(
+        HttpRequestMessage request, string name, out string value)
+    {
+        if (request.RequestUri is not { } uri)
+        {
+            value = string.Empty;
+            return false;
+        }
+
+        var scheme = uri.Scheme.ToLowerInvariant();
+        var authority = uri.Authority.ToLowerInvariant();
+        var path = "/" + uri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
+        var query = uri.GetComponents(UriComponents.Query, UriFormat.UriEscaped);
+        var requestTarget = string.IsNullOrEmpty(query) ? path : path + "?" + query;
+
+        value = name switch
+        {
+            "@scheme" => scheme,
+            "@query" => string.IsNullOrEmpty(query) ? "?" : "?" + query,
+            "@target-uri" => scheme + "://" + authority + requestTarget,
+            "@request-target" => requestTarget,
+            _ => string.Empty,
+        };
+        return value.Length > 0;
+    }
+
     /// <summary>
     /// Create an <see cref="HttpClient"/> that signs every outbound request.
     /// </summary>
@@ -400,7 +501,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// <param name="provider">Strategy that produces the Signature-Key header value.</param>
     /// <param name="innerHandler">Optional inner handler (defaults to <see cref="HttpClientHandler"/>).</param>
     public static HttpClient CreateClient(
-        IAAuthKey key,
+        IAAuthSigner key,
         ISignatureKeyProvider provider,
         HttpMessageHandler? innerHandler = null)
     {

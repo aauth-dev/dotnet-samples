@@ -13,7 +13,7 @@ namespace AAuth.Crypto;
 /// because neither .NET 10 (on this runtime) nor <c>Microsoft.IdentityModel</c>
 /// ships a usable Ed25519 implementation yet.
 /// </summary>
-public sealed class AAuthKey : IAAuthKey
+public sealed class AAuthKey : IAAuthExportableKey
 {
     /// <summary>The JOSE <c>alg</c> value for Ed25519.</summary>
     public const string Ed25519Algorithm = "Ed25519";
@@ -65,7 +65,11 @@ public sealed class AAuthKey : IAAuthKey
         return new AAuthKey(priv, pub);
     }
 
-    /// <summary>Sign the given data with the private key.</summary>
+    /// <inheritdoc/>
+    public ValueTask<byte[]> SignAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(Sign(data.ToArray()));
+
+    /// <summary>Sign the given data synchronously with the local private key.</summary>
     public byte[] Sign(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);

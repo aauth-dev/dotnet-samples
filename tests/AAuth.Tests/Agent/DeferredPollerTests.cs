@@ -22,6 +22,47 @@ public class DeferredPollerTests
     }
 
     [Fact]
+    public void MinPollInterval_DefaultsToZero()
+    {
+        var options = new DeferredPollerOptions();
+        Assert.Equal(TimeSpan.Zero, options.MinPollInterval);
+    }
+
+    [Fact]
+    public async Task RetryAfterZero_IsImmediateByDefault()
+    {
+        var delays = new List<TimeSpan>();
+        var handler = new ScriptedHandler(
+            r => Respond(HttpStatusCode.Accepted, retryAfter: TimeSpan.Zero),
+            r => Respond(HttpStatusCode.OK, body: "{}"));
+        using var client = new InProcessHttpClient(handler);
+        var poller = new DeferredPoller(client, new DeferredPollerOptions
+        {
+            DelayAsync = (delay, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                delays.Add(delay);
+                return Task.CompletedTask;
+            },
+        });
+
+        using var terminal = await poller.PollAsync(PendingUrl);
+
+        Assert.Equal(HttpStatusCode.OK, terminal.StatusCode);
+        Assert.Equal([TimeSpan.Zero], delays);
+    }
+
+    [Fact]
+    public void NegativeMinPollInterval_IsRejected()
+    {
+        using var client = new InProcessHttpClient(new ScriptedHandler(_ => Respond(HttpStatusCode.OK)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DeferredPoller(client, new DeferredPollerOptions
+        {
+            MinPollInterval = TimeSpan.FromMilliseconds(-1),
+        }));
+    }
+
+    [Fact]
     public async Task PollAsync_ReturnsFirstNon202Response()
     {
         var handler = new ScriptedHandler(

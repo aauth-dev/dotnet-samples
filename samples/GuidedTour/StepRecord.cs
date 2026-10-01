@@ -8,6 +8,8 @@ namespace GuidedTour;
 /// </summary>
 public sealed class StepRecord
 {
+    internal static bool ShowSensitiveProtocolArtifacts { get; set; }
+
     /// <summary>1-based step number.</summary>
     public required int Number { get; init; }
 
@@ -55,6 +57,11 @@ public sealed class StepRecord
 
     /// <summary>Free-form decoded text for non-JWT artifacts (e.g. JWK thumbprint).</summary>
     public string? TokenDecoded { get; init; }
+
+    internal string? RedactedTokenJwt => ProtocolArtifactRedactor.RedactToken(TokenJwt, ShowSensitiveProtocolArtifacts);
+    internal string? RedactedTokenHeader => ProtocolArtifactRedactor.RedactDecoded(TokenHeader, ShowSensitiveProtocolArtifacts);
+    internal string? RedactedTokenPayload => ProtocolArtifactRedactor.RedactDecoded(TokenPayload, ShowSensitiveProtocolArtifacts);
+    internal string? RedactedTokenDecoded => ProtocolArtifactRedactor.RedactDecoded(TokenDecoded, ShowSensitiveProtocolArtifacts);
 
     /// <summary>C# SDK code snippet showing how to implement this step programmatically.</summary>
     public string? CodeSnippet { get; init; }

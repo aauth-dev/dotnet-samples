@@ -20,8 +20,10 @@ previous one produced.
    read its `.RequireAAuth(...)` / `.RequireAAuthSignature(...)` metadata.
 2. **AAuth** (`UseAAuth`) — the single AAuth middleware. For each matched endpoint
    it verifies the HTTP signature (RFC 9421) and, for auth-token endpoints, the auth
-   token against the issuer's JWKS, then returns a `401` resource-token challenge
-   when only an agent token is presented. It writes an `AAuthVerificationResult` to
+   token against the issuer's JWKS, then returns a `401 requirement=person-token`
+   when only an agent token is presented, or a `401 requirement=auth-token`
+   resource-token challenge when a person token (or a valid but too-narrow auth
+   token) is presented. It writes an `AAuthVerificationResult` to
    `HttpContext.Features`. (Internally it runs the verification and challenge
    middleware described in [Verification Middleware](verification-middleware.md) and
    [Challenge Middleware](challenge-middleware.md).)
@@ -55,18 +57,23 @@ The verification *level* records how strongly the caller is identified:
 ```csharp
 public enum AAuthLevel
 {
-    Pseudonymous,  // hwk scheme — key-only identity
-    Identified,    // jwt / jwks_uri — agent identity known
+    Pseudonymous,  // generic hwk / jkt-jwt — key-only identity
+    Identified,    // verified jwt agent/person token, or identified generic signer
     Authorized,    // aa-auth+jwt — full PS/AS authorization
 }
 ```
 
 - **Pseudonymous** — the request proved possession of a key (`hwk`/`jkt-jwt`) but
   carries no agent identity.
-- **Identified** — the agent's identity is verified (`jwt`/`jwks_uri`), but no PS
-  has authorized access.
+- **Identified** — the AAuth token or generic signer identity is verified, but no
+  PS/AS has authorized access.
 - **Authorized** — a verified `aa-auth+jwt` is present; the PS/AS has authorized
   the agent for the asserted scope.
+
+AAuth resource, PS, and AS endpoints accept the `jwt` Signature-Key scheme by
+default. Generic Signature-Key schemes (`hwk`, `jwks_uri`, `jwks`, `self-jwt`,
+and `jkt-jwt`) are opt-in through `RequireGenericSignature()` or
+`AAuthVerificationOptions.Generic(...)`.
 
 ### Claim mapping and PS namespacing
 
@@ -81,9 +88,12 @@ the full table). The identity claims asserted by a Person Server — `sub`
 > **`sub` alone is not an identity.** The same `sub` asserted by two different
 > Person Servers is two different users. Key your application records on
 > `(iss, sub)` (or the `aauth:sub_iss` claim), never on `sub` alone. Issuer trust
-> is open by default — an unset `AAuthVerificationOptions.TrustedAuthTokenIssuers`
-> honors any *verifiable* Person Server (namespaced by `iss`); set the list (or
-> the `IsTrustedAuthTokenIssuer` predicate) to restrict which issuers are honored.
+> is open by default — an unset `AAuthVerificationOptions.Trust.AuthTokenIssuers`
+> honors any *verifiable* Person Server (namespaced by `iss`); set its `Allowed`
+> list (or `Predicate`) to restrict which issuers are honored. Four-party
+> resources are different: setting `AAuthResourceOptions.AccessServer` derives
+> AS-only auth-token trust for that Access Server unless you configure an
+> explicit mixed-mode trust policy.
 
 ## Authorization (authZ)
 
@@ -141,7 +151,7 @@ app.MapAAuthWellKnown();
 // One declarative pipeline. Resource-level config is trust only; key and issuer
 // default from the DI metadata.
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -153,6 +163,13 @@ app.MapGet("/events/admin", (HttpContext ctx) => Results.Ok(/* ... */))
 
 app.Run();
 ```
+
+`AddAAuthResource(o => o.Issuer = resourceUrl)` also binds verification to this
+resource: auth and person tokens must carry `aud == resourceUrl`. Without a
+resource identifier, auth/person-token verification fails closed with
+`invalid_request`. Set `o.AccessServer` to declare a four-party resource; the
+resource-token `aud` then names that AS and auth-token verification defaults to
+AS-issued `dwk=aauth-access.json` tokens from it.
 
 `MapGroup` organizes endpoints under a shared prefix; attach `.RequireAAuth(...)`
 to each endpoint in the group:
@@ -189,12 +206,16 @@ var app = builder.Build();
 
 app.MapAAuthWellKnown();
 
-app.UseAAuthVerification(new AAuthVerificationOptions
+app.UseAAuthVerification(options =>
 {
-    ResourceIdentifier = resourceUrl,
-    TrustedAuthTokenIssuers = trustedPersonServers,
+    options.ResourceIdentifier = resourceUrl;
+    options.Trust.AuthTokenIssuers.Allowed = trustedPersonServers;
 });
-app.UseAAuthChallenge(challengeOptions);
+app.UseAAuthChallenge(options =>
+{
+    options.ResourceSigningKeys = new AAuthSigningKeySet("key-1", resourceKey);
+    options.ResourceIdentifier = resourceUrl;
+});
 
 app.UseAuthentication();
 app.UseAuthorization();

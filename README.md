@@ -11,7 +11,7 @@ The [AAuth protocol](https://aauth.dev) SDK for .NET — agent-to-resource autho
 
 ## What is AAuth?
 
-AAuth is a four-party authorization protocol for AI agents. Every HTTP request carries a cryptographic signature; protocol tokens are proof-of-possession bound. See the [protocol spec](aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md) for full details.
+AAuth is a four-party authorization protocol for AI agents. Every HTTP request carries a cryptographic signature; protocol tokens are proof-of-possession bound. See the [protocol spec](aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md) for full details.
 
 The four parties are:
 
@@ -22,7 +22,7 @@ The four parties are:
 
 > **Agent Provider (AP)** is a supporting role that issues `aa-agent+jwt` tokens binding an agent's signing key to its identity.
 
-The SDK supports six Signature-Key schemes (`hwk`, `jkt-jwt`, `jwks_uri`, `jwks`, `jwt`, `self-jwt`). AAuth agent requests use `jwt` across all four resource access modes; the other schemes serve server signing, AP ceremonies, Events or explicit generic demonstrations. The SDK includes challenge/exchange flows, verification middleware, token builders, admitted discovery and a Blazor `GuidedTour`. See the [SDK documentation](docs/) for usage guides.
+The SDK supports six Signature-Key schemes (`hwk`, `jkt-jwt`, `jwks_uri`, `jwks`, `jwt`, `self-jwt`). AAuth agent requests use `jwt` across all five resource access modes; the other schemes serve server signing, AP ceremonies, Events or explicit generic demonstrations. The SDK includes challenge/exchange flows, verification middleware, token builders, admitted discovery and a Blazor `GuidedTour`. See the [SDK documentation](docs/) for usage guides.
 
 The [AAuth.Events companion](src/AAuth.Events/README.md) adds subscribe tokens,
 `self-jwt` event delivery, durable provider contracts and agent verification.
@@ -32,14 +32,15 @@ persistence and draft limitations.
 
 ## Access Modes
 
-AAuth supports four resource access modes. Each adds parties and capabilities, and they build on one another — adoption is incremental. Run `make demo` (no Docker) to start every service plus both UIs, then follow the demo column below. For the live-Keycloak federated experience, use `make demo-keycloak`.
+AAuth supports five resource access modes. Each adds parties and capabilities, and they build on one another — adoption is incremental. Run `make demo` (no Docker) to start every service plus both UIs, then follow the demo column below. For the live-Keycloak federated experience, use `make demo-keycloak`.
 
 | Mode | Parties | When to Use | Signing | See it in the demos |
 |------|---------|-------------|---------|---------------------|
-| **Identity-Based** | Agent + Resource | Resource authorizes verified agent identity | `jwt` | Profile `/identified` accepts agent JWT; generic signing demonstrations are separate |
+| **Agent Identity** | Agent + Resource | Resource authorizes verified agent identity (`agent-token`) | `jwt` | Profile `/identified` accepts agent JWT; generic signing demonstrations are separate |
 | **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization without an external PS or AS | `jwt` plus opaque AAuth-Access | GuidedTour → [**Resource-Managed (Two-Party)**](http://localhost:5400/tour?flow=ResourceManaged); SampleApp → [`/inbox`](http://localhost:5240/inbox) |
-| **PS-Asserted** (three-party) | Agent + Resource + PS | Resource accepts identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from any Person Server | `jwt` | GuidedTour → [**PS-Asserted (Direct Grant)**](http://localhost:5400/tour?flow=Autonomous) and [**PS-Asserted (Deferred)**](http://localhost:5400/tour?flow=Deferred); SampleApp → [`/calendar`](http://localhost:5240/calendar) and [`/calendar-deferred`](http://localhost:5240/calendar-deferred) |
-| **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` | GuidedTour → [**Federated (Four-Party)**](http://localhost:5400/tour?flow=Federated); SampleApp → [`/wallet`](http://localhost:5240/wallet). Live Keycloak consent: `make demo-keycloak` |
+| **Person Identity** | Agent + Resource + PS | Resource requires a PS-issued person token before issuing an auth-token challenge | `jwt` with a person token | Intermediate step in PS authorization; see [Getting Started](docs/getting-started.md#three-party-flow-deep-dive) |
+| **PS Authorization** (three-party) | Agent + Resource + PS | Resource accepts consent and identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from a trusted Person Server | `jwt` | GuidedTour → [**PS Authorization (Direct Grant)**](http://localhost:5400/tour?flow=Autonomous) and [**PS Authorization (Deferred)**](http://localhost:5400/tour?flow=Deferred); SampleApp → [`/calendar`](http://localhost:5240/calendar) and [`/calendar-deferred`](http://localhost:5240/calendar-deferred) |
+| **Federated authorization** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` | GuidedTour → [**Federated authorization (Four-Party)**](http://localhost:5400/tour?flow=Federated); SampleApp → [`/wallet`](http://localhost:5240/wallet). Live Keycloak consent: `make demo-keycloak` |
 
 GuidedTour runs on [http://localhost:5400](http://localhost:5400) and SampleApp on [http://localhost:5240](http://localhost:5240). The GuidedTour home page lists every flow; pick one to walk it step by step. See [Getting Started](docs/getting-started.md#supported-flows) for the full breakdown of each mode.
 
@@ -97,7 +98,10 @@ dotnet add package AAuth --prerelease
 An enrolled agent uses an AP-issued agent JWT and proves possession of its
 locally held key. Replace the example HTTPS endpoints with your configured
 provider and resource. For the runnable loopback configuration, use the
-[sample setup](samples/README.md#network-admission).
+[sample setup](samples/README.md#network-admission). Loopback identifiers are a
+development-only exception: configure only exact `localhost`/`127.0.0.1`
+origins with `AAuthEgressPolicy.ForDevelopmentLoopback(...)`; AAuth DI
+registrations reject those policies in Production.
 
 ```csharp
 using AAuth.Crypto;
@@ -121,7 +125,9 @@ for explicitly generic Signature Keys endpoints; it is not an AAuth access mode.
 
 ### Three-Party Flow (Agent → Resource → Person Server)
 
-The PS-Asserted flow is the primary authorization model. The resource delegates authorization to the agent's Person Server, which prompts the user for consent:
+The PS authorization flow is the primary authorization model. The resource first
+asks for a person token, then issues a resource token bound to that presented
+person token, and the agent exchanges both at the Person Server:
 
 ```mermaid
 sequenceDiagram
@@ -131,8 +137,12 @@ sequenceDiagram
     participant User
 
     Agent->>Resource: GET /data (signed, agent token)
-    Resource-->>Agent: 401 + resource_token (aud=PS)
-    Agent->>PS: POST /token (signed, resource_token)
+    Resource-->>Agent: 401 + requirement=person-token
+    Agent->>PS: POST /person (signed, resource)
+    PS-->>Agent: person_token
+    Agent->>Resource: GET /data (signed, person_token)
+    Resource-->>Agent: 401 + requirement=auth-token; resource_token
+    Agent->>PS: POST /token (signed, resource_token + presented_token)
     PS->>User: Consent prompt (scope, justification)
     User-->>PS: Grant consent
     PS-->>Agent: auth_token (aa-auth+jwt)
@@ -157,21 +167,24 @@ using var client = AAuthClientBuilder.SelfIssuing(key)
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
-// 1. Agent signs GET with agent token → Resource verifies, returns 401 + resource_token
-// 2. ChallengeHandler POSTs resource_token to PS token endpoint
-// 3. PS validates agent, prompts user for consent, issues auth_token
-// 4. Agent retries GET signed with auth_token → Resource verifies → 200 OK
+// 1. Agent signs GET with agent token → Resource returns requirement=person-token
+// 2. ChallengeHandler requests a person token and retries the resource
+// 3. Resource returns requirement=auth-token + resource_token bound by presented_jti
+// 4. ChallengeHandler POSTs resource_token + presented_token to the PS
+// 5. PS validates the pair, prompts user for consent, issues auth_token
+// 6. Agent retries GET signed with auth_token → Resource verifies → 200 OK
 ```
 
 **What happens step by step:**
 
 1. Agent signs the request with its agent token (`Signature-Key: sig=jwt;jwt="..."`)
-2. Resource verifies the signature, reads the `ps` claim, returns `401` with a `resource_token` (audience = PS URL)
-3. Agent POSTs the `resource_token` to the PS's token endpoint (signed request)
-4. PS validates the agent token, prompts the user for consent on the requested scope
-5. User grants consent; PS issues an `auth_token` (`aa-auth+jwt`) containing identity claims (`sub`, `email`, etc.)
-6. Agent retries the original request signed with the `auth_token`
-7. Resource verifies the auth token signature and claims → `200 OK`
+2. Resource verifies the signature and returns `401` with `requirement=person-token`
+3. Agent POSTs to the PS `/person` endpoint and receives a PS-issued `person_token`
+4. Agent retries the resource with the `person_token`; the resource returns `401` with `requirement=auth-token` and a `resource_token` bound to the presented token's `jti`
+5. Agent POSTs both `resource_token` and `presented_token` to the PS token endpoint
+6. PS validates the pair, prompts the user for consent on the requested scope, and issues an `auth_token` (`aa-auth+jwt`) containing identity claims (`sub`, `email`, etc.)
+7. Agent retries the original request signed with the `auth_token`
+8. Resource verifies the auth token signature and claims → `200 OK`
 
 See [Getting Started](docs/getting-started.md#three-party-flow-deep-dive) for a detailed walk-through, including deferred consent.
 
@@ -210,7 +223,7 @@ app.MapAAuthWellKnown();
 // One declarative pipeline. Per-route scope/role lives on the endpoint; this
 // single post-routing middleware verifies and challenges each matched endpoint.
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" });
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { "https://ps.example" });
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -219,7 +232,20 @@ app.MapGet("/data", (HttpContext ctx) => Results.Ok(new { ok = true }))
     .RequireAAuth(scope: "read");
 ```
 
-The single `UseAAuth` middleware (placed after `UseRouting()`) reads each endpoint's `.RequireAAuth(...)` requirement: it verifies the HTTP signature and, when an auth token is required, automatically returns `401` with an `AAuth-Requirement` header carrying a resource token. The optional `TrustedAuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from; omit it (or assign `AAuthTrust.Any`) to accept any *verifiable* Person Server — the spec default — with claims namespaced by issuer.
+The single `UseAAuth` middleware (placed after `UseRouting()`) reads each endpoint's `.RequireAAuth(...)` requirement: it verifies the HTTP signature and, when an auth token is required, automatically returns `401` with an `AAuth-Requirement` header carrying a resource token. With no Access Server configured, this is the three-party PS Authorization mode: leave `Trust.AuthTokenIssuers` unset (or assign `AAuthTrust.Any` to its `Predicate`) to accept any *verifiable* Person Server, with claims namespaced by issuer.
+
+For four-party resources, declare the AS once on the resource registration:
+
+```csharp
+builder.Services.AddAAuthResource(options =>
+{
+    options.Issuer = "https://resource.example";
+    options.AccessServer = "https://as.example";
+    options.SigningKeys["key-1"] = resourceKey;
+});
+```
+
+That single `AccessServer` value directs resource-token challenges to the AS and makes auth-token verification fail closed by default: the resource accepts AS-issued `aauth-access.json` auth tokens from that AS, not direct PS-issued `aauth-person.json` auth tokens. Mixed PS/AS acceptance is an advanced low-level configuration that must set `ExpectedAuthTokenDwk = null` and provide a trust policy that checks `AAuthTrustContext.TokenDwk`.
 
 ### Self-Hosted Agent (Server-Side)
 
@@ -238,10 +264,13 @@ var issuer = "https://my-service.example";
 var app = builder.Build();
 
 // Publish agent metadata so resources can discover the JWKS
-app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+app.MapAAuthAgentWellKnown(options =>
 {
-    Issuer = issuer,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [Kid] = key },
+    options.Issuer = issuer;
+    options.SigningKeys = new AAuthSigningKeySet(Kid, key);
+    // Optional: advertise an AP Events inbox or allow localhost callbacks.
+    // options.EventEndpoint = $"{issuer}/events";
+    // options.LocalhostCallbackAllowed = true;
 });
 
 // Build signed client with automatic token refresh and challenge handling
@@ -262,8 +291,8 @@ Full SDK documentation lives in [`docs/`](docs/):
 - [Getting Started](docs/getting-started.md) — install, generate a key, three-party flow deep dive, enrollment models
 - [Concepts](docs/concepts.md) — the four participants and how the SDK maps to them
 - [Glossary & Acronyms](docs/glossary.md) — every acronym and short protocol term used across the repo
-- [Signing Modes](docs/signing-modes/overview.md) - six carriers, distinct from four AAuth access modes
-- [Workflows](docs/workflows/identity-based-access.md) — identity-based, PS-asserted, federated
+- [Signing Modes](docs/signing-modes/overview.md) - six carriers, distinct from five AAuth access modes
+- [Workflows](docs/workflows/identity-based-access.md) — agent identity, PS authorization, federated authorization
 - [Server Guide](docs/server/verification-middleware.md) — verification middleware, token issuance
 - [Configuration Reference](docs/reference/configuration.md)
 
@@ -283,35 +312,48 @@ dotnet test tests/AAuth.Conformance   # spec conformance suite only
 | [docs/](docs/) | SDK documentation — signing modes, workflows, server guides |
 | [samples/](samples/) | Seven focused resources including Bookings and Catalog, PS/AS/AP hosts, console agents, GuidedTour and SampleApp |
 | [tests/](tests/) | Unit, integration, and spec-conformance tests |
-| [aauth-spec/](aauth-spec/) | Immutable protocol snapshots 01, 02, 08, 09 and 10 with pinned companion drafts |
+| [aauth-spec/](aauth-spec/) | Immutable protocol snapshots 01, 02, 08, 09, 10 and 11 with pinned companion drafts |
 
 ## Spec Compatibility
 
-This SDK targets **draft-10** of the AAuth protocol specification:
+This SDK targets **draft-11** of the AAuth protocol specification:
 
 | Spec | Draft |
 |------|-------|
-| [AAuth protocol](aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md) | 10 |
-| [Bootstrap](aauth-spec/v10/draft-hardt-aauth-bootstrap.md) | 02, informational |
-| [Rich Resource Requests](aauth-spec/v10/draft-hardt-aauth-r3.md) | 01 |
-| [Events](aauth-spec/v10/draft-hardt-aauth-events.md) | 00, revised |
-| [HTTP Signature Keys](aauth-spec/v10/draft-hardt-httpbis-signature-key-08.txt) | 08 |
+| [AAuth protocol](aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md) | 11 |
+| [Bootstrap](aauth-spec/v11/draft-hardt-aauth-bootstrap.md) | 02, informational |
+| [Rich Resource Requests](aauth-spec/v11/draft-hardt-aauth-r3.md) | editor's copy at the draft-11 tag |
+| [Events](aauth-spec/v11/draft-hardt-aauth-events.md) | 00, revised |
+| [HTTP Signature Keys](aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt) | 09 |
 
-The pinned source is commit `9dee49fbf49074d1460d0a7c0670bf355aef5e1e`,
-published 2026-08-06. All four access modes, account binding, AS clarification,
-issuer-qualified revocation and parent-mediated four-party delegation are
-implemented. Optional X.509/cached carriers and third-party login hosting are
-not implemented. Platform attestation, production stores/policies and native
-push transports remain deployment responsibilities. Events uses single-shot
-sample delivery with literal issuer/eid deduplication; recurring-event ambiguity
-is not hidden by the supported-carrier claim.
+The pinned source is commit `178e9e68b6578e4d6f7d0bf30f33b4c38833e3a1`,
+published 2026-09-25. The locally validated implementation covers agent-identity
+verification and agent-token challenges (`AgentTokenVerificationTests`,
+`ChallengeMiddlewareTests`), resource-managed `AAuth-Access`
+(`ResourceManagedFlowTests`), person-token access (`AuthorizationEndpointTests`),
+PS authorization with `presented_token` exchanges (`PersonServerMapperTests`,
+`ChallengeMiddlewareTests`) and four-party trust (`DeferredFederationTests`,
+`FourPartyTrustTests`), `mission_s256` hashing, resource-scoped person-token
+issuance and termination/expiry (`MissionS256Tests`,
+`MissionPersonTokenIssuanceTests`, `MissionTerminatedTests`), sub-agent
+identifiers, token verification and parent-mediated minting (`AgentIdTests`,
+`AgentTokenVerificationTests`, `PersonServerMapperTests`), call chaining through the person's PS
+(`CallChainingTests`, `CallChainingHandlerTests`), `{jti, exp}` revocation with
+cascades (`RevocationLifecycleTests`, `PersonTokenRevocationCascadeTests`,
+`AgentTokenRevocationCascadeTests`), `202` auth-token delivery and polling
+(`ChallengeHandlerTests` deferred auth-token cases, `HeldInvocationTests`,
+`PollingErrorTests`), and R3 per-call single use
+(`ResourceR3Tests`). Optional `accept_signature_algs`
+advertisement, `aauth-resource` links, Budgets, R3 release gating,
+X.509/cached carriers and third-party login hosting are not implemented.
+Platform attestation, production stores/policies and native push transports
+remain deployment responsibilities. Events delivery deduplicates on `(iss, jti)`.
 
-Local Release and both policy-mode browser gates pass. External whoami identity
-access succeeds, but its scoped endpoint returned `person-token` rather than the
-pinned `auth-token` challenge; full external authorization interop is not claimed.
+Local Release, stub and Keycloak policy-mode browser gates pass. External
+interop against third-party draft-11 deployments has not been run.
 See [SPEC-VERSION](aauth-spec/SPEC-VERSION.md),
 [snapshot history](aauth-spec/CHANGELOG.md), and the
-[conformance dispositions](.agent/plans/2026-09-08-aauth-v10-spec-migration/conformance-ledger.md).
+[conformance dispositions](.agent/plans/2026-09-11-aauth-v11-spec-migration/conformance-ledger.md).
 
 ## Contributing
 

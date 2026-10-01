@@ -22,18 +22,43 @@ public interface IJtiStore
     Task<bool> RegisterAsync(TokenKey token, DateTimeOffset expiration, CancellationToken ct = default);
 
     /// <summary>
-    /// Revoke a known token. False means unknown; repeated known revocation succeeds.
+    /// Record <paramref name="token"/> as revoked, whether or not it was seen, so a later
+    /// registration or presentation is refused. An unseen token is retained until
+    /// <paramref name="expiresAt"/> plus retention; repeating a revocation changes nothing.
     /// </summary>
-    Task<bool> RevokeAsync(TokenKey token, CancellationToken ct = default);
+    Task RevokeAsync(TokenKey token, DateTimeOffset expiresAt, CancellationToken ct = default);
 
     /// <summary>
     /// Check local token and ancestor revocation independently of request replay.
     /// </summary>
     Task<bool> IsRevokedAsync(TokenKey token, CancellationToken ct = default);
 
+    /// <summary>
+    /// Check whether <paramref name="token"/> is still present in the local token inventory.
+    /// </summary>
+    Task<bool> ContainsTokenAsync(TokenKey token, CancellationToken ct = default);
+
     /// <summary>Atomically attach a grant to known live sources, rejecting revoked local ancestry and dependency cycles.</summary>
     Task<bool> RegisterGrantAsync(IReadOnlyCollection<TokenKey> sources, TokenGrant grant, CancellationToken ct = default);
 
+    /// <summary>
+    /// Check whether adding a provenance record for this caller/resource would fit
+    /// the store's backpressure limits. False lets callers answer 429 before minting.
+    /// </summary>
+    Task<bool> CheckProvenanceQuotaAsync(UpstreamCallerRecord caller, string resource, CancellationToken ct = default);
+
     /// <summary>Return unexpired grants issued or provided for the exact source token.</summary>
     Task<IReadOnlyList<TokenGrant>> GetGrantsAsync(TokenKey source, CancellationToken ct = default);
+
+    /// <summary>Return the unexpired grant recorded for <paramref name="token"/> itself, if any.</summary>
+    Task<TokenGrant?> GetGrantAsync(TokenKey token, CancellationToken ct = default);
+
+    /// <summary>
+    /// Record the <c>sub</c> a registered agent token carried, so a revocation of that token
+    /// cascades by agent identity (#revocation-cascade, Records).
+    /// </summary>
+    Task RecordSubjectAsync(TokenKey token, string subject, CancellationToken ct = default);
+
+    /// <summary>The <c>sub</c> recorded for <paramref name="token"/>, if any.</summary>
+    Task<string?> GetSubjectAsync(TokenKey token, CancellationToken ct = default);
 }

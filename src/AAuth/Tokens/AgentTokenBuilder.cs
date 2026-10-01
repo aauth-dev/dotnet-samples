@@ -29,6 +29,9 @@ public sealed class AgentTokenBuilder
     /// <summary>The fixed <c>dwk</c> value mandated by the spec.</summary>
     public const string AgentDwk = "aauth-agent.json";
 
+    /// <summary>Maximum SDK-issued agent token lifetime. The protocol recommends at most 24 hours.</summary>
+    public static readonly TimeSpan MaximumLifetime = TimeSpan.FromHours(24);
+
     /// <summary>HTTPS URL of the agent provider that issues this token (<c>iss</c>).</summary>
     public required string Issuer { get; init; }
 
@@ -39,7 +42,7 @@ public sealed class AgentTokenBuilder
     public required string KeyId { get; init; }
 
     /// <summary>The agent's signing key. Its public half is embedded as <c>cnf.jwk</c>.</summary>
-    public required IAAuthKey Key { get; init; }
+    public required IAAuthSigner Key { get; init; }
 
     /// <summary>
     /// Optional separate confirmation key whose public half is embedded as
@@ -63,7 +66,7 @@ public sealed class AgentTokenBuilder
     /// </summary>
     public string? ParentAgent { get; init; }
 
-    /// <summary>Token lifetime. Spec recommends &le; 24 hours; default is 1 hour.</summary>
+    /// <summary>Token lifetime. Must be greater than zero and no more than <see cref="MaximumLifetime"/>; default is 1 hour.</summary>
     public TimeSpan Lifetime { get; init; } = TimeSpan.FromHours(1);
 
     /// <summary>Issue time. Defaults to current UTC.</summary>
@@ -81,7 +84,7 @@ public sealed class AgentTokenBuilder
     public IReadOnlyDictionary<string, JsonNode?>? AdditionalClaims { get; init; }
 
     /// <summary>Build and sign the agent token. Returns the compact JWT serialization.</summary>
-    public string Build()
+    public async ValueTask<string> BuildAsync(CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(Issuer))
         {
@@ -98,6 +101,10 @@ public sealed class AgentTokenBuilder
         if (!Key.HasPrivateKey)
         {
             throw new InvalidOperationException("Signing key must include a private component.");
+        }
+        if (Lifetime <= TimeSpan.Zero || Lifetime > MaximumLifetime)
+        {
+            throw new InvalidOperationException("Agent token lifetime must be greater than zero and no more than 24 hours.");
         }
         // Spec: Issuer (and PersonServer, when present) MUST be an HTTPS URL.
         // Fail fast at the issuer rather than waiting for a verifier reject.
@@ -202,16 +209,7 @@ public sealed class AgentTokenBuilder
             }
         }
 
-        var headerBytes = Encoding.UTF8.GetBytes(header.ToJsonString());
-        var payloadBytes = Encoding.UTF8.GetBytes(payload.ToJsonString());
-
-        var headerSegment = Base64UrlEncoder.Encode(headerBytes);
-        var payloadSegment = Base64UrlEncoder.Encode(payloadBytes);
-        var signingInput = headerSegment + "." + payloadSegment;
-        var signature = Key.Sign(Encoding.ASCII.GetBytes(signingInput));
-        var signatureSegment = Base64UrlEncoder.Encode(signature);
-
-        return signingInput + "." + signatureSegment;
+        return await JwtWriter.SignCompactAsync(header, payload, Key, cancellationToken).ConfigureAwait(false);
     }
 
     private static bool IsHttpsUrl(string value) =>

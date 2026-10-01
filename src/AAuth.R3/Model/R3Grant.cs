@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace AAuth.R3.Model;
 
-/// <summary>R3 granted or conditional operations.</summary>
+/// <summary>R3 granted or per-call operations.</summary>
 public sealed record R3Grant
 {
     [JsonPropertyName("vocabulary")]

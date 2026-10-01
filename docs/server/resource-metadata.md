@@ -28,37 +28,48 @@ app.MapAAuthWellKnown(); // serves /.well-known/aauth-resource.json
 ```
 
 <details>
-<summary>Manual Setup (building block)</summary>
+<summary>All metadata fields</summary>
 
-> `AddAAuthResource(...)` + `app.MapAAuthWellKnown()` is the preferred setup for
-> the common case. Use `MapAAuthResourceWellKnown(...)` directly when the host
-> manages metadata separately from the resource service registration.
-> `RevocationEndpoint` is also available through `AAuthResourceOptions`; it does
-> not require the manual mapper.
+> `AddAAuthResource(...)` + `app.MapAAuthWellKnown()` is the only public way to
+> publish resource metadata; the lower-level mapper is internal. Fields without a
+> typed `AAuthResourceOptions` property go through `AdditionalMetadata`.
+> `RevocationEndpoint` is also available through `AAuthResourceOptions`;
+> map the endpoint itself with `MapAAuthResourceRevocation`.
 
 ```csharp
-using AAuth.Server.Metadata;
+using AAuth;
 using AAuth.Crypto;
 
 var signingKey = AAuthKey.Generate();
 
-var app = builder.Build();
-
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
+builder.Services.AddAAuthResource(options =>
 {
-    Issuer = "https://resource.example",
-    SigningKeys = new Dictionary<string, IAAuthKey> { ["key-1"] = signingKey },
-    Name = "My Resource API",
-    DocumentationUri = "https://docs.resource.example",
-    ScopeDescriptions = new Dictionary<string, string>
+    options.Issuer = "https://resource.example";
+    options.SigningKeys["key-1"] = signingKey;
+    options.Name = "My Resource API";
+    options.Description = "Calendar and document APIs";
+    options.AccessMode = AAuthConstants.AccessModes.AuthToken;
+    options.ScopeDescriptions = new Dictionary<string, string>
     {
         ["read"] = "Read access to your data",
         ["write"] = "Write access to your data"
-    },
-    SignatureWindow = 60,
-    AuthorizationEndpoint = "https://resource.example/authorize",
-    RevocationEndpoint = "https://resource.example/revoke"
+    };
+    options.SignatureWindow = 60;
+    options.AdditionalSignatureComponents = new[] { "content-type", "content-digest" };
+    options.AuthorizationEndpoint = "https://resource.example/authorize";
+    options.RevocationEndpoint = "https://resource.example/revoke";
+    options.DocumentationUri = "https://docs.resource.example";
+    options.LogoUri = "https://resource.example/logo.svg";
+    options.TosUri = "https://resource.example/terms";
+    options.PolicyUri = "https://resource.example/privacy";
+    options.AdditionalMetadata = new()
+    {
+        ["support_uri"] = "https://resource.example/support"
+    };
 });
+
+var app = builder.Build();
+app.MapAAuthWellKnown();
 ```
 
 </details>
@@ -68,13 +79,21 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 | Property | Required | Description |
 |----------|:--------:|-------------|
 | `Issuer` | Yes | The resource's canonical URL (used as `iss` in resource tokens) |
-| `SigningKeys` | Conditional | Key-id to `IAAuthKey` map; required to issue resource tokens or make signed calls, optional for verification-only resources |
+| `SigningKeys` | Conditional | `AAuthSigningKeySet`: every key is published at the JWKS and tokens are signed with the active key; required to issue resource tokens or make signed calls, optional for verification-only resources |
 | `Name` | No | Human-readable name for the resource (`name`) |
+| `Description` | No | Human-readable Markdown/plain description (`description`) |
+| `LogoUri` | No | Light-mode logo URL (`logo_uri`) |
+| `LogoDarkUri` | No | Dark-mode logo URL (`logo_dark_uri`) |
 | `DocumentationUri` | No | Developer-documentation URL (`documentation_uri`) |
+| `TosUri` | No | Terms-of-service URL (`tos_uri`) |
+| `PolicyUri` | No | Privacy/security policy URL (`policy_uri`) |
 | `ScopeDescriptions` | No | Scope → description map (displayed during consent) |
 | `SignatureWindow` | No | Signature validity window in seconds (advertised to agents) |
-| `AuthorizationEndpoint` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient selected by `PersonServerAudience` |
+| `AdditionalSignatureComponents` | No | Additional HTTP signature components agents must cover, emitted as `additional_signature_components` |
+| `AccessMode` | No | Advisory `access_mode`: `agent-token`, `person-token`, `session-token` (resource-managed / `AAuth-Access`), `auth-token`, or R3 `per-call` |
+| `AuthorizationEndpoint` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | No | URL of the revocation endpoint |
+| `AdditionalMetadata` | No | Extension members merged into the well-known document. It cannot shadow typed fields. |
 
 ## Published Endpoint
 
@@ -84,24 +103,31 @@ The extension maps `GET /.well-known/aauth-resource.json` returning:
 {
   "issuer": "https://resource.example",
   "name": "My Resource API",
+  "description": "Calendar and document APIs",
+  "access_mode": "auth-token",
   "documentation_uri": "https://docs.resource.example",
+  "logo_uri": "https://resource.example/logo.svg",
+  "tos_uri": "https://resource.example/terms",
+  "policy_uri": "https://resource.example/privacy",
   "jwks_uri": "https://resource.example/.well-known/jwks.json",
   "scope_descriptions": {
     "read": "Read access to your data",
     "write": "Write access to your data"
   },
   "signature_window": 60,
+  "additional_signature_components": ["content-type", "content-digest"],
   "authorization_endpoint": "https://resource.example/authorize",
   "revocation_endpoint": "https://resource.example/revoke"
 }
 ```
 
-The keys themselves are served separately at `/.well-known/jwks.json` (also mapped by `MapAAuthWellKnown()` / `MapAAuthResourceWellKnown()`).
+The keys themselves are served separately at `/.well-known/jwks.json` (also mapped by `MapAAuthWellKnown()`).
 
 The `authorization_endpoint` belongs to the resource's proactive authorization
-flow. `PersonServerAudience` on the challenge options instead selects the
-resource token's recipient: an AS URL for federation, or the agent token's PS
-when the option is unset. It does not change this metadata endpoint.
+flow. `AccessServer` on the challenge options instead selects the resource
+token's recipient: the resource's AS for federation, or the PS that issued the
+presented person token when the option is unset. It does not change this
+metadata endpoint.
 
 ## Agent-Side Discovery
 

@@ -15,7 +15,7 @@ rejecting outright (§Clarification Chat). Two places use it:
   requests permission, the PS may ask the agent to refine the intent before
   approving.
 
-The agent answers the question, replaces its request with a narrower one, or
+The agent answers the question, replaces its request with an updated one, or
 withdraws — and the exchange continues until the server decides or the round
 limit is reached.
 
@@ -50,14 +50,20 @@ public sealed class ClarificationResponse
     public enum Kind { Respond, Update, Cancel }
 
     public static ClarificationResponse Respond(string markdown);                       // answer the question
-    public static ClarificationResponse Update(string resourceToken, string? justification = null); // replace the request
+    public static ClarificationResponse Update(string resourceToken, string presentedToken,
+        string? justification = null);                                                  // replace the request
     public static ClarificationResponse Cancel();                                       // withdraw
 }
 ```
 
 - `Respond` posts a Markdown answer and resumes the exchange.
 - `Update` replaces the original request with a new resource token (for example a
-  reduced scope) plus an optional justification.
+  reduced scope) and the `presented_token` the agent presented to obtain it, plus
+  an optional (RECOMMENDED) justification. The replacement must keep the original
+  resource token's `iss`, `ps`, `sub`, `agent_jkt`, `mission_s256`, and `tenant`;
+  only `presented_jti` may differ. The agent pre-validates those structural
+  claims before posting the update; the PS still verifies the signed replacement
+  pair and recomputes the active lifetime/source-token ceiling from it.
 - `Cancel` withdraws the request entirely.
 
 ## Driving the chat: `ClarificationExchange`
@@ -79,7 +85,8 @@ public sealed class ClarificationExchange
 
     public Task ApplyAsync(ClarificationResponse response, CancellationToken ct = default);
     public Task RespondAsync(string markdown, CancellationToken ct = default);
-    public Task UpdateRequestAsync(string resourceToken, string? justification = null, CancellationToken ct = default);
+    public Task UpdateRequestAsync(string resourceToken, string presentedToken, string? justification = null,
+        CancellationToken ct = default);
     public Task CancelAsync(CancellationToken ct = default);
 }
 ```
@@ -110,10 +117,13 @@ the PS decides or `MaxClarificationRounds` is hit.
 ```csharp
 var request = new TokenExchangeRequest
 {
+    PresentedToken = heldToken, // the person or auth token the resource token names
     MaxClarificationRounds = ClarificationExchange.DefaultMaxRounds,
     OnClarificationRequired = async (requirement, ct) =>
     {
         // requirement.Clarification is untrusted — sanitize before display.
+        // The cancellation token is bounded by the server's optional timeout;
+        // do not ignore it while waiting on UI, tools, or model calls.
         string question = WebUtility.HtmlEncode(requirement.Clarification);
 
         if (requirement.Options is { Count: > 0 } options)
@@ -151,6 +161,9 @@ var session = await governance.ProposeMissionAsync(
 
 When the callback is `null` and the server asks for clarification, the request
 fails rather than blocking.
+If the server includes `timeout`, the callback token is cancelled at that
+deadline and the SDK does not POST a late `clarification_response` or
+`updated_request`.
 
 ## Server side: emitting a clarification
 
@@ -158,7 +171,8 @@ A Person Server built on [`MapAAuthPersonServer`](../server/token-issuance.md#on
 gets the **server half** of the protocol for free. For an out-of-scope mission
 token request the helper calls the `IMissionTokenConsent` seam; returning
 `Clarify` makes the SDK emit the `requirement=clarification` `202`, accept the
-agent's `clarification_response` / updated `resource_token` / `DELETE` on the
+agent's `clarification_response` / updated `resource_token` + `presented_token` /
+`DELETE` on the
 pending URL, record each round in the mission log, and re-consult the seam:
 
 ```csharp

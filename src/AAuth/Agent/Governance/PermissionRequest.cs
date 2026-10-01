@@ -19,10 +19,10 @@ public sealed record PermissionRequest(MissionAction Action)
     public JsonObject? Parameters { get; init; }
 
     /// <summary>
-    /// Mission binding (<c>approver</c> + <c>s256</c>). When present the PS
-    /// evaluates the request against the mission context and log. Optional.
+    /// The mission (<c>mission_s256</c>). When present the PS evaluates the
+    /// request against the mission context and log. Optional.
     /// </summary>
-    public MissionClaim? Mission { get; init; }
+    public string? MissionS256 { get; init; }
 
     /// <summary>Render the request as the JSON request body.</summary>
     internal JsonObject ToJsonObject()
@@ -38,9 +38,9 @@ public sealed record PermissionRequest(MissionAction Action)
         {
             body["parameters"] = Parameters.DeepClone();
         }
-        if (Mission is not null)
+        if (MissionS256 is not null)
         {
-            body["mission"] = Mission.ToJsonObject();
+            body["mission_s256"] = MissionS256;
         }
         return body;
     }

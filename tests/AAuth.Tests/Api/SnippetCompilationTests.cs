@@ -31,7 +31,7 @@ public sealed class SnippetCompilationTests
         var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/reference/configuration.md"));
         var signing = text.Split("### AAuthSigningHandler", StringSplitOptions.None)[1]
             .Split("### ISignatureKeyProvider Implementations", StringSplitOptions.None)[0];
-        Assert.Contains("IAAuthKey", signing);
+        Assert.Contains("IAAuthSigner", signing);
         Assert.Contains("provider does not supply the private key", signing);
         foreach (var name in new[] { "Label", "Capabilities", "OnSignatureBase" })
         {
@@ -93,11 +93,11 @@ public sealed class SnippetCompilationTests
     {
         var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/server/token-issuance.md"));
         var overview = text.Split("## Overview", StringSplitOptions.None)[1].Split("## Resource Tokens", StringSplitOptions.None)[0];
-        Assert.Contains("IAAuthKey", overview);
+        Assert.Contains("IAAuthSigner", overview);
         Assert.Contains("Ed25519", overview);
         Assert.Contains("ES256", overview);
         foreach (var builder in new[] { typeof(AAuth.Tokens.AgentTokenBuilder), typeof(AAuth.Tokens.AuthTokenBuilder), typeof(AAuth.Tokens.ResourceTokenBuilder) })
-            Assert.Equal(typeof(AAuth.Crypto.IAAuthKey), builder.GetProperty("Key")!.PropertyType);
+            Assert.Equal(typeof(AAuth.Crypto.IAAuthSigner), builder.GetProperty("Key")!.PropertyType);
         Assert.DoesNotMatch(@"(?i)each produces[^\r\n]*signed with Ed25519", overview);
     }
 
@@ -178,10 +178,12 @@ public sealed class SnippetCompilationTests
     {
         var snippets = DocumentationInventory.Read();
         var issuance = snippets.Where(snippet => snippet.File == "docs/server/token-issuance.md").Select(snippet => snippet.Code).ToArray();
-        Assert.Contains(issuance, code => code.Contains("expectedApprover: psIssuer"));
-        Assert.Contains(issuance, code => code.Contains("expectedApprover: authenticatedPsIdentifier")
-            && code.Contains("issuance.ValidateResourceContext(verified.Payload, authenticatedPsIdentifier)"));
-        Assert.DoesNotContain(issuance, code => code.Contains("expectedApprover: null"));
+        Assert.Contains(issuance, code => code.Contains("expectedPersonServer: psIssuer")
+            && code.Contains("VerifyPresentedTokenAsync"));
+        Assert.Contains(issuance, code => code.Contains("expectedPersonServer: authenticatedPsIdentifier")
+            && code.Contains("VerifyPresentedTokenAsync")
+            && code.Contains("issuance.ValidateResourceContext(verified.Payload)"));
+        Assert.DoesNotContain(issuance, code => code.Contains("expectedApprover"));
         var routes = snippets.Single(snippet => snippet.File == "docs/server/verification-middleware.md"
             && snippet.Code.Contains("MapGet(\"/pseudonymous\""));
         Assert.Contains("MapGet(\"/pseudonymous\", handler).RequireGenericSignature()", routes.Code);
@@ -190,7 +192,8 @@ public sealed class SnippetCompilationTests
             .GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == "VerifyResourceTokenAsync");
         var documentation = verifier.GetLeadingTrivia().ToFullString();
         Assert.DoesNotContain("without a mission constraint pass", documentation);
-        Assert.Contains("When a mission is present, a verifying recipient must supply", documentation);
+        Assert.Contains("VerifyPresentedTokenAsync", documentation);
+        Assert.DoesNotContain("expectedApprover", documentation);
         var profile = File.ReadAllText(Path.Combine(RepositoryRoot(), "samples/MockResourceServers/Profile/Program.cs"));
         Assert.DoesNotContain("RequireAAuthSignature", profile);
         Assert.DoesNotContain("no JWT issuer check", profile);
@@ -225,7 +228,7 @@ public sealed class SnippetCompilationTests
             appendix.AppendLine($"| [{snippet.Key}](../../../{snippet.File}#L{snippet.Line}) | {snippet.Language} | `{snippet.Hash}` | {status} | {EvidenceFor(snippet.File)} |");
         var report = appendix.ToString();
         File.WriteAllText(Path.Combine(Path.GetTempPath(), "aauth-phase13-docs-surface.md"), report);
-        var mapPath = Path.Combine(RepositoryRoot(), ".agent/plans/2026-09-08-aauth-v10-spec-migration/docs-surface-map.md");
+        var mapPath = Path.Combine(RepositoryRoot(), ".agent/plans/2026-09-11-aauth-v11-spec-migration/docs-surface-map.md");
         var existing = File.ReadAllText(mapPath);
         const string marker = "<!-- generated-docs-surface -->";
         var expected = existing[..(existing.IndexOf(marker, StringComparison.Ordinal) + marker.Length)] + report;
@@ -296,7 +299,12 @@ public sealed class SnippetCompilationTests
                 var body = System.Text.Json.Nodes.JsonNode.Parse(snippet.Code[(bodyOffset + 2)..]);
                 Assert.NotNull(body);
                 if (snippet.Code.Contains("application/problem+json")) Assert.NotNull(body["error"]);
-                if (body["jti"] is not null) Assert.NotNull(body["iss"]);
+                if (body["jti"] is not null)
+                {
+                    Assert.True(JtiBodyExamples.TryGetValue(snippet.Key, out var members),
+                        $"{snippet.Key} carries a jti body but has no explicit HTTP example classification.");
+                    Assert.Equal(members.Order(StringComparer.Ordinal), body.AsObject().Select(member => member.Key).Order(StringComparer.Ordinal));
+                }
             }
             foreach (Match header in Regex.Matches(snippet.Code, @"(?m)^AAuth-Requirement:\s*(?<value>[^\r\n]+)"))
             {
@@ -309,6 +317,13 @@ public sealed class SnippetCompilationTests
         }
         throw new InvalidOperationException($"Unclassified {snippet.Language} block");
     }
+
+    private static readonly string[] RevocationRequestMembers = ["jti", "exp"];
+
+    private static readonly Dictionary<string, string[]> JtiBodyExamples = new(StringComparer.Ordinal)
+    {
+        ["docs/server/replay-detection.md:fence-5"] = RevocationRequestMembers,
+    };
 
     private static string EvidenceFor(string file)
     {
@@ -407,7 +422,7 @@ public sealed class SnippetCompilationTests
 
     [Theory]
     [InlineData(AAuth.Samples.Capabilities.WalletFlow.Clarification)]
-    [InlineData(AAuth.Samples.Capabilities.WalletFlow.DirectAs)]
+    [InlineData(AAuth.Samples.Capabilities.WalletFlow.AsGrantChaining)]
     [InlineData(AAuth.Samples.Capabilities.WalletFlow.Revocation)]
     public void Wallet_ExactDisplayedSnippetCompiles(AAuth.Samples.Capabilities.WalletFlow flow)
         => Compile(flow.ToString(), AAuth.Samples.Capabilities.WalletScenarioCode.For(flow), member: true);
@@ -531,6 +546,12 @@ public sealed class SnippetCompilationTests
                 private GuidedTour.TourAgentIdentity _selfIdentity = null!;
                 private GuidedTour.TourOptions _options = null!;
                 private WebApplicationBuilder builder = null!;
+                private IHttpClientFactory clients = null!;
+                private IAAuthInteractionHandler consent = null!;
+                private IAAuthClarificationHandler clarify = null!;
+                private IAAuthAgentFactory factory = null!;
+                private SampleApp.SampleAgents Agents = null!;
+                private string calendar = "https://calendar.example";
             """ + context + DocumentationSnippetContext.Fields
             + (hasReturn ? "public async Task<object?> RunAsync() {\n" : "public async Task RunAsync() {\n")
             + (member ? "\n}\n" + snippet + "\n}" : "\n" + snippet + (hasReturn ? "\nreturn null;" : "") + "\n}}")

@@ -7,11 +7,11 @@ public class R3HashTests
     [Fact]
     public void ComputeS256_UsesExactPinnedBytes()
     {
-        var bytes = Encoding.UTF8.GetBytes("{\"version\":\"v02\",\"vocabulary\":\"urn:aauth:vocabulary:mcp\",\"operations\":[{\"tool\":\"search_trip_options\"}]}");
+        var bytes = Encoding.UTF8.GetBytes("{\"vocabulary\":\"urn:aauth:vocabulary:mcp\",\"operations\":[{\"tool\":\"search_trip_options\"}]}");
 
         var hash = R3Hash.ComputeS256(bytes);
 
-        Assert.Equal("IxqNcEdUIcZFkxNHcDuGZVbT0MI9tpW1oUODXXwYe88", hash);
+        Assert.Equal("gz07FK76u_uML0ZZta5HVepZSVfmhIimdSg_2Pw6BFI", hash);
         Assert.True(R3Hash.Matches(bytes, hash));
     }
 

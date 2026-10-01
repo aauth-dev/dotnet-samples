@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using AAuth.Discovery;
 using AAuth.R3.Model;
 
 namespace AAuth.R3;
@@ -16,15 +17,30 @@ public static class R3ClaimReader
         string Uri,
         string S256,
         R3Grant Granted,
-        R3Grant? Conditional)
+        R3Grant? PerCall)
     {
         public string? Account { get; init; }
+        public string? Issuer { get; init; }
+        public string? Jti { get; init; }
+        public DateTimeOffset? ExpiresAt { get; init; }
     }
 
     public static ResourceDocumentClaims? ReadResourceDocument(JsonObject payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
         R3AuthClaims.ValidateResourcePair(payload);
+        return ReadResourceDocumentCore(payload);
+    }
+
+    internal static ResourceDocumentClaims? ReadResourceDocument(JsonObject payload, AAuthEgressPolicy egressPolicy)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        R3AuthClaims.ValidateResourcePair(payload, egressPolicy);
+        return ReadResourceDocumentCore(payload);
+    }
+
+    private static ResourceDocumentClaims? ReadResourceDocumentCore(JsonObject payload)
+    {
         var uri = (string?)payload[R3AuthClaims.UriClaim];
         var s256 = (string?)payload[R3AuthClaims.S256Claim];
         if (uri is null && s256 is null)
@@ -34,19 +50,33 @@ public static class R3ClaimReader
         return new ResourceDocumentClaims(uri!, s256!) { Account = AAuth.Tokens.AccountBinding.Read(payload) };
     }
 
-    public static AuthTokenClaims ReadAuthToken(JsonObject payload, R3VocabularySchemas? schemas = null)
+    public static AuthTokenClaims ReadAuthToken(JsonObject payload, R3VocabularySchemas? schemas = null, AAuthEgressPolicy? egressPolicy = null)
     {
         ArgumentNullException.ThrowIfNull(payload);
-        var doc = ReadResourceDocument(payload)
+        var doc = (egressPolicy is null ? ReadResourceDocument(payload) : ReadResourceDocument(payload, egressPolicy))
             ?? throw new InvalidOperationException("R3 auth token claims require r3_uri and r3_s256.");
+        return ReadAuthTokenCore(payload, doc, schemas);
+    }
+
+    private static AuthTokenClaims ReadAuthTokenCore(JsonObject payload, ResourceDocumentClaims doc, R3VocabularySchemas? schemas)
+    {
         var granted = ReadGrant(payload[R3AuthClaims.GrantedClaim], schemas)
             ?? throw new InvalidOperationException("R3 auth token claims require r3_granted.");
-        if (payload.ContainsKey(R3AuthClaims.ConditionalClaim) && payload[R3AuthClaims.ConditionalClaim] is null)
-            throw new InvalidOperationException("r3_conditional must be an object when present.");
-        var conditional = ReadGrant(payload[R3AuthClaims.ConditionalClaim], schemas);
-        if (conditional is not null && conditional.Vocabulary != granted.Vocabulary)
-            throw new InvalidOperationException("R3 granted and conditional vocabularies must match.");
-        return new AuthTokenClaims(doc.Uri, doc.S256, granted, conditional) { Account = doc.Account };
+        if (payload.ContainsKey(R3AuthClaims.PerCallClaim) && payload[R3AuthClaims.PerCallClaim] is null)
+            throw new InvalidOperationException("r3_per_call must be an object when present.");
+        var perCall = ReadGrant(payload[R3AuthClaims.PerCallClaim], schemas);
+        if (perCall is not null && perCall.Vocabulary != granted.Vocabulary)
+            throw new InvalidOperationException("R3 granted and per-call vocabularies must match.");
+        DateTimeOffset? expiresAt = null;
+        if (payload["exp"] is JsonValue expValue && expValue.TryGetValue<long>(out var exp))
+            expiresAt = DateTimeOffset.FromUnixTimeSeconds(exp);
+        return new AuthTokenClaims(doc.Uri, doc.S256, granted, perCall)
+        {
+            Account = doc.Account,
+            Issuer = (string?)payload["iss"],
+            Jti = (string?)payload["jti"],
+            ExpiresAt = expiresAt,
+        };
     }
 
     public static R3Grant? ReadGrant(JsonNode? node, R3VocabularySchemas? schemas = null)

@@ -15,50 +15,61 @@ public class DualDwkTests
 {
     private const string Iss = "https://ps.example";
     private const string Aud = "https://resource.example";
-    private const string Agent = "aauth:alice@ap.example";
     private const string Kid = "ps-1";
 
-    private static (string Jwt, AAuthKey PsKey, AAuthKey AgentKey) BuildWithDwk(string dwk)
+    private static async Task<(string Jwt, AAuthKey PsKey, AAuthKey AgentKey)> BuildWithDwkAsync(string dwk)
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = new AuthTokenBuilder
+        var jwt = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Iss,
             Audience = Aud,
-            Agent = Agent,
+            PersonServer = Iss,
             AgentConfirmationKey = agentKey,
             Key = psKey,
             KeyId = Kid,
             Subject = "sub",
             Dwk = dwk,
-        }.Build();
+        }.BuildAsync();
         return (jwt, psKey, agentKey);
     }
 
     [Fact(DisplayName = "§Auth Token dwk — verifier accepts aauth-person.json")]
-    public void Accepts_PersonDwk()
+    public async Task Accepts_PersonDwk()
     {
-        var (jwt, psKey, agentKey) = BuildWithDwk(AuthTokenBuilder.PersonDwk);
+        var (jwt, psKey, agentKey) = await BuildWithDwkAsync(AuthTokenBuilder.PersonDwk);
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         // Dual-dwk mode: expectedDwk=null
-        var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent, expectedDwk: null);
+        var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, expectedDwk: null);
         Assert.Equal("aauth-person.json", (string?)result.Payload["dwk"]);
     }
 
     [Fact(DisplayName = "§Auth Token dwk — verifier accepts aauth-access.json")]
-    public void Accepts_AccessDwk()
+    public async Task Accepts_AccessDwk()
     {
-        var (jwt, psKey, agentKey) = BuildWithDwk(AuthTokenBuilder.AccessDwk);
+        var (jwt, psKey, agentKey) = await BuildWithDwkAsync(AuthTokenBuilder.AccessDwk);
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
-        var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent, expectedDwk: null);
+        var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, expectedDwk: null);
         Assert.Equal("aauth-access.json", (string?)result.Payload["dwk"]);
     }
 
+    [Fact(DisplayName = "§Auth Token dwk — expected aauth-access.json rejects aauth-person.json")]
+    public async Task ExpectedAccessDwk_RejectsPersonDwk()
+    {
+        var (jwt, psKey, agentKey) = await BuildWithDwkAsync(AuthTokenBuilder.PersonDwk);
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
+
+        var exception = Assert.Throws<TokenVerificationException>(() =>
+            verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, expectedDwk: AuthTokenBuilder.AccessDwk));
+
+        Assert.Contains("dwk", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact(DisplayName = "§Auth Token dwk — verifier rejects aauth-resource.json as dwk for auth tokens")]
-    public void Rejects_ResourceDwk()
+    public async Task Rejects_ResourceDwk()
     {
         // Manually craft a token with invalid dwk.
         var psKey = AAuthKey.Generate();
@@ -69,18 +80,18 @@ public class DualDwkTests
         var payloadObj = new JsonObject
         {
             ["iss"] = Iss, ["dwk"] = "aauth-resource.json", ["aud"] = Aud,
-            ["agent"] = Agent, ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
+            ["ps"] = Iss, ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
             ["sub"] = "x", ["iat"] = iat, ["exp"] = exp, ["jti"] = "t1",
         };
-        var jwt = JwtWriter.SignCompact(headerObj, payloadObj, psKey);
+        var jwt = await JwtWriter.SignCompactAsync(headerObj, payloadObj, psKey);
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
-            verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent, expectedDwk: null));
+            verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, expectedDwk: null));
     }
 
     [Fact(DisplayName = "§Auth Token dwk — verifier rejects aauth-agent.json as dwk")]
-    public void Rejects_AgentDwk()
+    public async Task Rejects_AgentDwk()
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
@@ -90,13 +101,13 @@ public class DualDwkTests
         var payloadObj = new JsonObject
         {
             ["iss"] = Iss, ["dwk"] = "aauth-agent.json", ["aud"] = Aud,
-            ["agent"] = Agent, ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
+            ["ps"] = Iss, ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
             ["sub"] = "x", ["iat"] = iat, ["exp"] = exp, ["jti"] = "t1",
         };
-        var jwt = JwtWriter.SignCompact(headerObj, payloadObj, psKey);
+        var jwt = await JwtWriter.SignCompactAsync(headerObj, payloadObj, psKey);
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
-            verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent, expectedDwk: null));
+            verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, expectedDwk: null));
     }
 }

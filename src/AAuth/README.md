@@ -34,18 +34,23 @@ var response = await client.GetAsync("https://resource.example/data");
 
 ## Access Modes
 
-AAuth supports four resource access modes. Each adds parties and capabilities, and they build on one another — adoption is incremental.
+AAuth supports five resource access modes. Each adds parties and capabilities, and they build on one another — adoption is incremental.
 
 | Mode | Parties | When to Use | Signing |
 |------|---------|-------------|---------|
-| **Identity-Based** | Agent + Resource | Resource authorizes verified agent identity | `jwt` |
+| **Agent Identity** | Agent + Resource | Resource authorizes verified agent identity (`agent-token`) | `jwt` |
 | **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization itself | `jwt` plus opaque AAuth-Access |
-| **PS-Asserted** (three-party) | Agent + Resource + PS | Resource accepts identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from any Person Server | `jwt` |
-| **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` |
+| **Person Identity** | Agent + Resource + PS | Resource requires a PS-issued person token before issuing an auth-token challenge | `jwt` with a person token |
+| **PS Authorization** (three-party) | Agent + Resource + PS | Resource accepts consent and identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from a trusted Person Server | `jwt` |
+| **Federated authorization** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` |
 
 ## Three-Party Flow (Agent → Resource → Person Server)
 
-The PS-Asserted flow is the primary authorization model. The resource delegates authorization to the agent's Person Server, which prompts the user for consent. Add `WithChallengeHandling` when building the client and the entire 401 → exchange → retry cycle becomes automatic:
+The PS authorization flow is the primary authorization model. The resource first
+asks for a person token, then issues a resource token bound to that presented
+person token, and the agent exchanges both at the Person Server. Add
+`WithChallengeHandling` when building the client and the entire
+401 → person token → 401 → auth token → retry cycle becomes automatic:
 
 ```csharp
 using AAuth.Crypto;
@@ -62,10 +67,12 @@ using var client = AAuthClientBuilder.SelfIssuing(key)
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
-// 1. Agent signs GET with agent token → Resource verifies, returns 401 + resource_token
-// 2. ChallengeHandler POSTs resource_token to PS token endpoint
-// 3. PS validates agent, prompts user for consent, issues auth_token
-// 4. Agent retries GET signed with auth_token → Resource verifies → 200 OK
+// 1. Agent signs GET with agent token → Resource returns requirement=person-token
+// 2. ChallengeHandler requests a person token and retries the resource
+// 3. Resource returns requirement=auth-token + resource_token bound by presented_jti
+// 4. ChallengeHandler POSTs resource_token + presented_token to the PS
+// 5. PS validates the pair, prompts user for consent, issues auth_token
+// 6. Agent retries GET signed with auth_token → Resource verifies → 200 OK
 ```
 
 For CLI/desktop agents that enroll with an external Agent Provider, and for the
@@ -74,8 +81,8 @@ resource- and Person-Server-side code, see the
 
 ## Features
 
-Targets AAuth protocol draft-10 and HTTP Signature Keys draft-08. Companion
-packages provide R3 draft-01 and revised Events draft-00. Fully specified
+Targets AAuth protocol draft-11 and HTTP Signature Keys draft-09. Companion
+packages provide R3 and revised Events draft-00 as vendored with draft-11. Fully specified
 Ed25519/ES256 keys and JWT headers are supported; old wire aliases are rejected.
 X.509/cached carriers, third-party login hosting and platform attestation are
 not implemented. Production persistence, user admission and transport policies
@@ -83,7 +90,7 @@ remain host responsibilities. Local test success is not universal external inter
 
 - Six Signature-Key schemes: `hwk`, `jkt-jwt`, `jwks_uri`, `jwks`, `jwt`, `self-jwt`; AAuth agent resource requests use `jwt`
 - Two-party resource-managed access with opaque `AAuth-Access` tokens
-- Full three-party challenge/exchange flow (autonomous and deferred user-consent)
+- Full three-party challenge/exchange flow (person token, autonomous and deferred user-consent)
 - Four-party federated access with an Access Server
 - Signature verification middleware for resources
 - Resource & auth token builders, JWKS / metadata discovery

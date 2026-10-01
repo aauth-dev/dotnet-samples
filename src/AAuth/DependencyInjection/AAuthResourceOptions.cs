@@ -18,24 +18,35 @@ public sealed class AAuthResourceOptions
     public string Issuer { get; set; } = null!;
 
     /// <summary>
+    /// Optional Access Server issuer for four-party authorization. When set,
+    /// resource-token challenges are directed to this AS and auth-token
+    /// verification defaults to AS-issued <c>aauth-access.json</c> tokens from it.
+    /// </summary>
+    public string? AccessServer { get; set; }
+
+    /// <summary>
     /// Signing keys keyed by <c>kid</c>. These are served via the JWKS endpoint
     /// and used to sign resource tokens / challenges.
     /// </summary>
-    public Dictionary<string, IAAuthKey> SigningKeys { get; set; } = new();
+    public AAuthSigningKeySet SigningKeys { get; set; } = new();
 
-    /// <summary>Maximum allowed age of inbound signatures. Default: 60 seconds.</summary>
+    /// <summary>
+    /// A handle in the registered <see cref="IKeyStore"/> to load the signing key from when
+    /// <see cref="SigningKeys"/> is empty.
+    /// </summary>
+    public string? KeyHandle { get; set; }
+
+    /// <summary>The <c>kid</c> for the key loaded from <see cref="KeyHandle"/> (default: its thumbprint).</summary>
+    public string? KeyId { get; set; }
+
+    /// <summary>
+    /// Signature validity window for inbound <c>created</c>, applied in both
+    /// directions. Default: 60 seconds.
+    /// </summary>
     public TimeSpan MaxSignatureAge { get; set; } = TimeSpan.FromSeconds(60);
 
-    /// <summary>
-    /// Maximum allowed skew into the future for HTTP signature timestamps.
-    /// Default: 5 seconds.
-    /// </summary>
-    public TimeSpan MaxFutureSkew { get; set; } = TimeSpan.FromSeconds(5);
-
-    /// <summary>
-    /// Clock function for deterministic testing. Default: <c>null</c> (uses UtcNow).
-    /// </summary>
-    public Func<DateTimeOffset>? Clock { get; set; }
+    /// <summary>Time source for signature and token checks.</summary>
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
     /// <summary>
     /// Enable request replay detection using the signing-key thumbprint and
@@ -68,6 +79,21 @@ public sealed class AAuthResourceOptions
     /// <summary>Optional Markdown description for metadata (consent display).</summary>
     public string? Description { get; set; }
 
+    /// <summary>Optional logo URL for metadata (<c>logo_uri</c>).</summary>
+    public string? LogoUri { get; set; }
+
+    /// <summary>Optional dark-mode logo URL for metadata (<c>logo_dark_uri</c>).</summary>
+    public string? LogoDarkUri { get; set; }
+
+    /// <summary>Optional documentation URL for metadata (<c>documentation_uri</c>).</summary>
+    public string? DocumentationUri { get; set; }
+
+    /// <summary>Optional terms-of-service URL for metadata (<c>tos_uri</c>).</summary>
+    public string? TosUri { get; set; }
+
+    /// <summary>Optional policy URL for metadata (<c>policy_uri</c>).</summary>
+    public string? PolicyUri { get; set; }
+
     /// <summary>Optional scope descriptions for metadata.</summary>
     public Dictionary<string, string>? ScopeDescriptions { get; set; }
 
@@ -79,24 +105,43 @@ public sealed class AAuthResourceOptions
     public int? SignatureWindow { get; set; }
 
     /// <summary>
+    /// Optional resource metadata <c>additional_signature_components</c> values.
+    /// Agents that consume this metadata include these HTTP message components
+    /// on their first signed request to the resource.
+    /// </summary>
+    public IReadOnlyList<string>? AdditionalSignatureComponents { get; set; }
+
+    /// <summary>
     /// Optional advisory <c>access_mode</c> published in resource metadata: one
-    /// of <c>agent-token</c>, <c>aauth-access-token</c>, or <c>auth-token</c>.
+    /// of <c>agent-token</c>, <c>person-token</c>, <c>session-token</c>, <c>auth-token</c>,
+    /// or R3's <c>per-call</c>.
     /// </summary>
     public string? AccessMode { get; set; }
 
     /// <summary>
     /// Optional resource-owned <c>authorization_endpoint</c> URL for proactive
     /// authorization, published in resource metadata. This does not select the
-    /// PS/AS resource-token recipient; use <see cref="Server.AAuthChallengeOptions.PersonServerAudience"/>.
+    /// PS/AS resource-token recipient; use <see cref="AccessServer"/>.
     /// When absent, the resource issues challenges for authorization instead.
     /// </summary>
     public string? AuthorizationEndpoint { get; set; }
+
+    /// <summary>
+    /// Optional <c>revocation_endpoint</c> URL, published in resource metadata. Map it with
+    /// <c>app.MapAAuthResourceRevocation()</c>.
+    /// </summary>
     public string? RevocationEndpoint { get; set; }
+
+    /// <summary>
+    /// Adjusts the revocation endpoint mapped by <c>MapAAuthResourceRevocation</c>. It accepts any
+    /// verified issuer unless this narrows <see cref="AAuth.Server.AAuthRevocationOptions.IsAcceptedIssuer"/>.
+    /// </summary>
+    public Action<AAuth.Server.AAuthRevocationOptions>? ConfigureRevocation { get; set; }
 
     /// <summary>
     /// Optional extension metadata merged verbatim into the resource well-known
     /// document as top-level members (for example an R3 resource's
-    /// <c>r3_vocabularies</c> map or a <c>mission_aware</c> flag). See
+    /// <c>r3_vocabularies</c> map). See
     /// <see cref="Server.Metadata.AAuthResourceMetadataOptions.AdditionalMetadata"/>.
     /// </summary>
     public Dictionary<string, JsonNode?>? AdditionalMetadata { get; set; }

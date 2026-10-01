@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
@@ -16,7 +17,7 @@ namespace AAuth.Server.Metadata;
 public static class WellKnownEndpoints
 {
     /// <summary>Map both the resource metadata and JWKS endpoints.</summary>
-    public static IEndpointRouteBuilder MapAAuthResourceWellKnown(
+    internal static IEndpointRouteBuilder MapAAuthResourceWellKnown(
         this IEndpointRouteBuilder endpoints,
         AAuthResourceMetadataOptions options)
     {
@@ -45,10 +46,13 @@ public static class WellKnownEndpoints
     /// </remarks>
     public static IEndpointRouteBuilder MapAAuthAgentWellKnown(
         this IEndpointRouteBuilder endpoints,
-        AAuthAgentMetadataOptions options)
+        Action<AAuthAgentMetadataOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
-        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(configure);
+        var options = new AAuthAgentMetadataOptions();
+        configure(options);
+        ApplyMappedEventEndpoint(endpoints, options);
         options.Validate();
 
         endpoints.MapGet("/.well-known/aauth-agent.json", () => Results.Json(
@@ -65,7 +69,7 @@ public static class WellKnownEndpoints
     /// <c>/.well-known/jwks.json</c>), the JWKS endpoint is not re-registered.
     /// Otherwise, this method also maps the JWKS endpoint with the PS's signing keys.
     /// </remarks>
-    public static IEndpointRouteBuilder MapAAuthPersonServerWellKnown(
+    internal static IEndpointRouteBuilder MapAAuthPersonServerWellKnown(
         this IEndpointRouteBuilder endpoints,
         AAuthPersonServerMetadataOptions options)
     {
@@ -87,7 +91,7 @@ public static class WellKnownEndpoints
     /// <c>/.well-known/jwks.json</c>), the JWKS endpoint is not re-registered.
     /// Otherwise, this method also maps the JWKS endpoint with the AS's signing keys.
     /// </remarks>
-    public static IEndpointRouteBuilder MapAAuthAccessServerWellKnown(
+    internal static IEndpointRouteBuilder MapAAuthAccessServerWellKnown(
         this IEndpointRouteBuilder endpoints,
         AAuthAccessServerMetadataOptions options)
     {
@@ -167,6 +171,15 @@ public static class WellKnownEndpoints
         {
             doc["signature_window"] = window;
         }
+        if (options.AdditionalSignatureComponents is { Count: > 0 })
+        {
+            var components = new JsonArray();
+            foreach (var component in options.AdditionalSignatureComponents)
+            {
+                components.Add(component);
+            }
+            doc[AAuthConstants.MetadataFields.AdditionalSignatureComponents] = components;
+        }
         if (!string.IsNullOrEmpty(options.AuthorizationEndpoint))
         {
             doc["authorization_endpoint"] = options.AuthorizationEndpoint;
@@ -177,30 +190,30 @@ public static class WellKnownEndpoints
         }
         if (options.AdditionalMetadata is { Count: > 0 })
         {
-            // Generic extension seam: merge caller-supplied members verbatim. Typed
-            // fields already emitted win on key collision; core attaches no meaning.
             foreach (var (key, value) in options.AdditionalMetadata)
             {
-                if (string.IsNullOrEmpty(key) || doc.ContainsKey(key))
-                {
-                    continue;
-                }
                 doc[key] = value?.DeepClone();
             }
         }
         return doc;
     }
 
-    internal static JsonObject BuildJwks(IReadOnlyDictionary<string, IAAuthKey> signingKeys)
+    internal static JsonObject BuildJwks(IEnumerable<AAuthSigningKeySet> signingKeySets)
     {
         var keys = new JsonArray();
-        foreach (var (kid, key) in signingKeys)
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var set in signingKeySets)
         {
-            var jwk = key.ToPublicJwk();
-            jwk["kid"] = kid;
-            jwk["use"] = "sig";
-            jwk["alg"] = key.Algorithm;
-            keys.Add(jwk);
+            foreach (var (kid, key) in set)
+            {
+                // First registration of a given kid wins.
+                if (!seen.Add(kid)) continue;
+                var jwk = key.ToPublicJwk();
+                jwk["kid"] = kid;
+                jwk["use"] = "sig";
+                jwk["alg"] = key.Algorithm;
+                keys.Add(jwk);
+            }
         }
         return new JsonObject { ["keys"] = keys };
     }
@@ -217,8 +230,10 @@ public static class WellKnownEndpoints
             options.LogoDarkUri, options.DocumentationUri, options.TosUri, options.PolicyUri);
         if (!string.IsNullOrEmpty(options.CallbackEndpoint))
             doc["callback_endpoint"] = options.CallbackEndpoint;
-        if (!string.IsNullOrEmpty(options.LoginEndpoint))
-            doc["login_endpoint"] = options.LoginEndpoint;
+        if (!string.IsNullOrEmpty(options.EventEndpoint))
+            doc["event_endpoint"] = options.EventEndpoint;
+        if (options.LocalhostCallbackAllowed)
+            doc["localhost_callback_allowed"] = true;
         return doc;
     }
 
@@ -227,7 +242,8 @@ public static class WellKnownEndpoints
         var doc = new JsonObject
         {
             ["issuer"] = options.Issuer,
-            ["token_endpoint"] = options.TokenEndpoint,
+            ["person_token_endpoint"] = options.PersonTokenEndpoint,
+            ["auth_token_endpoint"] = options.AuthTokenEndpoint,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
         AddCommonMetadataFields(
@@ -258,7 +274,7 @@ public static class WellKnownEndpoints
         var doc = new JsonObject
         {
             ["issuer"] = options.Issuer,
-            ["token_endpoint"] = options.TokenEndpoint,
+            ["auth_token_endpoint"] = options.AuthTokenEndpoint,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
         AddCommonMetadataFields(
@@ -271,32 +287,57 @@ public static class WellKnownEndpoints
 
     private static readonly ConditionalWeakTable<IEndpointRouteBuilder, SharedJwksState> _jwksState = new();
 
-    private static void RegisterJwksKeys(IEndpointRouteBuilder endpoints, IReadOnlyDictionary<string, IAAuthKey> signingKeys)
+    private static void RegisterJwksKeys(IEndpointRouteBuilder endpoints, AAuthSigningKeySet signingKeys)
     {
         var state = _jwksState.GetOrCreateValue(endpoints);
         lock (state)
         {
-            // Merge keys (first registration of a given kid wins).
-            foreach (var (kid, key) in signingKeys)
+            // Merge key sets. The JWKS is rebuilt per request from the live
+            // sets, so rotation (Add/Activate/Remove) needs no restart.
+            if (!state.KeySets.Contains(signingKeys))
             {
-                state.Keys.TryAdd(kid, key);
+                state.KeySets.Add(signingKeys);
             }
 
             // Register the JWKS endpoint only once. The endpoint closure captures
-            // `state` so it serves the merged key set at request time.
+            // `state` so it serves the merged key sets at request time.
             if (!state.EndpointRegistered)
             {
                 state.EndpointRegistered = true;
-                endpoints.MapGet("/.well-known/jwks.json", () => Results.Json(
-                    BuildJwks(state.Keys),
-                    contentType: "application/json"));
+                endpoints.MapGet("/.well-known/jwks.json", () =>
+                {
+                    AAuthSigningKeySet[] sets;
+                    lock (state) sets = [.. state.KeySets];
+                    return Results.Json(BuildJwks(sets), contentType: "application/json");
+                });
             }
         }
     }
 
+    private static void ApplyMappedEventEndpoint(IEndpointRouteBuilder endpoints, AAuthAgentMetadataOptions options)
+    {
+        var paths = endpoints.DataSources
+            .SelectMany(source => source.Endpoints)
+            .Select(EventEndpointPath)
+            .Where(path => !string.IsNullOrEmpty(path))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (paths.Length == 0 || !string.IsNullOrEmpty(options.EventEndpoint)) return;
+        if (paths.Length > 1)
+            throw new InvalidOperationException("More than one AAuth Events endpoint is mapped; set EventEndpoint explicitly.");
+        options.EventEndpoint = AAuthServerRoles.Url(options.Issuer, paths[0]!);
+    }
+
+    private static string? EventEndpointPath(Endpoint endpoint)
+    {
+        var metadata = endpoint.Metadata
+            .FirstOrDefault(value => value.GetType().FullName == "AAuth.Events.AAuthEventEndpointMetadata");
+        return metadata?.GetType().GetProperty("Path")?.GetValue(metadata) as string;
+    }
+
     private sealed class SharedJwksState
     {
-        public Dictionary<string, IAAuthKey> Keys { get; } = new();
+        public List<AAuthSigningKeySet> KeySets { get; } = new();
         public bool EndpointRegistered { get; set; }
     }
 }
@@ -306,9 +347,16 @@ public static class WellKnownEndpoints
 /// </summary>
 public sealed class AAuthResourceMetadataOptions
 {
-    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; init; } = AAuth.Discovery.AAuthEgressPolicy.Production;
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>HTTPS URL of this resource (<c>issuer</c>).</summary>
-    public required string Issuer { get; init; }
+    public required string Issuer { get; set; }
+
+    /// <summary>
+    /// Optional Access Server issuer for four-party authorization. This is runtime
+    /// configuration used by resource verification/challenge composition; it is
+    /// not emitted as resource metadata.
+    /// </summary>
+    public string? AccessServer { get; set; }
 
     /// <summary>
     /// Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. Optional in
@@ -317,65 +365,72 @@ public sealed class AAuthResourceMetadataOptions
     /// that only verifies agent signatures MAY omit them, in which case no
     /// <c>jwks_uri</c> is advertised and no JWKS endpoint is mapped (§Resource Metadata).
     /// </summary>
-    public IReadOnlyDictionary<string, IAAuthKey>? SigningKeys { get; init; }
+    public AAuthSigningKeySet? SigningKeys { get; set; }
 
     /// <summary>
     /// Optional advisory <c>access_mode</c> declaring the credential flow agents
     /// should expect — one of <see cref="AAuthConstants.AccessModes"/>
-    /// (<c>agent-token</c>, <c>aauth-access-token</c>, <c>auth-token</c>). The runtime
+    /// (<c>agent-token</c>, <c>person-token</c>, <c>session-token</c>, <c>auth-token</c>, <c>per-call</c>). The runtime
     /// <c>AAuth-Requirement</c> remains authoritative. Omitted when <see langword="null"/>
     /// (the spec default is <c>agent-token</c>).
     /// </summary>
-    public string? AccessMode { get; init; }
+    public string? AccessMode { get; set; }
 
     /// <summary>Optional human-readable name (<c>name</c>).</summary>
-    public string? Name { get; init; }
+    public string? Name { get; set; }
 
     /// <summary>
     /// Optional Markdown <c>description</c> of the resource, for display to users
     /// (e.g. at a consent screen) (§Resource Metadata). Implementations MUST
     /// sanitize the Markdown before rendering.
     /// </summary>
-    public string? Description { get; init; }
+    public string? Description { get; set; }
 
     /// <summary>Optional logo URL (<c>logo_uri</c>).</summary>
-    public string? LogoUri { get; init; }
+    public string? LogoUri { get; set; }
 
     /// <summary>Optional dark-background logo URL (<c>logo_dark_uri</c>).</summary>
-    public string? LogoDarkUri { get; init; }
+    public string? LogoDarkUri { get; set; }
 
     /// <summary>Optional developer-documentation URL (<c>documentation_uri</c>).</summary>
-    public string? DocumentationUri { get; init; }
+    public string? DocumentationUri { get; set; }
 
     /// <summary>Optional terms-of-service URL (<c>tos_uri</c>).</summary>
-    public string? TosUri { get; init; }
+    public string? TosUri { get; set; }
 
     /// <summary>Optional privacy-policy URL (<c>policy_uri</c>).</summary>
-    public string? PolicyUri { get; init; }
+    public string? PolicyUri { get; set; }
 
     /// <summary>Optional scope description map (<c>scope_descriptions</c>).</summary>
-    public IReadOnlyDictionary<string, string>? ScopeDescriptions { get; init; }
+    public IReadOnlyDictionary<string, string>? ScopeDescriptions { get; set; }
 
     /// <summary>Optional signature-window override (<c>signature_window</c>, seconds).</summary>
-    public int? SignatureWindow { get; init; }
+    public int? SignatureWindow { get; set; }
+
+    /// <summary>
+    /// Optional <c>additional_signature_components</c> values published in
+    /// resource metadata. Agents must include these components in addition to
+    /// the base AAuth signature components when signing requests to this resource.
+    /// </summary>
+    public IReadOnlyList<string>? AdditionalSignatureComponents { get; set; }
 
     /// <summary>Optional resource-owned proactive authorization endpoint, not the PS/AS resource-token recipient.</summary>
-    public string? AuthorizationEndpoint { get; init; }
+    public string? AuthorizationEndpoint { get; set; }
 
     /// <summary>Optional revocation endpoint.</summary>
-    public string? RevocationEndpoint { get; init; }
+    public string? RevocationEndpoint { get; set; }
 
     /// <summary>
     /// Optional extension metadata merged verbatim into
     /// <c>/.well-known/aauth-resource.json</c> as top-level members. Lets a resource
     /// advertise fields not modelled by the typed options above (for example an R3
-    /// resource's <c>r3_vocabularies</c> map or a <c>mission_aware</c> flag) while
+    /// resource's <c>r3_vocabularies</c> map) while
     /// still using the high-level <c>MapAAuthResourceWellKnown</c>/<c>MapAAuthWellKnown</c>
     /// APIs. Each value is deep-cloned on emit. Keys that collide with a field the
     /// builder already emits are ignored (the typed field wins). Core attaches no
     /// meaning to these values.
     /// </summary>
-    public IReadOnlyDictionary<string, JsonNode?>? AdditionalMetadata { get; init; }
+    public IReadOnlyDictionary<string, JsonNode?>? AdditionalMetadata { get; set; }
 
     /// <summary>Whether this resource publishes signing keys (and thus a <c>jwks_uri</c>).</summary>
     internal bool HasSigningKeys => SigningKeys is { Count: > 0 };
@@ -394,16 +449,43 @@ public sealed class AAuthResourceMetadataOptions
             // bind plain HTTP) can still configure a sensible issuer.
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         }
+        if (!string.IsNullOrEmpty(AccessServer) && !AAuthUrl.IsHttpsOrLoopback(AccessServer, EgressPolicy))
+        {
+            throw new InvalidOperationException("AccessServer must be an absolute https:// URL (or http://localhost).");
+        }
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, LogoUri, AAuthUrlKind.Informational, Issuer, nameof(LogoUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, LogoDarkUri, AAuthUrlKind.Informational, Issuer, nameof(LogoDarkUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, DocumentationUri, AAuthUrlKind.Informational, Issuer, nameof(DocumentationUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, TosUri, AAuthUrlKind.Informational, Issuer, nameof(TosUri));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, PolicyUri, AAuthUrlKind.Informational, Issuer, nameof(PolicyUri));
+        if (HasSigningKeys)
+            AAuthMetadataUrl.ValidateRequired(EgressPolicy, $"{Issuer.TrimEnd('/')}/.well-known/jwks.json",
+                AAuthUrlKind.Jwks, Issuer, "JwksUri");
         // draft-02 relaxes jwks_uri: signing keys are REQUIRED only when the
         // resource issues resource tokens or makes signed calls. An identity-only
         // resource MAY omit them, so no hard "at least one key" requirement here.
         if (AccessMode is not null
             && AccessMode is not (AAuthConstants.AccessModes.AgentToken
-                or AAuthConstants.AccessModes.AAuthAccessToken
-                or AAuthConstants.AccessModes.AuthToken))
+                or AAuthConstants.AccessModes.PersonToken
+                or AAuthConstants.AccessModes.SessionToken
+                or AAuthConstants.AccessModes.AuthToken
+                or AAuthConstants.AccessModes.PerCall))
         {
             throw new InvalidOperationException(
-                $"access_mode must be one of 'agent-token', 'aauth-access-token', or 'auth-token' (was '{AccessMode}').");
+                $"access_mode must be one of 'agent-token', 'person-token', 'session-token', 'auth-token', or 'per-call' (was '{AccessMode}').");
+        }
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, AuthorizationEndpoint, AAuthUrlKind.Endpoint, Issuer, nameof(AuthorizationEndpoint));
+        AAuthMetadataUrl.ValidateOptional(EgressPolicy, RevocationEndpoint, AAuthUrlKind.Endpoint, Issuer, nameof(RevocationEndpoint));
+        if (AdditionalMetadata is { Count: > 0 })
+        {
+            var reserved = new HashSet<string>(AAuthMetadataUrl.ReservedMetadataFields, StringComparer.Ordinal);
+            foreach (var key in AdditionalMetadata.Keys)
+            {
+                if (string.IsNullOrEmpty(key))
+                    throw new InvalidOperationException("AdditionalMetadata keys must be non-empty.");
+                if (reserved.Contains(key))
+                    throw new InvalidOperationException($"AdditionalMetadata must not shadow the typed metadata field '{key}'.");
+            }
         }
     }
 }

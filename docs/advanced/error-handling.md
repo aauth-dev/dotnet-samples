@@ -17,16 +17,26 @@ namespace AAuth.Errors;
 
 public enum SignatureErrorCode
 {
-    InvalidRequest,         // Missing required headers (Signature, Signature-Input, Signature-Key)
+    UnsupportedScheme,      // Signature-Key scheme not accepted by this endpoint
+    IssuerMissing,          // jwks_uri/jwks carrier names no issuer
+    IssuerMismatch,         // Carrier issuer disagrees with the verified identity
+    InvalidRequest,         // Malformed information unrelated to signature verification
     InvalidInput,           // Covered components don't match the required set (see required_input)
-    InvalidSignature,       // Signature bytes don't verify against key
+    InvalidSignature,       // Signature headers missing or malformed, created older than the window, or bytes don't verify
     UnsupportedAlgorithm,   // Algorithm not supported by this resource
-    InvalidKey,             // Key material is malformed or unsupported
+    InvalidKey,             // Signature-Key or its key material is malformed or unsupported
     UnknownKey,             // Key not found (jwks_uri: kid not in JWKS)
-    InvalidJwt,             // Agent token JWT fails validation
-    ExpiredJwt,             // Agent token exp has passed
+    InvalidJwt,             // JWT in Signature-Key fails validation
+    ExpiredJwt,             // JWT in Signature-Key exp has passed
+    RevokedJwt,             // JWT verifies and is unexpired, but its issuer withdrew it
+    ClockSkew,              // JWT iat or signature created is ahead of the verifier clock by more than the window
 }
 ```
+
+The `created` window is symmetric: `AAuthVerifier.MaxAge` (60 seconds by default)
+bounds both how old and how far ahead `created` may be. A fresh signature from a
+sender whose clock runs ahead still fails with `clock_skew`, so wait and resend
+rather than re-signing immediately.
 
 ### Wire Format
 
@@ -35,13 +45,13 @@ using AAuth.Errors;
 
 // Formatting (server-side)
 var header = SignatureError.Format(SignatureErrorCode.InvalidSignature);
-// → "invalid_signature"
+// → "error=invalid_signature"
 
 // With details
 var detailedHeader = SignatureError.Format(
     SignatureErrorCode.InvalidInput,
     requiredInput: new[] { "@method", "@authority", "@path" });
-// → "invalid_input;required_input=\"@method\" \"@authority\" \"@path\""
+// → "error=invalid_input, required_input=(\"@method\" \"@authority\" \"@path\")"
 
 // Parsing (agent-side)
 var receivedHeader = response.Headers.TryGetValues("Signature-Error", out var values)
@@ -98,13 +108,23 @@ namespace AAuth.Errors;
 public enum TokenErrorCode
 {
     InvalidRequest,         // Malformed request body
-    InvalidAgentToken,      // Agent token fails validation
-    ExpiredAgentToken,      // Agent token exp has passed
+    InvalidAgentToken,      // agent_token parameter fails validation at an AS/R3 endpoint
+    ExpiredAgentToken,      // agent_token parameter exp has passed
     InvalidResourceToken,   // Resource token fails validation
     ExpiredResourceToken,   // Resource token exp has passed
-    InteractionRequired,    // User must approve (deferred consent, non-terminal 202)
+    RevokedResourceToken,   // The issuing resource withdrew it; do not resubmit
+    InvalidPresentedToken,  // Presented person/auth token fails validation
+    ExpiredPresentedToken,  // Get a fresh person token, then a fresh resource token
+    RevokedPresentedToken,  // Get a fresh person token, then a fresh resource token
+    InvalidUpstreamToken,   // Call chaining: upstream token fails validation
+    ExpiredUpstreamToken,   // Call chaining: caller must re-authorize at the intermediary
+    RevokedUpstreamToken,   // Call chaining: terminal for that token
+    InvalidSubagentToken,   // Sub-agent token fails validation or names another parent/issuer
+    ExpiredSubagentToken,   // Parent obtains a fresh sub-agent token
+    RevokedSubagentToken,   // Terminal for that sub-agent token
+    ClockSkew,              // A parameter token's iat is too far ahead; wait, don't refresh
     UserUnreachable,        // No channel to the user; agent declared no interaction capability (terminal 403)
-    MissionTerminated,      // Mission already terminated (terminal 403 mission_terminated)
+    AsUnreachable,          // PS could not get a verifiable auth token from the AS (502; retry later)
     ServerError,            // Internal server error (transient, retryable)
 }
 ```
@@ -114,12 +134,43 @@ public enum TokenErrorCode
 ```csharp
 public sealed record TokenErrorResponse(TokenErrorCode Error, string? Detail = null)
 {
-    public string ErrorCode { get; }  // wire format: "invalid_request", "expired_agent_token", etc.
+    public string ErrorCode { get; }  // wire format: "invalid_request", "expired_presented_token", etc.
 }
 ```
 
 `TokenExchangeClient` and `AccessServerClient` throw when a token endpoint returns
 an error response.
+
+Token-specific codes exist only for tokens carried as request parameters and
+follow the pattern `<invalid|expired|revoked>_<parameter>_token`. A parameter
+token that was revoked before the first request is a `400`
+`revoked_<parameter>_token` (for example `revoked_upstream_token`). The token in
+the `Signature-Key` header has no body code: when it fails, the response is
+`401` with `Signature-Error`, and a revoked agent, person, or auth token is
+reported as `revoked_jwt` (see [Signature Errors](#signature-errors-resource--agent)).
+For a revoked auth token, resources also include
+`AAuth-Requirement: requirement=person-token` so the agent can recover without
+asking a PS or AS to exchange a resource token bound to the revoked auth token.
+A request that is already pending reports a revocation while polling instead
+(`403 revoked` with `detail` naming the resource, presented, upstream, or
+agent dependency; see [Polling Errors](#polling-errors-deferred-consent)).
+
+## Revocation Errors
+
+Revocation endpoints use `application/problem+json` bodies with closed,
+machine-readable codes:
+
+| Error | Status | Meaning |
+|-------|--------|---------|
+| `unsupported_iss` | 400 | The revocation names an issuer this endpoint cannot process. |
+| `rate_limited` | 429 | The revocation is temporarily rate-limited; the response includes `Retry-After`. |
+| `revocation_unsupported` | 501 | This endpoint or issuer does not support the requested revocation operation. |
+| `revocation_unavailable` | 503 | The revocation dependency is unavailable; retry later. |
+
+Successful revocation is idempotent and returns an empty success once the local
+cascade is terminal. A pending request that depends on a revoked token is not
+reported through the token endpoint; polling returns `403 revoked` as listed
+below.
 
 When the PS returns a non-success status with a structured AAuth error body
 (`{ "error": ..., "detail": ... }`), the exchange throws a typed
@@ -139,7 +190,8 @@ public sealed class AAuthTokenExchangeException : Exception
 ```csharp
 try
 {
-    var authToken = await exchangeClient.ExchangeAsync(personServer, resourceToken);
+    // The resource token and the person (or auth) token it names.
+    var authToken = await exchangeClient.ExchangeAsync(personServer, resourceToken, heldToken);
 }
 catch (AAuthTokenExchangeException ex)
 {
@@ -199,9 +251,10 @@ namespace AAuth.Errors;
 
 public enum PollingErrorCode
 {
-    Denied,        // User explicitly denied the request
-    Abandoned,     // User navigated away / session expired
-    Expired,       // Interaction timed out server-side
+    Denied,        // User explicitly denied the request (403)
+    Abandoned,     // User navigated away / session expired (403)
+    Expired,       // Timed out server-side (408 before final consumption; then invalid_code 410)
+    Revoked,       // A token the pending request depends on was revoked (403)
     InvalidCode,   // Code doesn't match any pending interaction
     SlowDown,      // Polling too fast — back off
     ServerError,   // Internal server error
@@ -215,6 +268,7 @@ public sealed class PollingErrorException : Exception
 {
     public PollingErrorCode ErrorCode { get; }
     public int StatusCode { get; }
+    public string? Detail { get; }
 
     // Wire format helpers
     public static string ToWireCode(PollingErrorCode code);       // e.g., "denied"
@@ -270,9 +324,11 @@ catch (TokenVerificationException ex)
 
 ## Mission Termination
 
-Once a mission is terminated (the user completed it, or the PS revoked it), the PS
-refuses governed requests with `403 mission_terminated` (§Mission Status Errors).
-The governance clients surface this as a typed exception.
+Once a mission is terminated (the person accepted completion, the mission expired,
+or it was revoked or superseded), the PS refuses governed requests with
+`403 mission_terminated` (§Mission Status Errors). A `mission_s256` the PS does
+not know, or that belongs to another agent, is `404 mission_not_found` instead.
+The governance clients surface termination as a typed exception.
 
 ```csharp
 namespace AAuth.Errors;
@@ -280,7 +336,8 @@ namespace AAuth.Errors;
 public sealed class AAuthMissionTerminatedException : Exception
 {
     public const string ErrorCode = "mission_terminated";
-    public string? MissionStatus { get; }   // e.g. "terminated"
+    public string? MissionStatus { get; }       // always "terminated"
+    public string? TerminationReason { get; }   // optional, e.g. "expired" or "revoked"
 }
 ```
 
@@ -291,13 +348,19 @@ try
 }
 catch (AAuthMissionTerminatedException ex)
 {
-    // The mission is over — stop acting under it and start a new one if needed.
-    Console.WriteLine($"Mission terminated ({ex.MissionStatus}).");
+    // The mission is over: stop acting under it. An expired mission invites a
+    // new proposal; a revoked one does not.
+    Console.WriteLine($"Mission terminated ({ex.TerminationReason ?? "no reason given"}).");
 }
 ```
 
 On the PS side, emit the canonical `application/problem+json` body with
-`GovernanceEndpoints.MissionTerminated()`. See
+`GovernanceEndpoints.MissionTerminated()`, or
+`GovernanceEndpoints.MissionTerminated("expired")` to add a
+`termination_reason`. The SDK's own endpoints report the stored reason
+(`completed`, `revoked`, `expired`, `superseded`, `administrative`, or a local
+opaque value). A mission whose `expires_at` has passed auto-terminates with
+reason `expired`, including on pending and federated poll paths. See
 [Mission Governance (Server)](../server/mission-governance.md#terminating-a-mission).
 
 ## Clarification Exceptions
@@ -328,7 +391,7 @@ public sealed class AAuthClarificationLimitException : Exception
 | `AAuthInteractionDeniedException` | `DeferredPoller` / `ChallengeHandler` | User denied |
 | `AAuthInteractionTimeoutException` | `DeferredPoller` / `ChallengeHandler` | Polling timed out |
 | `PollingErrorException` | `DeferredPoller` | PS returned terminal error during polling |
-| `AAuthMissionTerminatedException` | `AuditClient` / `InteractionClient` | Mission terminated (`403 mission_terminated`) |
+| `AAuthMissionTerminatedException` | `MissionClient` / `MissionSession` / `AuditClient` / `InteractionClient` | Mission terminated (`403 mission_terminated`) |
 | `AAuthClarificationCancelledException` | `ClarificationExchange` | Agent withdrew during clarification |
 | `AAuthClarificationLimitException` | `ClarificationExchange` | Clarification round limit reached |
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
@@ -40,13 +41,13 @@ public class WellKnownMetadataTests : IAsyncLifetime
             Issuer = Issuer,
             Name = "Conformance Demo",
             DocumentationUri = $"{Issuer}/docs",
-            SigningKeys = new Dictionary<string, IAAuthKey> { [Kid] = _key },
+            SigningKeys = new AAuthSigningKeySet { [Kid] = _key },
             ScopeDescriptions = new Dictionary<string, string> { ["whoami"] = "See your basic profile." },
             SignatureWindow = 90,
+            AdditionalSignatureComponents = new[] { "content-type", "@query" },
             AdditionalMetadata = new Dictionary<string, JsonNode?>
             {
                 ["r3_vocabularies"] = new JsonObject { ["urn:aauth:vocabulary:mcp"] = $"{Issuer}/mcp" },
-                ["issuer"] = "https://attacker.example", // collision: the typed field MUST win
             },
         });
         await app.StartAsync();
@@ -106,6 +107,16 @@ public class WellKnownMetadataTests : IAsyncLifetime
         Assert.Equal(90, (int?)doc["signature_window"]);
     }
 
+    [Fact(DisplayName = "§Discovery — resource metadata MAY include 'additional_signature_components'")]
+    public async Task ResourceMetadata_OptionalAdditionalSignatureComponents()
+    {
+        var doc = await Get("/.well-known/aauth-resource.json");
+        var components = doc["additional_signature_components"] as JsonArray;
+
+        Assert.NotNull(components);
+        Assert.Equal(new[] { "content-type", "@query" }, components!.Select(component => (string?)component).ToArray());
+    }
+
     [Fact(DisplayName = "§Discovery — JWKS exposes the resource's signing key by kid")]
     public async Task Jwks_ContainsSigningKey()
     {
@@ -132,11 +143,41 @@ public class WellKnownMetadataTests : IAsyncLifetime
         Assert.Equal($"{Issuer}/mcp", (string?)vocabs!["urn:aauth:vocabulary:mcp"]);
     }
 
-    [Fact(DisplayName = "§Discovery — AdditionalMetadata cannot override a typed field")]
-    public async Task ResourceMetadata_AdditionalMetadataDoesNotOverrideTypedFields()
+    [Theory(DisplayName = "§Discovery — AdditionalMetadata MUST NOT shadow typed fields")]
+    [InlineData("issuer")]
+    [InlineData("additional_signature_components")]
+    [InlineData("logo_uri")]
+    public void ResourceMetadata_AdditionalMetadataShadowingFailsStartup(string field)
     {
-        var doc = await Get("/.well-known/aauth-resource.json");
-        Assert.Equal(Issuer, (string?)doc["issuer"]);
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        var app = builder.Build();
+
+        Assert.Throws<InvalidOperationException>(() => app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
+        {
+            Issuer = Issuer,
+            SigningKeys = new AAuthSigningKeySet { [Kid] = AAuthKey.Generate() },
+            AdditionalMetadata = new Dictionary<string, JsonNode?> { [field] = "https://attacker.example" },
+        }));
+    }
+
+    [Theory(DisplayName = "§Discovery — producer metadata URL fields fail closed")]
+    [InlineData("https://resource.example/authorize?x=1", null)]
+    [InlineData("https://resource.example/authorize#frag", null)]
+    [InlineData(null, "http://attacker.example/logo.png")]
+    public void ResourceMetadata_InvalidTypedUrlFailsStartup(string? authorizationEndpoint, string? logoUri)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        var app = builder.Build();
+
+        Assert.Throws<InvalidOperationException>(() => app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
+        {
+            Issuer = Issuer,
+            SigningKeys = new AAuthSigningKeySet { [Kid] = AAuthKey.Generate() },
+            AuthorizationEndpoint = authorizationEndpoint,
+            LogoUri = logoUri,
+        }));
     }
 
     private async Task<JsonObject> Get(string path)

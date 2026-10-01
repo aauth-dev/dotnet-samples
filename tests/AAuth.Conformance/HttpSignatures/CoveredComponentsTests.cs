@@ -2,10 +2,12 @@ using System;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.HttpSig;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.HttpSignatures;
@@ -30,7 +32,7 @@ public class CoveredComponentsTests
     private static async Task<HttpRequestMessage> Sign(AAuthKey key, string token, DateTimeOffset clock)
     {
         var capture = new CaptureHandler();
-        var pipeline = new AAuthSigningHandler(key, () => token, () => clock) { InnerHandler = capture };
+        var pipeline = new AAuthSigningHandler(key, () => token, new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(pipeline);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://r.example/path"));
         return capture.Captured!;
@@ -88,12 +90,37 @@ public class CoveredComponentsTests
         var signed = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var req = await Sign(key, "a.b.c", signed);
 
-        var verifier = new AAuthVerifier { Clock = () => signed.AddMinutes(10) };
+        var verifier = new AAuthVerifier { TimeProvider = new FakeTimeProvider(signed.AddMinutes(10)) };
         Assert.Throws<AAuthVerificationException>(() =>
             verifier.Verify("GET", "r.example", "/path",
                 req.Headers.GetValues("Signature-Key").Single(),
                 req.Headers.GetValues("Signature-Input").Single(),
                 req.Headers.GetValues("Signature").Single(),
                 AAuthKey.FromJwk(key.ToPublicJwk())));
+    }
+
+    [Fact(DisplayName = "§Covered Components — body without Content-Type fails closed before signing")]
+    public async Task Signer_BodyWithoutContentType_FailsClosed()
+    {
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var pipeline = new AAuthSigningHandler(
+                key,
+                () => "a.b.c",
+                new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero)))
+        {
+                InnerHandler = capture,
+        };
+        using var client = new InProcessHttpClient(pipeline);
+        var request = new HttpRequestMessage(HttpMethod.Post, "https://ps.example/token")
+        {
+                Content = new ByteArrayContent(Encoding.UTF8.GetBytes("{}")),
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.SendAsync(request));
+
+        Assert.Contains("Content-Type", ex.Message);
+        Assert.Null(capture.Captured);
+        Assert.False(request.Headers.Contains("Signature-Input"));
     }
 }

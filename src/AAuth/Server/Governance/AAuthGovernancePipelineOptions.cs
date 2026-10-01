@@ -11,6 +11,10 @@ namespace AAuth.Server.Governance;
 public sealed class AAuthGovernancePipelineOptions
 {
     public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
+
+    /// <summary>Clock used for deferred governance expiry and mission <c>expires_at</c> checks.</summary>
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
     /// <summary>
     /// Route prefix prepended to each endpoint path (default empty). For example,
     /// set <c>"/governance"</c> to mount at <c>/governance/permission</c>.
@@ -23,8 +27,12 @@ public sealed class AAuthGovernancePipelineOptions
     /// <summary>The audit endpoint path (§Audit Endpoint). Default <c>/audit</c>.</summary>
     public string AuditPath { get; set; } = "/audit";
 
-    /// <summary>The interaction endpoint path (§Interaction Endpoint). Default <c>/mission-interaction</c>.</summary>
-    public string InteractionPath { get; set; } = "/mission-interaction";
+    /// <summary>
+    /// The signed interaction endpoint path (§Interaction Endpoint). Default
+    /// <c>/mission-interaction</c>. Distinct from the browser-facing Person
+    /// Server <c>InteractionPath</c>.
+    /// </summary>
+    public string InteractionEndpointPath { get; set; } = "/mission-interaction";
 
     /// <summary>The mission-creation endpoint path (§Mission Creation). Default <c>/mission</c>.</summary>
     public string MissionPath { get; set; } = "/mission";
@@ -46,12 +54,12 @@ public sealed class AAuthGovernancePipelineOptions
     public string? InteractionUrl { get; set; }
 
     /// <summary>
-    /// The PS's canonical approver URL written into mission approval blobs
-    /// (§Mission Approval). When null, the mapper derives it from the request
+    /// The PS identifier recorded on stored missions and pending approvals
+    /// (§Mission Creation). When null, the mapper derives it from the request
     /// origin (<c>scheme://host</c>). Set this when the PS's advertised issuer
     /// differs from the request origin (e.g. behind a proxy).
     /// </summary>
-    public string? Approver { get; set; }
+    public string? PersonServer { get; set; }
 
     // Compose the prefix with a path, collapsing duplicate slashes at the seam.
     internal string Resolve(string path)

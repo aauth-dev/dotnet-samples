@@ -5,9 +5,17 @@
 @using System.Text.Json
 @using AAuth.Samples.Shared
 @inject IConfiguration Configuration
+@inject AAuth.Agent.IAAuthAgentFactory Agents
+
+@code {
+    /// <summary>The Person Server; defaults to <c>AAuth:PersonServer</c>.</summary>
+    [Parameter] public string? PersonServer { get; set; }
+
+    private string PersonServerUrl => PersonServer ?? Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
+}
 @implements IDisposable
 
-<section class="wallet-walkthrough @(GuidedTour ? "guided-tour-flow" : null)" aria-label="Wallet protocol walkthrough" data-step="@_session.Step" data-flow="@_session.Flow">
+<section class="wallet-walkthrough" aria-label="Wallet protocol walkthrough" data-step="@_session.Step" data-flow="@_session.Flow">
     <SyntaxHighlight Trigger="@((_session.Flow, _session.Step))" />
     <header><h1>Wallet Protocol</h1><output aria-live="polite">@_session.Step / @_session.Steps.Length complete</output></header>
     <details class="scenario-narrative" open>
@@ -27,8 +35,8 @@
     <label for="wallet-flow">Flow</label>
     <select id="wallet-flow" @bind="_session.Flow" disabled="@(_busy || _session.Step > 0)">
         <option value="Clarification">AS clarification</option>
-        <option value="DirectAs">Direct AS chaining</option>
-        <option value="Revocation">Issuer-qualified revocation</option>
+        <option value="AsGrantChaining">Chaining an AS-issued grant</option>
+        <option value="Revocation">Federated revocation</option>
     </select>
     <div class="wallet-actions">
         <button class="wallet-next" disabled="@(!_interactive || _busy || _session.Cancelled || _session.Step == _session.Steps.Length)" @onclick="Next">
@@ -49,38 +57,26 @@
             <button @onclick="_session.Cancel">Cancel request</button>
         </section>
     }
-    @if (_session.ConsentUrl is { } consent)
+    @if (_session.Consent is { } consent)
     {
-        <aside role="status"><a class="wallet-consent" href="@consent" target="_blank" rel="noopener">Review authorization</a></aside>
+        <aside role="status">
+            <ConsentSupport.PersonServerApprovalPrompt PersonServer="@PersonServerUrl" Interaction="consent" LinkClass="wallet-consent"
+                                                       ExternalLabel="Review authorization" />
+        </aside>
     }
     @if (_error is not null) { <p role="alert">@_error</p> }
     @if (_session.Cancelled) { <p role="status" data-testid="wallet-cancelled">Request cancelled. No auth token was issued.</p> }
-    <div class="tour-sequence-layout">
-        <ol class="wallet-steps" aria-label="Protocol steps">
-            @for (var index = 0; index < _session.Steps.Length; index++)
-            {
-                <li class="@(index < _session.Step ? "complete" : index == _session.Step ? "current" : "")"
-                    aria-current="@(index == _session.Step ? "step" : null)">@_session.Steps[index]</li>
-            }
-        </ol>
-        <div class="tour-diagram"><ProtocolSequence Participants="WalletParticipants" Messages="WalletSequence" CompletedSteps="_session.Step" ShowPendingMessages="@(!GuidedTour)" /></div>
-        @if (GuidedTour)
+    <ol class="wallet-steps" aria-label="Protocol steps">
+        @for (var index = 0; index < _session.Steps.Length; index++)
         {
-            <section class="tour-payload" aria-label="Selected step payload">
-                @if (_session.Result is { } payload)
-                {
-                    <h2>Step @_session.Step result</h2><pre>@payload</pre>
-                }
-                else
-                {
-                    <p class="hint">Run a step to see its payloads here.</p>
-                }
-            </section>
+            <li class="@(index < _session.Step ? "complete" : index == _session.Step ? "current" : "")"
+                aria-current="@(index == _session.Step ? "step" : null)">@_session.Steps[index]</li>
         }
-    </div>
+    </ol>
+    <ProtocolSequence Participants="WalletParticipants" Messages="WalletSequence" CompletedSteps="_session.Step" />
     @if (_session.Result is { } result)
     {
-        <section class="@(GuidedTour ? "tour-result-source" : null)" aria-label="Step result"><h2>Step @_session.Step result</h2><pre data-testid="wallet-result">@result</pre></section>
+        <section aria-label="Step result"><h2>Step @_session.Step result</h2><pre data-testid="wallet-result">@result</pre></section>
     }
     <section aria-label="Recorded exchanges">
         @foreach (var exchange in _session.Exchanges)
@@ -97,8 +93,6 @@
 </section>
 
 @code {
-    [Parameter] public bool GuidedTour { get; set; }
-
     private static readonly ProtocolParticipant[] ClarificationParticipants =
     [
         new("agent", "Agent"), new("ap", "Agent Provider"), new("wallet", "Wallet"),
@@ -107,6 +101,7 @@
     private static readonly ProtocolMessage[] ClarificationSequence =
     [
         ProtocolMessage.Http(1, "setup", "agent", "ap", "Enroll and receive agent JWT", responseLabel: "200"),
+        ProtocolMessage.Http(2, "network", "agent", "ps", "Obtain Wallet person token", responseLabel: "200"),
         ProtocolMessage.Http(2, "network", "agent", "wallet", "Request wallet review; receive challenge", responseLabel: "401"),
         ProtocolMessage.Http(3, "network", "agent", "ps", "Exchange Wallet resource token", "202/200"),
         ProtocolMessage.Http(3, "network", "ps", "as", "Federate review authorization", "202/200"),
@@ -116,21 +111,24 @@
         ProtocolMessage.Http(4, "network", "agent", "wallet", "Read approved wallet review", responseLabel: "200"),
         ProtocolMessage.Http(5, "network", "agent", "wallet", "Reject charge outside the grant", responseLabel: "403"),
     ];
-    private static readonly ProtocolParticipant[] DirectAsParticipants =
+    private static readonly ProtocolParticipant[] ChainingParticipants =
     [
         new("agent", "Agent"), new("ap", "Agent Provider"), new("concierge", "Concierge"),
         new("wallet", "Wallet"), new("ps", "Person Server"), new("as", "Access Server"),
         new("user", "User / Browser"),
     ];
-    private static readonly ProtocolMessage[] DirectAsSequence =
+    private static readonly ProtocolMessage[] ChainingSequence =
     [
         ProtocolMessage.Http(1, "setup", "agent", "ap", "Enroll and receive agent JWT", responseLabel: "200"),
+        ProtocolMessage.Http(2, "network", "agent", "ps", "Obtain Concierge person token", responseLabel: "200"),
         ProtocolMessage.Http(2, "network", "agent", "concierge", "Request delegated Wallet access", responseLabel: "401"),
         ProtocolMessage.Http(3, "network", "agent", "ps", "Exchange upstream resource token", "202/200"),
         ProtocolMessage.Http(3, "network", "ps", "as", "Federate upstream authorization", "202/200"),
         ProtocolMessage.Http(3, "network", "user", "as", "Approve upstream grant", responseLabel: "200"),
-        ProtocolMessage.Http(4, "network", "agent", "concierge", "Present upstream grant", "200"),
-        ProtocolMessage.Http(4, "network", "concierge", "as", "Exchange directly for Wallet grant", "200"),
+        ProtocolMessage.Http(4, "network", "agent", "concierge", "Present upstream grant", "202/200"),
+        ProtocolMessage.Http(4, "network", "concierge", "ps", "Exchange with upstream_token at the person's PS", "202/200"),
+        ProtocolMessage.Http(4, "network", "user", "ps", "Approve the chained Wallet grant", responseLabel: "200"),
+        ProtocolMessage.Http(4, "network", "ps", "as", "Federate Wallet authorization", "200"),
         ProtocolMessage.Http(4, "network", "concierge", "wallet", "Read Wallet with delegated grant", responseLabel: "200"),
         ProtocolMessage.Http(5, "network", "agent", "wallet", "Reject upstream token at Wallet", responseLabel: "401"),
         ProtocolMessage.Http(6, "network", "agent", "concierge", "Repeat delegated Wallet read", responseLabel: "200"),
@@ -138,17 +136,21 @@
     private static readonly ProtocolParticipant[] RevocationParticipants =
     [
         new("agent", "Agent"), new("ap", "Agent Provider"), new("wallet", "Wallet"),
-        new("ps", "Person Server"), new("user", "User / Browser"),
+        new("ps", "Person Server"), new("as", "Access Server"), new("user", "User / Browser"),
     ];
     private static readonly ProtocolMessage[] RevocationSequence =
     [
         ProtocolMessage.Http(1, "setup", "agent", "ap", "Enroll and receive agent JWT", responseLabel: "200"),
+        ProtocolMessage.Http(2, "network", "agent", "ps", "Obtain Wallet person token", responseLabel: "200"),
         ProtocolMessage.Http(2, "network", "agent", "wallet", "Request Wallet access", responseLabel: "401"),
         ProtocolMessage.Http(3, "network", "agent", "ps", "Exchange Wallet resource token", "202/200"),
+        ProtocolMessage.Http(3, "network", "ps", "as", "Federate with the presented person token", "202/200"),
         ProtocolMessage.Http(3, "network", "user", "ps", "Approve Wallet grant", responseLabel: "200"),
         ProtocolMessage.Http(4, "network", "agent", "wallet", "Read Wallet", responseLabel: "200"),
-        ProtocolMessage.Http(5, "network", "agent", "wallet", "Reject agent as token revoker", responseLabel: "403"),
-        ProtocolMessage.Http(6, "network", "agent", "ps", "Ask issuer to revoke qualified grant", responseLabel: "200"),
+        ProtocolMessage.Http(5, "network", "agent", "wallet", "Reject agent as revoker", responseLabel: "403"),
+        ProtocolMessage.Http(6, "network", "agent", "ps", "Ask the PS to end federated access", responseLabel: "200"),
+        ProtocolMessage.Http(6, "network", "ps", "as", "Revoke presented person token by {jti, exp}", responseLabel: "200"),
+        ProtocolMessage.Http(6, "network", "as", "wallet", "Cascade: revoke AS auth token by {jti, exp}", responseLabel: "200"),
         ProtocolMessage.Http(7, "network", "agent", "wallet", "Reject revoked grant", responseLabel: "401"),
         ProtocolMessage.Http(8, "network", "agent", "wallet", "Request fresh challenge", responseLabel: "401"),
         ProtocolMessage.Http(8, "network", "agent", "ps", "Obtain fresh grant", "202/200"),
@@ -156,13 +158,13 @@
     ];
     private IReadOnlyList<ProtocolParticipant> WalletParticipants => _session.Flow switch
     {
-        WalletFlow.DirectAs => DirectAsParticipants,
+        WalletFlow.AsGrantChaining => ChainingParticipants,
         WalletFlow.Revocation => RevocationParticipants,
         _ => ClarificationParticipants,
     };
     private IReadOnlyList<ProtocolMessage> WalletSequence => _session.Flow switch
     {
-        WalletFlow.DirectAs => DirectAsSequence,
+        WalletFlow.AsGrantChaining => ChainingSequence,
         WalletFlow.Revocation => RevocationSequence,
         _ => ClarificationSequence,
     };
@@ -181,8 +183,8 @@
     }
     private void Create(WalletFlow flow = WalletFlow.Clarification)
     {
-        _session = new(Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
-            Configuration["AAuth:PersonServer"] ?? "http://localhost:5100",
+        _session = new(Agents, Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
+            PersonServerUrl,
             Configuration["AAuth:Wallet"] ?? "http://localhost:5003",
             Configuration["AAuth:Concierge"] ?? "http://localhost:5200") { Flow = flow };
         _session.Changed = () => InvokeAsync(StateHasChanged);

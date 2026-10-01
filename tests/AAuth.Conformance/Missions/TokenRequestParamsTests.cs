@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth;
 using AAuth.Agent;
 using AAuth.Discovery;
 using Xunit;
@@ -35,11 +36,12 @@ public class TokenRequestParamsTests
 
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
+            PresentedToken = "presented.person.token",
             Justification = "Booking a flight on your behalf.",
             LoginHint = "alice@example.com",
             Tenant = "contoso",
             DomainHint = "example.com",
-            Platform = "ios",
+            Platform = AAuthConstants.Platforms.Mobile,
             Device = "iphone-15",
         }));
 
@@ -48,7 +50,7 @@ public class TokenRequestParamsTests
         Assert.Equal("alice@example.com", (string?)captured["login_hint"]);
         Assert.Equal("contoso", (string?)captured["tenant"]);
         Assert.Equal("example.com", (string?)captured["domain_hint"]);
-        Assert.Equal("ios", (string?)captured["platform"]);
+        Assert.Equal(AAuthConstants.Platforms.Mobile, (string?)captured["platform"]);
         Assert.Equal("iphone-15", (string?)captured["device"]);
     }
 
@@ -58,9 +60,10 @@ public class TokenRequestParamsTests
         JsonObject? captured = null;
         var client = BuildClient(new CaptureHandler(body => captured = body));
 
-        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource));
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, "presented.person.token"));
 
         Assert.NotNull(captured);
+        Assert.Equal("presented.person.token", (string?)captured!["presented_token"]);
         Assert.False(captured!.ContainsKey("justification"));
         Assert.False(captured.ContainsKey("login_hint"));
         Assert.False(captured.ContainsKey("tenant"));
@@ -85,7 +88,7 @@ public class TokenRequestParamsTests
         Assert.Equal("Device", ex.ParamName);
     }
 
-    [Theory(DisplayName = "§Agent Token Request — device with control characters is rejected")]
+    [Theory(DisplayName = "§Agent Token Request — device with non-printable characters is rejected")]
     [InlineData("Chrome on\tmacOS")]
     [InlineData("line\nbreak")]
     [InlineData("null\0byte")]
@@ -97,11 +100,51 @@ public class TokenRequestParamsTests
         Assert.Equal("Device", ex.ParamName);
     }
 
+    [Fact(DisplayName = "§Agent Token Request — device with an invalid surrogate is rejected")]
+    public void Device_InvalidSurrogate_Throws()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            new TokenExchangeRequest { Device = "bad" + new string('\ud800', 1) + "surrogate" });
+        Assert.Equal("Device", ex.ParamName);
+    }
+
     [Fact(DisplayName = "§Agent Token Request — printable device string is accepted")]
     public void Device_Printable_Accepted()
     {
         var request = new TokenExchangeRequest { Device = "Chrome on macOS (M3)" };
         Assert.Equal("Chrome on macOS (M3)", request.Device);
+    }
+
+    [Fact(DisplayName = "§Agent Token Request — platform outside the registry is rejected locally")]
+    public void Platform_Invalid_Throws()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            new TokenExchangeRequest { Platform = "evil-os" });
+        Assert.Equal("Platform", ex.ParamName);
+    }
+
+    [Fact(DisplayName = "§Agent Token Request — printable Unicode device string is accepted")]
+    public void Device_PrintableUnicode_Accepted()
+    {
+        var request = new TokenExchangeRequest { Device = "Café laptop" };
+        Assert.Equal("Café laptop", request.Device);
+    }
+
+    [Fact(DisplayName = "§Agent Token Request — explicit empty capabilities serializes an empty array")]
+    public async Task Capabilities_EmptyExplicitList_Serialized()
+    {
+        JsonObject? captured = null;
+        var client = BuildClient(new CaptureHandler(body => captured = body));
+
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
+        {
+            PresentedToken = "presented.person.token",
+            Capabilities = [],
+        }));
+
+        Assert.NotNull(captured);
+        Assert.True(captured!.ContainsKey("capabilities"));
+        Assert.Empty(captured["capabilities"]!.AsArray());
     }
 
     private sealed class CaptureHandler : HttpMessageHandler
@@ -117,7 +160,7 @@ public class TokenRequestParamsTests
                 return Json(new JsonObject
                 {
                     ["issuer"] = Ps,
-                    ["token_endpoint"] = Ps + "/token",
+                    ["auth_token_endpoint"] = Ps + "/token",
                 });
             }
 

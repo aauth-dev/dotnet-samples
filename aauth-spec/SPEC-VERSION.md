@@ -3,7 +3,7 @@
 These spec files were copied from the [AAuth](https://github.com/dickhardt/AAuth)
 repository for reference while building the .NET samples. They are grouped by the
 AAuth protocol draft version under [`v01/`](v01/), [`v02/`](v02/),
-[`v08/`](v08/), [`v09/`](v09/), and [`v10/`](v10/). Each folder is a
+[`v08/`](v08/), [`v09/`](v09/), [`v10/`](v10/), and [`v11/`](v11/). Each folder is a
 self-contained snapshot, so each carries its own copy of the HTTP Signature Keys
 draft at the version that snapshot's protocol references.
 
@@ -19,21 +19,68 @@ The vendored `.md` files are the upstream kramdown source; if the GitHub repo is
 unavailable, the Datatracker `.txt`/`.html` renderings are the authoritative
 substitute.
 
-The SDK now targets **draft-10** ([`v10/`](v10/)), following the separately
-verified migration on 2026-09-09. This includes all four access modes, the
-resource-managed opaque credential, accounts, AS clarification, issuer-qualified
-revocation, and real four-party parent/worker scenarios in both primary apps.
-Signature Keys draft-08, R3 draft-01 and revised Events draft-00 are included;
-Bootstrap draft-02 remains informational. No snapshot bytes changed during migration.
+The SDK now targets **draft-11** ([`v11/`](v11/)), following the separately
+verified migration on 2026-09-29 and the draft-11 compliance remediation phases
+whose definitions of done are ticked in
+[`implementation-plan.md`](../.agent/plans/2026-09-30-v11-compliance-remediation/implementation-plan.md).
+Locally passing conformance/unit tests cover agent-identity verification and
+agent-token challenges (`AgentTokenVerificationTests`, `ChallengeMiddlewareTests`),
+resource-managed `AAuth-Access` (`ResourceManagedFlowTests`), person-token
+access (`AuthorizationEndpointTests`), PS authorization with `presented_token`
+exchanges (`PersonServerMapperTests`, `ChallengeMiddlewareTests`) and four-party
+trust (`DeferredFederationTests`, `FourPartyTrustTests`), `mission_s256`
+hashing, resource-scoped person-token issuance and termination/expiry
+(`MissionS256Tests`, `MissionPersonTokenIssuanceTests`,
+`MissionTerminatedTests`), sub-agent identifiers, token verification and
+parent-mediated minting (`AgentIdTests`, `AgentTokenVerificationTests`,
+`PersonServerMapperTests`), call chaining through the person's PS
+(`CallChainingTests`, `CallChainingHandlerTests`), `{jti, exp}`
+revocation with cascades (`RevocationLifecycleTests`,
+`PersonTokenRevocationCascadeTests`, `AgentTokenRevocationCascadeTests`),
+`202` auth-token delivery and polling (`ChallengeHandlerTests` deferred
+auth-token cases, `HeldInvocationTests`, `PollingErrorTests`), and R3 per-call
+single use (`ResourceR3Tests`).
+Signature Keys draft-09 and the R3 and Events editor's copies at the draft-11
+tag are included. Bootstrap draft-02 remains informational. Budgets and
+`accept_signature_algs` advertisement are not implemented. No snapshot bytes
+changed during migration.
 
-`v10/` remains the latest vendored upstream reference. Earlier snapshots are
-historical, not compatibility fallbacks. X.509/cached carriers and third-party
-login hosting are unsupported; platform/native transports and production
-persistence/policy are deployment responsibilities. External whoami identity
-access passed, but scoped access returned `person-token`; external authorization
-and the full external mission/sub-agent profile remain unverified. See the
-[migration log](../.agent/plans/2026-09-08-aauth-v10-spec-migration/implementation-log.md)
-and [conformance ledger](../.agent/plans/2026-09-08-aauth-v10-spec-migration/conformance-ledger.md)
+### Deliberate deviations and implementation limits
+
+- **Development-only loopback identifiers (Q2).** The SDK keeps a locked-down
+  loopback identifier exception for samples and in-process tests.
+  `AAuthEgressPolicy.ForDevelopmentLoopback(...)` admits only explicitly listed
+  `localhost`/`127.0.0.1` origins (with or without a port), logs a warning when
+  active, and AAuth DI registrations fail in Production when such a policy is
+  used. `AAuthEgressPolicy.Production` remains strict.
+- **Signature throughput limit (Q1).** To avoid future-dated `created` values
+  and duplicate replay tuples, a second request with the same signing key,
+  method, authority and path in the same second waits for the next free second.
+  Cancellation during the wait prevents the request from being sent. This
+  one-identical-request-per-second-per-key behavior is tracked upstream at
+  <https://github.com/dickhardt/AAuth/issues/222>.
+- **Consumed AP token lifetime (Q19).** SDK producers reject lifetimes over
+  24 hours, but consumed AP tokens over 24 hours log a warning rather than
+  failing verification because the draft uses SHOULD NOT, not MUST NOT.
+- **In-flight revocation guard.** In-flight federation sends poll the
+  token inventory every 25 ms to detect source revocation and cancel the linked
+  request; a push notification contract is left to durable store implementations.
+- **Sample admin exact match.** The sample admin grant matches the
+  exact agent id; demo keys are ephemeral, so the remediation log records why it
+  does not pin a sample thumbprint. The SDK verifier still binds the agent id's
+  domain to the AP issuer, and later remediation closed the issuer/binding
+  follow-up.
+- **Historical compatibility deviations.** The R10 enrollment and
+  binding-inventory deviations were superseded on 2026-10-01; the legacy
+  `IMissionStore` sample compatibility deviation was also removed.
+
+Earlier snapshots are historical, not compatibility fallbacks. X.509/cached
+carriers and third-party login hosting are unsupported; platform/native
+transports and production persistence/policy are deployment responsibilities.
+External interop against third-party draft-11 deployments has not been run.
+See the
+[migration log](../.agent/plans/2026-09-11-aauth-v11-spec-migration/implementation-log.md)
+and [conformance ledger](../.agent/plans/2026-09-11-aauth-v11-spec-migration/conformance-ledger.md)
 for executed gates and explicit limitations. Historical snapshot entries below
 retain their original context.
 
@@ -251,3 +298,65 @@ draft-08 bundles six published protocol drafts (03 → 08). The headline deltas:
 - HTTP Signature Keys draft-08 adds `jwks`, assertion caching, fully specified
   algorithm rules, stricter covered-component and expiry requirements, and new
   negotiation and error handling.
+
+## `v11/` — protocol draft-11
+
+> This is the latest upstream reference. The SDK targets it after the draft-11
+> migration completed on 2026-09-29.
+
+| Field | Value |
+|---|---|
+| Source repository | <https://github.com/dickhardt/AAuth> |
+| Commit | `178e9e68b6578e4d6f7d0bf30f33b4c38833e3a1` |
+| Commit date | 2026-09-25 |
+| Tagged version | `draft-hardt-oauth-aauth-protocol-11` |
+| Source document date | 2026-06-17 (stale frontmatter) |
+| IETF publication date | 2026-09-25 |
+| IETF draft | <https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/11/> |
+| Copied on | 2026-09-28 |
+
+This snapshot replaces the 2026-09-11 WIP capture of editor's commit `55ae44c`,
+which remains in git history at commit `e6d18a3`. The migration research cites
+that capture's line numbers.
+
+- `draft-hardt-oauth-aauth-protocol.md` — Main AAuth protocol specification
+  (draft-11).
+- `draft-hardt-aauth-bootstrap.md` — Agent bootstrap guidance (draft-02, revised
+  against protocol draft-11; still informational).
+- `draft-hardt-aauth-r3.md` — Rich Resource Requests editor's copy (unsubmitted;
+  history now logged under `-00`).
+- `draft-hardt-aauth-events.md` — AAuth Events editor's copy (draft-00, revised).
+- `draft-hardt-aauth-budgets.md` — AAuth Budgets editor's copy (**new**,
+  unsubmitted).
+- `interop-demo-profile.md` — Interoperability Demo Profile (informational,
+  revised).
+- `draft-hardt-httpbis-signature-key-09.txt` — HTTP Signature Keys
+  (Internet-Draft, draft-09; bumped from draft-08 in `v10/`). The protocol
+  reference is unversioned; draft-09 is the published revision at the protocol
+  tag. Downloaded 2026-09-28 from
+  <https://www.ietf.org/archive/id/draft-hardt-httpbis-signature-key-09.txt>
+  (Internet-Draft, 13 September 2026 revision).
+- `upgrade-10-to-11/` — The author's per-role -10 to -11 upgrade checklists,
+  from commit `180bc9536cda7af139401eb6e2e00975850ca317` (2026-09-25). They were
+  added after the tag and are byte-identical on `main` at `a200889`.
+
+### Notable changes since draft-10
+
+- Person tokens (`aa-person+jwt`) add a fifth access mode and a REQUIRED PS
+  `person_token_endpoint`.
+- `token_endpoint` becomes `auth_token_endpoint`; `aauth-access-token` becomes
+  `session-token`.
+- Exchanges carry REQUIRED `presented_token`, bound to the resource token's
+  `presented_jti`. Resource-facing tokens drop `agent` and `act`.
+- `mission_s256` replaces the `mission` object and `AAuth-Mission`. Missions gain
+  update and completion operations.
+- Revocation requests are `{jti, exp}`, signed by the issuer, cascaded, and never
+  answered `404`.
+- Call chaining routes to the person's PS, and the intermediary is its own agent
+  provider.
+- `exp` has no skew tolerance; PS/AS request bodies require signed
+  `content-type` and `content-digest`.
+- R3 renames `r3_conditional` to `r3_per_call` and removes `version` and the
+  OpenAPI Gateway vocabulary. Events binds protected tickets to the subscribe
+  token key. Budgets is new. Signature Keys draft-09 adds `revoked_jwt` and
+  `clock_skew`.

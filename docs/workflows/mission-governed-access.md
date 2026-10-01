@@ -25,16 +25,18 @@ terminated everything is refused. This walkthrough ties together
 sequenceDiagram
     participant Agent
     participant PS as Person Server
-    participant Resource as Mission-aware Resource
+    participant Resource
 
     Agent->>PS: 1. propose mission
-    PS-->>Agent: mission blob + AAuth-Mission (approver, s256)
+    PS-->>Agent: { s256, mission (base64url blob) }
 
-    Agent->>Resource: 2. GET /data (signed, AAuth-Mission)
-    Resource-->>Agent: 401 + resource token (mission copied in)
-    Agent->>PS: 3. exchange resource token
+    Agent->>PS: 2. person token request (resource, mission_s256)
+    PS-->>Agent: person token (mission_s256)
+    Agent->>Resource: GET /data (signed, person token)
+    Resource-->>Agent: 401 requirement=auth-token + resource token (mission_s256 copied in)
+    Agent->>PS: 3. auth token request (resource_token, presented_token)
     Note over PS: scope fits intent → grant silently
-    PS-->>Agent: auth token (mission echoed)
+    PS-->>Agent: auth token (mission_s256)
     Agent->>Resource: GET /data (auth token) → 200
 
     Agent->>PS: 4. permission: out-of-mission tool
@@ -68,14 +70,15 @@ Mission mission = session.Mission;
 
 ## 2–3. Access a resource (scope evaluated in context)
 
-Resource access uses the ordinary access flow with the `AAuth-Mission` header
-added. A mission-aware resource copies the mission into its resource token, so the
-PS sees the mission when it evaluates the requested scope. If the scope fits the
-mission's intent, the PS grants the auth token silently and remembers the decision
-for the rest of the mission.
+Resource access uses the ordinary access flow; the agent names the mission when
+it requests the person token (`mission_s256`). The resource copies
+`mission_s256` from the person token into its resource token, so the PS sees the
+mission when it evaluates the requested scope. If the scope fits the mission's
+intent, the PS grants the auth token silently and remembers the decision for the
+rest of the mission.
 
 ```csharp
-// WithMission emits the AAuth-Mission header on every request and composes with
+// WithMission names the mission on person token requests and composes with
 // the challenge handler, so the whole 401 → exchange → retry leg is automatic.
 using var client = new AAuthClientBuilder(key)
     .UseJwt(agentToken)
@@ -92,7 +95,7 @@ var response = await client.GetAsync("https://trips.example/trips");
 A later request for a scope the PS has not seen and that does not fit the intent
 is deferred to the user (gate 2). See
 [Token Issuance](../server/token-issuance.md#mission-claims) for how the resource
-and PS carry the mission claim through the tokens.
+and PS carry `mission_s256` through the tokens.
 
 ## 4. Request permission for a local tool
 
@@ -103,7 +106,7 @@ other action goes to the PS, which prompts the user when it is out of mission.
 // Pre-approved tool → granted silently.
 var add = await session.RequestPermissionAsync(new MissionAction("add_to_calendar"));
 
-// Out-of-mission tool → the PS prompts the user (gate 3).
+// Out-of-mission tool → the PS prompts the user (gate 2).
 var cancel = await session.RequestPermissionAsync(
     new MissionAction("cancel_booking"),
     description: "Cancel the existing hotel reservation the user flagged.");
@@ -128,8 +131,9 @@ await session.RecordAuditAsync(
 
 ## 6. Close the mission out
 
-When the work is done the agent proposes completion. The user accepts the summary,
-and the PS terminates the mission.
+When the work is done the agent proposes completion at `{mission_endpoint}/{s256}`
+(§Mission Completion). The user accepts the summary, and the PS terminates the
+mission.
 
 ```csharp
 bool terminated = await session.ProposeCompletionAsync(
@@ -139,19 +143,21 @@ bool terminated = await session.ProposeCompletionAsync(
 If the PS's interaction relay cannot reach the user synchronously, it returns
 `InteractionRelayResult { Pending = true }`; the governance mapper then answers the
 completion proposal with a deferred `202` + poll `Location` (§Deferred Consent), and
-the agent's `InteractionClient` polls until the user accepts or declines — the same
+the agent's `MissionClient` polls until the user accepts or declines — the same
 park-and-poll mechanics used for deferred permission consent.
 
-After termination, any further governed request returns `403 mission_terminated`,
-surfaced to the agent as `AAuthMissionTerminatedException` (see
+After termination, any further governed request returns `403 mission_terminated`
+with the stored `termination_reason`, surfaced to the agent as
+`AAuthMissionTerminatedException` (see
 [Error Handling](../advanced/error-handling.md#mission-termination)).
 
 ## The binding chain
 
-Across all of these steps the mission travels as the same `{ approver, s256 }`
-pair: declared on requests via the `AAuth-Mission` header, copied into the
-resource token by a mission-aware resource, and echoed into the auth token by the
-PS. The mission content never leaves the PS — only the pointer and its hash do.
+Across all of these steps the mission travels as the same `mission_s256` string
+(the mission's `s256`), with the approving PS named beside it: named by the agent
+on its person token request, stamped into the person token by the PS, copied into
+the resource token by the resource, and carried into the auth token by the PS.
+The mission content never leaves the PS — only its hash does.
 
 ## Further reading
 

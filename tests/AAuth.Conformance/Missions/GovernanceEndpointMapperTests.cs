@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using AAuth;
 using AAuth.Agent;
 using AAuth.Server.Governance;
 using AAuth.Server.Verification;
@@ -27,7 +28,7 @@ namespace AAuth.Conformance.Missions;
 public class GovernanceEndpointMapperTests : IAsyncLifetime
 {
     private const string Ps = "https://ps.example";
-    private const string Approver = Ps;
+    private const string MissionPs = Ps;
 
     private IHost? _host;
     private string _missionS256 = string.Empty;
@@ -48,16 +49,19 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
                     Level = AAuthLevel.Identified, Scheme = "jwt", IssuerVerified = true,
                     TokenType = AAuthTokenType.AgentToken,
                     Agent = context.Request.Headers["Test-Agent"].FirstOrDefault() ?? "aauth:assistant@agent.example",
+                    AgentPersonServer = context.Request.Headers["Test-Agent-PS"].FirstOrDefault() is { } ps
+                        ? (ps == "absent" ? null : ps) : Ps,
+                    CoveredComponents = new HashSet<string> { "@method", "@authority", "@path", "signature-key", "content-type", "content-digest" },
                 });
             await next();
         });
-        app.MapAAuthGovernance();
+        app.MapAAuthGovernance(options => options.PersonServer = Ps);
 
         // Seed an active mission with one pre-approved tool ("WebSearch").
         var store = app.Services.GetRequiredService<IMissionStore>();
         var (blob, s256) = BuildMission("aauth:assistant@agent.example", "WebSearch");
         _missionS256 = s256;
-        await store.SaveAsync(new StoredMission(s256, Approver, "aauth:assistant@agent.example", blob));
+        await store.SaveAsync(new StoredMission(s256, MissionPs, "aauth:assistant@agent.example", blob));
 
         await app.StartAsync();
         _host = app;
@@ -70,17 +74,11 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
 
     private HttpClient Client() => _host!.GetTestServer().CreateClient();
 
-    private JsonObject MissionClaim() => new()
-    {
-        ["approver"] = Approver,
-        ["s256"] = _missionS256,
-    };
-
     [Fact(DisplayName = "§Permission Endpoint — a pre-approved tool is granted by the default decider")]
     public async Task Permission_ApprovedTool_Granted()
     {
         using var client = Client();
-        var body = new JsonObject { ["action"] = "WebSearch", ["mission"] = MissionClaim() };
+        var body = new JsonObject { ["action"] = "WebSearch", ["mission_s256"] = _missionS256 };
 
         var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -93,7 +91,7 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
     public async Task Permission_OutOfScope_Denied()
     {
         using var client = Client();
-        var body = new JsonObject { ["action"] = "SendEmail", ["mission"] = MissionClaim() };
+        var body = new JsonObject { ["action"] = "SendEmail", ["mission_s256"] = _missionS256 };
 
         var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -101,11 +99,27 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         Assert.Equal("denied", (string?)json?["permission"]);
     }
 
+    [Theory(DisplayName = "§Agent Governance — absent or foreign agent-token ps is rejected only on governance endpoints")]
+    [InlineData("absent")]
+    [InlineData("https://other-ps.example")]
+    public async Task Permission_AgentTokenPsMustNameThisPersonServer(string agentPs)
+    {
+        using var client = Client();
+        client.DefaultRequestHeaders.Add("Test-Agent-PS", agentPs);
+        var body = new JsonObject { ["action"] = "WebSearch" };
+
+        var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var json = await ReadJson(response);
+        Assert.Equal("invalid_request", (string?)json?["error"]);
+    }
+
     [Fact(DisplayName = "§Permission Endpoint — missing action is a 400")]
     public async Task Permission_MissingAction_BadRequest()
     {
         using var client = Client();
-        var body = new JsonObject { ["mission"] = MissionClaim() };
+        var body = new JsonObject { ["mission_s256"] = _missionS256 };
 
         var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -120,27 +134,117 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
     public async Task Audit_Valid_Created()
     {
         using var client = Client();
-        var body = new JsonObject { ["mission"] = MissionClaim(), ["action"] = "WebSearch" };
+        var body = new JsonObject { ["mission_s256"] = _missionS256, ["action"] = "WebSearch" };
 
         var response = await client.PostAsync("https://localhost/audit", JsonContent(body));
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Interaction Endpoint — a question returns an answer field")]
-    public async Task Interaction_Question_ReturnsAnswer()
+    [Theory(DisplayName = "§Interaction Endpoint Errors — the default relay returns 424 interaction_unavailable")]
+    [InlineData("interaction")]
+    [InlineData("payment")]
+    [InlineData("question")]
+    public async Task Interaction_DefaultRelay_ReturnsUnavailable(string type)
     {
         using var client = Client();
         var body = new JsonObject
         {
-            ["type"] = "question",
-            ["question"] = "Refundable?",
-            ["mission"] = MissionClaim(),
+            ["type"] = type,
+            ["mission_s256"] = _missionS256,
         };
+        if (type == "question")
+        {
+            body["question"] = "Refundable?";
+        }
+        else
+        {
+            body["url"] = "https://booking.example/confirm";
+            body["code"] = "X7K2-M9P4";
+        }
 
         var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.FailedDependency, response.StatusCode);
         var json = await ReadJson(response);
-        Assert.NotNull(json?["answer"]);
+        Assert.Equal("interaction_unavailable", (string?)json?["error"]);
+    }
+
+    [Theory(DisplayName = "§Permission/Audit Endpoint — present non-object parameters/result are invalid_request")]
+    [InlineData("permission", "parameters", "null")]
+    [InlineData("permission", "parameters", "\"send all files\"")]
+    [InlineData("audit", "parameters", "[]")]
+    [InlineData("audit", "result", "null")]
+    public async Task GovernanceObjects_PresentNonObject_ReturnsInvalidRequest(string endpoint, string property, string jsonValue)
+    {
+        using var client = Client();
+        var json = endpoint == "permission"
+            ? $$"""{"action":"WebSearch","mission_s256":"{{_missionS256}}","{{property}}":{{jsonValue}}}"""
+            : $$"""{"action":"WebSearch","mission_s256":"{{_missionS256}}","{{property}}":{{jsonValue}}}""";
+
+        using var response = await client.PostAsync("https://localhost/" + endpoint,
+            new StringContent(json, Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_request", (string?)(await ReadJson(response))?["error"]);
+    }
+
+    [Fact(DisplayName = "§Audit Endpoint — object parameters and result are preserved in the mission log")]
+    public async Task Audit_ObjectParametersAndResult_AreLogged()
+    {
+        using var client = Client();
+        var body = new JsonObject
+        {
+            ["mission_s256"] = _missionS256,
+            ["action"] = "WebSearch",
+            ["parameters"] = new JsonObject { ["query"] = "flights" },
+            ["result"] = new JsonObject { ["status"] = "completed" },
+        };
+
+        using var response = await client.PostAsync("https://localhost/audit", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var entries = await _host!.Services.GetRequiredService<IMissionLog>().ReadAsync(_missionS256);
+        var audit = Assert.Single(entries, entry => entry.Kind == MissionLogEntryKind.Audit);
+        Assert.Equal("flights", (string?)audit.Parameters?["query"]);
+        Assert.Equal("completed", (string?)audit.Result?["status"]);
+    }
+
+    [Fact(DisplayName = "§Permission Endpoint — object parameters are preserved in mission log decisions")]
+    public async Task Permission_ObjectParameters_AreLogged()
+    {
+        using var client = Client();
+        var body = new JsonObject
+        {
+            ["action"] = "WebSearch",
+            ["mission_s256"] = _missionS256,
+            ["parameters"] = new JsonObject { ["query"] = "flights" },
+        };
+
+        using var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var entries = await _host!.Services.GetRequiredService<IMissionLog>().ReadAsync(_missionS256);
+        var permission = Assert.Single(entries, entry => entry.Kind == MissionLogEntryKind.Permission);
+        Assert.Equal("flights", (string?)permission.Parameters?["query"]);
+    }
+
+    [Fact(DisplayName = "§Person Server Governance — conflicting manual governance mapping fails fast")]
+    public void MapGovernance_ConflictingPath_Throws()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddAAuthGovernance();
+        builder.Services.AddRouting();
+        var app = builder.Build();
+
+        app.MapAAuthGovernance(options => options.PersonServer = Ps);
+
+        var failure = Assert.Throws<InvalidOperationException>(() =>
+            app.MapAAuthGovernance(options =>
+            {
+                options.PersonServer = Ps;
+                options.InteractionEndpointPath = "/other-interaction";
+            }));
+        Assert.Contains("conflicting declaration", failure.Message, StringComparison.Ordinal);
     }
 
     [Fact(DisplayName = "§Mission Status Errors — permission on a terminated mission is 403 mission_terminated")]
@@ -148,10 +252,12 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
     {
         // Terminate the seeded mission, then request permission under it.
         var store = _host!.Services.GetRequiredService<IMissionStore>();
-        await store.SetStateAsync(_missionS256, MissionState.Terminated);
+        var (blob, s256) = BuildMission("aauth:assistant@agent.example", "WebSearch");
+        await store.SaveAsync(new StoredMission(s256, MissionPs, "aauth:assistant@agent.example", blob));
+        await store.TerminateAsync(MissionPs, s256, AAuthConstants.MissionTerminationReasons.Revoked);
 
         using var client = Client();
-        var body = new JsonObject { ["action"] = "WebSearch", ["mission"] = MissionClaim() };
+        var body = new JsonObject { ["action"] = "WebSearch", ["mission_s256"] = s256 };
 
         var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -159,11 +265,9 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         var json = await ReadJson(response);
         Assert.Equal("mission_terminated", (string?)json?["error"]);
         Assert.Equal("terminated", (string?)json?["mission_status"]);
+        Assert.Equal("revoked", (string?)json?["termination_reason"]);
         Assert.False(json!.ContainsKey("detail"));
         Assert.False(response.Headers.Contains("Signature-Error"));
-
-        // Restore active state so test ordering does not affect other cases.
-        await store.SetStateAsync(_missionS256, MissionState.Active);
     }
 
     [Theory]
@@ -175,11 +279,7 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         using var client = Client();
         var body = new JsonObject
         {
-            ["mission"] = new JsonObject
-            {
-                ["approver"] = Approver,
-                ["s256"] = Mission.ComputeS256(Encoding.UTF8.GetBytes("unknown mission")),
-            },
+            ["mission_s256"] = Mission.ComputeS256(Encoding.UTF8.GetBytes("unknown mission")),
             ["action"] = "WebSearch",
             ["type"] = "question",
             ["question"] = "Refundable?",
@@ -187,9 +287,9 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
 
         using var response = await client.PostAsync("https://localhost/" + endpoint, JsonContent(body));
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-        Assert.Equal("invalid_mission", (string?)(await ReadJson(response))?["error"]);
+        Assert.Equal("mission_not_found", (string?)(await ReadJson(response))?["error"]);
         Assert.False(response.Headers.Contains("Signature-Error"));
     }
 
@@ -197,35 +297,118 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
     [InlineData("permission", "foreign")]
     [InlineData("audit", "foreign")]
     [InlineData("mission-interaction", "foreign")]
-    [InlineData("permission", "approver")]
-    [InlineData("audit", "approver")]
-    [InlineData("mission-interaction", "approver")]
     [InlineData("permission", "anonymous")]
     [InlineData("audit", "anonymous")]
     [InlineData("mission-interaction", "anonymous")]
     [InlineData("permission", "terminated")]
     [InlineData("audit", "terminated")]
     [InlineData("mission-interaction", "terminated")]
+    [InlineData("permission", "expired")]
+    [InlineData("audit", "expired")]
+    [InlineData("mission-interaction", "expired")]
+    [InlineData("mission-action", "foreign")]
+    [InlineData("mission-action", "terminated")]
+    [InlineData("mission-action", "expired")]
     public async Task MissionAuthorization_RejectsInvalidContext(string endpoint, string scenario)
     {
         using var client = Client();
         if (scenario == "foreign") client.DefaultRequestHeaders.Add("Test-Agent", "aauth:foreign@agent.example");
         if (scenario == "anonymous") client.DefaultRequestHeaders.Add("Test-No-Identity", "true");
+        var store = _host!.Services.GetRequiredService<IMissionStore>();
         if (scenario == "terminated")
-            await _host!.Services.GetRequiredService<IMissionStore>().SetStateAsync(_missionS256, MissionState.Terminated);
-        var reference = MissionClaim();
-        if (scenario == "approver") reference["approver"] = "https://foreign.example";
+            await store.TerminateAsync(MissionPs, _missionS256, AAuthConstants.MissionTerminationReasons.Revoked);
+        if (scenario == "expired")
+            await store.SaveAsync((await store.GetAsync(MissionPs, _missionS256))! with { ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1) });
         var body = new JsonObject
         {
-            ["mission"] = reference, ["action"] = "WebSearch", ["type"] = "question", ["question"] = "Refundable?",
+            ["mission_s256"] = _missionS256, ["action"] = endpoint == "mission-action" ? "update" : "WebSearch",
+            ["type"] = "question", ["question"] = "Refundable?", ["description"] = "Also a hotel",
         };
-        using var response = await client.PostAsync("https://localhost/" + endpoint, JsonContent(body));
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        var expected = scenario == "terminated" ? "mission_terminated"
-            : scenario == "anonymous" ? "invalid_carrier_token" : "invalid_mission";
-        Assert.Equal(expected, (string?)(await ReadJson(response))?["error"]);
+        var path = endpoint == "mission-action" ? "mission/" + _missionS256 : endpoint;
+        using var response = await client.PostAsync("https://localhost/" + path, JsonContent(body));
+        // A foreign mission is indistinguishable from a missing one (§Mission Endpoint Errors).
+        Assert.Equal(scenario == "foreign" ? HttpStatusCode.NotFound : HttpStatusCode.Forbidden, response.StatusCode);
+        var expected = scenario is "terminated" or "expired" ? "mission_terminated"
+            : scenario == "anonymous" ? "invalid_request" : "mission_not_found";
+        var rejected = await ReadJson(response);
+        Assert.Equal(expected, (string?)rejected?["error"]);
+        if (scenario is "terminated" or "expired")
+        {
+            Assert.Equal("terminated", (string?)rejected?["mission_status"]);
+            Assert.Equal(scenario == "expired" ? "expired" : "revoked", (string?)rejected?["termination_reason"]);
+        }
         Assert.False(response.Headers.Contains("Signature-Error"));
         Assert.Empty(await _host!.Services.GetRequiredService<IMissionLog>().ReadAsync(_missionS256));
+    }
+
+    [Fact(DisplayName = "§Mission Endpoint Errors — absent, foreign-agent and foreign-PS missions are indistinguishable")]
+    public async Task MissionNotFound_ResponsesAreIdentical()
+    {
+        var spy = new SpyMissionStore();
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddAAuthGovernance();
+        builder.Services.AddSingleton<IMissionStore>(spy);
+        builder.Services.AddRouting();
+        var app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            context.Features.Set(new AAuthVerificationResult
+            {
+                Level = AAuthLevel.Identified, Scheme = "jwt", IssuerVerified = true,
+                TokenType = AAuthTokenType.AgentToken,
+                Agent = "aauth:assistant@agent.example",
+                AgentPersonServer = Ps,
+                CoveredComponents = new HashSet<string> { "@method", "@authority", "@path", "signature-key", "content-type", "content-digest" },
+            });
+            await next();
+        });
+        app.MapAAuthGovernance(options => options.PersonServer = Ps);
+        await app.StartAsync();
+        await using var _ = app;
+        using var client = app.GetTestServer().CreateClient();
+        var absentS256 = Mission.ComputeS256(Encoding.UTF8.GetBytes("absent"));
+        var foreignAgentS256 = Mission.ComputeS256(Encoding.UTF8.GetBytes("foreign-agent"));
+        var foreignPsS256 = Mission.ComputeS256(Encoding.UTF8.GetBytes("foreign-ps"));
+        await spy.SaveAsync(new StoredMission(foreignAgentS256, Ps, "aauth:other@agent.example", ReadOnlyMemory<byte>.Empty));
+        await spy.SaveAsync(new StoredMission(foreignPsS256, "https://other-ps.example", "aauth:assistant@agent.example", ReadOnlyMemory<byte>.Empty));
+
+        var absent = await CaptureNotFoundAsync(client, absentS256);
+        var foreignAgent = await CaptureNotFoundAsync(client, foreignAgentS256);
+        var foreignPs = await CaptureNotFoundAsync(client, foreignPsS256);
+
+        Assert.Equal(absent, foreignAgent);
+        Assert.Equal(absent, foreignPs);
+    }
+
+    [Fact(DisplayName = "§Mission Endpoint Errors — absent and foreign missions take the same default store operations")]
+    public async Task MissionNotFound_AbsentAndForeignUseSameStoreOperations()
+    {
+        var store = new SpyMissionStore();
+        var foreignS256 = Mission.ComputeS256(Encoding.UTF8.GetBytes("foreign-agent"));
+        await store.SaveAsync(new StoredMission(foreignS256, Ps, "aauth:other@agent.example", ReadOnlyMemory<byte>.Empty));
+        store.ResetCounts();
+
+        var absent = await MissionStatusEvaluator.EvaluateAsync(store, Ps,
+            Mission.ComputeS256(Encoding.UTF8.GetBytes("absent")), "aauth:assistant@agent.example", TimeProvider.System);
+        var absentCounts = store.Counts;
+        store.ResetCounts();
+        var foreign = await MissionStatusEvaluator.EvaluateAsync(store, Ps,
+            foreignS256, "aauth:assistant@agent.example", TimeProvider.System);
+
+        Assert.Equal(MissionStatusEvaluationKind.NotFound, absent.Kind);
+        Assert.Equal(MissionStatusEvaluationKind.NotFound, foreign.Kind);
+        Assert.Equal(absentCounts, store.Counts);
+    }
+
+    private static async Task<(HttpStatusCode Status, string? ContentType, string Body, string Headers)> CaptureNotFoundAsync(
+        HttpClient client, string s256)
+    {
+        using var response = await client.PostAsync("https://localhost/permission",
+            JsonContent(new JsonObject { ["action"] = "WebSearch", ["mission_s256"] = s256 }));
+        return (response.StatusCode, response.Content.Headers.ContentType?.MediaType,
+            await response.Content.ReadAsStringAsync(),
+            string.Join("\n", response.Headers.Select(h => h.Key + ":" + string.Join(",", h.Value)).Order(StringComparer.Ordinal)));
     }
 
     private static (byte[] Blob, string S256) BuildMission(string agent, params string[] approvedTools)
@@ -237,7 +420,6 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         }
         var blob = new JsonObject
         {
-            ["approver"] = Approver,
             ["agent"] = agent,
             ["approved_at"] = "2026-04-07T14:30:00Z",
             ["description"] = "# Plan a trip",
@@ -252,4 +434,27 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
 
     private static async Task<JsonObject?> ReadJson(HttpResponseMessage response)
         => JsonNode.Parse(await response.Content.ReadAsStringAsync()) as JsonObject;
+
+    private sealed class SpyMissionStore : IMissionStore
+    {
+        private readonly InMemoryMissionStore _inner = new();
+        public (int Gets, int Terminates) Counts { get; private set; }
+
+        public void ResetCounts() => Counts = default;
+
+        public Task SaveAsync(StoredMission mission, CancellationToken ct = default)
+            => _inner.SaveAsync(mission, ct);
+
+        public Task<StoredMission?> GetAsync(string personServer, string s256, CancellationToken ct = default)
+        {
+            Counts = (Counts.Gets + 1, Counts.Terminates);
+            return _inner.GetAsync(personServer, s256, ct);
+        }
+
+        public Task TerminateAsync(string personServer, string s256, string terminationReason, CancellationToken ct = default)
+        {
+            Counts = (Counts.Gets, Counts.Terminates + 1);
+            return _inner.TerminateAsync(personServer, s256, terminationReason, ct);
+        }
+    }
 }

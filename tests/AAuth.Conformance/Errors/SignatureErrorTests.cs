@@ -35,7 +35,7 @@ public class SignatureErrorTests : IAsyncLifetime
         builder.WebHost.UseTestServer();
         builder.Services.AddSingleton(new AAuthVerifier());
         var app = builder.Build();
-        app.UseAAuthVerification(AAuthVerificationOptions.Generic());
+        app.UseAAuthVerification(options => options.AcceptedSchemes = AAuthVerificationOptions.Generic().AcceptedSchemes);
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
         _host = app;
@@ -52,13 +52,13 @@ public class SignatureErrorTests : IAsyncLifetime
 
     private System.Net.Http.HttpClient Client => _host!.GetTestClient();
 
-    [Fact(DisplayName = "§Authentication Errors — missing headers returns invalid_request")]
-    public async Task MissingHeaders_Returns_InvalidRequest()
+    [Fact(DisplayName = "§Authentication Errors — missing headers returns invalid_signature")]
+    public async Task MissingHeaders_Returns_InvalidSignature()
     {
         var response = await Client.GetAsync("/protected");
         Assert.Equal(StatusCodes.Status401Unauthorized, (int)response.StatusCode);
         Assert.True(response.Headers.TryGetValues(SignatureError.HeaderName, out var values));
-        Assert.Contains("invalid_request", string.Join(",", values));
+        Assert.Equal("error=invalid_signature", Assert.Single(values));
     }
 
     [Fact(DisplayName = "§Authentication Errors — bad Signature-Key returns invalid_key")]
@@ -81,13 +81,13 @@ public class SignatureErrorTests : IAsyncLifetime
     public async Task StaleCreated_Returns_InvalidSignature()
     {
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AAuth.Tokens.AgentTokenBuilder
+        var agentToken = await new AAuth.Tokens.AgentTokenBuilder
         {
             Issuer = "https://ap.example",
             Subject = "aauth:test@ap.example",
             KeyId = "k1",
             Key = agentKey,
-        }.Build();
+        }.BuildAsync();
         var signatureKey = SignatureKeyHeader.FormatJwt(agentToken);
 
         var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "/protected");
@@ -102,6 +102,29 @@ public class SignatureErrorTests : IAsyncLifetime
         Assert.Equal(StatusCodes.Status401Unauthorized, (int)response.StatusCode);
         Assert.True(response.Headers.TryGetValues(SignatureError.HeaderName, out var values));
         Assert.Contains("invalid_signature", string.Join(",", values));
+    }
+
+    [Theory(DisplayName = "§Verification — created outside the window: stale is invalid_signature, ahead is clock_skew")]
+    [InlineData(-3600, "error=invalid_signature")]
+    [InlineData(3600, "error=clock_skew")]
+    public async Task CreatedOutsideWindow_ReturnsDistinctCodes(int offsetSeconds, string expected)
+    {
+        var agentToken = await new AAuth.Tokens.AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = "aauth:test@ap.example",
+            KeyId = "k1",
+            Key = AAuthKey.Generate(),
+        }.BuildAsync();
+        var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "/protected");
+        request.Headers.TryAddWithoutValidation("Signature-Key", SignatureKeyHeader.FormatJwt(agentToken));
+        var created = DateTimeOffset.UtcNow.AddSeconds(offsetSeconds).ToUnixTimeSeconds();
+        request.Headers.TryAddWithoutValidation("Signature-Input", $"sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created={created}");
+        request.Headers.TryAddWithoutValidation("Signature", "sig=:AAAA:");
+
+        var response = await Client.SendAsync(request);
+        Assert.Equal(StatusCodes.Status401Unauthorized, (int)response.StatusCode);
+        Assert.Equal(expected, Assert.Single(response.Headers.GetValues(SignatureError.HeaderName)));
     }
 
     [Fact(DisplayName = "§Signature-Error — format round-trips all codes")]

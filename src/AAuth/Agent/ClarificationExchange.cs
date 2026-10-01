@@ -38,14 +38,18 @@ public sealed class ClarificationResponse
     /// <summary>The replacement resource token (for <see cref="Kind.Update"/>).</summary>
     public string? ResourceToken { get; }
 
+    /// <summary>The token presented to obtain the replacement resource token (for <see cref="Kind.Update"/>).</summary>
+    public string? PresentedToken { get; }
+
     /// <summary>Optional justification for an updated request.</summary>
     public string? Justification { get; }
 
-    private ClarificationResponse(Kind action, string? markdown, string? resourceToken, string? justification)
+    private ClarificationResponse(Kind action, string? markdown, string? resourceToken, string? presentedToken, string? justification)
     {
         Action = action;
         Markdown = markdown;
         ResourceToken = resourceToken;
+        PresentedToken = presentedToken;
         Justification = justification;
     }
 
@@ -53,22 +57,24 @@ public sealed class ClarificationResponse
     public static ClarificationResponse Respond(string markdown)
     {
         ArgumentException.ThrowIfNullOrEmpty(markdown);
-        return new ClarificationResponse(Kind.Respond, markdown, null, null);
+        return new ClarificationResponse(Kind.Respond, markdown, null, null, null);
     }
 
     /// <summary>
     /// Replace the original request with a new resource token (e.g. reduced
-    /// scope). A <paramref name="justification"/> is optional but RECOMMENDED.
+    /// scope) and the <paramref name="presentedToken"/> used to obtain it. A
+    /// <paramref name="justification"/> is optional but RECOMMENDED.
     /// </summary>
-    public static ClarificationResponse Update(string resourceToken, string? justification = null)
+    public static ClarificationResponse Update(string resourceToken, string presentedToken, string? justification = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(resourceToken);
-        return new ClarificationResponse(Kind.Update, null, resourceToken, justification);
+        ArgumentException.ThrowIfNullOrEmpty(presentedToken);
+        return new ClarificationResponse(Kind.Update, null, resourceToken, presentedToken, justification);
     }
 
     /// <summary>Withdraw the request.</summary>
     public static ClarificationResponse Cancel()
-        => new(Kind.Cancel, null, null, null);
+        => new(Kind.Cancel, null, null, null, null);
 }
 
 /// <summary>
@@ -133,7 +139,7 @@ public sealed class ClarificationExchange
                 await RespondAsync(response.Markdown!, cancellationToken).ConfigureAwait(false);
                 break;
             case ClarificationResponse.Kind.Update:
-                await UpdateRequestAsync(response.ResourceToken!, response.Justification, cancellationToken)
+                await UpdateRequestAsync(response.ResourceToken!, response.PresentedToken!, response.Justification, cancellationToken)
                     .ConfigureAwait(false);
                 break;
             case ClarificationResponse.Kind.Cancel:
@@ -154,13 +160,19 @@ public sealed class ClarificationExchange
         await PostAsync(body, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>POST an updated resource token (and optional justification) to the pending URL.</summary>
+    /// <summary>POST an updated resource token, its presented token and optional justification to the pending URL.</summary>
     public async Task UpdateRequestAsync(
-        string resourceToken, string? justification = null, CancellationToken cancellationToken = default)
+        string resourceToken, string presentedToken, string? justification = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(resourceToken);
+        ArgumentException.ThrowIfNullOrEmpty(presentedToken);
         EnterRound();
-        var body = new JsonObject { ["action"] = "updated_request", ["resource_token"] = resourceToken };
+        var body = new JsonObject
+        {
+            ["action"] = "updated_request",
+            ["resource_token"] = resourceToken,
+            ["presented_token"] = presentedToken,
+        };
         if (!string.IsNullOrEmpty(justification))
         {
             body["justification"] = justification;
@@ -201,6 +213,6 @@ public sealed class ClarificationExchange
     {
         if (response.StatusCode != System.Net.HttpStatusCode.Forbidden) return;
         var state = await DeferredExchange.TryReadMissionTerminatedAsync(response, cancellationToken).ConfigureAwait(false);
-        if (state.Terminated) throw new AAuth.Errors.AAuthMissionTerminatedException(state.MissionStatus);
+        if (state.Terminated) throw new AAuth.Errors.AAuthMissionTerminatedException(state.MissionStatus, state.TerminationReason);
     }
 }

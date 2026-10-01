@@ -18,13 +18,15 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
 {
     private readonly InMemoryPersonPendingStore _inner = new();
     private readonly ConsentStore _consent;
+    private readonly ConsentRegistry _registry;
     private readonly IReadOnlyList<string> _demoRoles;
     private readonly IReadOnlyList<string> _demoGroups;
 
     public ConsentBridgePersonPendingStore(
-        ConsentStore consent, IReadOnlyList<string> demoRoles, IReadOnlyList<string> demoGroups)
+        ConsentStore consent, ConsentRegistry registry, IReadOnlyList<string> demoRoles, IReadOnlyList<string> demoGroups)
     {
         _consent = consent;
+        _registry = registry;
         _demoRoles = demoRoles;
         _demoGroups = demoGroups;
     }
@@ -32,10 +34,10 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
     public PersonPendingEntry Add(
         string resourceUrl, string scope, string agentId, IAAuthKey? agentConfirmationKey,
         DateTimeOffset agentTokenExpiresAt,
-        JsonObject? upstreamAct = null, MissionClaim? mission = null,
+        string? missionS256 = null,
         DateTimeOffset? authorizationExpiresAt = null)
         => _inner.Add(resourceUrl, scope, agentId, agentConfirmationKey, agentTokenExpiresAt,
-            upstreamAct, mission, authorizationExpiresAt);
+            missionS256, authorizationExpiresAt);
 
     public PersonPendingEntry? Get(string id)
     {
@@ -46,18 +48,21 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
         {
             // Non-mission three-party entry awaiting consent (PS mints): flip to
             // allowed once the demo ConsentStore records it.
-            if (entry is { MissionGate: false, Mission: null, AgentConfirmationKey: not null, Status: PersonPendingStatus.Pending }
+            if (entry is { MissionGate: false, MissionS256: null, AgentConfirmationKey: not null, Status: PersonPendingStatus.Pending }
                 && !entry.Lifecycle.Delivered && !entry.Lifecycle.Cancelled && !entry.Lifecycle.InvalidCode
                 && entry.PendingExpiresAt > DateTimeOffset.UtcNow
                 && _consent.IsConsented(entry.ConsentAgentId, entry.ResourceUrl, entry.Scope, entry.Account, entry.ResourceKeyThumbprint))
             {
-                var isAdmin = SampleIdentityClaimsAsserter.IsAdminAgent(entry.ConsentAgentId);
+                var isAdmin = entry.OwnerIssuer is not null
+                    && SampleIdentityClaimsAsserter.IsAdminAgent(entry.OwnerIssuer, entry.ConsentAgentId);
+                entry.PersonKey = SampleIdentityClaimsAsserter.DemoPersonKey;
                 entry.Subject = SampleIdentityClaimsAsserter.DirectedSubject(entry.ResourceUrl);
                 entry.Tenant = null;
                 entry.Roles = isAdmin ? _demoRoles : null;
                 entry.Groups = isAdmin ? _demoGroups : null;
                 entry.AdditionalClaims = null;
                 entry.Status = PersonPendingStatus.Allowed;
+                _registry.MarkDecided(entry.Id, ConsentDecider.Admin);
             }
             return entry;
         }
@@ -67,10 +72,10 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
     public PersonPendingEntry? GetByCode(string code) => _inner.GetByCode(code);
 
     public void MarkAllowed(
-        string id, string subject, string? tenant = null,
+        string id, AAuthPersonKey personKey, string? subject = null, string? tenant = null,
         IReadOnlyList<string>? roles = null, IReadOnlyList<string>? groups = null,
         IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null)
-        => _inner.MarkAllowed(id, subject, tenant, roles, groups, additionalClaims);
+        => _inner.MarkAllowed(id, personKey, subject, tenant, roles, groups, additionalClaims);
 
     public void MarkDenied(string id, string reason) => _inner.MarkDenied(id, reason);
 }

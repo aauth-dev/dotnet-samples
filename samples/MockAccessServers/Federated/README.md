@@ -9,10 +9,10 @@ A minimal AAuth Access Server (AS) for the four-party (federated) access demo an
 The Access Server is the fourth party in **federated access**. In this mode the
 resource issues a resource token whose `aud` is the AS (not the Person Server).
 The PS does not assert access itself — it *federates* to the AS by POSTing the
-resource token (and the agent token) to the AS `token_endpoint`. The AS
+resource token (and the agent token) to the AS `auth_token_endpoint`. The AS
 evaluates policy and mints the auth token.
 
-- Serves AS discovery metadata at `/.well-known/aauth-access.json` (with `token_endpoint`).
+- Serves AS discovery metadata at `/.well-known/aauth-access.json` (with `auth_token_endpoint`).
 - Serves its signing JWKS at `/.well-known/jwks.json`.
 - On `POST /token` (signed by the PS via the `jwks_uri` scheme):
   1. Verifies the RFC 9421 signature and pins the caller's `jwks_uri` host to a
@@ -38,15 +38,16 @@ evaluates policy and mints the auth token.
   6. For a deferred decision, returns `202` and parks it in an
      `IAccessPendingStore` — `requirement=interaction` (stub consent screen or
      Keycloak login) or `requirement=claims` with the claim names in the body's
-     `required_claims` (§Claims Required); the PS then pushes a directed `sub` +
-     claims to the `Location` and resumes polling.
+     `required_claims` (§Claims Required); the PS then pushes the requested
+     identity claims other than `sub` to the `Location` and resumes polling.
   7. Mints an `aa-auth+jwt` with `dwk = aauth-access.json`, `iss` = this AS,
      `aud` = the resource, bound to the agent's key.
 
 The whole `POST /token` + `GET|POST /pending/{id}` pipeline (signature/token
 verification, the §Claims Required composition, deferred polling, minting)
-ships as the SDK host helper `MapAAuthAccessServer`; this sample only supplies
-configuration, the `IAccessPolicy`, and (for Keycloak) the browser-facing
+ships as the SDK host helper `MapAAuthAccessServer`, registered with
+`builder.Services.AddAAuthAccessServer(...)`; this sample only supplies
+configuration, the `IAccessPolicy` (`.UsePolicy(...)`), and (for Keycloak) the browser-facing
 `/interaction` endpoints.
 
 The auth token's `dwk = aauth-access.json` is what tells a resource the token
@@ -67,7 +68,7 @@ dotnet run --project samples/MockAccessServers/Federated
 | `AAuth:SignatureWindow` | `60` | Max age (seconds) for the RFC 9421 signature. |
 | `MockAccessServer:TrustedPersonServers` | `[http://localhost:5100]` | Person Servers allowed to federate (matched by `jwks_uri` host). |
 | `AccessServer:PolicyProvider` | `stub` | Policy engine: `stub` or `keycloak`. |
-| `AccessServer:RequireClaims` | `[]` | (`stub` only) identity claims to demand via §Claims Required, e.g. `AccessServer__RequireClaims__0=email`. |
+| `AccessServer:RequireClaims` | `[]` | (`stub` only) identity claims to demand via §Claims Required, e.g. `AccessServer__RequireClaims__0=email`. Protocol-owned names such as `sub` are ignored/rejected; the presented token already identifies the person. |
 | `AccessServer:Keycloak:Authority` | `http://localhost:8080/realms/aauth` | Keycloak realm (OIDC issuer). |
 | `AccessServer:Keycloak:ClientId` | `aauth-access-server` | Confidential client the AS authenticates as. |
 | `AccessServer:Keycloak:ClientSecret` | — | Client secret for the AS client. |
@@ -119,6 +120,9 @@ when the AP restarts). Run `make agent-reset` to clear it manually.
 ## Scope
 
 This sample wires the SDK host helper `MapAAuthAccessServer` to a pluggable
-policy seam (`IAccessPolicy`, an SDK type in `AAuth.Server`) with a `stub` and a
-Keycloak-backed interactive provider, plus the shared `IAccessPendingStore` that
-parks deferred (interaction / §Claims Required) decisions.
+policy seam (`IAccessPolicy`, an SDK type in `AAuth.Server`, registered with
+`.UsePolicy(...)` on the Access Server builder) with a `stub` and a
+Keycloak-backed interactive provider, plus the SDK's default in-memory
+`IAccessPendingStore` that parks deferred (interaction / §Claims Required)
+decisions; its `/interaction` endpoints inject it with
+`[FromKeyedServices(AAuthAccessServerBuilder.DefaultName)]`.

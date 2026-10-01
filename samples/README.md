@@ -8,29 +8,29 @@ R3) live under [MockAccessServers/](MockAccessServers/).
 | Sample | Port | Description |
 |--------|------|-------------|
 | [Profile](MockResourceServers/Profile/) | 5000 | JWT identity access plus explicitly generic HWK, direct JWKS and naming-JWT demonstrations |
-| [Calendar](MockResourceServers/Calendar/) | 5001 | PS-Asserted (three-party) resource server — `/events` (`calendar.read`), `/events/write` (`calendar.write`), `/events/admin` (role `calendar.owner`) |
+| [Calendar](MockResourceServers/Calendar/) | 5001 | PS authorization (three-party) resource server — `/events` (`calendar.read`), `/events/write` (`calendar.write`), `/events/admin` (role `calendar.owner`) |
 | [Trips](MockResourceServers/Trips/) | 5002 | Mission-aware resource server — `/trips` (`trips.read`), `/trips/book` (`trips.book`) |
-| [Wallet](MockResourceServers/Wallet/) | 5003 | Federated (four-party) resource server — `/wallet` (`wallet.read`), `/wallet/charge` (`wallet.charge`) |
-| [Inbox](MockResourceServers/Inbox/) | 5004 | Resource-Managed (two-party) resource server — manages authorization itself via its own consent page; issues an opaque `AAuth-Access` token (`GET /messages`, `POST /authorize`) |
-| [Bookings](MockResourceServers/Bookings/) | 5005 | Rich Resource Requests (R3, four-party) resource server — dining & experiences reservations via the **OpenAPI** vocabulary; `searchAvailability`/`holdReservation` → `r3_granted`, `confirmReservation` → `r3_conditional` (per-call proposal) |
-| [Catalog](MockResourceServers/Catalog/README.md) | 5006 | Travel catalog reads with service-qualified R3 grants and colliding operation IDs |
+| [Wallet](MockResourceServers/Wallet/) | 5003 | Federated (four-party) resource server — `/wallet` (`wallet.read`), `/wallet/charge` (`wallet.charge`), `/wallet/review` (`wallet.review`) |
+| [Inbox](MockResourceServers/Inbox/) | 5004 | Resource-managed (two-party) resource server — manages authorization itself via its own consent page; issues an opaque `AAuth-Access` token (`GET /messages`) |
+| [Bookings](MockResourceServers/Bookings/) | 5005 | Rich Resource Requests (R3, four-party) resource server — dining & experiences reservations via the **OpenAPI** vocabulary; `searchAvailability`/`holdReservation` → `r3_granted`, `confirmReservation` → `r3_per_call` (per-call proposal) |
+| [Catalog](MockResourceServers/Catalog/README.md) | 5006 | Travel catalog reads through one merged OpenAPI definition with renamed colliding operation IDs |
 | [Documents](MockResourceServers/Documents/README.md) | 5007 | Resource release permission before PS consent, with account-bound signed download |
-| [Concierge](Concierge/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
+| [Concierge](Concierge/) | 5200 | Intermediate service — call chaining with `upstream_token` delegation and no `act` chain |
 | [MissionAgent](MissionAgent/) | — | CLI agent — drives the optional, orthogonal **agent governance** layer: proposes a mission, asks per-action permission, records audit, and relays interactions through a PS (§Agent Governance) |
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens, federates to an Access Server. **Sample only — not part of the AAuth SDK.** |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
 | [MockAccessServer](MockAccessServers/Federated/) | 5500 | Reference Access Server (Federated) — the fourth party in federated access; evaluates policy (stub or Keycloak) and mints `aa-auth+jwt` (`dwk=aauth-access.json`). **Sample only — not part of the AAuth SDK.** |
-| [R3 Access Server](MockAccessServers/R3/) | 5501 | Dedicated Access Server for Rich Resource Requests — fetches/hash-verifies R3 documents, splits granted vs conditional by policy, mints R3 auth tokens (guards Bookings). **Sample only — not part of the AAuth SDK.** |
+| [R3 Access Server](MockAccessServers/R3/) | 5501 | Dedicated Access Server for Rich Resource Requests — fetches/hash-verifies R3 documents, splits granted vs per-call by policy, mints R3 auth tokens (guards Bookings). **Sample only — not part of the AAuth SDK.** |
 | [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises every AAuth flow step by step, including the four-party federated flow |
-| [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwks_uri, jkt-jwt, jwt, call chain, federated four-party) plus the resource-managed Inbox |
+| [SampleApp](SampleApp/) | 5240 | Golden example — pages for AAuth `jwt` flows, generic HWK/direct-JWKS/JKT-JWT demonstrations, call chain, federated four-party, R3, Events, Documents and the resource-managed Inbox |
 | [AgentConsole](AgentConsole/) | — | CLI agent — signs requests, handles challenges, exchanges with a PS |
 | [EventAgent](EventAgent/README.md) | None | Single-shot Events CLI; the shared EventSupport client also powers both apps' `/events` pages |
-| [LiveWhoAmITest](LiveWhoAmITest/) | 5199 | Live interop test against `whoami.aauth.dev` + `person.hello.coop` — exercises all 3 protocol modes over a public tunnel |
+| [LiveWhoAmITest](LiveWhoAmITest/) | 5199 | Live interop test against `whoami.aauth.dev` + `person.hello.coop` — exercises unsigned challenge, agent identity and three-party PS authorization over a public tunnel |
 
 ## Quick Start
 
-Both primary apps expose `/wallet-protocol` (AS clarification, direct-AS chaining,
-issuer-qualified revocation), `/catalog-gateway`, `/documents` and `/events`. See the
+Both primary apps expose `/wallet-protocol` (AS clarification, chaining an AS-issued grant,
+federated revocation), `/catalog-gateway`, `/documents` and `/events`. See the
 [Wallet guide](../docs/workflows/wallet-protocol.md),
 [Document Release guide](../docs/workflows/document-release.md),
 [Catalog guide](../docs/workflows/catalog-gateway.md) and
@@ -70,7 +70,7 @@ using var client = new AAuthClientBuilder(key)
 
 Injected clients require `AAuthHttpTransport.AttachPolicy` and an explicit
 transport contract. `EnforcesEgressPolicy` is a caller obligation to enforce
-DNS/address admission and connection pinning and disable proxies and redirects;
+DNS/address admission and connection pinning, TLS 1.2-or-later, and disabled proxies and redirects;
 attaching it cannot repair an opaque handler. `InProcessOnly` is for fixtures
 that perform no network I/O or forwarding. Cross-origin JWKS links require
 an explicit source/target origin pair in `AAuthEgressPolicy`.
@@ -129,10 +129,12 @@ The fastest way to run all samples together:
 make demo
 ```
 
-The `demo`, `demo-mission` and `demo-keycloak` targets keep persistent draft-10
+The `demo`, `demo-mission` and `demo-keycloak` targets keep persistent
 sample keys, enrollment records and databases under
-`$XDG_DATA_HOME/aauth-samples/v10/home` (or
-`~/.local/share/aauth-samples/v10/home` when `XDG_DATA_HOME` is unset).
+`$XDG_DATA_HOME/aauth-samples/demo-home` (or
+`~/.local/share/aauth-samples/demo-home` when `XDG_DATA_HOME` is unset).
+State left at the earlier `aauth-samples/v10/home` location is moved there on
+the first run.
 They set the services' `HOME` and `XDG_DATA_HOME` to that isolated location while
 reusing your existing .NET and NuGet caches. Earlier `~/.aauth` keys are left
 untouched; keys created before the required JWK `alg` member was introduced are
@@ -156,7 +158,7 @@ make demo-keycloak   # both UIs + real Keycloak policy engine (Docker)
 
 The Keycloak target boots the Access Server with the Keycloak policy engine; log
 in as `demo`/`demo` (has the `wallet.payer` role) or `guest`/`guest` (read-only). See
-[Federated Access](../docs/workflows/federated-access.md) and the
+[Federated authorization](../docs/workflows/federated-access.md) and the
 [Mock Access Server README](MockAccessServers/Federated/README.md).
 
 For the optional **agent governance** layer — an agent operating under a
@@ -172,7 +174,7 @@ See the [MissionAgent README](MissionAgent/README.md).
 
 ## Running Individually
 
-### Profile (Identity-Based Resource Server)
+### Profile (Agent Identity Resource Server)
 
 ```bash
 dotnet run --project samples/MockResourceServers/Profile
@@ -186,7 +188,7 @@ Profile deliberately enables generic Signature Keys alongside agent-JWT identity
 | `/anchored` | Pseudonymous (key delegation) | Signature only — agent known by durable key thumbprint via naming JWT |
 | `/identified` | Verified identity | Agent JWT issuer/key verification, or explicitly generic direct `jwks` discovery |
 
-### Calendar (PS-Asserted Resource Server)
+### Calendar (PS Authorization Resource Server)
 
 ```bash
 dotnet run --project samples/MockResourceServers/Calendar
@@ -219,8 +221,9 @@ dotnet run --project samples/MockResourceServers/Wallet
 |------|------|-----------------------|
 | `/wallet` | Four-party | Scope `wallet.read` — verified against the Access Server |
 | `/wallet/charge` | Four-party (step-up) | Scope `wallet.charge` — requires the AS `wallet.payer` role |
+| `/wallet/review` | Four-party (clarification) | Scope `wallet.review` — used by the wallet-protocol AS clarification scenario |
 
-### Inbox (Resource-Managed Resource Server)
+### Inbox (Resource-managed Resource Server)
 
 ```bash
 dotnet run --project samples/MockResourceServers/Inbox
@@ -229,7 +232,6 @@ dotnet run --project samples/MockResourceServers/Inbox
 | Path | Mode | Verification / Policy |
 |------|------|-----------------------|
 | `/messages` | Resource-managed (reactive) | Verified agent JWT and HTTP proof; first call returns `202` for Inbox consent, then requires the key/account-bound opaque `AAuth-Access` credential |
-| `/authorize` | Resource-managed (proactive) | Signed `POST { "scope" }` — same consent path (§Authorization Endpoint Request) |
 
 The Inbox manages authorization **itself** (two-party, no PS/AS) and issues an
 opaque `AAuth-Access` token bound to the agent's signature. See
@@ -303,13 +305,14 @@ dotnet run --project samples/AgentConsole -- http://localhost:5003/wallet/charge
   --ap http://localhost:5301 --ps http://localhost:5100 --signing-mode jwt
 ```
 
-> **Note:** `make demo` starts MockPersonServer with `RequireConsent=true`, so three-party flows (`jwt`, `jkt-jwt`) will print an interaction URL for user approval:
+> **Note:** `make demo` starts MockPersonServer with `RequireConsent=true`, so three-party JWT flows that need PS consent will print an interaction URL for user approval:
 >
 > ```
 > [interaction] User approval required: http://localhost:5100/interaction?code=...
+> [interaction] Or decide on the PS dashboard: http://localhost:5100/dashboard?code=...
 > ```
 >
-> Open that URL in a browser and click **Approve**, or pre-approve programmatically:
+> Open either URL in a browser and click **Approve**, or pre-approve programmatically:
 >
 > ```bash
 > curl -X POST http://localhost:5100/admin/consent \
@@ -322,8 +325,9 @@ dotnet run --project samples/AgentConsole -- http://localhost:5003/wallet/charge
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--ap <url>` | _(required)_ | Agent Provider URL (enrol + refresh endpoints) |
-| `--sub <id>` | `aauth:demo@ap.example` | Agent subject identifier |
+| `--sub <id>` | `aauth:demo@ap.example` | Local enrollment-cache label; the AP assigns the actual agent identity |
 | `--ps <url>` | _(none)_ | Person Server URL — enables three-party flow |
+| `--resource-managed` | _(off)_ | Drives Inbox's two-party `AAuth-Access` consent + replay flow; no PS |
 | `--signing-mode <mode>` | `jwt` | JWT for AAuth; explicit `hwk`, `jwks`, `jkt-jwt` for generic demonstrations |
 | `--prefer-wait <seconds>` | _(none)_ | Long-poll hint for deferred PS responses |
 | `--upstream-token <jwt>` | _(none)_ | Upstream auth token for call-chaining scenarios |
@@ -350,7 +354,7 @@ Implements AP enrollment and JWKS hosting. See [MockAgentProvider/README.md](Moc
 dotnet run --project samples/GuidedTour
 ```
 
-Requires the resource servers (Profile, Calendar, Trips, Wallet, Inbox), MockPersonServer, Concierge, and MockAgentProvider already running (or use `make demo`). See [GuidedTour/README.md](GuidedTour/README.md) for mode configuration.
+Requires the resource servers (Profile, Calendar, Trips, Wallet, Inbox, Bookings, Catalog, Documents), MockPersonServer, Concierge, MockAgentProvider, the Federated AS and the R3 AS already running (or use `make demo`). See [GuidedTour/README.md](GuidedTour/README.md) for mode configuration.
 
 ### SampleApp
 
@@ -358,7 +362,7 @@ Requires the resource servers (Profile, Calendar, Trips, Wallet, Inbox), MockPer
 dotnet run --project samples/SampleApp
 ```
 
-Simple Blazor app showing each signing mode as a separate page. Open <http://localhost:5240>. Requires the resource servers (Profile, Calendar, Trips, Wallet, Inbox), MockPersonServer, and Concierge running. MockAgentProvider is needed only for the JWKS-URI enrollment page.
+Simple Blazor app showing each signing mode and workflow as a separate page. Open <http://localhost:5240>. Requires the resource servers (Profile, Calendar, Trips, Wallet, Inbox, Bookings, Catalog, Documents), MockPersonServer, Concierge, MockAgentProvider, the Federated AS and the R3 AS running for every page.
 
 ### LiveWhoAmITest
 
@@ -366,9 +370,9 @@ Simple Blazor app showing each signing mode as a separate page. Open <http://loc
 dotnet run --project samples/LiveWhoAmITest
 ```
 
-Live interop test that runs against the public reference servers (`whoami.aauth.dev` and `person.hello.coop`) instead of the local mocks. It generates an agent key, starts a local metadata + JWKS endpoint on port 5199, exposes it via a `cloudflared` quick tunnel, and exercises all three protocol modes:
+Live interop test that runs against the public reference servers (`whoami.aauth.dev` and `person.hello.coop`) instead of the local mocks. It generates an agent key, starts a local metadata + JWKS endpoint on port 5199, exposes it via a `cloudflared` quick tunnel, and exercises three public checks:
 
-- **Mode 1** — unsigned request returns `401` + `Accept-Signature`.
+- **Mode 1** — unsigned request returns `401` + `Accept-Signature-Scheme` / `Accept-Signature-Alg`.
 - **Mode 2** — `aa-agent+jwt` returns the agent identity (no scope) or a `401` + `AAuth-Requirement` resource token (scoped).
 - **Mode 3** — full three-party flow: agent token → resource token → PS exchange → auth token → identity claims.
 
@@ -383,14 +387,30 @@ make restore         # restore NuGet packages
 make test            # run all tests (SDK + conformance)
 make test-unit       # SDK unit + integration tests only
 make test-conformance # spec conformance tests only
+make test-events      # Events token, HTTP and persistence tests
+make format           # dotnet format AAuth.slnx
 make demo            # start the full stack (resource servers + Concierge + PS + AP + AS + both UIs)
-make resources       # only the five Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003, Inbox :5004)
+make resources       # all eight Aria resource servers (Profile :5000 through Documents :5007)
 make ps              # MockPersonServer (port 5100)
 make ps-consent      # MockPersonServer with RequireConsent=true
 make ap              # MockAgentProvider (port 5301)
+make concierge       # Concierge (port 5200)
 make tour            # GuidedTour (port 5400; expects other services running)
 make sampleapp       # SampleApp (port 5240; expects other services running)
 make agent           # AgentConsole against the Profile server (override URL=…)
+make agent-events    # EventAgent (override ARGS=…)
 make live            # LiveWhoAmITest against whoami.aauth.dev (needs cloudflared + network)
+make keycloak        # Keycloak demo realm (Docker)
+make access-server   # Federated AS with Keycloak policy (port 5500)
+make demo-keycloak   # full stack with live Keycloak policy engine
+make agent-federated # AgentConsole through Wallet four-party flow
+make agent-reset     # clear AgentConsole enrollment cache
+make demo-mission    # AP + PS + Trips for MissionAgent
+make agent-mission   # drive MissionAgent (AUTO=1, MISSION_APPROVED=… supported)
+make e2e-install     # install Playwright toolchain
+make e2e             # all Playwright E2E specs
+make e2e-tour        # GuidedTour Playwright specs only
+make e2e-sample      # SampleApp Playwright specs only
+make e2e-report      # serve last Playwright HTML report
 make clean           # dotnet clean + remove bin/ obj/
 ```

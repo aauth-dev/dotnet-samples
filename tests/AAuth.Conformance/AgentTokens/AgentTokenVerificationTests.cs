@@ -4,6 +4,7 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 using AAuth.Tokens;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.AgentTokens;
@@ -24,23 +25,23 @@ public class AgentTokenVerificationTests
     private const string Sub = "aauth:alice@ap.example";
     private const string Kid = "k1";
 
-    private static string GoodToken(AAuthKey key) => new AgentTokenBuilder
+    private static ValueTask<string> GoodTokenAsync(AAuthKey key) => new AgentTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = Iss,
         Subject = Sub,
         KeyId = Kid,
         Key = key,
-    }.Build();
+    }.BuildAsync();
 
     /// <summary>
     /// "Verifiers MUST verify the JWS signature using the key from cnf.jwk."
     /// </summary>
     [Fact(DisplayName = "§Agent Token Verification — accepts well-formed token signed by cnf.jwk")]
-    public void HappyPath_Verifies()
+    public async Task HappyPath_Verifies()
     {
         var key = AAuthKey.Generate();
-        var jwt = GoodToken(key);
+        var jwt = await GoodTokenAsync(key);
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
 
         var verified = verifier.VerifySelfIssuedAgentToken(jwt, key);
@@ -67,11 +68,11 @@ public class AgentTokenVerificationTests
     /// "Verifiers MUST reject expired tokens."
     /// </summary>
     [Fact(DisplayName = "§Agent Token Verification — MUST reject expired tokens")]
-    public void Rejects_Expired()
+    public async Task Rejects_Expired()
     {
         var key = AAuthKey.Generate();
         var issued = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = Iss,
@@ -80,9 +81,9 @@ public class AgentTokenVerificationTests
             Key = key,
             IssuedAt = issued,
             Lifetime = TimeSpan.FromSeconds(1),
-        }.Build();
+        }.BuildAsync();
 
-        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => issued.AddHours(1) };
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = new FakeTimeProvider(issued.AddHours(1)) };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifySelfIssuedAgentToken(jwt, key));
     }
@@ -91,10 +92,10 @@ public class AgentTokenVerificationTests
     /// "Verifiers MUST reject tokens whose typ is not 'aa-agent+jwt'."
     /// </summary>
     [Fact(DisplayName = "§Agent Token Verification — MUST reject wrong typ")]
-    public void Rejects_WrongTyp()
+    public async Task Rejects_WrongTyp()
     {
         var key = AAuthKey.Generate();
-        var jwt = GoodToken(key);
+        var jwt = await GoodTokenAsync(key);
         Assert.Throws<TokenVerificationException>(() =>
             new TokenVerifier { EgressPolicy = TestEgress.Policy }.Verify(jwt, key, "aa-resource+jwt", "aauth-agent.json"));
     }
@@ -103,10 +104,10 @@ public class AgentTokenVerificationTests
     /// "Verifiers MUST reject tokens with a missing or unexpected dwk claim."
     /// </summary>
     [Fact(DisplayName = "§Agent Token Verification — MUST reject wrong dwk")]
-    public void Rejects_WrongDwk()
+    public async Task Rejects_WrongDwk()
     {
         var key = AAuthKey.Generate();
-        var jwt = GoodToken(key);
+        var jwt = await GoodTokenAsync(key);
         Assert.Throws<TokenVerificationException>(() =>
             new TokenVerifier { EgressPolicy = TestEgress.Policy }.Verify(jwt, key, AgentTokenBuilder.TokenType, "aauth-person.json"));
     }
@@ -115,11 +116,11 @@ public class AgentTokenVerificationTests
     /// "Verifiers MUST verify the JWS signature using the key from cnf.jwk."
     /// </summary>
     [Fact(DisplayName = "§Agent Token Verification — MUST reject signatures from a different key")]
-    public void Rejects_WrongSignatureKey()
+    public async Task Rejects_WrongSignatureKey()
     {
         var a = AAuthKey.Generate();
         var b = AAuthKey.Generate();
-        var jwt = GoodToken(a);
+        var jwt = await GoodTokenAsync(a);
 
         Assert.Throws<TokenVerificationException>(() =>
             new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifySelfIssuedAgentToken(jwt, b));
@@ -137,5 +138,49 @@ public class AgentTokenVerificationTests
 
         Assert.Throws<TokenVerificationException>(() =>
             new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifySelfIssuedAgentToken(jwt, key));
+    }
+
+    [Fact(DisplayName = "§Sub-Agents — verifier rejects sub-agent subject without parent_agent")]
+    public async Task RejectsSubAgentSubjectWithoutParent()
+    {
+        var key = AAuthKey.Generate();
+        var jwt = await SignedAgentTokenAsync(key, "aauth:alice+worker@ap.example", parent: null);
+
+        var exception = Assert.Throws<TokenVerificationException>(() =>
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifySelfIssuedAgentToken(jwt, key));
+        Assert.Contains("parent_agent", exception.Message);
+    }
+
+    [Fact(DisplayName = "§Sub-Agents — verifier rejects parent_agent that does not derive from subject")]
+    public async Task RejectsMismatchedParentAgent()
+    {
+        var key = AAuthKey.Generate();
+        var jwt = await SignedAgentTokenAsync(key, "aauth:alice+worker@ap.example", "aauth:bob@ap.example");
+
+        var exception = Assert.Throws<TokenVerificationException>(() =>
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifySelfIssuedAgentToken(jwt, key));
+        Assert.Contains("parent_agent", exception.Message);
+    }
+
+    private static async ValueTask<string> SignedAgentTokenAsync(AAuthKey key, string subject, string? parent)
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var payload = new JsonObject
+        {
+            ["iss"] = Iss,
+            ["dwk"] = AgentTokenBuilder.AgentDwk,
+            ["sub"] = subject,
+            ["jti"] = Guid.NewGuid().ToString("N"),
+            ["cnf"] = new JsonObject { ["jwk"] = key.ToPublicJwk() },
+            ["iat"] = now,
+            ["exp"] = now + 3600,
+        };
+        if (parent is not null) payload["parent_agent"] = parent;
+        return await JwtWriter.SignCompactAsync(new JsonObject
+        {
+            ["alg"] = "Ed25519",
+            ["typ"] = AgentTokenBuilder.TokenType,
+            ["kid"] = Kid,
+        }, payload, key);
     }
 }

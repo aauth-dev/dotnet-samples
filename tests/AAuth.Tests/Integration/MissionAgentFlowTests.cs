@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using AAuth;
 using AAuth.Agent;
 using AAuth.Agent.Governance;
 using AAuth.Crypto;
@@ -62,20 +63,37 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row01_MissionApproved_ReturnsActiveMission()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true });
 
         var mission = await ProposeMissionAsync(agent, "row01 research mission");
 
-        Assert.Equal(PsIssuer, mission.Approver);
+        Assert.Equal(PsIssuer, mission.PersonServer);
         Assert.Equal(agent.AgentId, mission.Agent);
         Assert.False(string.IsNullOrEmpty(mission.S256));
     }
 
     [Fact]
+    public async Task MissionNamingResources_ApprovalCarriesPersonTokens()
+    {
+        var agent = await NewAgentAsync();
+        await ScriptAsync(agent, new JsonObject { ["reset"] = true });
+
+        var mission = await MissionClientFor(agent).ProposeAsync(
+            new MissionProposal("mission naming a resource") { Resources = [ResourceUrl] });
+
+        var token = Assert.Single(mission.PersonTokens);
+        Assert.Equal(ResourceUrl, token.Key);
+        var payload = PersonTokenFlow.Payload(token.Value);
+        Assert.Equal(mission.S256, (string?)payload["mission_s256"]);
+        Assert.Equal(PsIssuer, (string?)payload["iss"]);
+        Assert.Equal(ResourceUrl, (string?)payload["aud"]);
+    }
+
+    [Fact]
     public async Task Row02_MissionDenied_Aborts()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approveMission"] = false });
 
         var proposal = new MissionProposal("row02 rejected mission");
@@ -88,7 +106,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row03_TokenInScope_SilentGrant()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject
         {
             ["reset"] = true,
@@ -105,7 +123,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row04_TokenRepeat_PriorConsentSilentGrant()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approveToken"] = true });
         var mission = await ProposeMissionAsync(agent, "row04 prior-consent mission");
 
@@ -121,7 +139,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row05_TokenOutOfScope_PromptThenIssue()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approveToken"] = true });
         var mission = await ProposeMissionAsync(agent, "row05 out-of-scope approve mission");
 
@@ -140,7 +158,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row06_TokenOutOfScope_PromptThenDeny()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approveToken"] = false });
         var mission = await ProposeMissionAsync(agent, "row06 out-of-scope deny mission");
 
@@ -152,7 +170,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row07_TokenClarification_RoundThenIssue()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject
         {
             ["reset"] = true,
@@ -183,7 +201,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row08_TokenClarification_CancelViaDelete()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject
         {
             ["reset"] = true,
@@ -212,7 +230,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row09_PermissionApprovedTool_SilentGrant()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true });
         var mission = await ProposeMissionAsync(agent, "row09 approved-tool mission", "add_to_calendar");
 
@@ -226,13 +244,13 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row10_PermissionNonPreApproved_PromptThenGrant()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approvePermission"] = true });
         var mission = await ProposeMissionAsync(agent, "row10 prompt-grant mission", "add_to_calendar");
 
         var request = new PermissionRequest(new MissionAction("delete_file"))
         {
-            Mission = new MissionClaim(mission.Approver, mission.S256),
+            MissionS256 = mission.S256,
         };
         var result = await PermissionClientFor(agent).RequestAsync(request);
 
@@ -243,13 +261,13 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row11_PermissionNonPreApproved_PromptThenDeny()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approvePermission"] = false });
         var mission = await ProposeMissionAsync(agent, "row11 prompt-deny mission", "add_to_calendar");
 
         var request = new PermissionRequest(new MissionAction("delete_file"))
         {
-            Mission = new MissionClaim(mission.Approver, mission.S256),
+            MissionS256 = mission.S256,
         };
         var result = await PermissionClientFor(agent).RequestAsync(request);
 
@@ -263,7 +281,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [Fact]
     public async Task Row12_TerminationMidFlow_RejectsWithMissionTerminated()
     {
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject
         {
             ["reset"] = true,
@@ -284,61 +302,109 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     [InlineData("permission", "foreign")]
     [InlineData("audit", "foreign")]
     [InlineData("mission-interaction", "foreign")]
+    [InlineData("mission", "foreign")]
     [InlineData("permission", "unknown")]
     [InlineData("audit", "unknown")]
     [InlineData("mission-interaction", "unknown")]
-    [InlineData("permission", "approver")]
-    [InlineData("audit", "approver")]
-    [InlineData("mission-interaction", "approver")]
+    [InlineData("mission", "unknown")]
     [InlineData("permission", "terminated")]
     [InlineData("audit", "terminated")]
     [InlineData("mission-interaction", "terminated")]
+    [InlineData("mission", "terminated")]
     public async Task Governance_SignedInvalidMissionCannotAct(string endpoint, string scenario)
     {
-        var owner = NewAgent();
+        var owner = await NewAgentAsync();
         await ScriptAsync(owner, new JsonObject { ["reset"] = true });
         var mission = await ProposeMissionAsync(owner, "ownership regression", "WebSearch");
         var before = (await ReadLogAsync(mission)).Count;
-        var caller = scenario == "foreign" ? NewAgent("aauth:foreign@ap.example") : owner;
+        var caller = scenario == "foreign" ? await NewAgentAsync("aauth:foreign@ap.example") : owner;
         if (scenario == "terminated")
-            await _factory.Services.GetRequiredService<IMissionStore>().SetStateAsync(mission.S256, MissionState.Terminated);
-        var body = new JsonObject
-        {
-            ["mission"] = new JsonObject
+            await _factory.Services.GetRequiredService<IMissionStore>().TerminateAsync(
+                mission.PersonServer, mission.S256, AAuthConstants.MissionTerminationReasons.Revoked);
+        var s256 = scenario == "unknown" ? Mission.ComputeS256("unknown"u8.ToArray()) : mission.S256;
+        var body = endpoint == "mission"
+            ? new JsonObject { ["action"] = "completion", ["summary"] = "Complete" }
+            : new JsonObject
             {
-                ["approver"] = scenario == "approver" ? "https://foreign.example" : mission.Approver,
-                ["s256"] = scenario == "unknown" ? Mission.ComputeS256("unknown"u8.ToArray()) : mission.S256,
-            },
-            ["action"] = "WebSearch", ["type"] = "completion", ["summary"] = "Complete",
-        };
-        using var response = await caller.Signed.PostAsJsonAsync("/" + endpoint, body);
-        Assert.Equal(System.Net.HttpStatusCode.Forbidden, response.StatusCode);
+                ["mission_s256"] = s256,
+                ["action"] = "WebSearch", ["type"] = "question", ["question"] = "Proceed?",
+            };
+        using var response = await caller.Signed.PostAsJsonAsync(
+            endpoint == "mission" ? "/mission/" + s256 : "/" + endpoint, body);
+        // §Mission Endpoint Errors: a missing and a foreign mission are indistinguishable.
+        Assert.Equal(scenario == "terminated" ? System.Net.HttpStatusCode.Forbidden : System.Net.HttpStatusCode.NotFound,
+            response.StatusCode);
         var result = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal(scenario == "terminated" ? "mission_terminated" : "invalid_mission", (string?)result?["error"]);
+        Assert.Equal(scenario == "terminated" ? "mission_terminated" : "mission_not_found", (string?)result?["error"]);
         Assert.False(response.Headers.Contains("Signature-Error"));
         Assert.Equal(before, (await ReadLogAsync(mission)).Count);
         Assert.Equal(scenario == "terminated" ? MissionState.Terminated : MissionState.Active,
-            (await _factory.Services.GetRequiredService<IMissionStore>().GetAsync(mission.S256))!.State);
+            (await _factory.Services.GetRequiredService<IMissionStore>().GetAsync(mission.PersonServer, mission.S256))!.State);
+    }
+
+    [Theory]
+    [InlineData("interaction")]
+    [InlineData("payment")]
+    public async Task MissionInteraction_ResourceHostedRelayWithoutChannelReturnsUnavailable(string type)
+    {
+        var agent = await NewAgentAsync();
+        await ScriptAsync(agent, new JsonObject { ["reset"] = true });
+        var mission = await ProposeMissionAsync(agent, "relay unavailable regression");
+        var before = (await ReadLogAsync(mission)).Count;
+
+        using var response = await agent.Signed.PostAsJsonAsync("/mission-interaction", new JsonObject
+        {
+            ["type"] = type,
+            ["mission_s256"] = mission.S256,
+            ["url"] = "https://resource.example/interaction",
+            ["code"] = "ABCD-1234",
+        });
+
+        Assert.Equal(System.Net.HttpStatusCode.FailedDependency, response.StatusCode);
+        Assert.Equal("interaction_unavailable", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())?["error"]);
+        Assert.Equal(before, (await ReadLogAsync(mission)).Count);
+    }
+
+    [Fact]
+    public async Task MissionInteraction_QuestionUsesScriptedUserChannel()
+    {
+        var agent = await NewAgentAsync();
+        await ScriptAsync(agent, new JsonObject { ["reset"] = true });
+        var mission = await ProposeMissionAsync(agent, "question relay regression");
+
+        using var response = await agent.Signed.PostAsJsonAsync("/mission-interaction", new JsonObject
+        {
+            ["type"] = "question",
+            ["mission_s256"] = mission.S256,
+            ["question"] = "Proceed?",
+        });
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Yes, go ahead.", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())?["answer"]);
+        Assert.Contains(await ReadLogAsync(mission),
+            entry => entry.Kind == MissionLogEntryKind.Interaction && entry.Detail == InteractionType.Question.ToString());
     }
 
     [Fact]
     public async Task PermissionPending_TerminatedMissionCannotReleaseLateApproval()
     {
-        var owner = NewAgent();
+        var owner = await NewAgentAsync();
         await ScriptAsync(owner, new JsonObject { ["reset"] = true });
         var mission = await ProposeMissionAsync(owner, "Late permission approval");
         await ScriptAsync(owner, new JsonObject { ["interactive"] = true });
         using var initial = await owner.Signed.PostAsJsonAsync("/permission", new JsonObject
         {
-            ["action"] = "SendEmail", ["mission"] = new JsonObject { ["approver"] = mission.Approver, ["s256"] = mission.S256 },
+            ["action"] = "SendEmail", ["mission_s256"] = mission.S256,
         });
         Assert.Equal(System.Net.HttpStatusCode.Accepted, initial.StatusCode);
-        await _factory.Services.GetRequiredService<IMissionStore>().SetStateAsync(mission.S256, MissionState.Terminated);
+        await _factory.Services.GetRequiredService<IMissionStore>().TerminateAsync(
+            mission.PersonServer, mission.S256, AAuthConstants.MissionTerminationReasons.Revoked);
         var id = initial.Headers.Location!.ToString().Split('/').Last();
         Assert.True(_factory.Services.GetRequiredService<MockPersonServer.MissionPendingStore>().Get(id)!.Decide(true));
         using var response = await owner.Signed.GetAsync(initial.Headers.Location);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Equal("mission_terminated", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())?["error"]);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("mission_terminated", (string?)body?["error"]);
         Assert.DoesNotContain(await ReadLogAsync(mission), entry => entry.Kind == MissionLogEntryKind.Permission && entry.Granted == true);
     }
 
@@ -346,7 +412,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     public async Task MissionConsent_RendersUntrustedMarkdownAsEncodedText()
     {
         const string untrusted = "<img src=x onerror=alert(1)><script>private()</script> [unsafe](javascript:alert(1))";
-        var agent = NewAgent();
+        var agent = await NewAgentAsync();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["interactive"] = true });
         using var response = await agent.Signed.PostAsJsonAsync("/mission", new JsonObject { ["description"] = untrusted });
         Assert.Equal(System.Net.HttpStatusCode.Accepted, response.StatusCode);
@@ -369,11 +435,11 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
 
     private sealed record Agent(string AgentId, AAuthKey AgentKey, HttpClient Signed, HttpClient Plain, MetadataClient Metadata);
 
-    private Agent NewAgent(string? agentId = null)
+    private async Task<Agent> NewAgentAsync(string? agentId = null)
     {
         agentId ??= $"aauth:demo@ap.example";
         var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
@@ -382,7 +448,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
             Key = ResourceStub.ApKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
-        }.Build();
+        }.BuildAsync();
         var signing = new AAuthSigningHandler(agentKey, () => agentToken)
         {
             InnerHandler = _factory.Server.CreateHandler(),
@@ -416,24 +482,47 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         return await MissionClientFor(agent).ProposeAsync(proposal);
     }
 
+    // §Person Token Endpoint under the mission, then a resource token naming it.
     private async Task<string> ExchangeAsync(Agent agent, Mission mission, string scope, TokenExchangeRequest options)
     {
-        var resourceToken = new ResourceTokenBuilder
+        var exchange = new TokenExchangeClient(agent.Signed, agent.Metadata,
+            new TokenExchangeClientOptions
+            {
+                JwksClient = new JwksClient(new InProcessHttpClient(_factory.Server.CreateHandler())),
+            });
+        var personToken = await exchange.RequestPersonTokenAsync(PsIssuer, ResourceUrl, new TokenExchangeRequest
+        {
+            MissionS256 = mission.S256,
+            OnInteractionRequired = options.OnInteractionRequired,
+            PollerOptions = options.PollerOptions,
+        });
+        var person = PersonTokenFlow.Payload(personToken);
+        Assert.Equal(mission.S256, (string?)person["mission_s256"]);
+        var resourceToken = await new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
             EgressPolicy = TestEgress.Policy,
             Issuer = ResourceUrl,
             Audience = PsIssuer,
-            Agent = agent.AgentId,
+            PersonServer = PsIssuer,
+            Subject = (string)person["sub"]!,
+            PresentedJti = (string)person["jti"]!,
             AgentJkt = agent.AgentKey.ComputeJwkThumbprint(),
             Key = ResourceStub.Key,
             KeyId = ResourceStub.Kid,
             Scope = scope,
-            Mission = new MissionClaim(mission.Approver, mission.S256),
-        }.Build();
+            MissionS256 = mission.S256,
+        }.BuildAsync();
 
-        var exchange = new TokenExchangeClient(agent.Signed, agent.Metadata);
-        return await exchange.ExchangeAsync(PsIssuer, resourceToken, options);
+        return await exchange.ExchangeAsync(PsIssuer, resourceToken, new TokenExchangeRequest
+        {
+            PresentedToken = personToken,
+            OnInteractionRequired = options.OnInteractionRequired,
+            OnClarificationRequired = options.OnClarificationRequired,
+            PollerOptions = options.PollerOptions,
+            Capabilities = options.Capabilities,
+            Prompt = options.Prompt,
+        });
     }
 
     private static TokenExchangeRequest Promptable() => new()

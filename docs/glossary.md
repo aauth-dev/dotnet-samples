@@ -6,8 +6,8 @@ cryptographic terms come first; general tech terms are at the bottom.
 
 Canonical expansions follow the AAuth specification drafts under
 [`aauth-spec/`](../aauth-spec/) (the Terminology sections of
-[the protocol draft](../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md) and
-[the bootstrap draft](../aauth-spec/v10/draft-hardt-aauth-bootstrap.md)).
+[the protocol draft](../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md) and
+[the bootstrap draft](../aauth-spec/v11/draft-hardt-aauth-bootstrap.md)).
 
 > **Keep this current.** When you introduce a new acronym anywhere in the repo,
 > add it here. Treat this file as the source of truth for expansions.
@@ -29,8 +29,10 @@ Canonical expansions follow the AAuth specification drafts under
 | Term | Expansion | In AAuth |
 |------|-----------|----------|
 | **agent token** | `aa-agent+jwt` | Binds the agent's signing key to its identity (issued by an AP or self-issued). |
-| **resource token** | `aa-resource+jwt` | A resource's `401` challenge: "get an auth token from my PS/AS." `aud` = PS or AS. |
-| **auth token** | `aa-auth+jwt` | Proves the user authorized this agent for a scope; minted by a PS or AS. |
+| **person token** | `aa-person+jwt` | Identifies the person to one resource; issued by the PS's `person_token_endpoint`. Identity, not authorization. |
+| **resource token** | `aa-resource+jwt` | A resource's `401` challenge: "get an auth token from my PS/AS." `aud` = PS or AS; names the presented token via `ps`, `sub`, and `presented_jti`. |
+| **auth token** | `aa-auth+jwt` | Proves the person authorized the key-bound agent for a scope; minted by a PS or AS. Names the person (`ps`, `sub`), not the agent. |
+| **presented token** | `presented_token` | The person or auth token the agent presented to the resource; sent with the resource token to the PS/AS. |
 | **sub** | subject | Identifier of the principal the token is about (often directed/pairwise per resource). |
 | **aud** | audience | The intended recipient — the PS or AS URL for a resource token; the resource for an auth token. |
 | **iss** | issuer | URL of the entity that issued the token. |
@@ -38,14 +40,14 @@ Canonical expansions follow the AAuth specification drafts under
 | **iat** | issued at | Unix timestamp the token was issued. |
 | **exp** | expiration time | Unix timestamp after which the token is invalid. |
 | **cnf** | confirmation | Holds `jwk`, the public key the token is bound to (proof-of-possession). |
-| **act** | actor | Nested claim recording the delegation chain in call chaining. |
 | **dwk** | Discovery Well-Known | The well-known metadata document name for key discovery (e.g. `aauth-agent.json`); keys are fetched from `{iss}/.well-known/{dwk}`. |
 | **kid** | key ID | Selects one key from a JWKS. |
 | **typ** | type | JWT header value naming the token type (`aa-agent+jwt`, etc.). |
 | **alg** | algorithm | JWT header value naming the signing algorithm (e.g. `Ed25519`). |
-| **ps** | _(agent-token claim)_ | The Person Server URL bound to the agent. |
+| **ps** | _(claim)_ | The Person Server URL: bound to the agent in an agent token; the person's PS in resource and auth tokens. |
 | **scope** | _(claim)_ | The authorization requested/granted (e.g. `calendar.read`, `wallet.charge`). |
 | **s256** | SHA-256 (content hash) | Identifies a mission (or R3 document) by the hash of its content. |
+| **mission_s256** | _(claim / parameter)_ | A mission's `s256`, carried in person, resource, and auth tokens and in PS requests. |
 | **directed `sub`** | _(concept)_ | A subject identifier scoped to a single resource. |
 | **pairwise `sub`** | _(concept)_ | A subject identifier unique per PS↔resource pair. |
 
@@ -92,10 +94,10 @@ Canonical expansions follow the AAuth specification drafts under
 | **UMA** | User-Managed Access | The grant the Keycloak Access Server adapter uses to get a policy decision. |
 | **RBAC** | Role-Based Access Control | Authorization by role (e.g. `wallet.payer`, `calendar.owner`). |
 | **ABAC** | Attribute-Based Access Control | Authorization by attributes pushed to the AS (e.g. tenant, group). |
-| **Identity-Based** | _(access mode)_ | Two-party: the resource decides from the signature alone. |
-| **Resource-Managed** | _(access mode)_ | Two-party: the resource runs its own authorization (interaction/OAuth/policy). |
-| **PS-Asserted** | _(access mode)_ | Three-party: the resource delegates to the agent's PS. |
-| **Federated** | _(access mode)_ | Four-party: the resource has its own AS; the PS federates to it. |
+| **Agent Identity** | _(access mode)_ | Two-party: the resource authorizes the verified agent token directly. |
+| **Resource-Managed** | _(access mode)_ | Two-party: the resource runs its own authorization (interaction/OAuth/policy) and issues an opaque `AAuth-Access` token. |
+| **PS authorization** | _(access mode)_ | Three-party: the resource delegates authorization to the agent's PS, which issues the auth token. |
+| **Federated authorization** | _(access mode)_ | Four-party: the resource has its own AS; the PS federates to it and the AS issues the auth token. |
 
 ## Well-known documents & HTTP headers
 
@@ -109,21 +111,20 @@ Canonical expansions follow the AAuth specification drafts under
 | **Signature-Key** | Request header conveying the signing key material (inline JWK, JWKS reference, or JWT). |
 | **Signature-Input** | RFC 9421 header listing which request components are covered by the signature. |
 | **Signature-Error** | Response header conveying a signature-verification failure code. |
-| **AAuth-Requirement** | Response header on `401`/`202` signalling what is required (`auth-token`, `interaction`, `claims`). |
-| **AAuth-Mission** | Header carrying the mission pointer `{approver, s256}`. |
+| **AAuth-Requirement** | Response header on `401`/`202` signalling what is required (`person-token`, `auth-token`, `agent-token`, `interaction`, `clarification`, `claims`). |
 | **AAuth-Capabilities** | Header advertising agent/server capabilities. |
-| **AAuth-Access** | Header carrying an opaque access token in resource-managed access. |
+| **AAuth-Access** | Response header carrying an opaque resource-managed access token; the agent replays it as `Authorization: AAuth <token68>`. |
 
 ## Protocol concepts
 
 | Term | Meaning |
 |------|---------|
-| **Mission** | A durable, human-approved statement of intent plus pre-approved tools; the PS governs every later request under it. |
-| **Mission Log** | The PS-held, ordered record of token/permission/audit/clarification events within a mission. |
+| **Mission** | A durable, human-approved statement of intent plus pre-approved tools, identified by its `s256`; the PS governs every later request under it. |
+| **Mission Log** | The PS-held, ordered record of token/permission/audit/interaction/update/clarification events within a mission. |
 | **Bootstrap / Enrollment** | How an agent first acquires an agent token (AP enrollment, or self-issuing for hosted services). |
 | **Refresh** | Obtaining a fresh agent token using the durable key (chaining a new ephemeral key via `jkt-jwt`). |
-| **Challenge → Exchange → Retry** | The PS-asserted pattern: `401` + resource token → exchange at PS → retry with the auth token. |
-| **Call chaining** | A resource acting as an agent downstream, passing the caller's auth token as `upstream_token`; recorded in nested `act`. |
+| **Challenge → Exchange → Retry** | The PS authorization pattern: `401 requirement=person-token` → person token → `401` + resource token → exchange resource token + presented token at PS → retry with the auth token. |
+| **Call chaining** | A resource acting as an agent downstream, passing the caller's person or auth token as `upstream_token`; the PS holds the chain, and tokens carry no delegation claim. |
 | **Interaction Chaining** | Propagating a downstream consent requirement back up the chain to the original agent. |
 | **Clarification** | A PS follow-up question during a token/permission request; the agent answers before the user approves. |
 | **Justification** | A Markdown reason the agent supplies for an access request, shown at consent. |

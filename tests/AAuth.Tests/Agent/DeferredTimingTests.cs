@@ -102,7 +102,7 @@ public class DeferredTimingTests
                 OnInteractionRequired = (_, _) => { callbacks++; return Task.CompletedTask; },
             }, CancellationToken.None);
         Assert.Equal(1, callbacks);
-        Assert.Equal(new[] { 5d, 5d }, clock.Delays.Select(delay => delay.TotalSeconds));
+        Assert.Equal(new[] { 0d, 5d, 5d }, clock.Delays.Select(delay => delay.TotalSeconds));
     }
 
     [Fact]
@@ -165,7 +165,7 @@ public class DeferredTimingTests
         using var handler = new BlockingHandler(path.Contains("callback", StringComparison.Ordinal), entered, completion);
         using var http = path.StartsWith("handler", StringComparison.Ordinal)
             ? new InProcessHttpClient(new InteractionHandler(
-                onInteractionRequired: (_, _, _) => { entered.TrySetResult(); return completion.Task; },
+                onInteractionRequired: (_, _) => { entered.TrySetResult(); return completion.Task; },
                 pollingTimeout: TimeSpan.FromSeconds(10), minPollInterval: TimeSpan.Zero)
             {
                 EgressPolicy = TestEgress.Policy, TransportContract = AAuthTransportContract.InProcessOnly,

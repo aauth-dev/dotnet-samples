@@ -24,8 +24,10 @@ seams, see [Mission Governance (Server)](../server/mission-governance.md).
 
 ## The mission blob
 
-An approved mission is a **blob** — the exact JSON body the PS returns from its
-`mission_endpoint`. The agent stores those bytes verbatim so the mission's
+An approved mission is a **blob** — the exact JSON bytes the PS persists for the
+mission. The PS's `mission_endpoint` returns them base64url-encoded inside an
+approval envelope `{ s256, mission, capabilities?, person_tokens? }`
+(§Mission Approval). The agent keeps the decoded bytes verbatim so the mission's
 identity (`s256`) stays verifiable.
 
 ```csharp
@@ -33,18 +35,23 @@ namespace AAuth.Agent;
 
 public sealed class Mission
 {
-    public required string Approver { get; init; }            // HTTPS URL of the PS that approved it
+    public required string PersonServer { get; init; }        // the PS that approved it (named beside s256)
     public required string Agent { get; init; }               // aauth:local@domain the mission is for
     public required DateTimeOffset ApprovedAt { get; init; }  // approval timestamp (keeps s256 unique)
+    public DateTimeOffset? ExpiresAt { get; init; }           // optional expires_at; terminated after it
     public required string Description { get; init; }         // Markdown intent
-    public IReadOnlyList<MissionTool> ApprovedTools { get; init; }  // pre-approved tools (may be a subset)
-    public IReadOnlyList<string> Capabilities { get; init; }  // capabilities the PS provides for the session
+    public IReadOnlyList<MissionTool> ApprovedTools { get; init; } = Array.Empty<MissionTool>();
+    public IReadOnlyList<string> ApprovedResources { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> Capabilities { get; init; } = Array.Empty<string>();
+    public IReadOnlyDictionary<string, string> PersonTokens { get; init; } = new Dictionary<string, string>();
     public required string S256 { get; init; }                // base64url(SHA-256(blob)) — the identity
-    public ReadOnlyMemory<byte> RawBytes { get; init; }       // verbatim approval body bytes
+    public ReadOnlyMemory<byte> RawBytes { get; init; }       // verbatim mission blob bytes
 
-    public MissionState State { get; init; } = MissionState.Active;
+    public MissionState State { get; init; }                  // Active until terminated
 
-    public static Mission FromApprovalBytes(ReadOnlySpan<byte> body); // parse + compute s256
+    public static Mission FromApprovalResponse(ReadOnlySpan<byte> body, string personServer); // envelope + s256 check
+    public static Mission FromBlob(ReadOnlySpan<byte> blob, string personServer,
+        IReadOnlyList<string>? capabilities = null, IReadOnlyDictionary<string, string>? personTokens = null);
     public bool VerifyS256(string expected);                  // constant-time compare
     public static string ComputeS256(ReadOnlySpan<byte> body);
 }
@@ -56,16 +63,25 @@ public sealed record MissionTool(string Name, string? Description = null);
 
 ### Identity: `s256`
 
-The mission's identity is its `s256`: the base64url-encoded SHA-256 hash of the
-exact approval body bytes (§Mission Approval). Because the hash is computed over
-the bytes as received, the agent must **never re-serialize** the blob — it keeps
+The mission's identity is its `s256`: the unpadded base64url SHA-256 hash of the
+exact mission blob bytes (§Mission Identifier). It travels as the
+`mission_s256` claim of person, resource, and auth tokens and as the
+`mission_s256` parameter of PS requests; the approving PS is named beside it
+(the `iss` of a person token, the `ps` claim of a resource or auth token). The
+blob carries no approver member. Because the hash is computed over the bytes as
+the PS persisted them, the agent must **never re-serialize** the blob — it keeps
 `RawBytes` and recomputes from those when verifying.
 
-```csharp
-// Build a Mission from the bytes the PS returned and verify the header's s256.
-var mission = Mission.FromApprovalBytes(approvalBodyBytes);
+`MissionClient.ProposeAsync` already does this for you. When you receive an
+approval envelope yourself, parse it with `FromApprovalResponse`, which decodes
+the blob and rejects an envelope whose `s256` does not match it:
 
-if (!mission.VerifyS256(headerS256))
+```csharp
+// Decode the approval envelope, verify its s256 against the blob, and bind the PS.
+var mission = Mission.FromApprovalResponse(approvalBodyBytes, personServer);
+
+// Later, check a mission_s256 you were handed (for example, in a token).
+if (!mission.VerifyS256(s256))
 {
     throw new InvalidOperationException("Mission s256 mismatch.");
 }
@@ -75,8 +91,12 @@ if (!mission.VerifyS256(headerS256))
 
 A mission is either `Active` or `Terminated` (§Mission Management). There is no
 `pending`/`denied`/`completed` ladder: approval produces an active mission, and
-the PS moves it to terminated on completion or revocation. After termination the
-PS answers governed requests with `mission_terminated` (see
+the PS moves it to terminated on completion, revocation, supersession, or when
+its `expires_at` passes. The reason is stored next to the mission as an open
+string (`completed`, `revoked`, `expired`, `superseded`, `administrative`, or a
+local value), not as another state. After termination the PS answers governed
+requests with `403 mission_terminated`; a mission that does not exist, belongs
+to another agent, or belongs to another PS is `404 mission_not_found` (see
 [Error Handling](error-handling.md#mission-termination)).
 
 ### Tools vs scopes
@@ -97,79 +117,83 @@ A mission governs two kinds of authority **asymmetrically** — the central idea
 
 See [Protocol Concepts → Governance](../concepts.md) for the full discussion.
 
-## The `AAuth-Mission` header
+## Acting under a mission
 
-The agent declares its mission context on outbound requests with the structured
-`AAuth-Mission` header, carrying the `approver` and `s256` (§Call Chaining). The
-mission content never leaves the PS — only the pointer travels.
-
-```csharp
-public static class AAuthMissionHeader
-{
-    public const string Name = "AAuth-Mission";
-
-    // Produces: approver="https://ps.example"; s256="dBjf..."
-    public static string FormatStructured(string approver, string s256);
-    public static bool TryParseStructured(string? value, out string? approver, out string? s256,
-        AAuth.Discovery.AAuthEgressPolicy? policy = null);
-}
-```
+There is no mission header and no mission signature component. The agent names
+its mission once per resource, when it **requests a person token** at the PS's
+`person_token_endpoint` with the `mission_s256` parameter (§Person Token
+Endpoint, §Mission Log). The PS validates that the mission is this agent's and
+still active, and stamps `mission_s256` into the person token. From there it
+flows by copy: the resource copies `mission_s256` from the presented token into
+the resource token it issues, and the PS carries it into the auth token. The
+mission content never leaves the PS — only the digest travels.
 
 ```csharp
-var request = new HttpRequestMessage(HttpMethod.Get, "https://resource.example/data");
-request.Headers.TryAddWithoutValidation(
-    AAuthMissionHeader.Name,
-    AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
-var response = await signedClient.SendAsync(request);
+// Ask the approving PS for a person token for one resource, under the mission.
+var personToken = await exchangeClient.RequestPersonTokenAsync(
+    mission.PersonServer,
+    "https://resource.example",
+    new TokenExchangeRequest { MissionS256 = mission.S256 });
 ```
+
+If the proposal named `resources`, the approval envelope may already carry person
+tokens for them in `Mission.PersonTokens`, each with `mission_s256` set, bound to
+the proposing agent's key, and capped at the agent token's `exp`, the mission's
+`expires_at`, and one hour. A resource the PS declined is simply absent; request
+it through the person token endpoint as above.
 
 ### Carrying your own mission with `WithMission`
 
 When the **originating** agent holds its own approved `Mission`, you don't have to
-set the header by hand on every request. `AAuthClientBuilder.WithMission(mission)`
-attaches the `AAuth-Mission` header (`{approver, s256}`) to every outbound request,
-and the signing pipeline covers it as the `aauth-mission` component automatically
-(§Mission Context at Resources, §HTTP Message Signatures). Compose it with
-`WithChallengeHandling()` / `WithInteractionHandling()` so the entire
-resource-access leg — mission header, the `401` challenge, the token exchange, and
-the retry — collapses to a single signed `SendAsync`:
+request person tokens by hand. `AAuthClientBuilder.WithMission(mission)` tags every
+outbound request with the mission's `s256`; when a resource answers
+`401` with `AAuth-Requirement: requirement=person-token`, the challenge handler
+requests the person token with `mission_s256`, retries, and — if the resource
+then asks for `requirement=auth-token` — exchanges the resource token together
+with that person token. Compose it with `WithChallengeHandling()` /
+`WithInteractionHandling()` so the entire resource-access leg — person token,
+the `401` challenge, the token exchange, and the retry — collapses to a single
+signed `SendAsync`:
 
 ```csharp
 using var client = AAuthClientBuilder.SelfIssuing(identity.Key)
     .As(identity.Issuer, identity.AgentId)
     .WithKid(identity.KeyId)
     .WithPersonServer(personServer)
-    .WithMission(mission)                 // emits AAuth-Mission on every request
+    .WithMission(mission)                 // person tokens are requested with mission_s256
     .WithChallengeHandling(o => o.OnInteractionRequired = SurfaceInteractionAsync)
     .WithInteractionHandling()
     .Build();
 
-// The mission header is present and signed before the request leaves; if the
-// resource challenges, the mission travels through the exchange so the PS can
-// evaluate the requested scope against the mission's intent.
+// If the resource challenges, the person token names the mission, the resource
+// copies mission_s256 into its resource token, and the PS evaluates the
+// requested scope against the mission's intent before issuing the auth token.
 var response = await client.GetAsync("https://resource.example/data");
 ```
 
 `WithMission(...)` is for the agent that holds its **own** approved mission. A
-call-chaining intermediary that re-emits a mission extracted from an *upstream*
-auth token uses `WithCallChaining(...)` instead (see
-[Forwarding a mission in a call chain](#forwarding-a-mission-in-a-call-chain)
-below); the two are mutually exclusive on a given client, and the header is never
-emitted twice. The combined [Mission Call Chain sample](../../samples/SampleApp/Components/Pages/MissionCallChain.razor)
+call-chaining intermediary never names a mission of its own: it presents the
+*upstream* token it was called with, and the PS carries that token's
+`mission_s256` forward. Such an intermediary uses `WithCallChaining(...)` instead
+(see [Missions in a call chain](#missions-in-a-call-chain) below). The combined
+[Mission Call Chain sample](../../samples/SampleApp/Components/Pages/MissionCallChain.razor)
 uses `WithMission(...)` to carry one approved mission across a forwarded call chain.
 
 ## The binding chain
 
-The mission travels end to end as a `MissionClaim` — `{ approver, s256 }` —
-embedded in tokens (§Resource Token Structure, §Auth Token Structure):
+The mission travels end to end as the `mission_s256` string claim (§Person Token
+Structure, §Resource Token Structure, §Auth Token Structure). `MissionReference`
+names and validates it; `TokenVerifier.VerifiedToken.MissionS256` reads it from a
+verified token.
 
 ```csharp
 namespace AAuth.Tokens;
 
-public sealed record MissionClaim(string Approver, string S256)
+public static class MissionReference
 {
-    public JsonObject ToJsonObject();
-    public static MissionClaim? FromPayload(JsonObject? payload, AAuth.Discovery.AAuthEgressPolicy? policy = null);
+    public const string ClaimName = "mission_s256";
+    public static bool IsValid(string? value);          // unpadded base64url SHA-256 digest
+    public static string? Read(JsonObject? document);   // null when absent; throws when malformed
 }
 ```
 
@@ -179,54 +203,53 @@ The chain is:
 sequenceDiagram
     participant Agent
     participant PS as Person Server
-    participant Resource as Mission-aware Resource
+    participant Resource
 
     Agent->>PS: POST mission_endpoint (propose)
-    PS-->>Agent: 200 mission blob + AAuth-Mission: approver, s256
-    Note over Agent: store RawBytes, verify s256
+    PS-->>Agent: 200 { s256, mission (base64url blob), person_tokens? }
+    Note over Agent: decode blob, verify s256
 
-    Agent->>Resource: GET /data (signed, AAuth-Mission: approver, s256)
-    Resource-->>Agent: 401 + resource token (mission claim copied in)
-    Agent->>PS: POST token_endpoint (resource token)
-    Note over PS: evaluate requested scope vs mission intent
-    PS-->>Agent: auth token (mission claim echoed)
-    Agent->>Resource: GET /data (signed, auth token)
+    Agent->>PS: POST person_token_endpoint (resource, mission_s256)
+    PS-->>Agent: person token (mission_s256)
+    Agent->>Resource: GET /data (signed, Signature-Key: person token)
+    Resource-->>Agent: 401 requirement=auth-token + resource token (mission_s256 copied)
+    Agent->>PS: POST auth_token_endpoint (resource_token, presented_token)
+    Note over PS: evaluate requested scope vs mission intent and log
+    PS-->>Agent: auth token (mission_s256)
+    Agent->>Resource: GET /data (signed, Signature-Key: auth token)
     Resource-->>Agent: 200 OK
 ```
 
-A **mission-aware resource** copies the mission object from the `AAuth-Mission`
-header into the resource token it issues, so the mission context reaches the PS
-even when the resource is not the approver (§Terminology). Enable it with
-`ChallengeOptions.MissionAware` — see
-[Challenge Middleware](../server/challenge-middleware.md#mission-aware-resources).
+Every resource participates without configuration: the challenge middleware
+copies `mission_s256` (and `tenant`) from the verified presented token into the
+resource token it issues, and the PS rejects a pair whose `mission_s256` differs
+(§Resource Token Verification). See
+[Challenge Middleware](../server/challenge-middleware.md#missions-in-resource-tokens).
 
-## Forwarding a mission in a call chain
+## Missions in a call chain
 
 When an intermediary resource calls downstream resources within a mission
-context, it must forward the `AAuth-Mission` header so the downstream PS can
-evaluate against the same mission. The SDK does this automatically via
-`MissionForwardingHandler`, which reads `mission.approver` and `mission.s256`
-from the upstream auth token and sets the structured header on every downstream
-request.
+context, it presents the calling agent's token as `upstream_token` when it
+requests a downstream person token and again on the downstream auth token
+request (§Call Chaining). It sends no `mission_s256` of its own: the PS reads
+the upstream token's `mission_s256`, stamps it into the downstream tokens, and
+evaluates the downstream request against the same mission. The SDK does this
+automatically — `WithCallChaining(...)` attaches the upstream token to every
+downstream request and routes each hop to the PS the upstream token names (the
+`iss` of a person token, the `ps` of an auth token).
 
 ```csharp
 using var client = new AAuthClientBuilder(key)
     .UseJwt(agentToken)
-    .WithCallChaining(httpContext) // also enables mission forwarding
+    .WithCallChaining(httpContext) // forwards the caller's token as upstream_token
     .Build();
 
-// If the upstream auth token carries mission.approver + mission.s256,
-// downstream requests include AAuth-Mission automatically.
+// If the upstream token carries mission_s256, the downstream person and auth
+// tokens carry the same mission_s256.
 await client.GetAsync("https://downstream.example");
 ```
 
-The handler formats the structured header on every downstream request:
-
-```text
-AAuth-Mission: approver="https://ps.example"; s256="abc123..."
-```
-
-This gives the PS receiving the downstream exchange full mission context for
+This gives the PS receiving the downstream request full mission context for
 policy evaluation, enabling governed multi-hop access (§Call Chaining). See
 [Call Chaining](../workflows/call-chaining.md) for the full multi-hop flow.
 

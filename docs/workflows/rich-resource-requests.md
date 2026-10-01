@@ -4,11 +4,11 @@
 > separate [`AAuth.R3`](../../src/AAuth.R3/) preview package, not the core `AAuth` package.
 
 Overview: R3 adds **resource-declared, vocabulary-based** authorization on top of the
-four AAuth access modes. Instead of opaque scope strings, the resource publishes a
+five AAuth resource access modes. Instead of opaque scope strings, the resource publishes a
 content-addressed **R3 document** describing the operations a class of access covers
 (in a vocabulary the agent already understands — here **OpenAPI** operation IDs) and the
 human consequences of granting it. The auth token then carries `r3_granted` (serve
-immediately) and `r3_conditional` (needs per-call approval) instead of, or alongside,
+immediately) and `r3_per_call` (needs per-call approval) instead of, or alongside,
 `scope`. The **Bookings** sample (a dining & experiences reservation provider) is
 guarded by a **dedicated R3 Access Server**.
 
@@ -18,20 +18,20 @@ sequenceDiagram
     participant Bookings as Bookings (:5005)
     participant PS as Person Server (:5100)
     participant AS as R3 Access Server (:5501)
-    Agent->>Bookings: POST /authorize { r3_operations } (signed)
-    Bookings-->>Agent: resource token (aud=AS, r3_uri + r3_s256)
-    Agent->>PS: POST /token (resource token)
-    PS->>AS: POST /token (forwards resource token)
+    Agent->>Bookings: POST /authorize { r3_operations } (signed, person token)
+    Bookings-->>Agent: resource token (aud=AS, r3_uri + r3_s256, presented_jti = person token)
+    Agent->>PS: POST /token (resource_token, presented_token)
+    PS->>AS: POST /token (resource_token, agent_token, presented_token)
     AS->>Bookings: GET r3_uri (AS-signed) — fetch R3 document
     Bookings-->>AS: R3 document bytes (verbatim)
-    Note over AS: hash-verify r3_s256, split granted vs conditional, audit
-    AS-->>PS: auth token (r3_granted + r3_conditional)
+    Note over AS: hash-verify r3_s256, split granted vs per-call, audit
+    AS-->>PS: auth token (r3_granted + r3_per_call)
     PS-->>Agent: auth token
     Agent->>Bookings: GET /search_availability (auth token) — in r3_granted
     Bookings-->>Agent: 200 OK
-    Agent->>Bookings: POST /confirm_reservation (auth token) — in r3_conditional
+    Agent->>Bookings: POST /confirm_reservation (auth token) — in r3_per_call
     Bookings-->>Agent: 401 + resource token → per-call proposal (r3_uri + parameters)
-    Agent->>PS: POST /token (proposal resource token)
+    Agent->>PS: POST /token (proposal resource token, presented_token = auth token)
     PS->>AS: POST /token
     AS-->>PS: 202 Accepted + interaction URL (per-call consent required)
     PS-->>Agent: 202 Accepted + interaction URL
@@ -56,18 +56,19 @@ sequenceDiagram
   bytes. Agents never fetch them. The designated AS may fetch with an HTTP Message
   Signature; a PS evaluator requires explicit resource policy.
 - **Token claims** — the resource token carries `r3_uri` + `r3_s256`; the auth token
-  adds `r3_granted` and (optionally) `r3_conditional`.
+  adds `r3_granted` and (optionally) `r3_per_call`.
 
-## Granted vs. conditional
+## Granted vs. per-call
 
 The **Access Server** — not the resource — decides which operations to grant outright
-and which to make conditional, from the document's `operations` and its own policy
+and which to make per-call, from the document's `operations` and its own policy
 (r3 §Auth Token Extensions). The dedicated Bookings AS is configured to treat
-`confirmReservation` as conditional (override via `R3AccessServer:ConditionalOperations`);
-the R3 document itself carries only the spec fields (`operations` + `display`):
+`confirmReservation` as per-call (override via `R3AccessServer:PerCallOperations`);
+the R3 document itself carries the required spec fields (`vocabulary`,
+`operations`, and `display`):
 
 - **`r3_granted`** — `searchAvailability`, `holdReservation`: served immediately.
-- **`r3_conditional`** — `confirmReservation`: charges a non-refundable deposit, so it
+- **`r3_per_call`** — `confirmReservation`: charges a non-refundable deposit, so it
   requires a **per-call proposal**. On first call the resource returns a resource token
   referencing a single-invocation R3 document that carries the concrete `parameters`
   (venue, date, party size, deposit). Because the proposal is consequential, the R3 AS
@@ -96,8 +97,49 @@ the R3 document itself carries only the spec fields (`operations` + `display`):
 - **Per-call digest match** — the resource rejects a retry whose parameters differ from
   the approved proposal.
 
-Every Bookings route supports granted, conditional, and rejected outcomes;
-confirmation is conditional only because of the demo AS policy. GET search/hold
+## Serving R3 documents
+
+`AddAAuthR3Documents` registers the `R3DocumentReaderPolicy` and an in-memory
+`IR3DocumentEntitlements`; `MapR3Document(pattern, getBytes)` resolves both from DI.
+Every resource token minted through `R3Challenge` entitles its `aud` (the AS) and
+`ps` (the PS) to read the exact `r3_uri`/`r3_s256` pair until that resource token
+expires. A configured AS or PS without an exact unexpired entitlement sees the
+document as absent (`404`).
+
+```csharp
+builder.Services.AddAAuthR3Documents(_ =>
+    new R3DocumentReaderPolicy(asIssuer, [psIssuer], egressPolicy));
+var documents = new R3ProposalStore();
+
+// After builder.Build():
+app.MapR3Document("/r3/{hash}", ctx =>
+    documents.TryGet((string)ctx.Request.RouteValues["hash"]!, out var bytes) ? bytes : null);
+
+// ChallengeAsync(context, ...) and per-call ToResultAsync(context, challenge, ...) use
+// the DI entitlements; set Entitlements when minting with BuildResourceTokenAsync.
+var entitlements = app.Services.GetRequiredService<IR3DocumentEntitlements>();
+var operationValidator = app.Services.GetRequiredService<IR3OperationValidator>();
+var challenge = new R3Challenge
+{
+    ResourceIssuer = resourceUrl, Audience = asIssuer,
+    Key = resourceKey, KeyId = ResourceKid, Entitlements = entitlements,
+    OperationValidator = operationValidator,
+};
+
+// A resource token minted without R3Challenge must entitle its readers itself.
+var stored = documents.AddBytes("{}"u8.ToArray(), new Uri(resourceUrl), "/r3");
+await entitlements.EntitleAsync(stored.Uri, stored.S256, asIssuer,
+    resourceTokenId: "resource-token-jti", expiresAt: DateTimeOffset.UtcNow.AddMinutes(5));
+await entitlements.EntitleAsync(stored.Uri, stored.S256, psIssuer,
+    resourceTokenId: "resource-token-jti", expiresAt: DateTimeOffset.UtcNow.AddMinutes(5));
+```
+
+The in-memory entitlements are per process. Behind a load balancer, register a
+shared `IR3DocumentEntitlements` before `AddAAuthR3Documents` so every instance
+serving the document sees the grants.
+
+Every Bookings route supports granted, per-call, and rejected outcomes;
+confirmation is per-call only because of the demo AS policy. GET search/hold
 use `searchAvailability` and `holdReservation`; POST variants use
 `searchAvailabilityPost` and `holdReservationPost`. All identifiers come from the
 same published OpenAPI definition. Per-call parameters bind the HTTP method,
@@ -106,9 +148,14 @@ ID, venue, date, party size, deposit, and cancellation policy.
 
 ## Vocabulary and API contracts
 
-All eight standard vocabularies have validated operation shapes. Gateway discovery
-is a service-label map, and Gateway operation identity is the pair of `service`
-and `operationId`. `R3OperationIdentity` also includes the vocabulary and every
+R3 documents and proposals include a required `vocabulary` member. Before a
+resource token is minted, `R3Challenge` validates the referenced document or
+proposal through `IR3OperationValidator`, which checks every operation against the
+resource's authoritative definition and rejects ambiguous bare identifiers.
+
+All seven standard vocabularies have validated operation shapes. OpenAPI
+operation identity is the vocabulary plus `operationId`; WSDL may add an optional
+`service` member. `R3OperationIdentity` also includes the vocabulary and every
 optional member; bare-ID matching is not supported. Third-party schemas are
 explicitly supplied through a consumer-local `R3VocabularySchemas` instance.
 
@@ -119,13 +166,19 @@ IReadOnlyDictionary<string, R3Parameter> presentedParameters =
   new Dictionary<string, R3Parameter>();
 var result = enforcement.Evaluate(grantedClaims, identity, presentedParameters,
     approvedProposalS256: proposalHash, expectedAccount: account);
+object ExecuteOperation() => new { ok = true };
+if (result.Kind == R3EnforcementDecisionKind.SingleUse)
+{
+    return (await result.SingleUseGrant!.ExecuteOnceAsync(_ =>
+        Task.FromResult(HeldInvocationResult.Json(ExecuteOperation())))).ToResult();
+}
 ```
 
 An approved proposal retry must supply its proposal hash and matching parameters.
 For digest parameters, use `R3PresentedParameters` with the actual value bytes.
-The resource recovers the exact proposal bytes and rechecks their hash. Callers
-must distinguish class grants from proposal grants before serving a request, as
-the Bookings sample does using its stored document.
+The resource recovers the exact proposal bytes, rechecks their hash, and returns
+a `SingleUse` execute-once handle. Missing `jti`, `exp`, or a configured
+`IAAuthSingleUseGate` yields `single_use_required` instead of executing.
 
 The sample's `R3AccessServer:AuditPath` selects the SQLite file. Its default is
 `aauth-samples/r3-audit.sqlite` beneath local application data. Audit survives
@@ -137,16 +190,16 @@ still size-limited and hash-verified by the SDK.
 Bookings uses AsyncAPI `receive` grants to issue protected subscription tickets.
 The [Events workflow](events.md) exercises registration, self-jwt delivery,
 durable AP acceptance and independent agent receipt verification. The separate
-[Catalog Gateway](catalog-gateway.md) demonstrates service-qualified operations
-with colliding operation IDs. Native MCP, gRPC, GraphQL, WSDL and OData hosting
+[Travel Catalog](catalog-gateway.md) demonstrates one merged OpenAPI definition
+that renames colliding operation IDs. Native MCP, gRPC, GraphQL, WSDL and OData hosting
 is not implied by the SDK's typed vocabulary support.
 
 ## Person-Server trust (spec default)
 
 The R3 AS brokers for Person Servers using the same trust model as the core Access
-Server: an **unset** `TrustedPersonServers` list is **open** (broker any *verifiable*
-PS), an explicit list **narrows** (empty ⇒ deny-all), composed
-by AND with an optional `IsTrustedPersonServer` policy. The Bookings demo AS pins the
+Server: an **unset** `Trust.PersonServers` rule is **open** (broker any *verifiable*
+PS), an explicit `Allowed` list **narrows** (empty ⇒ deny-all), composed
+by AND with an optional `Predicate`. The Bookings demo AS pins the
 demo PS (:5100) as the documented four-party pattern.
 
 ## Try it

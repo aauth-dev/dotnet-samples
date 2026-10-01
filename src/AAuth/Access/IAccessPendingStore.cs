@@ -25,8 +25,7 @@ public interface IAccessPendingStore
         DateTimeOffset agentTokenExpiresAt,
         JsonObject? claims,
         IReadOnlyList<string>? requiredClaims = null,
-        DateTimeOffset? authorizationExpiresAt = null,
-        JsonObject? upstreamAct = null);
+        DateTimeOffset? authorizationExpiresAt = null);
 
     /// <summary>Look up a pending entry by id, or <see langword="null"/>.</summary>
     AccessPendingEntry? Get(string id);
@@ -52,6 +51,7 @@ public enum AccessPendingStatus
     Denied,
     AwaitingClarification,
     Review,
+    PaymentRequired,
 }
 
 /// <summary>A parked federated access decision.</summary>
@@ -63,13 +63,12 @@ public sealed class AccessPendingEntry
     public AAuth.Server.DeferredState Lifecycle { get; } = new();
     public AAuth.Server.BrowserInteraction Browser { get; } = new();
     public string? OwnerKeyThumbprint { get; set; }
-    public string? OwnerAgentIssuer { get; set; }
-    public string? OwnerAgentSubject { get; set; }
     public AAuth.Headers.ClarificationRequirement? Clarification { get; set; }
     public DateTimeOffset? ClarificationDeadline { get; set; }
     public List<string> ClarificationAnswers { get; } = [];
     public int ClarificationRounds { get; set; }
     public JsonObject? ResourceContext { get; set; }
+    public AAuthPaymentChallenge? PaymentChallenge { get; set; }
     public string? Account => AAuth.Tokens.AccountBinding.Read(ResourceContext);
 
     /// <summary>The resource URL the auth token will be audienced to.</summary>
@@ -84,8 +83,6 @@ public sealed class AccessPendingEntry
     public required DateTimeOffset AgentTokenExpiresAt { get; init; }
 
     public DateTimeOffset? AuthorizationExpiresAt { get; init; }
-
-    public JsonObject? UpstreamAct { get; init; }
 
     public DateTimeOffset ExpiresAt => AuthorizationExpiresAt is { } expiry && expiry < AgentTokenExpiresAt
         ? expiry : AgentTokenExpiresAt;
@@ -103,7 +100,7 @@ public sealed class AccessPendingEntry
     /// poll or push into another PS's entry.
     /// </summary>
     public string? OriginPersonServerHost { get; set; }
-    public IReadOnlyList<AAuth.Server.TokenKey> SourceTokens { get; set; } = [];
+    public IReadOnlyList<AAuth.Server.TokenRegistration> SourceTokens { get; set; } = [];
 
     /// <summary>Identity claims known when the decision was parked.</summary>
     public JsonObject? Claims { get; init; }
@@ -115,9 +112,6 @@ public sealed class AccessPendingEntry
     /// gathering on the same <c>Location</c>.
     /// </summary>
     public IReadOnlyList<string>? RequiredClaims { get; set; }
-
-    /// <summary>The directed <c>sub</c> the PS supplied on the claims push.</summary>
-    public string? SuppliedSubject { get; set; }
 
     /// <summary>The identity claims the PS pushed (§Claims Required).</summary>
     public JsonObject? SuppliedClaims { get; set; }
@@ -160,8 +154,7 @@ public sealed class InMemoryAccessPendingStore : IAccessPendingStore
         DateTimeOffset agentTokenExpiresAt,
         JsonObject? claims,
         IReadOnlyList<string>? requiredClaims = null,
-        DateTimeOffset? authorizationExpiresAt = null,
-        JsonObject? upstreamAct = null)
+        DateTimeOffset? authorizationExpiresAt = null)
     {
         Sweep();
         var entry = new AccessPendingEntry
@@ -172,7 +165,6 @@ public sealed class InMemoryAccessPendingStore : IAccessPendingStore
             AgentId = agentId,
             AgentTokenExpiresAt = agentTokenExpiresAt,
             AuthorizationExpiresAt = authorizationExpiresAt,
-            UpstreamAct = upstreamAct,
             AgentConfirmationKey = agentConfirmationKey,
             Claims = claims,
             RequiredClaims = requiredClaims,

@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace AAuth.R3.Model;
 
 /// <summary>
-/// A vocabulary-specific operation, including service qualifiers and optional members.
+/// A vocabulary-specific operation, including qualifiers (such as a WSDL service) and optional members.
 /// </summary>
 [JsonConverter(typeof(R3OperationConverter))]
 public sealed record R3Operation
@@ -33,8 +33,6 @@ public sealed record R3Operation
     /// <summary>An OpenAPI operation (<c>{ "operationId": … }</c>).</summary>
     public static R3Operation OpenApi(string operationId) => new() { Field = OpenApiField, Id = operationId };
 
-    public static R3Operation OpenApiGateway(string service, string operationId) =>
-        OpenApi(operationId) with { Service = service };
     public static R3Operation Grpc(string method) => new() { Field = "method", Id = method };
     public static R3Operation GraphQl(string operation, string type) => new() { Field = "operation", Id = operation, Type = type };
     public static R3Operation AsyncApi(string operationId, string? action = null) => OpenApi(operationId) with { Action = action };

@@ -1,11 +1,12 @@
 # AAuth .NET SDK Documentation
 
 The AAuth .NET SDK (`AAuth` NuGet package) supports agent-side JWT signing,
-server-side verification, six Signature-Key schemes and four resource access
-modes. Generic signing demonstrations are separate from AAuth resource access.
+server-side verification, five draft-11 resource access modes and generic
+Signature-Key schemes for non-AAuth demonstrations. AAuth agent requests use
+`jwt`; `hwk`, `jwks_uri`, `jwks` and `jkt-jwt` are not AAuth agent credentials.
 
-- [Interactive Protocol Explorer](https://explorer.aauth.dev/)
-- [AAuth Protocol Specification](../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md)
+- [Interactive Protocol Explorer](https://explorer.aauth.dev/) — Click-through protocol walkthroughs and comparisons
+- [AAuth Protocol Specification](../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md) — Normative draft-11 protocol text
 
 ## Getting Started
 
@@ -18,27 +19,27 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 [Compare signing modes →](https://explorer.aauth.dev/signing/compare)
 
 - [Overview](signing-modes/overview.md) — When to use each mode
-- [Pseudonymous (hwk)](signing-modes/pseudonymous-hwk.md)
-- [Agent Identity (jwks_uri)](signing-modes/agent-identity-jwks-uri.md)
-- [Agent Token (jwt)](signing-modes/agent-token-jwt.md)
-- [Key Rotation (jkt-jwt)](signing-modes/key-rotation-jkt-jwt.md)
+- [Pseudonymous (hwk)](signing-modes/pseudonymous-hwk.md) — Generic inline public-key signing, not an AAuth resource-access credential
+- [Agent Identity (jwks_uri)](signing-modes/agent-identity-jwks-uri.md) — Server identity discovery for PS/AS signers; agents use `jwt` for AAuth requests
+- [Agent Token (jwt)](signing-modes/agent-token-jwt.md) — Agent-token, auth-token and Events subscribe-token carriers with confirmation keys
+- [Key Rotation (jkt-jwt)](signing-modes/key-rotation-jkt-jwt.md) — Generic/AP durable-to-ephemeral key-refresh ceremony
 
 ## Workflows
 
 [Compare access workflows →](https://explorer.aauth.dev/access/compare)
 
-- [Identity-Based Access](workflows/identity-based-access.md)
-- [Resource-Managed Access](workflows/resource-managed-access.md)
-- [PS-Asserted Access](workflows/ps-asserted-access.md)
-- [Federated Access](workflows/federated-access.md)
-- [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md)
-- [Deferred Consent](workflows/deferred-consent.md)
-- [Call Chaining](workflows/call-chaining.md)
-- [Mission-Governed Access](workflows/mission-governed-access.md)
-- [Rich Resource Requests (R3)](workflows/rich-resource-requests.md) — preview; ships in the separate [`AAuth.R3`](../src/AAuth.R3/) package
+- [Agent identity access](workflows/identity-based-access.md) — Resource authorizes a verified agent token directly
+- [Resource-Managed Access](workflows/resource-managed-access.md) — Two-party resource consent that returns an opaque `AAuth-Access` token
+- [PS authorization](workflows/ps-asserted-access.md) — Three-party flow: person token, resource token, PS-issued auth token
+- [Federated authorization](workflows/federated-access.md) — Four-party flow where the PS federates to the resource's AS for the auth token
+- [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md) — AP enrollment for CLI/desktop/mobile agents and self-issuing for hosted services
+- [Deferred Consent](workflows/deferred-consent.md) — 202 interaction + polling until the PS grants or denies the auth token
+- [Call Chaining](workflows/call-chaining.md) — A resource acting as an agent downstream with the caller's token as `upstream_token`
+- [Mission-Governed Access](workflows/mission-governed-access.md) — User-approved mission intent governing tokens, local tools, audit and closeout
+- [Rich Resource Requests (R3)](workflows/rich-resource-requests.md) — Resource-declared, vocabulary-based authorization in the separate [`AAuth.R3`](../src/AAuth.R3/) package
 - [Events](workflows/events.md) - subscribe tokens, durable AP inbox delivery and verified agent receipts in `AAuth.Events`
-- [Wallet Protocol](workflows/wallet-protocol.md) - AS clarification, direct-AS chaining and issuer-qualified revocation
-- [Catalog Gateway](workflows/catalog-gateway.md) - service-qualified R3 grants, sibling rejection and recovery
+- [Wallet Protocol](workflows/wallet-protocol.md) - AS clarification, chaining an AS-issued grant and federated revocation
+- [Travel Catalog](workflows/catalog-gateway.md) - merged OpenAPI definition, sibling rejection and recovery
 - [Document Release](workflows/document-release.md) - resource permission before PS consent, with signed download or denial
 
 ## Server Implementation
@@ -47,27 +48,27 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 - [Challenge Middleware](server/challenge-middleware.md) — Auto-challenge for auth token upgrade
 - [Authentication and Authorization](server/authn-authz.md) — authN/authZ pipeline + minimal-API and MVC wiring
 - [Authorization Policies](server/authorization-policies.md) — Scope-based `[Authorize]` integration
-- [Resource Metadata](server/resource-metadata.md)
-- [Token Issuance](server/token-issuance.md)
-- [Replay Detection](server/replay-detection.md)
-- [Multi-Scheme Verification](server/multi-scheme-verification.md)
+- [Resource Metadata](server/resource-metadata.md) — Serve `/.well-known/aauth-resource.json` and resource JWKS metadata
+- [Token Issuance](server/token-issuance.md) — Builders, one-call PS mapping, claims and token verification
+- [Replay Detection](server/replay-detection.md) — Per-request signature replay protection plus token revocation
+- [Multi-Scheme Verification](server/multi-scheme-verification.md) — Opt-in generic Signature-Key verification beyond the default `jwt`
 - [Mission Governance](server/mission-governance.md) — PS-side mission policy seams
 
 ## Advanced Topics
 
-- [Missions](advanced/missions.md)
+- [Missions](advanced/missions.md) — Optional governance layer for user-approved, multi-step agent work
 - [Mission Governance Clients](advanced/mission-governance-clients.md) — propose, permission, audit, interaction
 - [Clarification Chat](advanced/clarification-chat.md) — answering a server's follow-up questions
-- [Interaction Chaining](advanced/interaction-chaining.md)
-- [Platform Attestation](advanced/platform-attestation.md)
-- [Key Management](advanced/key-management.md)
-- [Error Handling](advanced/error-handling.md)
+- [Interaction Chaining](advanced/interaction-chaining.md) — Bubble downstream interaction requirements back to the original agent
+- [Platform Attestation](advanced/platform-attestation.md) — `IPlatformAttestor` hook for device/key evidence when policy requires it
+- [Key Management](advanced/key-management.md) — Persistent signing keys, key-store interfaces and key identity vs signing ability
+- [Error Handling](advanced/error-handling.md) — Structured signature, token-exchange and polling errors
 - [Observability](advanced/observability.md) — OpenTelemetry Activity tracing
 
 ## Reference
 
-- [Configuration](reference/configuration.md)
-- [Dependency Injection](reference/dependency-injection.md)
+- [Configuration](reference/configuration.md) — Options for agents, resources, PS/AS roles, discovery and egress policy
+- [Dependency Injection](reference/dependency-injection.md) — ASP.NET Core registration patterns for agents, resources, PS and AS roles
 
 ## API Map
 
@@ -80,7 +81,10 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `IKeyStore` | Key storage interface (implement for custom backends) |
 | `FileKeyStore` | Built-in `IKeyStore` — on-disk persistence (`~/.aauth/keys/`) |
 | `InMemoryKeyStore` | Built-in `IKeyStore` — in-memory (testing/ephemeral) |
-| `IAAuthKey` | Key abstraction (implement for custom key backends) |
+| `IAAuthKey` | Public key identity: algorithm, public JWK, thumbprint, verification |
+| `IAAuthSigner` | Signing key: `SignAsync` (implement for remote or non-exportable key backends) |
+| `IAAuthExportableKey` | Local signing key that can export its private JWK (`AAuthKey`, `EcdsaAAuthKey`) |
+| `AAuthSigningKeySet` | Issuer signing keys: JWKS publishes every key, tokens are signed with the active key; supports live rotation |
 
 ### `AAuth.HttpSig` — Signing and verification
 
@@ -99,7 +103,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `HwkSignatureKeyProvider` | `sig=hwk` — inline public key |
 | `JwksUriSignatureKeyProvider` | `sig=jwks_uri` — JWKS-discoverable identity |
 | `JwtSignatureKeyProvider` | `sig=jwt` — agent/auth token inline |
-| `JktJwtSignatureKeyProvider` | `sig=jkt-jwt` — key rotation mode |
+| `JktJwtSignatureKeyProvider` | `sig=jkt-jwt` — generic/AP key-refresh ceremony |
 | `BootstrapBuilder` | Fluent builder for AP enrollment (CLI/desktop agents) |
 | `ChallengeHandlingOptions` | Options for automatic 401 challenge handling |
 | `InteractionHandlingOptions` | Options for deferred/interaction handling |
@@ -113,13 +117,14 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `InteractionHandler` | `DelegatingHandler` — handles 202 deferred/interaction |
 | `AAuthAccessHandler` | `DelegatingHandler` — captures/replays the resource-managed `AAuth-Access` token |
 | `IAAuthAccessStore` / `InMemoryAAuthAccessStore` | Per-origin store for captured `AAuth-Access` tokens |
-| `TokenExchangeClient` | Sends signed `POST /token` to the Person Server |
+| `TokenExchangeClient` | Signed person token requests and auth token exchanges at the Person Server |
 | `DeferredPoller` | Polls the pending URL until auth_token or timeout |
 | `AgentProviderClient` | Enrols with an Agent Provider (CLI/desktop agents; hosted services self-issue) |
-| `Mission` / `AAuthMissionHeader` | Mission state + the `AAuth-Mission` header helpers |
-| `MissionForwardingHandler` | `DelegatingHandler` that forwards mission context downstream |
+| `IAAuthAgentFactory` / `AAuthAgent` / `AAuthAgentDescriptor` | Resolve registered agents (`Get`) or create caller-owned agents at runtime (`Create`) |
+| `Mission` / `MissionContextHandler` | Mission state + the handler that names the mission (`mission_s256`) on person token requests |
+| `MissionForwardingHandler` | `DelegatingHandler` that forwards the caller's token downstream as `upstream_token` |
 | `AAuthGovernanceClient` | Facade bundling the four PS governance clients |
-| `MissionClient` | Propose missions at the PS `mission_endpoint` |
+| `MissionClient` | Propose, update, and complete missions at the PS `mission_endpoint` |
 | `PermissionClient` | Request permission at the PS `permission_endpoint` |
 | `AuditClient` | Record actions at the PS `audit_endpoint` |
 | `InteractionClient` | Reach the user via the PS `interaction_endpoint` |
@@ -129,7 +134,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `InteractionRequest` / `InteractionResult` | Interaction request + typed terminal result |
 | `GovernanceOptions` | Deferral callbacks shared by the governance clients |
 | `ClarificationExchange` / `ClarificationResponse` | Drive a clarification chat; respond / update / cancel |
-| `AAuthCapabilitiesHeader` | Helpers for the `AAuth-Capabilities` request header |
+| `AAuthCapabilitiesHeader` / `AAuthConstants.Capabilities` | Helpers for the `AAuth-Capabilities` request header and known capability tokens |
 | `IInteractionPresenter` | Surface interaction URLs to the user |
 | `IPlatformAttestor` / `NoopAttestor` | Platform attestation hook + built-in no-op implementation |
 | `ITokenRefresher` | Pluggable agent-token refresh strategy |
@@ -141,10 +146,11 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | Type | Purpose |
 |------|---------|
 | `AgentTokenBuilder` | Builds `aa-agent+jwt` (agent identity + DWK) |
-| `ResourceTokenBuilder` | Builds `aa-resource+jwt` (401 challenge payload) |
+| `PersonTokenBuilder` | Builds `aa-person+jwt` (the person's identity at one resource) |
+| `ResourceTokenBuilder` | Builds `aa-resource+jwt` (401 challenge payload naming the presented token) |
 | `AuthTokenBuilder` | Builds `aa-auth+jwt` (person delegation proof) |
 | `TokenVerifier` | Ed25519 JWT verification with claim checks and JWKS resolution |
-| `MissionClaim` | The `mission` claim (`approver` + `s256`) carried in tokens |
+| `MissionReference` | The `mission_s256` claim/parameter name and validation |
 
 ### `AAuth.Discovery` — Metadata and JWKS
 
@@ -152,7 +158,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 |------|---------|
 | `MetadataClient` | Cached fetcher for `/.well-known/aauth-*.json` |
 | `JwksClient` | Cached fetcher for JWKS endpoints |
-| `ServerMetadata` / `ResourceMetadata` | Parsed metadata models |
+| `ServerMetadata` / `ResourceMetadata` | Parsed metadata models, including typed resource `additional_signature_components` |
 
 ### `AAuth.Headers` — Protocol headers
 
@@ -163,7 +169,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `ClarificationRequirement` | Typed `requirement=clarification` projection (untrusted question) |
 | `AAuthAccessHeader` | Format/parse/validate the `AAuth-Access` opaque token (`token68`) |
 
-> The `AAuthCapabilitiesHeader` and `AAuthMissionHeader` types live in the `AAuth.Agent` namespace (alongside `Mission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
+> The `AAuthCapabilitiesHeader` and `MissionContextHandler` types live in the `AAuth.Agent` namespace (alongside `Mission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
 
 ### `AAuth.Server.Verification` — Verification middleware
 
@@ -185,7 +191,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | Type | Purpose |
 |------|---------|
 | `GovernanceEndpoints` | Parse governance request bodies + emit `mission_terminated` |
-| `IMissionStore` / `InMemoryMissionStore` | Persist missions (verbatim blob + state) |
+| `IMissionStore` / `InMemoryMissionStore` | Persist missions keyed by PS + `s256` (verbatim blob + state + termination reason) |
 | `IMissionLog` / `InMemoryMissionLog` | Ordered mission log + prior-consent lookup |
 | `IPermissionDecider` | PS policy seam for the permission endpoint |
 | `IAuditSink` | PS sink for audit records |
@@ -205,7 +211,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 
 | Type | Purpose |
 |------|---------|
-| `WellKnownEndpoints` | `MapAAuthResourceWellKnown()` for ASP.NET minimal APIs |
+| `WellKnownEndpoints` | `MapAAuthAgentWellKnown(o => ...)` for agent metadata (including typed `event_endpoint` / `localhost_callback_allowed`); resources use `MapAAuthWellKnown()`, PS/AS publish through their role mappers. Core metadata fields are typed; resource `AdditionalMetadata` cannot shadow them. |
 
 ### `AAuth.Server.CallChaining` — Delegation routing
 
@@ -218,6 +224,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | Type | Purpose |
 |------|---------|
 | `RevocationEndpoint` | Token revocation endpoint |
+| `IAAuthServerIdentity` | A registered PS/AS instance's issuer, signing keys and egress policy (keyed by instance name); `Url(path)` and `CreateSignedClient()` sign as the server |
 | `IJtiStore` / `InMemoryJtiStore` | Replay detection (records the per-request signature) + revocation |
 | `AddAAuthResourceManaged` | High-level resource-managed (two-party) setup: opaque-token store + interaction store + poll endpoint |
 | `HttpContext.RequireAAuthInteraction` | Opt an endpoint into a consent interaction (`202` + `AAuth-Requirement`) |
@@ -225,22 +232,23 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `IInteractionPendingStore` / `InMemoryInteractionPendingStore` | Owner/key/account-bound pending state; decisions use authenticated browser sessions, not the correlation code alone |
 | `AAuthInteractionCode` | Single-use interaction code (Crockford base32) |
 | `IOpaqueTokenStore` / `InMemoryOpaqueTokenStore` | Opaque access-token store (mint/validate); read a request's token via `ResolveAAuthAccessAsync` |
-| `HttpContext.IssueAAuthAccessAsync` / `InteractionRequiredAAuth`, `MapAAuthAuthorizationEndpoint` | Low-level building blocks `AddAAuthResourceManaged` wires for you |
+| `HttpContext.IssueAAuthAccessAsync` / `InteractionRequiredAAuth`, `MapAAuthInteractionPoll` | Low-level building blocks `AddAAuthResourceManaged` wires for you |
 
 ### `AAuth` — Diagnostics
 
 | Type | Purpose |
 |------|---------|
-| `AAuthDiagnostics` | Shared `ActivitySource` + tag key constants for OTel tracing |
+| `AAuthDiagnostics` | Shared `ActivitySource`, `Meter` and tag key constants for OTel tracing/metrics |
 
 ### `Microsoft.Extensions.DependencyInjection` / `Microsoft.AspNetCore.Builder` — ASP.NET Core integration
 
 | Type | Purpose |
 |------|---------|
-| `AAuthAgentServiceCollectionExtensions` | `services.AddAAuthAgent(...)` |
-| `AAuthResourceServiceCollectionExtensions` | `services.AddAAuthResource(...)`, `services.AddAAuthAuthentication()`, `services.AddAAuthAuthorization()` |
+| `AAuthAgentServiceCollectionExtensions` / `AAuthAgentBuilder` | `services.AddAAuthAgent(name, …)` (options or a configuration section such as `AAuth:Agents:<name>`); builder `Configure` / `WithAgentProvider()` / `WithGovernance()`; `services.AddAAuthAgentFactory()` registers `IAAuthAgentFactory` alone |
+| `AAuthResourceServiceCollectionExtensions` | `services.AddAAuthResource(...)` (options or an `AAuth:Resource` configuration section), `services.AddAAuthAuthentication()`, `services.AddAAuthAuthorization()` |
 | `AAuthResourceManagedServiceCollectionExtensions` | `services.AddAAuthResourceManaged(...)` — resource-managed (two-party) setup |
-| `AAuthFederationServiceCollectionExtensions` | `services.AddAAuthFederation(...)` — PS→AS four-party client |
+| `AAuthPersonServerServiceCollectionExtensions` / `AAuthPersonServerBuilder` | `services.AddAAuthPersonServer(...)` (options or `AAuth:PersonServer`); builder `UseClaimsAsserter` / `UsePendingStore` / `UseTokenVerifier` / `UseTokenInventory` / `WithTrust` / `WithFederation()` (PS→AS four-party client) / `WithGovernance()`; map with `app.MapAAuthPersonServer(name?)` |
+| `AAuthAccessServerServiceCollectionExtensions` / `AAuthAccessServerBuilder` | `services.AddAAuthAccessServer(...)` (options or `AAuth:AccessServer`); builder `UsePolicy` (required) / `UsePendingStore` / `UseTokenVerifier` / `UseTokenInventory` / `WithTrust`; map with `app.MapAAuthAccessServer(name?)` |
 | `AAuthDiscoveryServiceCollectionExtensions` | `services.AddAAuthDiscovery(...)` |
 | `AAuthGovernanceServiceCollectionExtensions` | `services.AddAAuthGovernance()` |
 | `AAuthEndpointExtensions` | `endpoint.RequireAAuth(scope, role)` / `.RequireAAuthSignature()` + `app.UseAAuth(...)` — per-route requirements |

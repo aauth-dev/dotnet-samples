@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Nodes;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -31,33 +32,44 @@ public static class AAuthApplicationBuilderExtensions
     /// and (optionally) JWT issuer signature verification.
     /// </summary>
     /// <param name="app">The application builder.</param>
-    /// <param name="options">Verification options. When null, uses default options (issuer verification enabled).</param>
+    /// <param name="configure">
+    /// Adjusts the options for this pipeline after any DI configuration of
+    /// <see cref="AAuthVerificationOptions"/>. The egress policy defaults to the registered
+    /// <see cref="MetadataClient"/>'s.
+    /// </param>
     public static IApplicationBuilder UseAAuthVerification(
         this IApplicationBuilder app,
-        AAuthVerificationOptions? options = null)
+        Action<AAuthVerificationOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(app);
+        var metadata = app.ApplicationServices.GetService<MetadataClient>();
+        var options = AAuthOptionsResolver.Create(app.ApplicationServices,
+            () => new AAuthVerificationOptions { EgressPolicy = metadata?.Policy ?? AAuthEgressPolicy.Production });
+        configure?.Invoke(options);
+        return app.UseAAuthVerificationCore(options);
+    }
 
+    internal static IApplicationBuilder UseAAuthVerificationCore(this IApplicationBuilder app, AAuthVerificationOptions resolvedOptions)
+    {
+        var resourceMetadata = app.ApplicationServices.GetService<AAuthResourceMetadataOptions>();
+        resolvedOptions = AAuthResourceVerificationDefaults.Normalize(
+            resolvedOptions, resourceMetadata?.AccessServer, app.ApplicationServices);
         var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
         var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
             ?? new DefaultSignatureKeyResolver(
                 app.ApplicationServices.GetService<JwksClient>(), app.ApplicationServices.GetService<MetadataClient>(),
-                tokenVerifiers: app.ApplicationServices.GetServices<ISignatureTokenVerifier>());
+                tokenVerifiers: app.ApplicationServices.GetServices<ISignatureTokenVerifier>(),
+                services: app.ApplicationServices);
         var metadata = app.ApplicationServices.GetService<MetadataClient>();
         var jwks = app.ApplicationServices.GetService<JwksClient>();
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
-        var resolvedOptions = options ?? new AAuthVerificationOptions
-        {
-            EgressPolicy = metadata?.Policy ?? AAuthEgressPolicy.Production,
-        };
 
-        // Startup footgun guards (diagnostics only — no runtime policy change):
-        // throw on a configured-but-ignored trust policy; warn on implicit-open.
         TrustConfigDiagnostics.Validate(
             app.ApplicationServices.GetService<ILoggerFactory>()?.CreateLogger("AAuth.Verification"),
-            authTrustConfigured: resolvedOptions.TrustedAuthTokenIssuers is not null || resolvedOptions.IsTrustedAuthTokenIssuer is not null,
-            agentTrustConfigured: resolvedOptions.TrustedAgentProviderIssuers is not null || resolvedOptions.IsTrustedAgentProviderIssuer is not null,
-            contextLabel: "UseAAuthVerification");
+            authTrustConfigured: resolvedOptions.Trust.IsConfigured(AAuth.Server.AAuthTrustedParty.AuthTokenIssuer, app.ApplicationServices),
+            agentTrustConfigured: resolvedOptions.Trust.IsConfigured(AAuth.Server.AAuthTrustedParty.AgentProvider, app.ApplicationServices),
+            contextLabel: "UseAAuthVerification",
+            accessServer: resourceMetadata?.AccessServer);
 
         if (jtiStore is not null)
         {
@@ -82,10 +94,18 @@ public static class AAuthApplicationBuilderExtensions
     /// agent token is presented. Must be registered AFTER <see cref="UseAAuthVerification"/>.
     /// </summary>
     /// <param name="app">The application builder.</param>
-    /// <param name="options">Challenge options configuring access mode, resource key, and scopes.</param>
+    /// <param name="configure">Adjusts the options after any DI configuration of <see cref="ChallengeOptions"/>.</param>
     public static IApplicationBuilder UseAAuthChallenge(
         this IApplicationBuilder app,
-        ChallengeOptions options)
+        Action<ChallengeOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        var options = AAuthOptionsResolver.Create(app.ApplicationServices, () => new ChallengeOptions());
+        configure?.Invoke(options);
+        return app.UseAAuthChallengeCore(options);
+    }
+
+    internal static IApplicationBuilder UseAAuthChallengeCore(this IApplicationBuilder app, ChallengeOptions options)
     {
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(options);
@@ -110,15 +130,11 @@ public static class AAuthApplicationBuilderExtensions
     /// <summary>
     /// Map a resource <c>authorization_endpoint</c> (§Authorization Endpoint
     /// Request): a signed <c>POST</c> that the agent calls proactively to request
-    /// access. The request body is <c>{ "scope": "…" }</c> (scope REQUIRED). The
-    /// request MUST be AAuth-verified (place this route behind
-    /// <see cref="UseAAuthVerification"/>); the agent token is read from the
-    /// verified <c>Signature-Key</c>. The <paramref name="handler"/> runs the
-    /// resource's authorization decision — returning, for example, a
-    /// <c>202 + requirement=interaction</c> (via
-    /// <c>HttpContext.InteractionRequiredAAuth</c>) or issuing a token (via
-    /// <c>HttpContext.IssueAAuthAccessAsync</c>) — sharing one code path with the
-    /// reactive endpoint.
+    /// access. The request body carries <c>{ "scope": "…" }</c>, unless a
+    /// registered companion extension such as R3 supplies a replacement
+    /// authorization claim. The request MUST present a verified AAuth person
+    /// token; otherwise the endpoint returns
+    /// <c>AAuth-Requirement: requirement=person-token</c>.
     /// </summary>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="pattern">The route pattern (e.g. <c>/authorize</c>), matching the published <c>authorization_endpoint</c>.</param>
@@ -134,26 +150,25 @@ public static class AAuthApplicationBuilderExtensions
 
         return endpoints.MapPost(pattern, async (HttpContext context) =>
         {
-            // Require a verified AAuth signature (the agent token is in Signature-Key).
             var verification = context.GetAAuthVerification();
-            if (verification is null)
+            if (verification is not { TokenType: AAuthTokenType.PersonToken })
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status401Unauthorized);
+                context.Response.Headers[AAuth.Headers.AAuthRequirementHeader.Name] =
+                    AAuth.Headers.AAuthRequirementHeader.FormatPersonToken();
+                return AAuth.Server.AAuthProblemDetails.Create("person_token_required",
+                    statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            // Body: { "scope": "a b c" } — scope is REQUIRED. Reject a non-JSON
-            // content type up front: ReadFromJsonAsync would otherwise throw
-            // InvalidOperationException (not JsonException) and surface as a 500.
             if (!context.Request.HasJsonContentType())
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "Content-Type must be application/json", statusCode: StatusCodes.Status415UnsupportedMediaType);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "Content-Type must be application/json", statusCode: StatusCodes.Status400BadRequest);
             }
 
-            AuthorizationEndpointBody? body;
+            JsonObject? body;
             try
             {
                 body = await context.Request
-                    .ReadFromJsonAsync<AuthorizationEndpointBody>(context.RequestAborted)
+                    .ReadFromJsonAsync<JsonObject>(context.RequestAborted)
                     .ConfigureAwait(false);
             }
             catch (JsonException)
@@ -161,24 +176,57 @@ public static class AAuthApplicationBuilderExtensions
                 return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "malformed JSON body", statusCode: StatusCodes.Status400BadRequest);
             }
 
-            if (body is null || string.IsNullOrWhiteSpace(body.Scope))
+            if (body is null)
+            {
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "JSON body must be an object", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var scopeNode = body["scope"];
+            string? scope = null;
+            if (scopeNode is not null)
+            {
+                if (scopeNode is not JsonValue scopeValue || !scopeValue.TryGetValue<string>(out scope))
+                {
+                    return AAuthProblemDetails.Create("invalid_request", "scope must be a string when present", statusCode: 400);
+                }
+            }
+
+            var accountNode = body["account"];
+            if (accountNode is not null && (accountNode is not JsonValue accountValue || !accountValue.TryGetValue<string>(out _)))
+            {
+                return AAuthProblemDetails.Create("invalid_request", "account must be a string when present", statusCode: 400);
+            }
+
+            var account = accountNode?.GetValue<string>();
+            if (!AAuth.Tokens.AccountBinding.IsValid(account))
+                return AAuthProblemDetails.Create("invalid_request", "account must be non-empty and contain no control characters", statusCode: 400);
+
+            var request = new AAuthAuthorizationRequest(scope, verification) { Account = account };
+            var hasExtensionClaim = false;
+            foreach (var extension in context.RequestServices.GetServices<IAAuthAuthorizationEndpointExtension>())
+            {
+                AAuthAuthorizationExtensionResult result;
+                try
+                {
+                    result = await extension.ReadAsync(context, body, request, context.RequestAborted)
+                        .ConfigureAwait(false);
+                }
+                catch (AAuthAuthorizationExtensionException ex)
+                {
+                    return AAuthProblemDetails.Create(ex.Error, ex.Detail, statusCode: StatusCodes.Status400BadRequest);
+                }
+
+                hasExtensionClaim |= result.SatisfiesAuthorizationClaim;
+            }
+
+            if (string.IsNullOrWhiteSpace(scope) && !hasExtensionClaim)
             {
                 return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "scope is required", statusCode: StatusCodes.Status400BadRequest);
             }
 
-            if (body.Account.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.String))
-                return AAuthProblemDetails.Create("invalid_request", "account must be a string when present", statusCode: 400);
-            var account = body.Account.ValueKind == JsonValueKind.String ? body.Account.GetString() : null;
-            if (!AAuth.Tokens.AccountBinding.IsValid(account))
-                return AAuthProblemDetails.Create("invalid_request", "account must be non-empty and contain no control characters", statusCode: 400);
-            var request = new AAuthAuthorizationRequest(body.Scope, verification) { Account = account };
             return await handler(context, request).ConfigureAwait(false);
-        });
+        }).RequireAAuthPersonToken();
     }
-
-    private sealed record AuthorizationEndpointBody(
-        [property: JsonPropertyName("scope")] string? Scope,
-        [property: JsonPropertyName("account")] JsonElement Account = default);
 
     /// <summary>
     /// Configure the full AAuth resource pipeline in one call: maps well-known endpoints,
@@ -201,41 +249,34 @@ public static class AAuthApplicationBuilderExtensions
         var metadataOptions = app.Services.GetRequiredService<AAuthResourceMetadataOptions>();
         var pipelineOptions = new AAuthResourcePipelineOptions();
         configure?.Invoke(pipelineOptions);
+        var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AAuth.Resource");
+        AAuthServerRoles.RejectDevelopmentLoopbackInProduction(app.Services, "Resource", metadataOptions.EgressPolicy);
+        AAuthServerRoles.WarnOnDevelopmentLoopback(app.Services, logger, "Resource", "Default", metadataOptions.EgressPolicy);
 
         // 1. Map well-known endpoints
         WellKnownEndpoints.MapAAuthResourceWellKnown(app, metadataOptions);
 
         // 2. Verification middleware
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerificationCore(new AAuthVerificationOptions
         {
             EgressPolicy = metadataOptions.EgressPolicy,
             ResourceIdentifier = metadataOptions.Issuer,
             ExpectedAccount = pipelineOptions.AccountSelector,
-            TrustedAuthTokenIssuers = pipelineOptions.TrustedAuthTokenIssuers,
-            IsTrustedAuthTokenIssuer = pipelineOptions.IsTrustedAuthTokenIssuer,
-            TrustedAgentProviderIssuers = pipelineOptions.TrustedAgentProviderIssuers,
-            IsTrustedAgentProviderIssuer = pipelineOptions.IsTrustedAgentProviderIssuer,
+            ExpectedAuthTokenDwk = metadataOptions.AccessServer is null
+                ? AAuthConstants.DwkFiles.Person
+                : AAuthConstants.DwkFiles.Access,
+            Trust = pipelineOptions.Trust,
         });
 
         // 3. Challenge middleware (only if there's a signing key available)
         if (metadataOptions.SigningKeys is { Count: > 0 } signingKeys)
         {
-            // Use the first signing key for challenges
-            string? kid = null;
-            AAuth.Crypto.IAAuthKey? key = null;
-            foreach (var kvp in signingKeys)
-            {
-                kid = kvp.Key;
-                key = kvp.Value;
-                break;
-            }
-
-            app.UseAAuthChallenge(new ChallengeOptions
+            app.UseAAuthChallengeCore(new ChallengeOptions
             {
                 EgressPolicy = metadataOptions.EgressPolicy,
-                ResourceSigningKey = key,
-                ResourceKeyId = kid,
+                ResourceSigningKeys = signingKeys,
                 ResourceIdentifier = metadataOptions.Issuer,
+                AccessServer = metadataOptions.AccessServer,
                 RequestedAccount = pipelineOptions.AccountSelector,
                 AccessMode = pipelineOptions.AccessMode,
                 DefaultScopes = pipelineOptions.DefaultScopes,
@@ -252,19 +293,16 @@ public static class AAuthApplicationBuilderExtensions
     /// with the supplied options.
     /// </summary>
     /// <param name="app">The application builder.</param>
-    /// <param name="verificationOptions">Verification options (signature + issuer verification).</param>
-    /// <param name="challengeOptions">Challenge options (access mode, resource key, scopes).</param>
+    /// <param name="configureVerification">Adjusts the verification options (signature + issuer verification).</param>
+    /// <param name="configureChallenge">Adjusts the challenge options (access mode, resource key, scopes).</param>
     public static IApplicationBuilder UseAAuthIntermediary(
         this IApplicationBuilder app,
-        AAuthVerificationOptions verificationOptions,
-        ChallengeOptions challengeOptions)
+        Action<AAuthVerificationOptions>? configureVerification = null,
+        Action<ChallengeOptions>? configureChallenge = null)
     {
         ArgumentNullException.ThrowIfNull(app);
-        ArgumentNullException.ThrowIfNull(verificationOptions);
-        ArgumentNullException.ThrowIfNull(challengeOptions);
-
-        app.UseAAuthVerification(verificationOptions);
-        app.UseAAuthChallenge(challengeOptions);
+        app.UseAAuthVerification(configureVerification);
+        app.UseAAuthChallenge(configureChallenge);
         return app;
     }
 }

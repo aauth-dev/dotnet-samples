@@ -210,6 +210,25 @@ public class BrowserConsentSessionTests
     }
 
     [Fact]
+    public async Task ConsumedCodeRejectsOpenDecisionAndNewArrival()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var fields = await fixture.ArriveAsync("01010101");
+        var code = fixture.Pending.Browser.Code;
+        fixture.Pending.Browser.Consume();
+        Assert.Equal(code, fixture.Pending.Browser.Code);
+        using var stale = await fixture.Client.PostAsync("/consent/approve", Form(fields));
+        Assert.Equal(HttpStatusCode.BadRequest, stale.StatusCode);
+        Assert.Equal(0, fixture.Approvals);
+        var context = AuthenticatedContext();
+        context.Request.QueryString = new QueryString("?code=" + code);
+        var pending = new BrowserPendingRequest("consumed", DateTimeOffset.UtcNow.AddMinutes(1), fixture.Pending.Browser, new());
+        var arrival = await new BrowserConsentSessions("consumed", authorizePerson: (_, _, _) => true)
+            .EnterAsync(context, _ => pending);
+        Assert.Equal(400, Assert.IsAssignableFrom<IStatusCodeHttpResult>(arrival.Error).StatusCode);
+    }
+
+    [Fact]
     public async Task ProtectedCodeAttemptsTerminateOnlyTheirAuthenticatedDecision()
     {
         await using var fixture = await Fixture.CreateAsync();

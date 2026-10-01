@@ -6,18 +6,18 @@
         <option value="Bootstrap">1 · Bootstrap — keygen + AP enrol</option>
         <option value="Identity">2 · Generic Signature Keys - no PS, 2 steps</option>
         <option value="ResourceManaged">3 · Resource-Managed (Two-Party) — authenticated consent, 6 steps</option>
-        <option value="Autonomous">4 · PS-Asserted (Direct Grant) — no user, 6 steps</option>
-        <option value="Deferred">5 · PS-Asserted (Deferred) — authenticated consent, 9 steps</option>
-        <option value="CallChain">6 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
-        <option value="Federated">7 · Federated (Four-Party) — Access Server, 7–10 steps</option>
-        <option value="RichRequests">8 · Rich Resource Requests (R3) — R3 Access Server, 14 steps</option>
-        <option value="Mission">9 · Mission (PS-Governed) — three prompts, 20 steps</option>
-        <option value="MissionCallChain">10 · Mission + Call Chain — dual governance, 14 steps</option>
-        <option value="SubAgent">11 · Sub-Agents — parent-mediated worker, 7 steps</option>
-        <option value="/events">12 · Bookings Events — availability notification, 6 steps</option>
-        <option value="/wallet-protocol">13 · Wallet Protocol — decisions and recovery, 3 scenarios</option>
-        <option value="/documents">14 · Document Release — resource permission first, 4 steps</option>
-        <option value="/catalog-gateway">15 · Travel Catalog — service-qualified access, 5 steps</option>
+        <option value="Autonomous">4 · PS Authorization (Direct Grant) — no user, 8 steps</option>
+        <option value="Deferred">5 · PS Authorization (Deferred) — authenticated consent, 11 steps</option>
+        <option value="CallChain">6 · Call Chain (Multi-Agent) — user approves, 9 or 15 steps</option>
+        <option value="Federated">7 · Federated (Four-Party) — Access Server, 9–12 steps</option>
+        <option value="RichRequests">8 · Rich Resource Requests (R3) — R3 Access Server, 16 steps</option>
+        <option value="Mission">9 · Mission (PS-Governed) — three prompts, 21 steps</option>
+        <option value="MissionCallChain">10 · Mission + Call Chain — dual governance, 15 steps</option>
+        <option value="SubAgent">11 · Sub-Agents — parent-mediated worker, 8 steps</option>
+        <option value="Events">12 · Bookings Events — availability notification, 11 or 19 steps</option>
+        <option value="WalletProtocol">13 · Wallet Protocol — decisions and recovery, 3 scenarios</option>
+        <option value="Documents">14 · Document Release — resource permission first, 11 steps</option>
+        <option value="Catalog">15 · Travel Catalog — merged OpenAPI definition, 16 steps</option>
     </select>
 </label>
 
@@ -36,11 +36,6 @@
         var value = args.Value?.ToString();
         if (string.IsNullOrWhiteSpace(value))
         {
-            return;
-        }
-        if (value.StartsWith("/", StringComparison.Ordinal))
-        {
-            Navigation.NavigateTo(value);
             return;
         }
         if (!Enum.TryParse<TourMode>(value, out var mode))

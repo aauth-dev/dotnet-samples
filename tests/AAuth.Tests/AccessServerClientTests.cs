@@ -29,8 +29,9 @@ namespace AAuth.Tests;
 public class AccessServerClientTests
 {
     private const string AsIssuer = "https://as.test";
+    private const string PsIssuer = "https://ps.test";
     private const string ResourceUrl = "https://whoami.test";
-    private const string AgentId = "aauth:demo@ap.test";
+    private const string Subject = "pairwise-sub";
     private const string AsKid = "as-1";
 
     private static readonly AAuthKey AsKey = AAuthKey.Generate();
@@ -56,14 +57,14 @@ public class AccessServerClientTests
     public async Task FederateAsync_DispatchesMixedClarificationAndNewInteractions(bool claimsFirst)
     {
         var agentKey = AAuthKey.Generate();
-        var token = BuildAuthToken(agentKey, ResourceUrl, "whoami");
+        var token = await BuildAuthTokenAsync(agentKey, ResourceUrl, "whoami");
         var callbacks = new List<string>();
         var polls = 0;
         HttpResponseMessage Pending(string requirement, string code = "ABCDEFGH")
         {
             var response = new HttpResponseMessage(HttpStatusCode.Accepted)
             {
-                Content = JsonContent.Create(new { clarification = "Why?", timeout = 30, required_claims = new[] { "sub" } }),
+                Content = JsonContent.Create(new { clarification = "Why?", timeout = 30, required_claims = new[] { "email" } }),
             };
             response.Headers.Location = new Uri($"{AsIssuer}/pending/mixed");
             response.Headers.TryAddWithoutValidation("Retry-After", "0");
@@ -85,8 +86,9 @@ public class AccessServerClientTests
         {
             ResourceToken = "resource", AgentToken = "agent", AgentKey = agentKey,
             AuthorizationExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
-            ExpectedAudience = ResourceUrl, ExpectedAgentId = AgentId, RequestedScope = "whoami",
-            OnClaimsRequired = (_, _) => { callbacks.Add("claims"); return Task.FromResult(new ClaimsResponse { Subject = "user" }); },
+            ExpectedAudience = ResourceUrl, ExpectedSubject = Subject, ExpectedPersonServer = PsIssuer, RequestedScope = "whoami",
+            PresentedToken = "presented", PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
+            OnClaimsRequired = (_, _) => { callbacks.Add("claims"); return Task.FromResult(new ClaimsResponse()); },
             OnClarificationRequired = (_, _) => { callbacks.Add("clarification"); return Task.FromResult(ClarificationResponse.Respond("because")); },
             OnInteractionRequired = (interaction, _) => { callbacks.Add(interaction.Code!); return Task.CompletedTask; },
         });
@@ -101,7 +103,7 @@ public class AccessServerClientTests
     public async Task FederateAsync_RejectsOverlongAuthToken_DirectOrDeferred(bool deferred)
     {
         var agentKey = AAuthKey.Generate();
-        var token = BuildAuthToken(agentKey, ResourceUrl, "whoami");
+        var token = await BuildAuthTokenAsync(agentKey, ResourceUrl, "whoami");
         HttpResponseMessage Pending()
         {
             var response = new HttpResponseMessage(HttpStatusCode.Accepted) { Content = JsonContent.Create(new { status = "pending" }) };
@@ -113,7 +115,8 @@ public class AccessServerClientTests
         await Assert.ThrowsAsync<TokenVerificationException>(() => BuildClient(stub).FederateAsync(AsIssuer, new AccessServerRequest
         {
             ResourceToken = "resource", AgentToken = "agent", AuthorizationExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
-            ExpectedAudience = ResourceUrl, ExpectedAgentId = AgentId, AgentKey = agentKey,
+            ExpectedAudience = ResourceUrl, ExpectedSubject = Subject, ExpectedPersonServer = PsIssuer, AgentKey = agentKey,
+            PresentedToken = "presented", PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
             OnInteractionRequired = (_, _) => Task.CompletedTask,
         }));
     }
@@ -122,14 +125,17 @@ public class AccessServerClientTests
     public async Task FederateAsync_ForwardsChildToken()
     {
         var key = AAuthKey.Generate();
-        var stub = new StubAccessServer(() => Ok(BuildAuthToken(key, ResourceUrl, "whoami")));
+        var authToken = await BuildAuthTokenAsync(key, ResourceUrl, "whoami");
+        var stub = new StubAccessServer(() => Ok(authToken));
         await BuildClient(stub).FederateAsync(AsIssuer, new AccessServerRequest
         {
             ResourceToken = "resource", AgentToken = "parent", SubagentToken = "child",
             AuthorizationExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
-            ExpectedAudience = ResourceUrl, ExpectedAgentId = AgentId, AgentKey = key,
+            ExpectedAudience = ResourceUrl, ExpectedSubject = Subject, ExpectedPersonServer = PsIssuer, AgentKey = key,
+            PresentedToken = "presented", PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
         });
         Assert.Equal("child", (string?)stub.LastTokenRequestBody!["subagent_token"]);
+        Assert.Equal("presented", (string?)stub.LastTokenRequestBody["presented_token"]);
     }
 
     [Fact]
@@ -139,7 +145,7 @@ public class AccessServerClientTests
         {
             var response = new HttpResponseMessage(HttpStatusCode.Accepted)
             {
-                Content = JsonContent.Create(new { required_claims = new[] { "act" } }),
+                Content = JsonContent.Create(new { required_claims = new[] { "sub" } }),
             };
             response.Headers.Location = new Uri($"{AsIssuer}/pending/claims");
             response.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, "requirement=claims");
@@ -149,8 +155,9 @@ public class AccessServerClientTests
         await Assert.ThrowsAsync<TokenVerificationException>(() => BuildClient(stub).FederateAsync(AsIssuer, new AccessServerRequest
         {
             ResourceToken = "resource", AgentToken = "agent", AuthorizationExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
-            ExpectedAudience = ResourceUrl, ExpectedAgentId = AgentId, AgentKey = AAuthKey.Generate(),
-            OnClaimsRequired = (_, _) => { called = true; return Task.FromResult(new ClaimsResponse { Subject = "user" }); },
+            ExpectedAudience = ResourceUrl, ExpectedSubject = Subject, ExpectedPersonServer = PsIssuer, AgentKey = AAuthKey.Generate(),
+            PresentedToken = "presented", PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
+            OnClaimsRequired = (_, _) => { called = true; return Task.FromResult(new ClaimsResponse()); },
         }));
         Assert.False(called);
         Assert.Null(stub.LastClaimsPushBody);
@@ -160,7 +167,7 @@ public class AccessServerClientTests
     public async Task FederateAsync_ReturnsVerifiedAuthToken_OnSuccess()
     {
         var agentKey = AAuthKey.Generate();
-        var authToken = BuildAuthToken(agentKey, audience: ResourceUrl, scope: "whoami");
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: ResourceUrl, scope: "whoami");
         var stub = new StubAccessServer(() => Ok(authToken));
         var client = BuildClient(stub);
 
@@ -177,7 +184,7 @@ public class AccessServerClientTests
     public async Task FederateAsync_IncludesUpstreamToken_WhenProvided()
     {
         var agentKey = AAuthKey.Generate();
-        var authToken = BuildAuthToken(agentKey, audience: ResourceUrl, scope: "whoami");
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: ResourceUrl, scope: "whoami");
         var stub = new StubAccessServer(() => Ok(authToken));
         var client = BuildClient(stub);
 
@@ -188,7 +195,10 @@ public class AccessServerClientTests
             AgentToken = "the-agent-token",
             UpstreamToken = "the-upstream-token",
             ExpectedAudience = ResourceUrl,
-            ExpectedAgentId = AgentId,
+            ExpectedSubject = Subject,
+            ExpectedPersonServer = PsIssuer,
+            PresentedToken = "the-presented-token",
+            PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             AgentKey = agentKey,
             RequestedScope = "whoami",
         });
@@ -197,23 +207,102 @@ public class AccessServerClientTests
     }
 
     [Fact]
-    public async Task FederateAsync_ThrowsPaymentRequired_On402()
+    public async Task FederateAsync_SettlesPaymentThenComposesClaims_On402()
+    {
+        var agentKey = AAuthKey.Generate();
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: ResourceUrl, scope: "whoami");
+        AAuthPaymentSettlementContext? paymentSeen = null;
+        var stub = new StubAccessServer(
+            tokenResponse: () =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.PaymentRequired)
+                {
+                    Content = JsonContent.Create(new { invoice = "42" }),
+                };
+                response.Headers.Location = new Uri($"{AsIssuer}/pending/pay");
+                response.Headers.TryAddWithoutValidation("WWW-Authenticate", "Payment method=\"stripe\"");
+                return response;
+            },
+            claimsResponse: _ => Ok(authToken),
+            pendingGetResponse: () =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = JsonContent.Create(new { status = "pending", required_claims = new[] { "email" } }),
+                };
+                response.Headers.Location = new Uri($"{AsIssuer}/pending/pay");
+                response.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, "requirement=claims");
+                return response;
+            });
+        var client = BuildClient(stub);
+
+        var request = NewRequest(agentKey);
+        request = new AccessServerRequest
+        {
+            AuthorizationExpiresAt = request.AuthorizationExpiresAt,
+            ResourceToken = request.ResourceToken,
+            AgentToken = request.AgentToken,
+            ExpectedAudience = request.ExpectedAudience,
+            ExpectedSubject = request.ExpectedSubject,
+            ExpectedPersonServer = request.ExpectedPersonServer,
+            PresentedToken = request.PresentedToken,
+            PresentedTokenExpiresAt = request.PresentedTokenExpiresAt,
+            AgentKey = request.AgentKey,
+            RequestedScope = request.RequestedScope,
+            OnPaymentRequired = (payment, _) =>
+            {
+                paymentSeen = payment;
+                return Task.FromResult(AAuthPaymentSettlementResult.Success);
+            },
+            OnClaimsRequired = (_, _) => Task.FromResult(new ClaimsResponse
+            {
+                Claims = new Dictionary<string, JsonNode?> { ["email"] = "demo@person.example" },
+            }),
+        };
+        var result = await client.FederateAsync(AsIssuer, request);
+
+        Assert.Equal(authToken, result);
+        Assert.NotNull(paymentSeen);
+        Assert.Equal($"{AsIssuer}/pending/pay", paymentSeen!.PendingUrl.ToString());
+        Assert.Equal(AsIssuer, paymentSeen.AccessServerOrigin);
+        Assert.Equal("Payment", paymentSeen.Challenge.Scheme);
+        Assert.Equal("demo@person.example", (string?)stub.LastClaimsPushBody!["email"]);
+        Assert.False(stub.LastClaimsPushBody.ContainsKey("sub"));
+    }
+
+    [Fact]
+    public async Task FederateAsync_DeniesPayment_WhenSettlementUnavailable()
     {
         var agentKey = AAuthKey.Generate();
         var stub = new StubAccessServer(() =>
         {
             var response = new HttpResponseMessage(HttpStatusCode.PaymentRequired);
-            response.Headers.Location = new Uri("https://pay.as.test/invoice/42");
-            response.Headers.TryAddWithoutValidation("WWW-Authenticate", "x402 realm=\"as.test\"");
+            response.Headers.Location = new Uri($"{AsIssuer}/pending/pay");
+            response.Headers.TryAddWithoutValidation("WWW-Authenticate", "Payment method=\"stripe\"");
             return response;
         });
-        var client = BuildClient(stub);
 
-        var ex = await Assert.ThrowsAsync<AAuthPaymentRequiredException>(
-            () => client.FederateAsync(AsIssuer, NewRequest(agentKey)));
+        var request = NewRequest(agentKey);
+        request = new AccessServerRequest
+        {
+            AuthorizationExpiresAt = request.AuthorizationExpiresAt,
+            ResourceToken = request.ResourceToken,
+            AgentToken = request.AgentToken,
+            ExpectedAudience = request.ExpectedAudience,
+            ExpectedSubject = request.ExpectedSubject,
+            ExpectedPersonServer = request.ExpectedPersonServer,
+            PresentedToken = request.PresentedToken,
+            PresentedTokenExpiresAt = request.PresentedTokenExpiresAt,
+            AgentKey = request.AgentKey,
+            RequestedScope = request.RequestedScope,
+            OnPaymentRequired = (_, _) => Task.FromResult(AAuthPaymentSettlementResult.Declined),
+        };
+        var ex = await Assert.ThrowsAsync<AAuthTokenExchangeException>(
+            () => BuildClient(stub).FederateAsync(AsIssuer, request));
 
-        Assert.Equal("https://pay.as.test/invoice/42", ex.Location);
-        Assert.Contains("x402", ex.Challenge);
+        Assert.Equal("denied", ex.ErrorCode);
+        Assert.Equal(403, ex.StatusCode);
+        Assert.Equal("payment settlement is unavailable", ex.Detail);
     }
 
     [Fact]
@@ -241,7 +330,7 @@ public class AccessServerClientTests
     public async Task FederateAsync_PushesClaimsAndReturnsAuthToken_OnClaimsRequirement()
     {
         var agentKey = AAuthKey.Generate();
-        var authToken = BuildAuthToken(agentKey, audience: ResourceUrl, scope: "whoami");
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: ResourceUrl, scope: "whoami");
 
         // First /token call -> 202 requirement=claims (required_claims in body);
         // the signed claims push -> 200 auth_token.
@@ -273,7 +362,10 @@ public class AccessServerClientTests
             ResourceToken = "the-resource-token",
             AgentToken = "the-agent-token",
             ExpectedAudience = ResourceUrl,
-            ExpectedAgentId = AgentId,
+            ExpectedSubject = Subject,
+            ExpectedPersonServer = PsIssuer,
+            PresentedToken = "the-presented-token",
+            PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             AgentKey = agentKey,
             RequestedScope = "whoami",
             OnClaimsRequired = (requirement, _) =>
@@ -281,7 +373,6 @@ public class AccessServerClientTests
                 seen = requirement;
                 return Task.FromResult(new ClaimsResponse
                 {
-                    Subject = "directed-123",
                     Claims = new Dictionary<string, JsonNode?>
                     {
                         ["email"] = "demo@person.example",
@@ -295,48 +386,10 @@ public class AccessServerClientTests
         Assert.NotNull(seen);
         Assert.Contains("email", seen!.RequiredClaims);
         Assert.Contains("tenant", seen.RequiredClaims);
-        // The directed sub + claims were POSTed (signed) to the pending URL.
+        // The claims were POSTed (signed) to the pending URL, never a `sub`.
         Assert.NotNull(stub.LastClaimsPushBody);
-        Assert.Equal("directed-123", (string?)stub.LastClaimsPushBody!["sub"]);
+        Assert.False(stub.LastClaimsPushBody!.ContainsKey("sub"));
         Assert.Equal("demo@person.example", (string?)stub.LastClaimsPushBody["email"]);
-    }
-
-    [Fact]
-    public async Task FederateAsync_ThrowsInvalidOperation_WhenClaimsHandlerOmitsSub()
-    {
-        var agentKey = AAuthKey.Generate();
-        var stub = new StubAccessServer(
-            tokenResponse: () =>
-            {
-                var response = new HttpResponseMessage(HttpStatusCode.Accepted)
-                {
-                    Content = new StringContent(
-                        new JsonObject { ["required_claims"] = new JsonArray("email") }.ToJsonString(),
-                        Encoding.UTF8,
-                        "application/json"),
-                };
-                response.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, "requirement=claims");
-                response.Headers.Location = new Uri($"{AsIssuer}/pending/abc");
-                return response;
-            });
-        var client = BuildClient(stub);
-
-        // The handler returns claims WITHOUT the mandatory directed sub.
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.FederateAsync(AsIssuer, new AccessServerRequest
-            {
-                AuthorizationExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
-                ResourceToken = "the-resource-token",
-                AgentToken = "the-agent-token",
-                ExpectedAudience = ResourceUrl,
-                ExpectedAgentId = AgentId,
-                AgentKey = agentKey,
-                RequestedScope = "whoami",
-                OnClaimsRequired = (_, _) => Task.FromResult(
-                    new ClaimsResponse { Subject = string.Empty }),
-            }));
-
-        Assert.Contains("sub", ex.Message);
     }
 
     [Fact]
@@ -348,7 +401,7 @@ public class AccessServerClientTests
         // claims push -> 200 auth_token. Verifies the client handles a
         // requirement=claims that arrives MID-POLL, not just as the first reply.
         var agentKey = AAuthKey.Generate();
-        var authToken = BuildAuthToken(agentKey, audience: ResourceUrl, scope: "whoami");
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: ResourceUrl, scope: "whoami");
 
         var stub = new StubAccessServer(
             tokenResponse: () =>
@@ -384,7 +437,10 @@ public class AccessServerClientTests
             ResourceToken = "the-resource-token",
             AgentToken = "the-agent-token",
             ExpectedAudience = ResourceUrl,
-            ExpectedAgentId = AgentId,
+            ExpectedSubject = Subject,
+            ExpectedPersonServer = PsIssuer,
+            PresentedToken = "the-presented-token",
+            PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             AgentKey = agentKey,
             RequestedScope = "whoami",
             OnInteractionRequired = (_, _) => { interactionSeen = true; return Task.CompletedTask; },
@@ -393,7 +449,6 @@ public class AccessServerClientTests
                 claimsSeen = requirement;
                 return Task.FromResult(new ClaimsResponse
                 {
-                    Subject = "directed-xyz",
                     Claims = new Dictionary<string, JsonNode?>
                     {
                         ["email"] = "demo@person.example",
@@ -406,14 +461,14 @@ public class AccessServerClientTests
         Assert.True(interactionSeen, "interaction callback should have fired first");
         Assert.NotNull(claimsSeen);
         Assert.Contains("email", claimsSeen!.RequiredClaims);
-        Assert.Equal("directed-xyz", (string?)stub.LastClaimsPushBody!["sub"]);
+        Assert.Equal("demo@person.example", (string?)stub.LastClaimsPushBody!["email"]);
     }
     [Fact]
     public async Task FederateAsync_ThrowsVerification_WhenAudienceMismatch()
     {
         var agentKey = AAuthKey.Generate();
         // The AS mints a token for a DIFFERENT resource than the PS expects.
-        var authToken = BuildAuthToken(agentKey, audience: "https://evil.test", scope: "whoami");
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: "https://evil.test", scope: "whoami");
         var stub = new StubAccessServer(() => Ok(authToken));
         var client = BuildClient(stub);
 
@@ -491,7 +546,10 @@ public class AccessServerClientTests
         ResourceToken = "the-resource-token",
         AgentToken = "the-agent-token",
         ExpectedAudience = ResourceUrl,
-        ExpectedAgentId = AgentId,
+        ExpectedSubject = Subject,
+        ExpectedPersonServer = PsIssuer,
+        PresentedToken = "the-presented-token",
+        PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
         AgentKey = agentKey,
         RequestedScope = "whoami",
     };
@@ -514,21 +572,21 @@ public class AccessServerClientTests
                 "application/json"),
         };
 
-    private static string BuildAuthToken(AAuthKey agentKey, string audience, string scope) =>
+    private static ValueTask<string> BuildAuthTokenAsync(AAuthKey agentKey, string audience, string scope) =>
         new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = AsIssuer,
             Audience = audience,
-            Agent = AgentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = agentKey,
             Key = AsKey,
             KeyId = AsKid,
             Dwk = AuthTokenBuilder.AccessDwk,
             Scope = scope,
-            Subject = "pairwise-sub",
-        }.Build();
+            Subject = Subject,
+        }.BuildAsync();
 
     /// <summary>
     /// Stub AS: serves <c>aauth-access.json</c> + JWKS for discovery, and a
@@ -599,7 +657,7 @@ public class AccessServerClientTests
                 {
                     ["issuer"] = AsIssuer,
                     ["jwks_uri"] = $"{AsIssuer}/.well-known/jwks.json",
-                    ["token_endpoint"] = $"{AsIssuer}/token",
+                    ["auth_token_endpoint"] = $"{AsIssuer}/token",
                 }.ToJsonString(),
                 "as.test/.well-known/jwks.json" => Jwks(AsKey, AsKid),
                 _ => null,

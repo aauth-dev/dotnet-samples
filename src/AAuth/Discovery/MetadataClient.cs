@@ -28,13 +28,13 @@ public sealed class MetadataClient : IDisposable
     /// <summary>Create a metadata client.</summary>
     /// <param name="http">HttpClient used for fetches; left undisposed.</param>
     /// <param name="cacheTtl">Cache TTL. Default 5 minutes.</param>
-    /// <param name="clock">Clock injection point.</param>
-    public MetadataClient(HttpClient? http = null, TimeSpan? cacheTtl = null, Func<DateTimeOffset>? clock = null,
+    /// <param name="timeProvider">Time source for cache freshness.</param>
+    public MetadataClient(HttpClient? http = null, TimeSpan? cacheTtl = null, TimeProvider? timeProvider = null,
         AAuthEgressPolicy? policy = null, AAuthTransportContract? transportContract = null,
         int maxCacheEntries = 1024, TimeSpan? maxCacheAge = null)
     {
         _cache = new(cacheTtl ?? TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(1),
-            clock ?? (() => DateTimeOffset.UtcNow), maxCacheEntries, maxCacheAge);
+            timeProvider ?? TimeProvider.System, maxCacheEntries, maxCacheAge);
         _ownsHttp = http is null;
         http ??= AAuthHttpTransport.CreateClient(policy);
         if (transportContract is { } contract)
@@ -102,15 +102,9 @@ public sealed class MetadataClient : IDisposable
             // URL it was fetched from (the URL minus the `/.well-known/{dwk}` suffix).
             // Reject on mismatch — only verified documents are ever cached.
             VerifyIssuer(url, expectedIssuer, doc);
-            foreach (var field in new[] { "jwks_uri", "token_endpoint", "authorization_endpoint", "mission_endpoint", "callback_endpoint", "interaction_endpoint", "revocation_endpoint", "event_endpoint" })
-            {
-                if (!doc.TryGetPropertyValue(field, out var node)) continue;
-                if (node is not JsonValue endpoint || !endpoint.TryGetValue<string>(out var endpointUrl)
-                    || string.IsNullOrWhiteSpace(endpointUrl))
-                    throw new AAuth.HttpSig.AAuthVerificationException(SignatureErrorCode.InvalidKey, $"Metadata {field} must be a nonempty URL string.");
-                if (field == "jwks_uri") Policy.ValidateJwksUrl(endpointUrl, expectedIssuer);
-                else Policy.ValidateUrl(endpointUrl, endpoint: true);
-            }
+            try { AAuthMetadataUrl.ValidateDocument(Policy, doc, expectedIssuer); }
+            catch (HttpRequestException exception)
+            { throw new AAuth.HttpSig.AAuthVerificationException(SignatureErrorCode.InvalidKey, "Metadata has an invalid URL field.", exception); }
             return _cache.Response(doc, response);
         }
         catch (Exception exception) when (exception is System.Text.Json.JsonException or ArgumentException)

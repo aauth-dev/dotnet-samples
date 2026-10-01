@@ -30,6 +30,48 @@ public sealed class BrowserInteraction
         }
         finally { Gate.Release(); }
     }
+
+    /// <summary>
+    /// Complete the interaction over a channel the host already controls, such as a consent
+    /// dashboard or a notification the person taps (#user-interaction). Runs <paramref name="apply"/>
+    /// under the pending request's gate, so it and a decision on the consent page never interleave;
+    /// <paramref name="apply"/> checks that the request is still undecided. When it reports the
+    /// decision applied, the code is consumed: it stops opening
+    /// the consent page and in-flight page decisions fail (#interaction-code-format).
+    /// </summary>
+    /// <param name="lifecycle">The pending request's state (<c>PersonPendingEntry.Lifecycle</c>).</param>
+    /// <param name="apply">Records the decision; returns <see langword="false"/> when it did not apply.</param>
+    /// <param name="cancellationToken">Cancels the wait for the gate and the decision.</param>
+    /// <returns><see langword="true"/> when the request was still open and the decision applied.</returns>
+    public async Task<bool> CompleteOutOfBandAsync(DeferredState lifecycle, Func<CancellationToken, Task<bool>> apply,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(lifecycle);
+        ArgumentNullException.ThrowIfNull(apply);
+        await lifecycle.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // An arrived code is already consumed for the page; the host's channel may still
+            // decide, and consuming again invalidates that page's in-flight decision.
+            if (lifecycle.Delivered || lifecycle.Cancelled || lifecycle.InvalidCode) return false;
+            if (!await apply(cancellationToken).ConfigureAwait(false)) return false;
+            Consume();
+            return true;
+        }
+        finally { lifecycle.Gate.Release(); }
+    }
+
+    // The code stops opening the consent page and in-flight page decisions fail.
+    internal void Consume()
+    {
+        Gate.Wait();
+        try
+        {
+            Generation++;
+            Consumed = true;
+        }
+        finally { Gate.Release(); }
+    }
 }
 
 public sealed record BrowserPendingRequest(string Id, DateTimeOffset ExpiresAt,

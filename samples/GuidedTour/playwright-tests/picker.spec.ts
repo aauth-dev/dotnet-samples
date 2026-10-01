@@ -16,8 +16,8 @@ test('flow picker offers all fifteen flows and reacts to selection', async ({ pa
     'Bootstrap',
     'Generic Signature Keys',
     'Resource-Managed',
-    'PS-Asserted (Direct Grant)',
-    'PS-Asserted (Deferred)',
+    'PS Authorization (Direct Grant)',
+    'PS Authorization (Deferred)',
     'Call Chain',
     'Federated (Four-Party)',
     'Rich Resource Requests',
@@ -39,7 +39,8 @@ test('flow picker offers all fifteen flows and reacts to selection', async ({ pa
     await flow.selectOption('Identity');
     await expect(page.locator('select#signing-mode-select')).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 20_000 });
-  await expect(page.locator('details.flow-picker__desc')).toContainText('access control');
+  await expect(page.locator('details.flow-picker__desc')).toContainText('generic Signature Keys');
+  await expect(page.locator('details.flow-picker__desc')).toContainText('AAuth agent identity');
 
   // Switching to a three-party flow hides the signing-mode picker again.
   await expect(async () => {
@@ -48,8 +49,13 @@ test('flow picker offers all fifteen flows and reacts to selection', async ({ pa
   }).toPass({ timeout: 20_000 });
   await expect(page.locator('details.flow-picker__desc')).toContainText('standing consent');
 
-  await flow.selectOption('/events');
-  await expect(page).toHaveURL(/\/events$/);
-  await expect(page.locator('select#flow-select')).toHaveValue('/events');
+  // Capability flows run in the same tour page with their own option picker.
+  await expect(async () => {
+    await flow.selectOption('Events');
+    await expect(page.locator('select#events-channel-select')).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
+  await expect(page).toHaveURL(/\/tour/);
+  await expect(page.locator('details.flow-picker__desc')).toContainText('Bookings');
+  await expect(page.locator('aside.steps .step').first()).toContainText('Discover Bookings metadata');
   await expect(page.locator('select#flow-select option')).toHaveCount(15);
 });

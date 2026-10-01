@@ -2,9 +2,18 @@ namespace AAuth.Events;
 
 public sealed record ProviderSubscription(string Eid, string Agent, string Resource,
     DateTimeOffset ExpiresAt, long? MaxUses);
-public sealed record EventEnvelope(string Token, string Eid, string Issuer, string Agent,
+public sealed record EventEnvelope(string Token, string Eid, string Jti, string Issuer, string Agent,
     DateTimeOffset ExpiresAt, byte[] Body);
-public sealed record EventAcceptance(int StatusCode, long? RemainingUses = null);
+public enum EventAcceptanceOutcome
+{
+    Accepted,
+    Duplicate,
+    Unknown,
+    Expired,
+    Exhausted,
+    Forbidden,
+}
+public sealed record EventAcceptance(EventAcceptanceOutcome Outcome, long? RemainingUses = null);
 public sealed record PendingEvent(string Receipt, EventEnvelope Event);
 
 public interface IAgentProviderEventStore
@@ -15,10 +24,10 @@ public interface IAgentProviderEventStore
     bool Acknowledge(string agent, string receipt);
 }
 
-public sealed record SubscriptionTicket(string Ticket, string Agent, string Operation,
+public sealed record SubscriptionTicket(string Ticket, string KeyThumbprint, string Operation,
     string? Account, string State, DateTimeOffset ExpiresAt);
 public sealed record ResourceSubscription(string Eid, string Provider, string Agent,
-    string Operation, string? Account, string State, DateTimeOffset ExpiresAt);
+    string Operation, string? Account, string State, DateTimeOffset ExpiresAt, string? KeyThumbprint = null);
 public sealed record RegistrationResult(int StatusCode, ResourceSubscription? Subscription = null);
 
 public interface IResourceEventStore

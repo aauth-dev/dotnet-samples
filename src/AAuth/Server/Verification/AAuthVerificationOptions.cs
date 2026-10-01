@@ -10,92 +10,103 @@ namespace AAuth.Server.Verification;
 /// </summary>
 public sealed class AAuthVerificationOptions
 {
+    private string? _expectedAuthTokenDwk = AAuthConstants.DwkFiles.Person;
+    internal bool IsExpectedAuthTokenDwkConfigured { get; private set; }
+
     public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
-    public IReadOnlyList<string> AcceptedSchemes { get; init; } = ["jwt"];
-    public string SignatureLabel { get; init; } = "sig";
-    public IReadOnlyCollection<string> RequiredComponents { get; init; } = [];
-    public bool GenericSignatureKeys { get; init; }
-    /// <summary>
-    /// Optional allow-list of trusted Agent Provider issuers (for <c>aa-agent+jwt</c>).
-    /// When <c>null</c>, any issuer whose JWKS is resolvable is accepted; an empty
-    /// set denies all. Composed by AND with <see cref="IsTrustedAgentProviderIssuer"/>.
-    /// </summary>
-    public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; init; }
+    public IReadOnlyList<string> AcceptedSchemes { get; set; } = ["jwt"];
+    public string SignatureLabel { get; set; } = "sig";
+    public IReadOnlyCollection<string> RequiredComponents { get; set; } = [];
 
     /// <summary>
-    /// Optional trust policy for Agent Provider issuers, evaluated per <c>iss</c>
-    /// during agent-token verification and composed by AND with
-    /// <see cref="TrustedAgentProviderIssuers"/>. <c>null</c> ⇒ no policy constraint.
+    /// When <see langword="true"/>, a request that carries a body MUST also cover
+    /// <c>content-type</c> and <c>content-digest</c> (§Covered Components: required
+    /// on every body-bearing request to a PS or AS endpoint). A request without a
+    /// body is unaffected. A request that omits them fails with <c>invalid_input</c>
+    /// naming them in <c>required_input</c>, before any handler runs.
     /// </summary>
-    public Func<string, bool>? IsTrustedAgentProviderIssuer { get; init; }
+    public bool RequireBodyCoverage { get; set; }
+    public bool GenericSignatureKeys { get; set; }
 
     /// <summary>
-    /// Optional allow-list of trusted Person Server / Access Server issuers (for
-    /// <c>aa-auth+jwt</c>).
-    /// <para>
-    /// <b>Open by default (spec-compliant):</b> when <c>null</c>, any auth token
-    /// from a <em>verifiable</em> issuer is accepted — PS-asserted access accepts
-    /// identity claims from any Person Server, namespaced by <c>iss</c> (§Trust
-    /// Posture in PS-Asserted Access). An <b>empty</b> set denies all (a deliberate
-    /// kill-switch). A non-empty set restricts to the listed issuers. Composed by
-    /// AND with <see cref="IsTrustedAuthTokenIssuer"/>. Signature-only flows
-    /// (<c>hwk</c>/<c>jkt-jwt</c>/<c>jwks_uri</c>) carry no auth-token issuer and
-    /// are unaffected.
-    /// </para>
+    /// Trust for agent-token, auth-token and person-token issuers. Open by default
+    /// (spec-compliant): any <em>verifiable</em> issuer is accepted, namespaced by
+    /// <c>iss</c> (§Trust Posture in PS-Asserted Access). Signature-only schemes
+    /// (<c>hwk</c>/<c>jkt-jwt</c>/<c>jwks_uri</c>) carry no issuer and are unaffected.
     /// </summary>
-    public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; init; }
+    public AAuthTrustOptions Trust { get; set; } = new();
 
     /// <summary>
-    /// Optional trust policy for auth-token issuers (Person Servers / Access
-    /// Servers), evaluated per <c>iss</c> during auth-token verification and
-    /// composed by AND with <see cref="TrustedAuthTokenIssuers"/>. <c>null</c> ⇒ no
-    /// policy constraint. Assign <see cref="AAuthTrust.Any"/> to state intentional
-    /// open trust explicitly (and suppress the startup warning).
+    /// Expected auth-token <c>dwk</c>. Defaults to <c>aauth-person.json</c> for
+    /// three-party PS-asserted access. Four-party resource composition derives
+    /// <c>aauth-access.json</c> from <c>AAuthResourceOptions.AccessServer</c>.
+    /// Set <see langword="null"/> only for explicit mixed PS/AS deployments with
+    /// a trust policy that inspects <see cref="AAuthTrustContext.TokenDwk"/>.
     /// </summary>
-    public Func<string, bool>? IsTrustedAuthTokenIssuer { get; init; }
+    public string? ExpectedAuthTokenDwk
+    {
+        get => _expectedAuthTokenDwk;
+        set
+        {
+            _expectedAuthTokenDwk = value;
+            IsExpectedAuthTokenDwkConfigured = true;
+        }
+    }
 
     /// <summary>
-    /// This resource's own identifier — used for <c>aud</c> validation on auth tokens.
-    /// When null, audience is not validated by the middleware (caller must check).
+    /// This resource's own identifier, which auth-token and person-token <c>aud</c> must
+    /// equal. <c>AddAAuthResource</c> derives it from <see cref="AAuth.AAuthResourceOptions.Issuer"/>
+    /// when unset. When no identifier is known, auth and person tokens are rejected
+    /// (<c>invalid_request</c>); agent tokens and generic signature schemes still verify.
     /// </summary>
-    public string? ResourceIdentifier { get; init; }
-    public Func<Microsoft.AspNetCore.Http.HttpContext, string?>? ExpectedAccount { get; init; }
+    public string? ResourceIdentifier { get; set; }
+    public Func<Microsoft.AspNetCore.Http.HttpContext, string?>? ExpectedAccount { get; set; }
 
     /// <summary>
     /// Enable implemented generic Signature Keys schemes. JWT assertions still
     /// require issuer verification. AAuth-only endpoints use the default jwt policy.
     /// </summary>
-    /// <param name="clock">Optional clock for signature-freshness checks (testing).</param>
+    /// <param name="timeProvider">Optional time source for signature-freshness checks (testing).</param>
     /// <returns>A fresh generic-scheme policy.</returns>
-    public static AAuthVerificationOptions Generic(Func<DateTimeOffset>? clock = null)
+    public static AAuthVerificationOptions Generic(TimeProvider? timeProvider = null)
         => new()
         {
             AcceptedSchemes = ["jwt", "hwk", "jkt-jwt", "jwks_uri", "jwks", "self-jwt"],
-            Clock = clock,
+            TimeProvider = timeProvider ?? TimeProvider.System,
         };
-
-    /// <summary>
-    /// Maximum depth of nested <c>act</c> claims allowed in auth tokens.
-    /// Prevents unbounded chain depth. Default: <c>10</c>.
-    /// </summary>
-    public int MaxActDepth { get; init; } = 10;
 
     /// <summary>
     /// Tolerance applied to <c>exp</c>/<c>iat</c> checks on tokens.
     /// Default: 30 seconds.
     /// </summary>
-    public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan ClockSkew { get; set; } = TimeSpan.FromSeconds(30);
 
-    /// <summary>
-    /// Maximum allowed skew into the future for HTTP signature timestamps.
-    /// Default: 5 seconds.
-    /// </summary>
-    public TimeSpan MaxFutureSkew { get; init; } = TimeSpan.FromSeconds(5);
+    /// <summary>Time source for signature freshness and token expiry.</summary>
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
-    /// <summary>
-    /// Clock function for time-dependent checks (signature freshness, token expiry).
-    /// Default: <c>null</c> (uses <see cref="DateTimeOffset.UtcNow"/>).
-    /// Inject a fixed clock for deterministic testing.
-    /// </summary>
-    public Func<DateTimeOffset>? Clock { get; init; }
+    internal AAuthVerificationOptions Clone()
+    {
+        var clone = new AAuthVerificationOptions
+        {
+            EgressPolicy = EgressPolicy,
+            AcceptedSchemes = AcceptedSchemes,
+            SignatureLabel = SignatureLabel,
+            RequiredComponents = RequiredComponents,
+            RequireBodyCoverage = RequireBodyCoverage,
+            GenericSignatureKeys = GenericSignatureKeys,
+            Trust = Trust,
+            ResourceIdentifier = ResourceIdentifier,
+            ExpectedAccount = ExpectedAccount,
+            ClockSkew = ClockSkew,
+            TimeProvider = TimeProvider,
+        };
+        clone._expectedAuthTokenDwk = _expectedAuthTokenDwk;
+        clone.IsExpectedAuthTokenDwkConfigured = IsExpectedAuthTokenDwkConfigured;
+        return clone;
+    }
+
+    internal void UseDefaultExpectedAuthTokenDwk(string? expectedDwk)
+    {
+        _expectedAuthTokenDwk = expectedDwk;
+    }
 }

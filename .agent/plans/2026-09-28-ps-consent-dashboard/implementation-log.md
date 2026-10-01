@@ -1,0 +1,475 @@
+# PS Consent Dashboard — Implementation Log
+
+Append-only. Entries: `[YYYY-MM-DD] [Phase N] <title>` with a status of
+`PROCEEDED (default X)`, `BLOCKED`, or `RESOLVED`.
+
+## Decisions taken
+
+### [2026-09-28] [Phase 0] Q1 — Base branch
+
+RESOLVED (owner). Build on `wip/aauth-draft-11`, on top of the in-flight
+draft-11 changes. Do not branch from `origin/main`.
+
+### [2026-09-28] [Phase 0] Q2 — Waiting-step UI
+
+RESOLVED (owner).
+- The waiting step's primary button opens the PS dashboard, optionally
+  deep-linked with `?code=` to highlight the request (see Q12).
+- The per-request interaction URL is shown only as a small secondary "or open
+  this request directly" link.
+- The button is shown only at the waiting step. Clicking it is optional, and
+  polling never depends on it.
+
+### [2026-09-28] [Phase 0] Q3 — Sequencing against the red build
+
+PROCEEDED (default: gate on build).
+- `dotnet build AAuth.slnx` is red on the branch (23 errors, see research
+  §Baseline).
+- Phases 1+ start only once MockPersonServer, SampleApp (through AAuth.R3) and
+  GuidedTour compile under the draft-11 migration.
+- This initiative does not fix draft-11 compile errors. If it must start
+  earlier, it may only touch files it already owns and must log each deviation.
+
+### [2026-09-28] [Phase 0] Q4 — Wire response
+
+PROCEEDED (default: keep `requirement=interaction`).
+- The PS keeps emitting `url` + `code`.
+- The dashboard completes the interaction out-of-band (#user-interaction, v11
+  L1011).
+- No SDK or wire change. `requirement=approval` is out of scope (see the plan's
+  Out of Scope table).
+
+### [2026-09-28] [Phase 0] Q5 — Dashboard authentication and availability
+
+PROCEEDED (default: isolated demo sign-in, same gate as the consent page).
+- `GET /dashboard` requires a signed-in person (#ps-approval-endpoint-auth, v11
+  L2908).
+- Sign-in reuses the isolated demo identity (`isolated-person-demo`) and the
+  loopback-only guard. It is enabled exactly when `AAuth:EnableIsolatedDemoConsent`
+  is enabled; otherwise the dashboard returns `401`.
+- Decisions are POSTs carrying a session cookie plus a CSRF token.
+- All requests belong to the single demo person. A real PS resolves the
+  agent-to-person binding.
+
+### [2026-09-28] [Phase 0] Q6 — Code consumption on dashboard decision
+
+PROCEEDED (default: `BrowserInteraction.Renew()` under the entry lifecycle gate).
+- A dashboard decision renews the code, which retires the old code and bumps
+  `Generation` so any in-flight `/interaction` decision is rejected. A later
+  visit with the old code gets `invalid_code` (#interaction-code-format, v11
+  L2396).
+- If tests show `Renew()` has side effects (failed-attempt counting, or a fresh
+  code leaking via a later `202`), escalate to an SDK `Consume()` and log a
+  deviation.
+
+### [2026-09-28] [Phase 0] Q7 — Live updates
+
+PROCEEDED (default: JSON endpoint + vanilla JS polling).
+- `GET /dashboard/requests` returns JSON and the page polls it every ~1 s.
+- No SignalR or SSE. The page stays static HTML like the existing consent
+  pages.
+
+### [2026-09-28] [Phase 0] Q8 — History scope and retention
+
+PROCEEDED (default: in-memory, capped, reset-aware).
+- A sample `ConsentRegistry` records each parked PS consent request and its
+  outcome: approved, denied, expired, withdrawn, or delivered.
+- It holds a reference to the live entry so status is derived, not copied.
+- Capped at 500 records (oldest dropped). Cleared by `/admin/reset`.
+- Per mission, the dashboard also links to the existing mission log
+  (#interaction-response-poll-authority, v11 L1181).
+
+### [2026-09-28] [Phase 0] Q9 — Request kinds
+
+PROCEEDED (default: list all PS-parked requests; decide only PS-hosted ones).
+- **Decidable:** three-party token consent, the out-of-scope mission token gate,
+  mission creation, tool permission, and the four-party PS consent step.
+- **Listed read-only, with a "complete at the Access Server" link:** Access
+  Server interactions relayed by the PS (their `url` is not PS-hosted, v11
+  L1011).
+- **Not listed:** resource-interaction hops before PS consent.
+
+### [2026-09-28] [Phase 0] Q10 — Scripted mission decisions
+
+PROCEEDED (default: show as history). When `MissionConsentScript` resolves a
+prompt without a person (non-interactive mode), the registry records it as
+`approved by script` or `denied by script`, so the history matches the mission
+log.
+
+### [2026-09-28] [Phase 0] Q11 — Shared agent-side prompt component
+
+PROCEEDED (default: new tiny Razor library `samples/ConsentSupport`).
+- It holds a `PersonServerApprovalPrompt` component and a `PersonServerConsent`
+  helper, which builds the dashboard URL and classifies whether an interaction
+  URL is PS-hosted.
+- It is referenced by EventSupport, CapabilitySupport, SampleApp and GuidedTour,
+  and added to `AAuth.slnx`.
+- Alternative if you prefer no new project: place both in EventSupport (the
+  lowest existing shared library).
+
+### [2026-09-28] [Phase 0] Q12 — Deep-link parameter
+
+PROCEEDED (default: `?code=`).
+- The dashboard highlights the pending request matching the code.
+- The lookup is read-only: it never consumes the code and never counts as a
+  failed attempt.
+- Unknown codes are ignored silently (no oracle beyond "no highlight").
+
+### [2026-09-28] [Phase 0] Q13 — Playwright strategy
+
+PROCEEDED (default: dashboard-first, keep direct-link coverage).
+- Add `approveOnDashboard` and `denyOnDashboard` helpers that open the dashboard
+  once per browser context and act on the matching request.
+- Migrate PS-hosted consent specs to them.
+- Keep one direct-link spec per app for the secondary link, plus a spec proving
+  that a dashboard decision makes the old link return `invalid_code`.
+
+### [2026-09-28] [Phase 0] Q14 — CLIs
+
+PROCEEDED (default: dashboard-first).
+- MissionAgent opens the dashboard once per run (interactive mode), and for each
+  prompt prints `Approve on the PS dashboard: {ps}/dashboard (or directly: {url})`.
+- AgentConsole prints both URLs.
+
+### [2026-09-28] [Phase 0] Q15 — Decision-logic sharing
+
+PROCEEDED (default: extract one `PersonConsentDecisions` service).
+- Move the mutation bodies of `/interaction/approve` and `/interaction/deny`
+  (both stores, asserter call, `FederationConsent`, standing-consent grant) into
+  one service used by the link path, the dashboard and the registry.
+- Its behaviour must stay byte-for-byte the same for the link path.
+
+### [2026-09-29] [Phase 0] Q3 — Build gate superseded
+
+RESOLVED. Supersedes the 2026-09-28 Q3 entry.
+- The draft-11 migration closed (`ecc71e7`).
+- `dotnet build AAuth.slnx -c Release` is green at `1045186`.
+- The full solution build is now the gate for every phase.
+- Research line citations were re-derived after the owner's `e2154a1`
+  refactor (research.md §Baseline update).
+
+### [2026-09-29] [Phase 0] Q16 — Sequencing with the SDK API surface plan
+
+RESOLVED (owner): "We will do it next."
+- This initiative lands before
+  [2026-09-29-sdk-api-surface-consistency](../2026-09-29-sdk-api-surface-consistency/implementation-plan.md),
+  which rebases onto it.
+- Forward-compatibility rules were added to Guiding principles:
+  - DI-registered sample services;
+  - no new PS-identity restatements;
+  - the prompt takes `Interaction`;
+  - no new per-request builders or manual seams;
+  - no SDK types.
+- The Phase 7 review checks them.
+
+### [2026-09-29] [Phase 0] Scope — GuidedTour capability modes
+
+PROCEEDED (default: include in Phase 4).
+- `e2154a1` added GuidedTour capability modes (Events, Wallet Protocol,
+  Documents, Catalog) in `TourSession.Capabilities.cs`. Their PS-hosted
+  waiting steps (`CapAuthority` L670-L684) get the same poll-on-arrival,
+  prompt, and "Run all" behaviour as the classic tracks.
+
+### [2026-09-29] [Phase 0] Q4–Q15 — Owner review of defaults
+
+RESOLVED (owner): "accept". Every default ruling Q4–Q15 stands as recorded
+above, including:
+- Q6: `Renew()` code consumption, with the SDK `Consume()` fallback logged if
+  needed.
+- Q9: the dashboard decides PS-hosted requests only.
+- Q11: a new `samples/ConsentSupport` library.
+
+Phase 0 is complete.
+
+## Deviations from plan
+
+### [2026-09-29] [Phase 1] Q6 escalated — SDK `BrowserInteraction.Consume()`
+
+RESOLVED (Q6 fallback, as pre-authorised).
+- **Why `Renew()` was not enough.** `Renew()` issues a fresh code. In
+  four-party, the entry stays `Pending` while federation continues after PS
+  consent, and `Pending202` (AAuthPersonServerEndpoints.cs L1566) re-emits
+  `entry.Browser.Code`. A dashboard `Renew()` would therefore leak a fresh,
+  unconsumed code in the next `202`: exactly the side effect Q6 named.
+- **The fix.** A public `BrowserInteraction.Consume()` bumps `Generation`,
+  which fails any in-flight page decision, and marks the code consumed, so
+  arrivals return `invalid_code`. The code value itself is kept, which
+  matches the link path.
+- **Tests.**
+  - `BrowserConsentSessionTests.ConsumedCodeRejectsOpenDecisionAndNewArrival`.
+  - The API map was refreshed. It also picked up the unmapped `e2154a1`
+    GuidedTour/TourOptions additions.
+
+### [2026-09-29] [Phase 1] Registry scope details
+
+PROCEEDED.
+- A `PersonToken` kind was added, for `/person` identity consent, which the
+  plan did not name.
+- Four-party entries are listed only once the PS asks for consent
+  (`FederationConsent`) or relays an AS interaction. Background federation
+  that needs no person decision stays hidden.
+- The Delivered status applies only to approvals; a denial stays `Denied`.
+- Scripted permission resolutions record `Decision` and `DecidedBy = Script`.
+  Automated SDK decisions with no recorded decider display as
+  `Script` (mission kinds) or `Policy`.
+- The dashboard decision path (`DecideAsync`, which takes the lifecycle gate
+  and consumes the code) landed in Phase 1 with its tests, ahead of the
+  Phase 2 UI.
+- The full Playwright run is deferred to the end of Phase 2. Phase 1 changes
+  no UI.
+
+### [2026-09-29] [Phase 2] Dashboard implementation details
+
+PROCEEDED.
+- **Session.** The dashboard has its own sample-side session (the
+  `AAuth.Person.Dashboard` cookie: `HttpOnly`, `SameSite=Strict`,
+  `Path=/dashboard`). The SDK `BrowserConsentSessions` keeps per-code
+  decision sessions private, so it cannot be reused. Protections:
+  - the same isolated demo identity;
+  - the same loopback guard;
+  - the same enablement flag.
+- **Decisions.** Decisions are JSON POSTs carrying `X-CSRF-Token`. Outcomes:
+  - `200 applied`;
+  - `409` for `already_decided`, `expired`, and `not_decidable`;
+  - `404 unknown_request`.
+- **Page hardening.** The page sets a nonce-based CSP, `no-store`,
+  `no-referrer`, and `nosniff`. It renders only through `textContent`, never
+  `innerHTML`.
+- **Tests.** `TestConsentBrowser` routes `/dashboard` through its loopback
+  shim, as it already does for `/interaction`.
+- **Verification.**
+  - `MockPersonServerDashboardTests` (6), plus two SampleApp deferred e2e
+    specs (dashboard approve with stale link, and dashboard deny).
+  - Browser check against `make demo`: sign-in, pending card, `?code=`
+    highlight, and approve moving to history as Delivered via the dashboard.
+  - Full Playwright suite: 77 passed, 1 skipped (Keycloak), `--retries=0`.
+- **Notes for the final UX pass:**
+  - The status pill is redundant inside Pending.
+  - "Delivered" is jargon.
+  - Pending cards show no expiry.
+
+### [2026-09-29] [Phase 3] Agent-side prompt details
+
+PROCEEDED.
+- **References.** `ConsentSupport` is referenced once, from EventSupport.
+  CapabilitySupport, SampleApp and GuidedTour reach it transitively, which
+  avoids four duplicate references.
+- **Interaction, not URL.** Pages and walkthrough sessions store the
+  `Interaction`. Callbacks that only receive a built URL (CallChain hop 2,
+  the Wallet raw challenge path) recover it with
+  `PersonServerConsent.FromUserUrl`.
+- **Named target.** The dashboard button opens in the named window
+  `aauth-ps-dashboard`, so repeated prompts reuse one dashboard tab.
+- **E2E helpers.** `approveInPopup`, `denyInPopup` and `authenticateConsent`
+  detect a dashboard popup and decide the highlighted card. Existing specs
+  therefore exercise the dashboard with no per-spec branching. The specs
+  select the prompt through `CONSENT_ACTION`.
+- **Fix.** `ConsentProgress` first rendered its code sample with a
+  conditional block inside `<pre><code>`. highlight.js rewrites that element,
+  so the Blazor diff crashed the circuit (`removeChild` of null) when the
+  authority changed mid-flow (bookings and federated PS-to-AS). The sample is
+  now one keyed string.
+- **Verification.** Full Playwright suite: 75 passed and 2 failed before the
+  fix. The two failing specs passed after it.
+
+### [2026-09-29] [Phase 4] GuidedTour poll on arrival
+
+PROCEEDED.
+- **One hook.** Poll-on-arrival lives in the public `RunNextAsync`. After any
+  step leaves `AwaitingUserApproval` true and `IsPersonServerConsent`
+  (`PersonServerConsent.IsPersonServerHosted` on the current interaction), it
+  records the waiting step and starts the background poll. Every mode is
+  covered without per-mode branches, including the capability modes, the
+  federated PS step, and both call-chain hops. `/interaction/resource`
+  (Documents) and AS/Inbox URLs are not PS-hosted, so they keep the
+  click-driven path. `StepUserApprovesPlaceholder` is unchanged because PS
+  consent no longer reaches it.
+- **Run all.** "Run all" continues because the next (poll) step awaits the
+  in-flight poll. While it waits, Reset stays enabled; a run counter stops the
+  loop after a reset.
+- **UI.**
+  - The PS prompt renders in the polling banner.
+  - Worker consent (sub-agent, federated AS, R3 person token) now stores an
+    `Interaction` and renders through the same prompt. The sub-agent round
+    label moved to `.worker-round`.
+- **Narratives.** The waiting steps now teach "the agent polls already; decide
+  on the dashboard or through the direct link". `CodeSnippets.DirectUserToInteraction`
+  starts the poll before showing the link.
+- **Deviation (dashboard).** Wallet Protocol's AS-clarification scenario
+  exposed an SDK behaviour. After the agent answers an AS clarification, a
+  four-party PS entry calls `Browser.Renew()` and its 202 advertises a *fresh
+  PS interaction code*, although the PS consent is already given
+  (`AAuthPersonServerEndpoints` pending GET, four-party branch, which falls
+  through to `Pending202`). The per-request page previously showed a status
+  for that code. The dashboard found no pending card and gave no feedback.
+  - Fix: the dashboard now highlights the record for any current code and
+    shows a "Nothing to decide for this link" note (`settled`).
+  - Covered by `MockPersonServerDashboardTests`.
+  - The SDK behaviour (advertising `requirement=interaction` when nothing is
+    asked of the person) is logged for the SDK API surface plan. It is not
+    changed here.
+- **Verification.**
+  - Build clean; AAuth.Tests 1691 passed.
+  - GuidedTour project 43/43.
+  - Full Playwright suite 78 passed, 1 skipped (Keycloak), `--retries=0`.
+  - Browser check against `make demo`: Deferred "Run all" reached the prompt
+    with polls counting, a dashboard approval was delivered, and the SampleApp
+    Deferred prompt showed a live poll count.
+- **Notes for the final UX pass:**
+  - The tour banner shows two spinners (banner plus prompt).
+  - The SampleApp prompt could not be screenshotted while it re-renders every
+    second; use a wait or disable animations.
+
+### [2026-09-29] [Phase 5] CLIs and Makefile
+
+PROCEEDED.
+- **CLI dashboard link.** The CLIs build the dashboard URL inline. They do
+  not reference `ConsentSupport`, which is a Razor library that pulls in the
+  ASP.NET Core framework. Each CLI prints the dashboard only when the
+  interaction is `{ps}/interaction?`.
+- **MissionAgent** opens the dashboard once per run (interactive mode). An
+  interaction that is not hosted on the PS still opens its own page.
+- **Banners.** The `demo`, `demo-keycloak` and `demo-mission` banners list
+  `PS dashboard: $(PS_URL)/dashboard`.
+- **Verification.**
+  - `MissionAgent` tests: 27 passed.
+  - Live check: `make demo-mission`, then `make agent-mission AUTO=1`, printed
+    `Dashboard: http://localhost:5100/dashboard?code=…` and the
+    `Or directly:` link.
+
+### [2026-09-29] [Phase 6] Samples, snippets and docs sweep
+
+PROCEEDED.
+- **MockPersonServer README.** New "Consent dashboard" section covering:
+  - sign-in and session;
+  - listing, including `code` highlighting and `settled`;
+  - decisions and their status codes;
+  - code consumption and reach;
+  - reset.
+- **Other READMEs.**
+  - GuidedTour: deferred steps 9 and 10, poll on arrival. This removes the
+    stale "Simulate deny" button reference; the button no longer exists.
+  - MissionAgent: dashboard once per run.
+  - `samples/README.md`: AgentConsole output.
+  - `tests/e2e/README.md`: the dashboard helpers.
+- **Docs.** `docs/workflows/ps-asserted-access.md` and
+  `docs/server/mission-governance.md` cite
+  `#user-interaction` (v11 L1011, verified with `sed -n 1011p`) for
+  out-of-band completion.
+- **Code copy.** Stale "Approve as user" / `ApproveAsUserAsync` copy is gone
+  from `TourSession`.
+- **Sweep.** It leaves only the following, which is intended:
+  - "Open consent page" as the label for Access Server and Inbox links;
+  - the Documents resource-first narrative, which really opens a tab.
+- **Verification.** Build clean. AAuth.Tests 1691 passed; docs inventory
+  refreshed.
+
+### [2026-09-29] [Phase 7] Independent review
+
+RESOLVED. A fresh review subagent read the diff `4692e8b~1..79bca06`, this
+plan, the research and the spec (v11 L1011, L2861). Every verdict below was
+re-checked against the source.
+
+**Findings**
+
+- **F1 — `external_url` rendered into an `href` (graded High by the
+  reviewer).**
+  - Ruling: **Low**, fixed as defense in depth.
+  - Why Low: the value comes only from the SDK's four-party
+    `OnInteractionRequired` (`AAuthPersonServerEndpoints`,
+    `entry.InteractionUrl = interaction.Url`). That interaction was parsed
+    through `Interaction.FromRequirement`, whose egress `ValidateUrl`
+    (`AAuthEgressPolicy`, `uri.Scheme != "https" && uri.Scheme != "http"`)
+    already rejects `javascript:`.
+  - Fix: `ConsentDashboard.Describe` now emits `external_url` only for
+    absolute http(s) URLs.
+- **F2 — sign-in checks the loopback/enablement refusal before CSRF
+  (Medium).**
+  - Ruling: **rejected**. Both checks run on every request and both reject.
+    Their order changes only which error an attacker sees, and a loopback
+    bypass would bypass the gate in either order. No change.
+- **Reviewer inaccuracy.** The reviewer said worker consent stays
+  click-driven. In fact PS-hosted worker rounds now render the dashboard
+  prompt (Phase 4). Not a finding.
+
+**Areas with no findings**
+
+The reviewer passed these and spot-checks confirmed them:
+- **Code consumption.** `Consume()` bumps `Generation`. The link path's
+  generation check rejects in-flight page decisions.
+- **Decision races.** Every path takes `Lifecycle.Gate`, and
+  `LinkAndDashboardDecisions_ApplyOnce` covers the race.
+- **No drift from the link path.** Both paths share `ApplyHeld*`.
+- **Access Server and resource consent untouched.** `IsDecidable` excludes
+  AS interactions, and `IsPersonServerHosted` requires the path
+  `/interaction`.
+- **`settled`.** It is behind dashboard authentication.
+
+**Q16 seams for the SDK API surface plan**
+
+1. MockPersonServer `Program.cs` hand-wires the registrations and the route:
+   - registrations: `ConsentRegistry`, `PersonConsentDecisions`,
+     `ConsentDashboardSessions`;
+   - route: `MapConsentDashboard()`.
+   - Folds into: an `AddAAuthPersonServer(o => o.Dashboard ...)` option plus
+     `MapAAuthPersonServer` mapping.
+2. The bridge store and `MissionPendingStore` call `registry.Register`.
+   - Folds into: an SDK pending-store observer or event.
+3. The SDK `BrowserInteraction.Consume()` is public, used by the sample
+   decision service.
+   - Folds into: an SDK out-of-band decision API
+     (`IPersonConsentDecisions`-like) so hosts stop touching
+     `BrowserInteraction`.
+4. Restated PS identity:
+   - `PersonServerConsent.DashboardUrl(ps)` (ConsentSupport);
+   - MissionAgent and AgentConsole build `{ps}/dashboard?code=` inline;
+   - GuidedTour `PersonServer` comes from options.
+   - Folds into: a PS metadata field (for example a sample-profile
+     `dashboard_endpoint`) or an SDK helper, once the SDK exposes it.
+5. Four-party `Pending202` re-advertises a fresh PS interaction code after an
+   AS clarification, even though the PS consent is complete (Phase 4
+   deviation). This is an SDK behaviour candidate for the API surface plan.
+
+**Final status**
+
+- Build clean.
+- Test projects: AAuth.Tests 1691, AAuth.Conformance 1254, AAuth.R3.Tests
+  327, AAuth.Events.Tests 80, all passed.
+- e2e typecheck clean.
+- Full Playwright suite (Phase 4 run, unchanged since except docs and this
+  serializer guard): 78 passed, 1 skipped.
+
+### [2026-09-29] [Post-plan] Screenshot UX pass
+
+PROCEEDED. At the owner's request, I took screenshots after the plan, using
+`make demo`. The integrated browser only shows a 1024x768 viewport, so the
+full-page shots were taken with the container's Playwright and viewed as
+images. Fixes:
+- **Dashboard.**
+  - No status pill on pending cards; it only repeated the section heading.
+  - Friendly history labels: `Delivered` shows as "Approved · agent has it",
+    and `Withdrawn` as "Withdrawn by agent". The JSON `status` values are
+    unchanged.
+  - Pending cards show **Expires**.
+  - Mission-creation cards list the proposed **Tools**, matching the
+    per-request consent screen.
+  - In the Mission grouping, cards drop the Mission and s256 rows that the
+    group header already shows.
+  - Group headers read "Mission: …", "Agent: …" and "Not under a mission".
+- **Prompt.** A new `ShowWaiting` parameter lets a host hide the prompt's own
+  spinner. The GuidedTour polling banner now shows a single spinner. The
+  secondary hint inherits the host's text colour, so it reads on the dark
+  tour theme.
+- **Checked and left as is.**
+  - The SampleApp prompt: dashboard button, live poll count, direct link.
+  - The GuidedTour Mission banner.
+  - The dashboard highlight and the "Run all" continuation after a dashboard
+    approval.
+- **Verification.**
+  - Build clean; AAuth.Tests 1691 passed.
+  - API map and docs inventory refreshed.
+  - Full Playwright suite: 78 passed, 1 skipped (Keycloak), `--retries=0`.
+
+## Open questions / inputs needed
+
+_None yet._

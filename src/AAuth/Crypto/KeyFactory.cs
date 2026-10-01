@@ -11,12 +11,13 @@ namespace AAuth.Crypto;
 public static class KeyFactory
 {
     /// <summary>
-    /// Create an <see cref="IAAuthKey"/> from a JWK JSON object.
+    /// Create a local key from a JWK JSON object. The key can sign and export
+    /// when the JWK carries <c>d</c>.
     /// </summary>
     /// <param name="jwk">The JWK as a JSON object.</param>
-    /// <returns>An <see cref="IAAuthKey"/> of the appropriate concrete type.</returns>
+    /// <returns>An <see cref="IAAuthExportableKey"/> of the appropriate concrete type.</returns>
     /// <exception cref="ArgumentException">If the key type/curve is unsupported or malformed.</exception>
-    public static IAAuthKey FromJwk(JsonObject jwk)
+    public static IAAuthExportableKey FromJwk(JsonObject jwk)
     {
         ArgumentNullException.ThrowIfNull(jwk);
         var algorithm = Validate(jwk);

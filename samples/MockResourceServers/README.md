@@ -1,7 +1,7 @@
 # Mock Resource Servers
 
-Eight small ASP.NET Core resource servers demonstrate the four AAuth access
-modes and explicitly generic signing examples. They replace the former `WhoAmI`
+Eight small ASP.NET Core resource servers demonstrate the five draft-11 AAuth
+resource access modes and explicitly generic signing examples. They replace the former `WhoAmI`
 sample with focused templates,
 each a short `Program.cs` (well-known + one verification pipeline + a couple of
 endpoints).
@@ -17,14 +17,14 @@ traveler's behalf — each protocol concept gets a real-feeling home:
 
 | Server | Port | Access mode | What it protects | Endpoints → scope/role |
 |--------|------|-------------|------------------|------------------------|
-| [**Profile**](Profile/) | 5000 | Identity-Based | who the caller is (no Person Server) | `/pseudonymous` (`hwk`), `/identified` (`jwks_uri`), `/anchored` (`jkt-jwt`) — no scope |
-| [**Calendar**](Calendar/) | 5001 | PS-Asserted (three-party) | the traveler's events | `/events` → `calendar.read`, `/events/write` → `calendar.write` (step-up), `/events/admin` → role `calendar.owner` (RBAC) |
-| [**Trips**](Trips/) | 5002 | three-party + mission-aware | trip planning under a mission | `/trips` → `trips.read` (in-mission, silent), `/trips/book` → `trips.book` (out-of-mission, prompts) |
-| [**Wallet**](Wallet/) | 5003 | Federated (four-party) | the bank, with its own Access Server | `/wallet` → `wallet.read`, `/wallet/charge` → `wallet.charge` (AS role `wallet.payer`) |
-| [**Inbox**](Inbox/) | 5004 | Resource-Managed (two-party) | the traveler's inbox / trip confirmations | `/messages` → reactive (`202` + own consent → poll `/pending/{code}` → `AAuth-Access`), `/authorize` → proactive (`{scope}`) |
-| [**Bookings**](Bookings/) | 5005 | Federated + R3 (four-party) | dining & experiences reservations, via a dedicated R3 Access Server (:5501) | `/search_availability`, `/hold_reservation` → `r3_granted`; `/confirm_reservation` → `r3_conditional` (per-call proposal; charges a deposit) |
-| [Catalog](Catalog/README.md) | 5006 | Federated + R3 gateway | Destination and experience catalogs | Service-qualified `list`; sibling-service grant rejected |
-| [Documents](Documents/README.md) | 5007 | PS-asserted with resource permission | Work travel document | `/document` requires `documents.read`, account `work` and completed release permission |
+| [**Profile**](Profile/) | 5000 | Agent identity + generic Signature Keys | who the caller is (no Person Server) | `/pseudonymous` (`hwk`), `/identified` (`jwt` or generic `jwks`), `/anchored` (`jkt-jwt`) — no scope |
+| [**Calendar**](Calendar/) | 5001 | PS authorization (three-party) | the traveler's events | `/events` → `calendar.read`, `/events/write` → `calendar.write` (step-up), `/events/admin` → role `calendar.owner` (RBAC) |
+| [**Trips**](Trips/) | 5002 | PS authorization + mission-aware | trip planning under a mission | `/trips` → `trips.read` (in-mission, silent), `/trips/book` → `trips.book` (out-of-mission, prompts) |
+| [**Wallet**](Wallet/) | 5003 | Federated authorization (four-party) | the bank, with its own Access Server | `/wallet` → `wallet.read`, `/wallet/charge` → `wallet.charge` (AS role `wallet.payer`), `/wallet/review` → `wallet.review` (AS clarification) |
+| [**Inbox**](Inbox/) | 5004 | Resource-managed (two-party session token) | the traveler's inbox / trip confirmations | `/messages` → reactive (`202` + own consent → poll `/pending/{code}` → `AAuth-Access`) |
+| [**Bookings**](Bookings/) | 5005 | Federated + R3 (four-party) | dining & experiences reservations, via a dedicated R3 Access Server (:5501) | `/search_availability`, `/hold_reservation` → `r3_granted`; `/confirm_reservation` → `r3_per_call` (per-call proposal; charges a deposit) |
+| [Catalog](Catalog/README.md) | 5006 | Federated + R3 (merged OpenAPI) | Destination and experience catalogs | `listDestinations` / `listExperiences`; sibling-operation grant rejected |
+| [Documents](Documents/README.md) | 5007 | Person identity then PS authorization with resource permission | Work travel document | `/document` requires `documents.read`, account `work` and completed release permission |
 
 The narrative reads as a journey: *Aria identifies itself (Profile), imports your
 trip confirmations from your **Inbox** (which manages its own consent — no Person
@@ -62,7 +62,7 @@ what the resource concludes; they do not authorize replacing JWT in an AAuth flo
   reflects the granted scope rather than a federated mode).
 - **Bookings** endpoints return `operationId` + `source` (`r3_granted` or per-call) +
   `r3_uri`/`r3_s256` (R3 vocabulary demo: the auth token carries granted vs.
-  conditional operations, not scopes). Bookings advertises the **OpenAPI** vocabulary
+  per-call operations, not scopes). Bookings advertises the **OpenAPI** vocabulary
   (`urn:aauth:vocabulary:openapi`) at `/openapi.json`.
 
 Each payload's field names self-describe which concept it demonstrates. None of

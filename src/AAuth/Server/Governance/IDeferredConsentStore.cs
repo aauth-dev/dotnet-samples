@@ -55,11 +55,17 @@ public sealed class DeferredConsent
     public string? OwnerKeyThumbprint { get; init; }
     public DeferredState Lifecycle { get; } = new();
 
-    /// <summary>HTTPS URL of the approver (the PS).</summary>
-    public string Approver { get; init; } = string.Empty;
+    /// <summary>HTTPS identifier of the PS that approves the mission.</summary>
+    public string PersonServer { get; init; } = string.Empty;
 
     /// <summary>The proposal (set when <see cref="Kind"/> is <see cref="DeferredConsentKind.MissionCreation"/>).</summary>
     public MissionProposal? Proposal { get; init; }
+
+    /// <summary>The approver's mission <c>expires_at</c>, applied when the user approves a parked proposal.</summary>
+    public DateTimeOffset? MissionExpiresAt { get; init; }
+
+    /// <summary>The approver's approved subset of the proposed resources; <see langword="null"/> for all.</summary>
+    public IReadOnlyList<string>? MissionApprovedResources { get; init; }
 
     /// <summary>The permission request (set when <see cref="Kind"/> is <see cref="DeferredConsentKind.Permission"/>).</summary>
     public PermissionRequest? Permission { get; init; }

@@ -48,14 +48,14 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         var agentApp = WebApplication.CreateBuilder();
         agentApp.WebHost.UseTestServer();
         var a = agentApp.Build();
-        a.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+        a.MapAAuthAgentWellKnown(options =>
         {
-            Issuer = AgentIssuer,
-            Name = "Test Agent",
-            Description = "**Test Agent** drafts email on your behalf.",
-            DocumentationUri = $"{AgentIssuer}/docs",
-            SigningKeys = new Dictionary<string, IAAuthKey> { [AgentKid] = _agentKey },
-            CallbackEndpoint = $"{AgentIssuer}/callback",
+            options.Issuer = AgentIssuer;
+            options.Name = "Test Agent";
+            options.Description = "**Test Agent** drafts email on your behalf.";
+            options.DocumentationUri = $"{AgentIssuer}/docs";
+            options.SigningKeys = new AAuthSigningKeySet { [AgentKid] = _agentKey };
+            options.CallbackEndpoint = $"{AgentIssuer}/callback";
         });
         await a.StartAsync();
         _agentHost = a;
@@ -67,9 +67,10 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         p.MapAAuthPersonServerWellKnown(new AAuthPersonServerMetadataOptions
         {
             Issuer = PsIssuer,
-            TokenEndpoint = $"{PsIssuer}/token",
+            AuthTokenEndpoint = $"{PsIssuer}/token",
+            PersonTokenEndpoint = $"{PsIssuer}/person",
             Description = "**Test PS** — manage which agents act for you.",
-            SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = _psKey },
+            SigningKeys = new AAuthSigningKeySet { [PsKid] = _psKey },
             MissionEndpoint = $"{PsIssuer}/mission",
             ScopesSupported = new[] { "whoami", "data.read" },
         });
@@ -83,8 +84,8 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         s.MapAAuthAccessServerWellKnown(new AAuthAccessServerMetadataOptions
         {
             Issuer = AsIssuer,
-            TokenEndpoint = $"{AsIssuer}/token",
-            SigningKeys = new Dictionary<string, IAAuthKey> { [AsKid] = _asKey },
+            AuthTokenEndpoint = $"{AsIssuer}/token",
+            SigningKeys = new AAuthSigningKeySet { [AsKid] = _asKey },
             RevocationEndpoint = $"{AsIssuer}/revoke",
         });
         await s.StartAsync();
@@ -97,12 +98,12 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         c.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
         {
             Issuer = AgentIssuer,
-            SigningKeys = new Dictionary<string, IAAuthKey> { [ResourceKid] = _resourceKey },
+            SigningKeys = new AAuthSigningKeySet { [ResourceKid] = _resourceKey },
         });
-        c.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+        c.MapAAuthAgentWellKnown(options =>
         {
-            Issuer = AgentIssuer,
-            SigningKeys = new Dictionary<string, IAAuthKey> { [AgentKid] = _agentKey },
+            options.Issuer = AgentIssuer;
+            options.SigningKeys = new AAuthSigningKeySet { [AgentKid] = _agentKey };
         });
         await c.StartAsync();
         _combinedHost = c;
@@ -184,11 +185,19 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         Assert.Equal(PsIssuer, (string?)doc["issuer"]);
     }
 
-    [Fact(DisplayName = "§Discovery — aauth-person.json has 'token_endpoint'")]
+    [Fact(DisplayName = "§Discovery — aauth-person.json has 'auth_token_endpoint', not 'token_endpoint'")]
     public async Task PsMetadata_HasTokenEndpoint()
     {
         var doc = await Get(_psHost!, "/.well-known/aauth-person.json");
-        Assert.Equal($"{PsIssuer}/token", (string?)doc["token_endpoint"]);
+        Assert.Equal($"{PsIssuer}/token", (string?)doc["auth_token_endpoint"]);
+        Assert.False(doc.ContainsKey("token_endpoint"));
+    }
+
+    [Fact(DisplayName = "§Discovery — aauth-person.json has 'person_token_endpoint'")]
+    public async Task PsMetadata_HasPersonTokenEndpoint()
+    {
+        var doc = await Get(_psHost!, "/.well-known/aauth-person.json");
+        Assert.Equal($"{PsIssuer}/person", (string?)doc["person_token_endpoint"]);
     }
 
     [Fact(DisplayName = "§Discovery — aauth-person.json has 'jwks_uri'")]
@@ -235,11 +244,12 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         Assert.Equal(AsIssuer, (string?)doc["issuer"]);
     }
 
-    [Fact(DisplayName = "§Discovery — aauth-access.json has 'token_endpoint'")]
+    [Fact(DisplayName = "§Discovery — aauth-access.json has 'auth_token_endpoint', not 'token_endpoint'")]
     public async Task AsMetadata_HasTokenEndpoint()
     {
         var doc = await Get(_asHost!, "/.well-known/aauth-access.json");
-        Assert.Equal($"{AsIssuer}/token", (string?)doc["token_endpoint"]);
+        Assert.Equal($"{AsIssuer}/token", (string?)doc["auth_token_endpoint"]);
+        Assert.False(doc.ContainsKey("token_endpoint"));
     }
 
     [Fact(DisplayName = "§Discovery — aauth-access.json has 'jwks_uri'")]
@@ -307,31 +317,45 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
             new AAuthAgentMetadataOptions
             {
                 Issuer = "",
-                SigningKeys = new Dictionary<string, IAAuthKey> { ["k"] = AAuthKey.Generate() },
+                SigningKeys = new AAuthSigningKeySet { ["k"] = AAuthKey.Generate() },
             }.Validate());
     }
 
-    [Fact(DisplayName = "§Discovery — PS metadata requires token_endpoint")]
+    [Fact(DisplayName = "§Discovery — PS metadata requires auth_token_endpoint")]
     public void PsMetadata_RequiresTokenEndpoint()
     {
         Assert.Throws<InvalidOperationException>(() =>
             new AAuthPersonServerMetadataOptions
             {
                 Issuer = "https://ps.example",
-                TokenEndpoint = "",
-                SigningKeys = new Dictionary<string, IAAuthKey> { ["k"] = AAuthKey.Generate() },
+                AuthTokenEndpoint = "",
+                PersonTokenEndpoint = "https://ps.example/person",
+                SigningKeys = new AAuthSigningKeySet { ["k"] = AAuthKey.Generate() },
             }.Validate());
     }
 
-    [Fact(DisplayName = "§Discovery — AS metadata requires token_endpoint")]
+    [Fact(DisplayName = "§Discovery — PS metadata requires person_token_endpoint")]
+    public void PsMetadata_RequiresPersonTokenEndpoint()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            new AAuthPersonServerMetadataOptions
+            {
+                Issuer = "https://ps.example",
+                AuthTokenEndpoint = "https://ps.example/token",
+                PersonTokenEndpoint = "",
+                SigningKeys = new AAuthSigningKeySet { ["k"] = AAuthKey.Generate() },
+            }.Validate());
+    }
+
+    [Fact(DisplayName = "§Discovery — AS metadata requires auth_token_endpoint")]
     public void AsMetadata_RequiresTokenEndpoint()
     {
         Assert.Throws<InvalidOperationException>(() =>
             new AAuthAccessServerMetadataOptions
             {
                 Issuer = "https://as.example",
-                TokenEndpoint = "",
-                SigningKeys = new Dictionary<string, IAAuthKey> { ["k"] = AAuthKey.Generate() },
+                AuthTokenEndpoint = "",
+                SigningKeys = new AAuthSigningKeySet { ["k"] = AAuthKey.Generate() },
             }.Validate());
     }
 

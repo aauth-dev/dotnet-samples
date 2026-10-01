@@ -24,6 +24,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.HttpSignatures;
@@ -62,45 +63,42 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         _metadataHost = await StartMetadataServer();
 
         // Start the resource server with RequireAuthToken mode.
-        _challengeHost = await StartResourceServer(new ChallengeOptions
+        _challengeHost = await StartResourceServer(options =>
         {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = _resourceKey,
-            ResourceKeyId = ResourceKid,
-            ResourceIdentifier = ResourceId,
-            DefaultScopes = ResourceScope,
+            options.ScopeDescriptions = TestScopeDefinitions.Resource;
+            options.EgressPolicy = TestEgress.Policy;
+            options.AccessMode = AAuthAccessMode.RequireAuthToken;
+            options.ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey);
+            options.ResourceIdentifier = ResourceId;
+            options.DefaultScopes = ResourceScope;
             // PersonServerAudience left null — resolved from agent token's `ps` claim.
         });
 
         // Start a resource server with IdentityOnly mode.
-        _identityOnlyHost = await StartResourceServer(new ChallengeOptions
+        _identityOnlyHost = await StartResourceServer(options =>
         {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            AccessMode = AAuthAccessMode.IdentityOnly,
+            options.ScopeDescriptions = TestScopeDefinitions.Resource;
+            options.EgressPolicy = TestEgress.Policy;
+            options.AccessMode = AAuthAccessMode.IdentityOnly;
         });
 
         // Start a resource server with scheme filter (only allow jwt).
-        _schemeFilterHost = await StartResourceServer(new ChallengeOptions
+        _schemeFilterHost = await StartResourceServer(options =>
         {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = _resourceKey,
-            ResourceKeyId = ResourceKid,
-            ResourceIdentifier = ResourceId,
-            DefaultScopes = ResourceScope,
-            AllowedSignatureKeySchemes = new HashSet<string> { "jwt" },
-        });
+            options.ScopeDescriptions = TestScopeDefinitions.Resource;
+            options.EgressPolicy = TestEgress.Policy;
+            options.AccessMode = AAuthAccessMode.RequireAuthToken;
+            options.ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey);
+            options.ResourceIdentifier = ResourceId;
+            options.DefaultScopes = ResourceScope;
+        }, acceptedSchemes: [AAuthConstants.Schemes.Jwt]);
 
         // Start a resource server with AgentTokenRequired mode (§Agent Token Required).
-        _agentTokenRequiredHost = await StartResourceServer(new ChallengeOptions
+        _agentTokenRequiredHost = await StartResourceServer(options =>
         {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            AccessMode = AAuthAccessMode.AgentTokenRequired,
+            options.ScopeDescriptions = TestScopeDefinitions.Resource;
+            options.EgressPolicy = TestEgress.Policy;
+            options.AccessMode = AAuthAccessMode.AgentTokenRequired;
         });
     }
 
@@ -133,7 +131,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         {
             issuer = PsIssuer,
             jwks_uri = $"{PsIssuer}/.well-known/ps-jwks.json",
-            token_endpoint = $"{PsIssuer}/token",
+            auth_token_endpoint = $"{PsIssuer}/token",
             scopes_supported = new[] { "email", "custom_identity" },
         }));
 
@@ -159,11 +157,15 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         return app;
     }
 
-    private async Task<IHost> StartResourceServer(ChallengeOptions challengeOptions)
+    private async Task<IHost> StartResourceServer(Action<ChallengeOptions> configureChallenge,
+        IReadOnlySet<string>? trustedAuthTokenIssuers = null, IReadOnlySet<string>? trustedPersonServers = null,
+        IReadOnlyCollection<string>? acceptedSchemes = null)
     {
+        var challengeOptions = new ChallengeOptions();
+        configureChallenge(challengeOptions);
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) });
         builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
         builder.Services.AddSingleton(sp =>
             new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
@@ -171,20 +173,21 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
 
         var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
+        app.UseAAuthVerification(options =>
         {
-            EgressPolicy = TestEgress.Policy,
-            AcceptedSchemes = challengeOptions.AllowedSignatureKeySchemes?.ToArray() ?? ["jwt", "hwk"],
-            ResourceIdentifier = ResourceId,
-            TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
+            options.EgressPolicy = TestEgress.Policy;
+            options.AcceptedSchemes = acceptedSchemes?.ToArray() ?? ["jwt", "hwk"];
+            options.ResourceIdentifier = ResourceId;
+            options.Trust.AuthTokenIssuers.Allowed = trustedAuthTokenIssuers ?? new HashSet<string> { PsIssuer };
+            options.Trust.PersonServers.Allowed = trustedPersonServers;
         });
-        app.UseAAuthChallenge(challengeOptions);
+        app.UseAAuthChallenge(configureChallenge);
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
         return app;
     }
 
-    private string BuildAgentToken(string? personServer = PsIssuer)
+    private ValueTask<string> BuildAgentTokenAsync(string? personServer = PsIssuer)
     {
         return new AgentTokenBuilder
         {
@@ -196,10 +199,10 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             ConfirmationKey = _agentKey,
             IssuedAt = FixedClock,
             PersonServer = personServer,
-        }.Build();
+        }.BuildAsync();
     }
 
-    private string BuildAuthToken()
+    private ValueTask<string> BuildAuthTokenAsync(string? scope = ResourceScope, string? role = null)
     {
         return new AuthTokenBuilder
         {
@@ -207,33 +210,49 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
-            Agent = AgentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = _psKey,
             KeyId = "ps-key-1",
             Subject = "pairwise-sub",
-            Scope = ResourceScope,
+            Scope = scope,
+            Roles = role is null ? null : [role],
             IssuedAt = FixedClock,
-        }.Build();
+        }.BuildAsync();
     }
 
-    private async Task<HttpRequestMessage> SignRequest(string token)
+    private ValueTask<string> BuildPersonTokenAsync(string? missionS256 = null, string? tenant = null) => new PersonTokenBuilder
+    {
+        EgressPolicy = TestEgress.Policy,
+        Issuer = PsIssuer,
+        Audience = ResourceId,
+        Subject = "pairwise-sub",
+        ConfirmationKey = _agentKey,
+        AgentTokenExpiresAt = FixedClock.AddHours(1),
+        Key = _psKey,
+        KeyId = "ps-key-1",
+        IssuedAt = FixedClock,
+        MissionS256 = missionS256,
+        Tenant = tenant,
+    }.BuildAsync();
+
+    private async Task<HttpRequestMessage> SignRequest(string token, string path = "/protected")
     {
         var capture = new CaptureHandler();
         var provider = new JwtSignatureKeyProvider(() => token);
-        var handler = new AAuthSigningHandler(_agentKey, provider, () => FixedClock)
+        var handler = new AAuthSigningHandler(_agentKey, provider, new FakeTimeProvider(FixedClock))
         {
             InnerHandler = capture,
         };
         using var client = new InProcessHttpClient(handler);
-        await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected"));
+        await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000" + path));
         return capture.Captured!;
     }
 
-    private async Task<HttpResponseMessage> SendSigned(IHost host, string token)
+    private async Task<HttpResponseMessage> SendSigned(IHost host, string token, string path = "/protected")
     {
-        var signed = await SignRequest(token);
-        var relay = new HttpRequestMessage(HttpMethod.Get, "/protected");
+        var signed = await SignRequest(token, path);
+        var relay = new HttpRequestMessage(HttpMethod.Get, path);
         foreach (var h in signed.Headers)
             relay.Headers.TryAddWithoutValidation(h.Key, h.Value);
         relay.Headers.Host = "localhost:5000";
@@ -260,27 +279,75 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
     [InlineData("undeclared.resource", false)]
     public async Task ChallengeUsesActualPsIdentityScopeMetadata(string scope, bool allowed)
     {
-        using var resource = await StartResourceServer(new ChallengeOptions
+        using var resource = await StartResourceServer(options =>
         {
-            EgressPolicy = TestEgress.Policy, ResourceSigningKey = _resourceKey, ResourceKeyId = ResourceKid,
-            ResourceIdentifier = ResourceId, DefaultScopes = scope,
-            ScopeDescriptions = new Dictionary<string, string> { ["resource.read"] = "Read resource" },
+            options.EgressPolicy = TestEgress.Policy;
+            options.ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey);
+            options.ResourceIdentifier = ResourceId;
+            options.DefaultScopes = scope;
+            options.ScopeDescriptions = new Dictionary<string, string> { ["resource.read"] = "Read resource" };
         });
         if (allowed)
         {
-            using var response = await SendSigned(resource, BuildAgentToken());
+            using var response = await SendSigned(resource, await BuildPersonTokenAsync());
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
             Assert.True(response.Headers.Contains(AAuthRequirementHeader.Name));
         }
-        else await Assert.ThrowsAsync<InvalidOperationException>(() => SendSigned(resource, BuildAgentToken()));
+        else
+        {
+            using var response = await SendSigned(resource, await BuildPersonTokenAsync());
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        }
         await resource.StopAsync();
     }
 
-    [Fact(DisplayName = "§Challenge — RequireAuthToken challenges agent token with resource token")]
-    public async Task ChallengesAgentTokenWithResourceToken()
+    [Theory(DisplayName = "§Person Token Usage — person-token issuer trust is separate from auth-token issuer trust")]
+    [InlineData(false, true, true)]    // four-party: auth tokens from the AS, person tokens from the PS
+    [InlineData(false, false, false)] // PS trusted for neither
+    [InlineData(true, null, true)]    // three-party: no person-server list falls back to auth-token trust
+    public async Task PersonTokenIssuerTrustIsIndependent(bool psIssuesAuthTokens, bool? psTrustedForPersonTokens, bool challenged)
     {
-        var token = BuildAgentToken();
+        using var resource = await StartResourceServer(challenge =>
+            {
+                challenge.EgressPolicy = TestEgress.Policy;
+                challenge.ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey);
+                challenge.ResourceIdentifier = ResourceId;
+                challenge.DefaultScopes = ResourceScope;
+                challenge.ScopeDescriptions = new Dictionary<string, string> { [ResourceScope] = "Read resource" };
+            },
+            trustedAuthTokenIssuers: new HashSet<string>(psIssuesAuthTokens ? [PsIssuer] : ["https://as.example"]),
+            trustedPersonServers: psTrustedForPersonTokens switch
+            {
+                true => new HashSet<string> { PsIssuer },
+                false => new HashSet<string> { "https://other-ps.example" },
+                null => null,
+            });
+
+        using var response = await SendSigned(resource, await BuildPersonTokenAsync());
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(challenged, response.Headers.Contains(AAuthRequirementHeader.Name));
+        await resource.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Person Token Required — RequireAuthToken challenges an agent token with requirement=person-token")]
+    public async Task ChallengesAgentTokenWithPersonTokenRequirement()
+    {
+        var token = await BuildAgentTokenAsync();
         var response = await SendSigned(_challengeHost!, token);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var headerValue = string.Join(",", response.Headers.GetValues(AAuthRequirementHeader.Name));
+        Assert.Equal(AAuthRequirementHeader.FormatPersonToken(), headerValue);
+        var parsed = AAuthRequirementHeader.Parse(headerValue);
+        Assert.Equal(AAuthRequirementHeader.PersonTokenRequirement, parsed.Requirement);
+        Assert.Null(parsed.ResourceToken);
+    }
+
+    [Fact(DisplayName = "§Challenge — RequireAuthToken challenges a person token with a resource token")]
+    public async Task ChallengesPersonTokenWithResourceToken()
+    {
+        var response = await SendSigned(_challengeHost!, await BuildPersonTokenAsync());
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.True(response.Headers.Contains(AAuthRequirementHeader.Name));
@@ -292,11 +359,11 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         Assert.NotEmpty(parsed.ResourceToken);
     }
 
-    [Fact(DisplayName = "§Challenge — resource token contains correct claims")]
+    [Fact(DisplayName = "§Challenge — resource token names the presented person token")]
     public async Task ResourceTokenHasCorrectClaims()
     {
-        var token = BuildAgentToken();
-        var response = await SendSigned(_challengeHost!, token);
+        var personToken = await BuildPersonTokenAsync();
+        var response = await SendSigned(_challengeHost!, personToken);
 
         var headerValue = string.Join(",", response.Headers.GetValues(AAuthRequirementHeader.Name));
         var parsed = AAuthRequirementHeader.Parse(headerValue);
@@ -307,28 +374,93 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
 
         var headerJson = JsonNode.Parse(Base64UrlDecode(parts[0]))!.AsObject();
         var payloadJson = JsonNode.Parse(Base64UrlDecode(parts[1]))!.AsObject();
+        var person = JsonNode.Parse(Base64UrlDecode(personToken.Split('.')[1]))!.AsObject();
 
         Assert.Equal(ResourceTokenBuilder.TokenType, (string?)headerJson["typ"]);
         Assert.Equal(ResourceKid, (string?)headerJson["kid"]);
         Assert.Equal(ResourceId, (string?)payloadJson["iss"]);
         Assert.Equal(PsIssuer, (string?)payloadJson["aud"]);
-        Assert.Equal(AgentId, (string?)payloadJson["agent"]);
+        Assert.Equal(PsIssuer, (string?)payloadJson["ps"]);
+        Assert.Equal("pairwise-sub", (string?)payloadJson["sub"]);
+        Assert.Equal((string?)person["jti"], (string?)payloadJson["presented_jti"]);
+        Assert.False(payloadJson.ContainsKey("agent"));
         Assert.Equal(ResourceScope, (string?)payloadJson["scope"]);
-        Assert.NotNull((string?)payloadJson["agent_jkt"]);
+        Assert.Equal(_agentKey.ComputeJwkThumbprint(), (string?)payloadJson["agent_jkt"]);
     }
 
     [Fact(DisplayName = "§Challenge — auth token passes through to endpoint")]
     public async Task AuthTokenPassesThrough()
     {
-        var token = BuildAuthToken();
+        var token = await BuildAuthTokenAsync();
         var response = await SendSigned(_challengeHost!, token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Auth Token Required — narrower auth token gets scope step-up")]
+    public async Task AuthTokenMissingEndpointScope_StepUpChallenge()
+    {
+        var token = await BuildAuthTokenAsync("data:read-basic");
+        var response = await SendSigned(_challengeHost!, token);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var headerValue = Assert.Single(response.Headers.GetValues(AAuthRequirementHeader.Name));
+        var requirement = AAuthRequirementHeader.Parse(headerValue);
+        Assert.Equal(AAuthRequirementHeader.AuthTokenRequirement, requirement.Requirement);
+        Assert.NotNull(requirement.ResourceToken);
+
+        var resource = JsonNode.Parse(Base64UrlDecode(requirement.ResourceToken!.Split('.')[1]))!.AsObject();
+        var auth = JsonNode.Parse(Base64UrlDecode(token.Split('.')[1]))!.AsObject();
+        Assert.Equal(ResourceScope, (string?)resource["scope"]);
+        Assert.Equal((string?)auth["jti"], (string?)resource["presented_jti"]);
+        Assert.Equal(PsIssuer, (string?)resource["ps"]);
+        Assert.Equal("pairwise-sub", (string?)resource["sub"]);
+    }
+
+    [Fact(DisplayName = "UseAAuth — per-endpoint trust override beats the resource-wide trust")]
+    public async Task EndpointTrustOverride_BeatsResourceTrust()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) });
+        builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
+        builder.Services.AddSingleton(sp =>
+            new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuthTransportContract.InProcessOnly));
+        builder.Services.AddSingleton(sp =>
+            new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuthTransportContract.InProcessOnly));
+        builder.Services.AddAAuthAuthentication();
+        builder.Services.AddAAuthAuthorization();
+        await using var app = builder.Build();
+        app.UseRouting();
+        app.UseAAuth(o =>
+        {
+            o.ResourceIdentifier = ResourceId;
+            o.ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey);
+            o.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { PsIssuer };
+        });
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.MapGet("/protected", () => Results.Ok("hello")).RequireAAuth(ResourceScope);
+        app.MapGet("/restricted", () => Results.Ok("hello")).RequireAAuth(ResourceScope, trust: new DenyAllTrust());
+        await app.StartAsync();
+
+        using var allowed = await SendSigned(app, await BuildAuthTokenAsync());
+        using var overridden = await SendSigned(app, await BuildAuthTokenAsync(), "/restricted");
+
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, overridden.StatusCode);
+        await app.StopAsync();
+    }
+
+    private sealed class DenyAllTrust : IAAuthTrustPolicy
+    {
+        public ValueTask<bool> IsTrustedAsync(AAuthTrustContext context, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(false);
     }
 
     [Fact(DisplayName = "§Challenge — IdentityOnly passes agent token through")]
     public async Task IdentityOnlyPassesAgentToken()
     {
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         var response = await SendSigned(_identityOnlyHost!, token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -336,7 +468,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
     [Fact(DisplayName = "§Challenge — IdentityOnly passes auth token through")]
     public async Task IdentityOnlyPassesAuthToken()
     {
-        var token = BuildAuthToken();
+        var token = await BuildAuthTokenAsync();
         var response = await SendSigned(_identityOnlyHost!, token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -344,17 +476,29 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
     [Fact(DisplayName = "§Agent Token Required — passes an agent token through")]
     public async Task AgentTokenRequired_PassesAgentToken()
     {
-        var token = BuildAgentToken();
+        var token = await BuildAgentTokenAsync();
         var response = await SendSigned(_agentTokenRequiredHost!, token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Agent Token Required — passes an auth token through (identity established)")]
-    public async Task AgentTokenRequired_PassesAuthToken()
+    [Fact(DisplayName = "§Agent Token Required — challenges an auth token with requirement=agent-token")]
+    public async Task AgentTokenRequired_ChallengesAuthToken()
     {
-        var token = BuildAuthToken();
+        var token = await BuildAuthTokenAsync();
         var response = await SendSigned(_agentTokenRequiredHost!, token);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(AAuthRequirementHeader.AgentTokenRequirement,
+            AAuthRequirementHeader.Parse(response.Headers.GetValues(AAuthRequirementHeader.Name).Single()).Requirement);
+    }
+
+    [Fact(DisplayName = "§Agent Token Required — challenges a person token with requirement=agent-token")]
+    public async Task AgentTokenRequired_ChallengesPersonToken()
+    {
+        var token = await BuildPersonTokenAsync();
+        var response = await SendSigned(_agentTokenRequiredHost!, token);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(AAuthRequirementHeader.AgentTokenRequirement,
+            AAuthRequirementHeader.Parse(response.Headers.GetValues(AAuthRequirementHeader.Name).Single()).Requirement);
     }
 
     [Fact(DisplayName = "§Agent Token Required — challenges a non-agent-token credential with a bare requirement=agent-token")]
@@ -364,7 +508,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         // resource specifically wants an agent token, so it challenges.
         var capture = new CaptureHandler();
         var provider = new HwkSignatureKeyProvider(_agentKey);
-        var handler = new AAuthSigningHandler(_agentKey, provider, () => FixedClock)
+        var handler = new AAuthSigningHandler(_agentKey, provider, new FakeTimeProvider(FixedClock))
         {
             InnerHandler = capture,
         };
@@ -393,7 +537,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         // Use hwk scheme (not in the allowed list for schemeFilterHost).
         var capture = new CaptureHandler();
         var provider = new HwkSignatureKeyProvider(_agentKey);
-        var handler = new AAuthSigningHandler(_agentKey, provider, () => FixedClock)
+        var handler = new AAuthSigningHandler(_agentKey, provider, new FakeTimeProvider(FixedClock))
         {
             InnerHandler = capture,
         };
@@ -416,45 +560,44 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
     public async Task SchemeFilterAllowsListedScheme()
     {
         // jwt scheme is allowed for schemeFilterHost.
-        var token = BuildAuthToken();
+        var token = await BuildAuthTokenAsync();
         var response = await SendSigned(_schemeFilterHost!, token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Challenge — no ps claim returns 401 without resource token")]
-    public async Task NoPsClaimReturns401WithoutResourceToken()
+    [Fact(DisplayName = "§Person Token Required — an agent token without ps still gets a person-token challenge")]
+    public async Task NoPsClaimStillChallengesForPersonToken()
     {
-        // Build agent token without ps claim.
-        var token = BuildAgentToken(personServer: null);
+        // The resource token's ps/aud come from the presented person token, not the agent token.
+        var token = await BuildAgentTokenAsync(personServer: null);
         var response = await SendSigned(_challengeHost!, token);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        // Should NOT have a resource token since we can't resolve audience.
-        Assert.False(response.Headers.Contains(AAuthRequirementHeader.Name));
-        Assert.True(response.Headers.Contains("AAuth-Error"));
+        var parsed = AAuthRequirementHeader.Parse(string.Join(",", response.Headers.GetValues(AAuthRequirementHeader.Name)));
+        Assert.Equal(AAuthRequirementHeader.PersonTokenRequirement, parsed.Requirement);
+        Assert.Null(parsed.ResourceToken);
     }
 
-    [Fact(DisplayName = "§Challenge — explicit PersonServerAudience overrides ps claim")]
+    [Fact(DisplayName = "§Challenge — an explicit AccessServer is the resource token audience; ps stays the person's PS")]
     public async Task ExplicitAudienceOverridesPsClaim()
     {
         const string explicitAud = "http://localhost:9999";
 
         // Start a resource with explicit PersonServerAudience.
-        var host = await StartResourceServer(new ChallengeOptions
+        var host = await StartResourceServer(options =>
         {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = _resourceKey,
-            ResourceKeyId = ResourceKid,
-            ResourceIdentifier = ResourceId,
-            DefaultScopes = ResourceScope,
-            PersonServerAudience = explicitAud,
+            options.ScopeDescriptions = TestScopeDefinitions.Resource;
+            options.EgressPolicy = TestEgress.Policy;
+            options.AccessMode = AAuthAccessMode.RequireAuthToken;
+            options.ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey);
+            options.ResourceIdentifier = ResourceId;
+            options.DefaultScopes = ResourceScope;
+            options.AccessServer = explicitAud;
         });
 
         try
         {
-            var token = BuildAgentToken(personServer: PsIssuer);
+            var token = await BuildPersonTokenAsync();
             var response = await SendSigned(host, token);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -465,6 +608,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             var parts = parsed.ResourceToken!.Split('.');
             var payloadJson = JsonNode.Parse(Base64UrlDecode(parts[1]))!.AsObject();
             Assert.Equal(explicitAud, (string?)payloadJson["aud"]);
+            Assert.Equal(PsIssuer, (string?)payloadJson["ps"]);
         }
         finally
         {
@@ -486,31 +630,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
 
     // ── Mission-aware resource (§Terminology, §Missions) ─────────────────
 
-    private const string MissionApprover = PsIssuer;
     private const string MissionS256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-
-    private async Task<HttpResponseMessage> SendSignedWithMission(
-        IHost host, string token, string? missionHeader)
-    {
-        var capture = new CaptureHandler();
-        var provider = new JwtSignatureKeyProvider(() => token);
-        var handler = new AAuthSigningHandler(_agentKey, provider, () => FixedClock)
-        {
-            InnerHandler = capture,
-        };
-        using var client = new InProcessHttpClient(handler);
-        var outbound = new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected");
-        if (missionHeader is not null)
-            outbound.Headers.TryAddWithoutValidation(AAuthMissionHeader.Name, missionHeader);
-        await client.SendAsync(outbound);
-        var signed = capture.Captured!;
-
-        var relay = new HttpRequestMessage(HttpMethod.Get, "/protected");
-        foreach (var h in signed.Headers)
-            relay.Headers.TryAddWithoutValidation(h.Key, h.Value);
-        relay.Headers.Host = "localhost:5000";
-        return await host.GetTestClient().SendAsync(relay);
-    }
 
     private static JsonObject DecodeResourceTokenPayload(HttpResponseMessage response)
     {
@@ -520,80 +640,52 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         return JsonNode.Parse(Base64UrlDecode(parts[1]))!.AsObject();
     }
 
-    [Fact(DisplayName = "§Missions — mission-aware resource copies AAuth-Mission into the resource token")]
-    public async Task MissionAwareResourceCopiesMissionClaim()
+    [Fact(DisplayName = "§Resource Token Structure — mission_s256 and tenant are copied from the presented person token")]
+    public async Task ResourceTokenCopiesPresentedMissionAndTenant()
     {
-        var host = await StartResourceServer(new ChallengeOptions
-        {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = _resourceKey,
-            ResourceKeyId = ResourceKid,
-            ResourceIdentifier = ResourceId,
-            DefaultScopes = ResourceScope,
-            MissionAware = true,
-        });
-        try
-        {
-            var token = BuildAgentToken();
-            var missionHeader = AAuthMissionHeader.FormatStructured(MissionApprover, MissionS256);
-            var response = await SendSignedWithMission(host, token, missionHeader);
-
-            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-            var payload = DecodeResourceTokenPayload(response);
-            var mission = Assert.IsType<JsonObject>(payload["mission"]);
-            Assert.Equal(MissionApprover, (string?)mission["approver"]);
-            Assert.Equal(MissionS256, (string?)mission["s256"]);
-        }
-        finally
-        {
-            await host.StopAsync();
-            host.Dispose();
-        }
-    }
-
-    [Fact(DisplayName = "§Missions — mission-aware resource omits the mission claim when no header is present")]
-    public async Task MissionAwareResourceOmitsMissionWhenHeaderAbsent()
-    {
-        var host = await StartResourceServer(new ChallengeOptions
-        {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = _resourceKey,
-            ResourceKeyId = ResourceKid,
-            ResourceIdentifier = ResourceId,
-            DefaultScopes = ResourceScope,
-            MissionAware = true,
-        });
-        try
-        {
-            var token = BuildAgentToken();
-            var response = await SendSignedWithMission(host, token, missionHeader: null);
-
-            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-            var payload = DecodeResourceTokenPayload(response);
-            Assert.False(payload.ContainsKey("mission"));
-        }
-        finally
-        {
-            await host.StopAsync();
-            host.Dispose();
-        }
-    }
-
-    [Fact(DisplayName = "§Missions — non-mission-aware resource ignores the AAuth-Mission header")]
-    public async Task NonMissionAwareResourceIgnoresMissionHeader()
-    {
-        // _challengeHost is configured WITHOUT MissionAware — the mission header
-        // must be ignored (opt-in only), so no mission claim is emitted.
-        var token = BuildAgentToken();
-        var missionHeader = AAuthMissionHeader.FormatStructured(MissionApprover, MissionS256);
-        var response = await SendSignedWithMission(_challengeHost!, token, missionHeader);
+        var response = await SendSigned(_challengeHost!, await BuildPersonTokenAsync(MissionS256, "acme"));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         var payload = DecodeResourceTokenPayload(response);
+        Assert.Equal(MissionS256, (string?)payload["mission_s256"]);
+        Assert.Equal("acme", (string?)payload["tenant"]);
         Assert.False(payload.ContainsKey("mission"));
+    }
+
+    [Fact(DisplayName = "§Resource Token Structure — mission_s256 omitted when the presented token carries none")]
+    public async Task ResourceTokenOmitsMissionWhenPresentedTokenHasNone()
+    {
+        var response = await SendSigned(_challengeHost!, await BuildPersonTokenAsync());
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var payload = DecodeResourceTokenPayload(response);
+        Assert.False(payload.ContainsKey("mission_s256"));
+        Assert.False(payload.ContainsKey("mission"));
+    }
+
+    [Fact(DisplayName = "§Resource Token — helper rejects an agent-token assertion")]
+    public async Task BuildResourceTokenAsync_RejectsAgentTokenAssertion()
+    {
+        var assertion = new AAuthVerifiedAssertion("agent.jwt", new TokenVerifier.VerifiedToken(
+            new JsonObject(),
+            new JsonObject
+            {
+                ["sub"] = AgentId,
+                ["jti"] = "agent-token-1",
+                ["exp"] = FixedClock.AddMinutes(5).ToUnixTimeSeconds(),
+            },
+            ApIssuer,
+            AgentTokenBuilder.TokenType), _agentKey);
+        var options = new ChallengeOptions
+        {
+            EgressPolicy = TestEgress.Policy,
+            AccessMode = AAuthAccessMode.RequireAuthToken,
+            ResourceSigningKeys = new AAuthSigningKeySet(ResourceKid, _resourceKey),
+            ResourceIdentifier = ResourceId,
+            DefaultScopes = ResourceScope,
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await AAuthChallengeMiddleware.BuildResourceTokenAsync(options, assertion, ResourceScope));
     }
 }

@@ -1,16 +1,14 @@
 using System;
-using System.Collections.Generic;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Discovery;
 using AAuth.HttpSig;
-using AAuth.Identifiers;
+using AAuth.Server;
 
 namespace AAuth.Tokens;
 
 /// <summary>
-/// Result of upstream token validation.
+/// Result of upstream token validation (§Upstream Token Verification).
 /// </summary>
 public sealed record UpstreamTokenValidationResult
 {
@@ -23,44 +21,44 @@ public sealed record UpstreamTokenValidationResult
     public string? Error { get; init; }
     public AAuth.Errors.SignatureErrorCode FailureCode { get; init; } = AAuth.Errors.SignatureErrorCode.InvalidJwt;
 
-    /// <summary>The upstream token's own <c>act</c> claim (its delegation chain),
-    /// or <see langword="null"/> if the upstream token was a direct authorization.
-    /// Combine with <see cref="Agent"/> via <see cref="ActChainBuilder.BuildNestedAct"/>
-    /// to compose the downstream <c>act</c> node per §Upstream Token Verification step 4.</summary>
-    public JsonObject? UpstreamAct { get; init; }
-
     /// <summary>The upstream token's issuer.</summary>
     public string? Issuer { get; init; }
 
-    /// <summary>The upstream token's <c>dwk</c> claim, which authoritatively
-    /// identifies the issuer's role: <c>aauth-access.json</c> when issued by an
-    /// AS (four-party), <c>aauth-person.json</c> when issued by a PS (three-party).
-    /// Verified during validation, since the issuer's signing key was resolved at
-    /// <c>{iss}/.well-known/{dwk}</c>.</summary>
-    public string? IssuerDwk { get; init; }
+    /// <summary>The upstream token's <c>typ</c>: <c>aa-person+jwt</c> or <c>aa-auth+jwt</c>.</summary>
+    public string? TokenType { get; init; }
 
-    /// <summary>The upstream token's agent identifier.</summary>
-    public string? Agent { get; init; }
+    /// <summary>
+    /// The person server the upstream token names: a person token's <c>iss</c>,
+    /// an auth token's <c>ps</c>. Downstream token requests route here.
+    /// </summary>
+    public string? PersonServer { get; init; }
 
-    /// <summary>The upstream token's subject.</summary>
+    /// <summary>The intermediary the upstream token was presented to (its <c>aud</c>).</summary>
+    public string? Audience { get; init; }
+
+    /// <summary>The directed subject at the intermediary. MUST NOT be copied downstream.</summary>
     public string? Subject { get; init; }
 
-    /// <summary>The upstream token's scope.</summary>
+    /// <summary>The upstream auth token's scope; <see langword="null"/> for a person token.</summary>
     public string? Scope { get; init; }
 
-    /// <summary>The <c>mission.approver</c> of the upstream token, or
-    /// <see langword="null"/> when the upstream token carries no mission. A
-    /// present approver means the chain is anchored to a PS for governance.</summary>
-    public string? MissionApprover { get; init; }
-    public MissionClaim? Mission { get; init; }
+    /// <summary>The mission the chain runs under, if any.</summary>
+    public string? MissionS256 { get; init; }
+    public string? Tenant { get; init; }
     public TokenVerifier.VerifiedToken? Verified { get; init; }
     public string? Account => Verified?.Account;
+
+    /// <summary>The original calling agent identified from PS provenance records.</summary>
+    public UpstreamCallerRecord? Caller { get; init; }
+
+    /// <summary>The PS provenance record for the upstream token.</summary>
+    public AAuthTokenProvenance? Provenance { get; init; }
 }
 
 /// <summary>
-/// Validates an <c>upstream_token</c> per §Upstream Token Verification.
-/// Used by PS implementations to validate tokens from intermediary resources
-/// before issuing downstream auth tokens.
+/// Validates an <c>upstream_token</c> (a person token or auth token) per
+/// §Upstream Token Verification. Used by PS and AS token endpoints to verify
+/// the token a calling agent presented to an intermediary.
 /// </summary>
 public sealed class UpstreamTokenValidator
 {
@@ -76,53 +74,51 @@ public sealed class UpstreamTokenValidator
     }
 
     /// <summary>
-    /// Validates an upstream_token per §Upstream Token Verification steps 1–4.
+    /// Validates an upstream token per §Upstream Token Verification steps 1–3.
     /// </summary>
-    /// <param name="upstreamToken">The compact JWS auth token to validate.</param>
-    /// <param name="expectedAudience">The intermediary resource's own URL (must match <c>aud</c>).</param>
-    /// <param name="trustedIssuers">Set of trusted AS/PS issuer URLs.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>Validation result with parsed claims or error.</returns>
-    public Task<UpstreamTokenValidationResult> ValidateAsync(
-        string upstreamToken,
-        string expectedAudience,
-        IReadOnlySet<string> trustedIssuers,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(trustedIssuers);
-        return ValidateAsync(upstreamToken, expectedAudience, trustedIssuers.Contains, ct);
-    }
-
-    /// <summary>
-    /// Validates an upstream_token per §Upstream Token Verification, deciding issuer
-    /// trust (step 2) with a predicate rather than a static set.
-    /// <paramref name="isTrustedIssuer"/> MUST return true only for an issuer the
-    /// recipient previously brokered or is authorized to extend (e.g. self, or an
-    /// Access Server it federates with).
-    /// </summary>
+    /// <param name="upstreamToken">The compact JWS person or auth token.</param>
+    /// <param name="intermediary">
+    /// The <c>iss</c> of the intermediary's agent token; the upstream <c>aud</c> MUST equal it.
+    /// </param>
+    /// <param name="expectedPersonServer">
+    /// The PS a person token's <c>iss</c> / auth token's <c>ps</c> MUST name: this PS
+    /// at a PS, the signing PS at an AS.
+    /// </param>
+    /// <param name="isTrustedAuthTokenIssuer">
+    /// At a PS: accepts an auth token's <c>iss</c> only when it is this PS or an AS
+    /// this PS federated with. At an AS, pass <c>(_, _) =&gt; ValueTask.FromResult(true)</c>.
+    /// </param>
     public async Task<UpstreamTokenValidationResult> ValidateAsync(
         string upstreamToken,
-        string expectedAudience,
-        Func<string, bool> isTrustedIssuer,
+        string intermediary,
+        string expectedPersonServer,
+        Func<string, CancellationToken, ValueTask<bool>> isTrustedAuthTokenIssuer,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(upstreamToken);
-        ArgumentException.ThrowIfNullOrEmpty(expectedAudience);
-        ArgumentNullException.ThrowIfNull(isTrustedIssuer);
+        ArgumentException.ThrowIfNullOrEmpty(intermediary);
+        ArgumentException.ThrowIfNullOrEmpty(expectedPersonServer);
+        ArgumentNullException.ThrowIfNull(isTrustedAuthTokenIssuer);
 
-        // Step 1: Standard auth token verification (signature, temporal, structure).
-        // We don't enforce PoP binding (cnf.jwk vs HTTP signature key) since the
-        // intermediary has already verified that. We only need structural + issuer verification.
         TokenVerifier.VerifiedToken verified;
+        string typ;
         try
         {
-            verified = await VerifyWithoutPoPAsync(upstreamToken, expectedAudience, ct);
-            var originalKey = SignatureKeyParser.Confirmation(verified.Payload);
-            var originalAgent = (string?)verified.Payload["agent"];
-            if (!AgentId.TryParse(originalAgent, out _, out _, _verifier.EgressPolicy))
-                throw new TokenVerificationException("invalid_upstream_token: missing or invalid 'agent'.");
-            verified = await _verifier.VerifyAuthTokenWithJwksAsync(upstreamToken, _metadata, _jwks,
-                expectedAudience, originalKey, originalAgent!, cancellationToken: ct);
+            var parts = upstreamToken.Split('.');
+            if (parts.Length != 3) throw new TokenVerificationException("upstream_token is not a compact JWS.");
+            typ = (string?)TokenVerifier.DecodeJsonSegment(parts[0], "header")["typ"]
+                ?? throw new TokenVerificationException("upstream_token is missing typ.");
+            // cnf is the calling agent's key and is not compared with the key that
+            // signed this request (the intermediary's); bind to the token's own cnf.
+            var callingAgentKey = SignatureKeyParser.Confirmation(TokenVerifier.DecodeJsonSegment(parts[1], "payload"));
+            verified = typ switch
+            {
+                PersonTokenBuilder.TokenType => await _verifier.VerifyPersonTokenWithJwksAsync(
+                    upstreamToken, _metadata, _jwks, intermediary, callingAgentKey, ct),
+                AuthTokenBuilder.TokenType => await _verifier.VerifyAuthTokenWithJwksAsync(
+                    upstreamToken, _metadata, _jwks, intermediary, callingAgentKey, cancellationToken: ct),
+                _ => throw new TokenVerificationException("upstream_token must be a person token or an auth token."),
+            };
         }
         catch (Exception ex) when (ex is TokenVerificationException or AAuthVerificationException or FormatException or ArgumentException or InvalidOperationException)
         {
@@ -135,87 +131,72 @@ public sealed class UpstreamTokenValidator
             };
         }
 
-        // Step 2: Verify iss is a trusted issuer.
-        if (!isTrustedIssuer(verified.Issuer))
-        {
-            return new UpstreamTokenValidationResult
-            {
-                IsValid = false,
-                Error = $"untrusted_issuer: '{verified.Issuer}' is not in the trusted issuers set.",
-            };
-        }
+        var personServer = typ == PersonTokenBuilder.TokenType ? verified.Issuer : (string?)verified.Payload["ps"];
+        if (!string.Equals(personServer, expectedPersonServer, StringComparison.Ordinal))
+            return Invalid($"upstream_token names person server '{personServer}', expected '{expectedPersonServer}'.");
+        if (typ == AuthTokenBuilder.TokenType
+            && !string.Equals(verified.Issuer, expectedPersonServer, StringComparison.Ordinal)
+            && !await isTrustedAuthTokenIssuer(verified.Issuer, ct).ConfigureAwait(false))
+            return Invalid($"upstream auth token issuer '{verified.Issuer}' is not trusted.");
 
-        // Step 3: aud already verified by Verify() above.
-
-        // Step 4: Extract act for the caller to nest. `act` is OPTIONAL in draft-08
-        // — absent when the upstream token was a direct authorization (no chaining).
-        var act = verified.Payload["act"] as JsonObject;
-        var agent = (string?)verified.Payload["agent"];
-
-        // §Upstream Token Verification step 1 requires full Auth Token Verification.
-        // VerifyWithoutPoPAsync covers JWT trust; enforce the request-context presence
-        // checks the upstream token must still satisfy: `agent` (used to compose the
-        // downstream act node — a null here would otherwise throw at BuildNestedAct)
-        // and a `dwk` constrained to the auth-token set (the four-party mission gate
-        // classifies AS vs PS from `dwk`, so an out-of-set value MUST NOT pass).
-        if (string.IsNullOrEmpty(agent))
-        {
-            return new UpstreamTokenValidationResult
-            {
-                IsValid = false,
-                Error = "invalid_upstream_token: missing 'agent'.",
-            };
-        }
-        var upstreamDwk = (string?)verified.Payload["dwk"];
-        if (upstreamDwk != AuthTokenBuilder.PersonDwk && upstreamDwk != AuthTokenBuilder.AccessDwk)
-        {
-            return new UpstreamTokenValidationResult
-            {
-                IsValid = false,
-                Error = $"invalid_upstream_token: 'dwk' must be '{AuthTokenBuilder.PersonDwk}' or '{AuthTokenBuilder.AccessDwk}'.",
-            };
-        }
-
-        // When present, validate chain well-formedness: each level has `agent`,
-        // depth is within limits. The presenter is the top-level `agent`; `act.agent`
-        // identifies the upstream delegator and is intentionally different — so there
-        // is no self-reference check.
-        if (act is not null && !ActChainBuilder.ValidateChain(act, _verifier.MaxActDepth, _verifier.EgressPolicy))
-        {
-            return new UpstreamTokenValidationResult
-            {
-                IsValid = false,
-                Error = "invalid_act_chain: act chain is malformed (missing agent or exceeds max depth).",
-            };
-        }
-
-        // Return the upstream token's agent and its (optional) act chain. The caller
-        // composes the downstream act via ActChainBuilder.BuildNestedAct(agent, act)
-        // per §Upstream Token Verification step 4.
         return new UpstreamTokenValidationResult
         {
             IsValid = true,
             ExpiresAt = verified.ExpiresAt,
-            UpstreamAct = act?.DeepClone() as JsonObject,
             Issuer = verified.Issuer,
-            IssuerDwk = upstreamDwk,
-            Agent = agent,
-            Subject = (string?)verified.Payload["sub"],
+            TokenType = typ,
+            PersonServer = personServer,
+            Audience = intermediary,
+            Subject = verified.Subject,
             Scope = (string?)verified.Payload["scope"],
-            MissionApprover = (string?)(verified.Payload["mission"] as JsonObject)?["approver"],
-            Mission = MissionClaim.FromPayload(verified.Payload, _metadata.Policy),
+            MissionS256 = verified.MissionS256,
+            Tenant = verified.Tenant,
             Verified = verified,
         };
     }
 
-    private async Task<TokenVerifier.VerifiedToken> VerifyWithoutPoPAsync(
-        string jwt, string expectedAudience, CancellationToken ct)
+    /// <summary>
+    /// Validates an upstream token at a Person Server, including the PS inventory
+    /// provenance checks required by §Upstream Token Verification steps 2 and 4.
+    /// </summary>
+    public async Task<UpstreamTokenValidationResult> ValidateAtPersonServerAsync(
+        string upstreamToken,
+        string intermediary,
+        string personServer,
+        IJtiStore inventory,
+        Func<string, CancellationToken, ValueTask<bool>> isTrustedAuthTokenIssuer,
+        CancellationToken ct = default)
     {
-        // Decode to find issuer and dwk for key resolution.
-        var (_, payload) = _verifier.ReadStructure(jwt, AuthTokenBuilder.TokenType);
-        var dwk = (string?)payload["dwk"]
-            ?? throw new TokenVerificationException("Token is missing 'dwk'.");
-        return await _verifier.VerifyWithJwksAsync(jwt, _metadata, _jwks,
-            AuthTokenBuilder.TokenType, dwk, expectedAudience, ct).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(inventory);
+        var result = await ValidateAsync(upstreamToken, intermediary, personServer, isTrustedAuthTokenIssuer, ct)
+            .ConfigureAwait(false);
+        if (!result.IsValid || result.Verified is null)
+            return result;
+
+        var key = TokenRegistration.FromVerified(result.Verified).Token;
+        if (await inventory.IsRevokedAsync(key, ct).ConfigureAwait(false))
+            return Invalid("upstream token is revoked.", AAuth.Errors.SignatureErrorCode.RevokedJwt);
+
+        var grant = await inventory.GetGrantAsync(key, ct).ConfigureAwait(false);
+        if (grant?.Provenance is not { } provenance)
+            return Invalid("PS has no provenance record for upstream_token.");
+        if (!string.Equals(provenance.TokenType, result.TokenType, StringComparison.Ordinal)
+            || !string.Equals(provenance.PersonServer, personServer, StringComparison.Ordinal)
+            || !string.Equals(provenance.Audience, result.Audience, StringComparison.Ordinal)
+            || !string.Equals(provenance.Subject, result.Subject, StringComparison.Ordinal))
+            return Invalid("PS provenance record does not match upstream_token.");
+        if (result.TokenType == AuthTokenBuilder.TokenType
+            && !string.Equals(result.Issuer, personServer, StringComparison.Ordinal)
+            && provenance.PresentedToken is null)
+            return Invalid("PS has no federated provenance for upstream auth token.");
+        if (await inventory.IsRevokedAsync(provenance.Caller.AgentToken, ct).ConfigureAwait(false)
+            || await inventory.IsRevokedAsync(provenance.Caller.AgentPersonBinding, ct).ConfigureAwait(false))
+            return Invalid("original calling agent or binding is revoked.", AAuth.Errors.SignatureErrorCode.RevokedJwt);
+
+        return result with { Caller = provenance.Caller, Provenance = provenance };
     }
+
+    private static UpstreamTokenValidationResult Invalid(string error,
+        AAuth.Errors.SignatureErrorCode code = AAuth.Errors.SignatureErrorCode.InvalidJwt)
+        => new() { IsValid = false, Error = error, FailureCode = code };
 }

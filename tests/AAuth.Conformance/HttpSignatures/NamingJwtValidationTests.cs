@@ -36,15 +36,20 @@ public class NamingJwtValidationTests : IAsyncLifetime
     private readonly AAuthKey _ephemeralKey = AAuthKey.Generate();
 
     private IHost? _host;
+    private int _signingSecond = -30;
 
     public async Task InitializeAsync()
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FixedTimeProvider() });
         builder.Services.AddSingleton<IJtiStore>(new InMemoryJtiStore(new FixedTimeProvider()));
         var app = builder.Build();
-        app.UseAAuthVerification(AAuthVerificationOptions.Generic(() => FixedClock));
+        app.UseAAuthVerification(options =>
+        {
+            options.AcceptedSchemes = AAuthVerificationOptions.Generic().AcceptedSchemes;
+            options.TimeProvider = new FixedTimeProvider();
+        });
         app.MapGet("/jkt-jwt", () => Results.Ok("ok"));
         await app.StartAsync();
         _host = app;
@@ -57,15 +62,15 @@ public class NamingJwtValidationTests : IAsyncLifetime
 
     private HttpClient Client => _host!.GetTestClient();
 
-    private sealed class FixedTimeProvider : TimeProvider
+    private sealed class FixedTimeProvider(DateTimeOffset? now = null) : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => FixedClock;
+        public override DateTimeOffset GetUtcNow() => now ?? FixedClock;
     }
 
     [Fact(DisplayName = "§jkt-jwt — valid naming JWT with future exp succeeds")]
     public async Task ValidNamingJwt_Succeeds()
     {
-        var namingJwt = BuildNamingJwt(exp: FixedClock.AddMinutes(5));
+        var namingJwt = await BuildNamingJwtAsync(exp: FixedClock.AddMinutes(5));
         var response = await SendSignedRequest(namingJwt);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -74,40 +79,40 @@ public class NamingJwtValidationTests : IAsyncLifetime
     public async Task ExpiredNamingJwt_Returns401()
     {
         // exp is 2 minutes in the past (beyond 30s clock skew)
-        var namingJwt = BuildNamingJwt(exp: FixedClock.AddMinutes(-2));
+        var namingJwt = await BuildNamingJwtAsync(exp: FixedClock.AddMinutes(-2));
         var response = await SendSignedRequest(namingJwt);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§jkt-jwt — naming JWT expired within clock skew still succeeds")]
-    public async Task NamingJwtExpiredWithinClockSkew_Succeeds()
+    [Fact(DisplayName = "§jkt-jwt — naming JWT expired within clock skew still returns 401")]
+    public async Task NamingJwtExpiredWithinClockSkew_Returns401()
     {
-        // exp is 10 seconds in the past (within 30s clock skew)
-        var namingJwt = BuildNamingJwt(exp: FixedClock.AddSeconds(-10));
+        var namingJwt = await BuildNamingJwtAsync(exp: FixedClock.AddSeconds(-10));
         var response = await SendSignedRequest(namingJwt);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact(DisplayName = "§jkt-jwt — replay detection rejects duplicate jti")]
     public async Task DuplicateJti_Returns401()
     {
         var fixedJti = "replay-test-jti-12345";
-        var namingJwt = BuildNamingJwt(exp: FixedClock.AddMinutes(5), jti: fixedJti);
+        var namingJwt = await BuildNamingJwtAsync(exp: FixedClock.AddMinutes(5), jti: fixedJti);
 
         // First request succeeds
-        var response1 = await SendSignedRequest(namingJwt);
+        var signed = await SignAsync(namingJwt);
+        var response1 = await RelayAsync(signed);
         Assert.Equal(HttpStatusCode.OK, response1.StatusCode);
 
-        // Second request with same jti is rejected
-        var response2 = await SendSignedRequest(namingJwt);
+        // Replaying the same signed request is rejected
+        var response2 = await RelayAsync(signed);
         Assert.Equal(HttpStatusCode.Unauthorized, response2.StatusCode);
     }
 
     [Fact(DisplayName = "§jkt-jwt — different jti values both succeed")]
     public async Task DifferentJti_BothSucceed()
     {
-        var jwt1 = BuildNamingJwt(exp: FixedClock.AddMinutes(5), jti: "unique-1");
-        var jwt2 = BuildNamingJwt(exp: FixedClock.AddMinutes(5), jti: "unique-2");
+        var jwt1 = await BuildNamingJwtAsync(exp: FixedClock.AddMinutes(5), jti: "unique-1");
+        var jwt2 = await BuildNamingJwtAsync(exp: FixedClock.AddMinutes(5), jti: "unique-2");
 
         var response1 = await SendSignedRequest(jwt1);
         Assert.Equal(HttpStatusCode.OK, response1.StatusCode);
@@ -137,7 +142,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
             ["jti"] = Guid.NewGuid().ToString("N"),
             ["cnf"] = new JsonObject { ["jwk"] = _ephemeralKey.ToPublicJwk() },
         };
-        var spoofed = JwtWriter.SignCompact(header, payload, attackerDurable);
+        var spoofed = await JwtWriter.SignCompactAsync(header, payload, attackerDurable);
 
         var response = await SendSignedRequest(spoofed);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -162,7 +167,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
             ["jti"] = Guid.NewGuid().ToString("N"),
             ["cnf"] = new JsonObject { ["jwk"] = _ephemeralKey.ToPublicJwk() },
         };
-        var forged = JwtWriter.SignCompact(header, payload, AAuthKey.Generate());
+        var forged = await JwtWriter.SignCompactAsync(header, payload, AAuthKey.Generate());
 
         var response = await SendSignedRequest(forged);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -185,7 +190,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
             ["jti"] = Guid.NewGuid().ToString("N"),
             ["cnf"] = new JsonObject { ["jwk"] = _ephemeralKey.ToPublicJwk() },
         };
-        var wrongTyp = JwtWriter.SignCompact(header, payload, _durableKey);
+        var wrongTyp = await JwtWriter.SignCompactAsync(header, payload, _durableKey);
 
         var response = await SendSignedRequest(wrongTyp);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -193,7 +198,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private string BuildNamingJwt(DateTimeOffset exp, string? jti = null)
+    private async Task<string> BuildNamingJwtAsync(DateTimeOffset exp, string? jti = null)
     {
         // draft-hardt-httpbis-signature-key-04 §3.4 self-issued naming JWT.
         var header = new JsonObject
@@ -215,24 +220,33 @@ public class NamingJwtValidationTests : IAsyncLifetime
             },
         };
 
-        return JwtWriter.SignCompact(header, payload, _durableKey);
+        return await JwtWriter.SignCompactAsync(header, payload, _durableKey);
     }
 
     private async Task<HttpResponseMessage> SendSignedRequest(string namingJwt)
+        => await RelayAsync(await SignAsync(namingJwt));
+
+    private async Task<HttpRequestMessage> SignAsync(string namingJwt)
     {
         // Sign a request targeting the test server's host
         var capture = new CaptureHandler();
         var signingHandler = new AAuthSigningHandler(
             _ephemeralKey,
             new JktJwtSignatureKeyProvider(() => namingJwt),
-            () => FixedClock)
+            new FixedTimeProvider(NextSigningTime()))
         {
             InnerHandler = capture,
         };
         using var signingClient = new InProcessHttpClient(signingHandler);
         await signingClient.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost/jkt-jwt"));
-        var signed = capture.Captured!;
+        return capture.Captured!;
+    }
 
+    private DateTimeOffset NextSigningTime()
+        => FixedClock.AddSeconds(_signingSecond++);
+
+    private async Task<HttpResponseMessage> RelayAsync(HttpRequestMessage signed)
+    {
         // Relay the signed headers to the test server
         var relay = new HttpRequestMessage(HttpMethod.Get, "http://localhost/jkt-jwt");
         foreach (var h in signed.Headers)

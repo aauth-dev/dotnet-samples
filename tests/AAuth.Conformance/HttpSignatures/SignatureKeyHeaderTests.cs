@@ -60,17 +60,17 @@ public class SignatureKeyHeaderTests
     /// carried by Signature-Key."
     /// </summary>
     [Fact(DisplayName = "§Header Format — parser extracts cnf.jwk for HTTP signature verification")]
-    public void Parser_ExtractsConfirmationKey()
+    public async Task Parser_ExtractsConfirmationKey()
     {
         var key = AAuthKey.Generate();
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:demo@ap.example",
             KeyId = "demo",
             Key = key,
-        }.Build();
+        }.BuildAsync();
 
         var parsed = SignatureKeyParser.Parse(SignatureKeyHeader.FormatJwt(jwt));
         Assert.Equal(key.ComputeJwkThumbprint(), parsed.ConfirmationKey.ComputeJwkThumbprint());

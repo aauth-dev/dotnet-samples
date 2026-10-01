@@ -102,6 +102,14 @@ public sealed record MissionTokenConsentContext
     public string? ConsentAgentId { get; init; }
     public UpstreamTokenValidationResult? UpstreamAuthorization { get; init; }
     public StoredMission? ValidatedApproval { get; internal init; }
+
+    /// <summary>
+    /// The mission's accepted updates, oldest first (§Mission Update). The mission
+    /// now means <see cref="ValidatedApproval"/> plus these; review against both.
+    /// Each entry's <see cref="MissionLogEntry.Detail"/> holds the update bytes as
+    /// the PS persisted them.
+    /// </summary>
+    public IReadOnlyList<MissionLogEntry> AcceptedUpdates { get; internal init; } = Array.Empty<MissionLogEntry>();
     /// <summary>The verified agent identifier.</summary>
     public required string AgentId { get; init; }
 
@@ -110,15 +118,28 @@ public sealed record MissionTokenConsentContext
 
     /// <summary>The requested scope.</summary>
     public required string Scope { get; init; }
+    /// <summary>
+    /// Resource-asserted content: the verified resource token's claims (§Consent
+    /// Presentation). Present it apart from <see cref="AgentAsserted"/>.
+    /// </summary>
     public System.Text.Json.Nodes.JsonObject? ResourceContext { get; init; }
 
-    /// <summary>The mission governing the request.</summary>
-    public required MissionClaim Mission { get; init; }
+    /// <summary>
+    /// Agent-asserted content from the token request (<c>justification</c>,
+    /// <c>platform</c>, <c>device</c>), or <see langword="null"/> when the agent sent
+    /// none. A Supervisor MUST see it attributed to the agent, and MUST NOT decide
+    /// on it alone where resource-asserted content covers the same operation
+    /// (§Consent Presentation).
+    /// </summary>
+    public AAuth.Person.AgentAssertedContent? AgentAsserted { get; init; }
+
+    /// <summary>The mission governing the request (<c>mission_s256</c>).</summary>
+    public required string MissionS256 { get; init; }
 
     /// <summary>Which step of the gate this review is.</summary>
     public MissionTokenConsentStage Stage { get; init; }
 
-    /// <summary>The agent's optional natural-language justification (#aauth-prompt).</summary>
+    /// <summary>The OIDC <c>prompt</c> value from the token request, if any.</summary>
     public string? Prompt { get; init; }
 
     /// <summary>The agent's declared capabilities (#aauth-capabilities), e.g. <c>clarification</c>.</summary>

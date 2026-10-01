@@ -8,19 +8,24 @@ using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Tokens;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Tokens;
 
 public class TokenVerifierTests
 {
+    public static IEnumerable<object[]> BuiltInTokenTypes =>
+        new[] { AgentTokenBuilder.TokenType, ResourceTokenBuilder.TokenType, AuthTokenBuilder.TokenType, PersonTokenBuilder.TokenType }
+            .Select(type => new object[] { type });
+
     [Theory]
     [MemberData(nameof(TestTokens.InvalidRequiredClaims), MemberType = typeof(TestTokens))]
     public async Task RawBuiltInMandatoryClaimsRejectBeforeDiscovery(string type, string claim, string mutation)
     {
         var key = AAuthKey.Generate();
-        var jwt = TestTokens.Raw(key, type, (header, payload) => TestTokens.Mutate(header, payload, claim, mutation));
-        var verifier = new TokenVerifier { Clock = () => DateTimeOffset.FromUnixTimeSeconds(1800000000) };
+        var jwt = await TestTokens.RawAsync(key, type, (header, payload) => TestTokens.Mutate(header, payload, claim, mutation));
+        var verifier = new TokenVerifier { TimeProvider = new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(1800000000)) };
         var dwk = type == AgentTokenBuilder.TokenType ? AgentTokenBuilder.AgentDwk
             : type == ResourceTokenBuilder.TokenType ? ResourceTokenBuilder.ResourceDwk : AuthTokenBuilder.PersonDwk;
         Assert.Equal(AAuth.Errors.SignatureErrorCode.InvalidJwt,
@@ -32,7 +37,28 @@ public class TokenVerifierTests
             verifier.VerifyWithJwksAsync(jwt, metadata, jwks, type, dwk, null))).Code);
         if (type == AuthTokenBuilder.TokenType)
             Assert.Equal(AAuth.Errors.SignatureErrorCode.InvalidJwt, (await Assert.ThrowsAsync<TokenVerificationException>(() =>
-                verifier.VerifyAuthTokenWithJwksAsync(jwt, metadata, jwks, "https://resource.example", key, "aauth:wire@issuer.example"))).Code);
+                verifier.VerifyAuthTokenWithJwksAsync(jwt, metadata, jwks, "https://resource.example", key,
+                    expectedMaxScope: "aauth:wire@issuer.example"))).Code);
+    }
+
+    [Theory]
+    [MemberData(nameof(BuiltInTokenTypes))]
+    public async Task Verify_RejectsCriticalJoseHeaderForBuiltInTokens(string type)
+    {
+        var key = AAuthKey.Generate();
+        var jwt = await TestTokens.RawAsync(key, type, (header, _) =>
+        {
+                header["crit"] = new JsonArray("x");
+                header["x"] = true;
+        });
+        var verifier = new TokenVerifier { TimeProvider = new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(1800000000)) };
+        var dwk = type == AgentTokenBuilder.TokenType ? AgentTokenBuilder.AgentDwk
+                : type == ResourceTokenBuilder.TokenType ? ResourceTokenBuilder.ResourceDwk
+                : AuthTokenBuilder.PersonDwk;
+
+        var failure = Assert.Throws<TokenVerificationException>(() => verifier.Verify(jwt, key, type, dwk));
+
+        Assert.Equal(AAuth.Errors.SignatureErrorCode.InvalidJwt, failure.Code);
     }
 
     private sealed class NoDiscovery : HttpMessageHandler
@@ -44,10 +70,10 @@ public class TokenVerifierTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void ResourceAuthorizationHasExplicitScopeOrR3Pair(bool r3)
+    public async Task ResourceAuthorizationHasExplicitScopeOrR3Pair(bool r3)
     {
         var key = AAuthKey.Generate();
-        var jwt = TestTokens.Raw(key, ResourceTokenBuilder.TokenType, (_, payload) =>
+        var jwt = await TestTokens.RawAsync(key, ResourceTokenBuilder.TokenType, (_, payload) =>
         {
             if (r3)
             {
@@ -57,7 +83,7 @@ public class TokenVerifierTests
             }
             else payload["scope"] = "";
         });
-        Assert.NotNull(new TokenVerifier { Clock = () => DateTimeOffset.FromUnixTimeSeconds(1800000000) }
+        Assert.NotNull(new TokenVerifier { TimeProvider = new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(1800000000)) }
             .Verify(jwt, key, ResourceTokenBuilder.TokenType, ResourceTokenBuilder.ResourceDwk));
     }
 
@@ -70,10 +96,10 @@ public class TokenVerifierTests
     [InlineData("iat", false)]
     public void Verify_RequiresAgentClaims(string claim, bool inHeader)
     {
-        IAAuthKey key = AAuthKey.Generate();
+        var key = AAuthKey.Generate();
         foreach (var mutation in new[] { "absent", "null", "wrong-type", "blank" })
         {
-            var header = new JsonObject { ["alg"] = key.Algorithm, ["typ"] = AgentTokenBuilder.TokenType, ["kid"] = "issuer" };
+            var header = new JsonObject { ["alg"] = AAuthKey.Ed25519Algorithm, ["typ"] = AgentTokenBuilder.TokenType, ["kid"] = "issuer" };
             var payload = new JsonObject
             {
                 ["iss"] = "https://ap.example", ["dwk"] = AgentTokenBuilder.AgentDwk,
@@ -92,8 +118,8 @@ public class TokenVerifierTests
     [Fact]
     public void VerifyAuthToken_RejectsNumericAudienceWithTypedError()
     {
-        IAAuthKey key = AAuthKey.Generate();
-        var header = new JsonObject { ["alg"] = key.Algorithm, ["typ"] = AuthTokenBuilder.TokenType, ["kid"] = "issuer" };
+        var key = AAuthKey.Generate();
+        var header = new JsonObject { ["alg"] = AAuthKey.Ed25519Algorithm, ["typ"] = AuthTokenBuilder.TokenType, ["kid"] = "issuer" };
         var payload = new JsonObject
         {
             ["iss"] = "https://ps.example", ["dwk"] = AuthTokenBuilder.PersonDwk, ["aud"] = 123,
@@ -105,7 +131,7 @@ public class TokenVerifierTests
             SignRaw(header, payload, key), key, "https://resource.example", key, "aauth:test@ap.example"));
     }
 
-    private static string SignRaw(JsonObject header, JsonObject payload, IAAuthKey key)
+    private static string SignRaw(JsonObject header, JsonObject payload, AAuthKey key)
     {
         var input = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(header.ToJsonString()) + "."
             + Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(payload.ToJsonString());
@@ -113,17 +139,17 @@ public class TokenVerifierTests
     }
 
     [Fact]
-    public void VerifySelfIssuedAgentToken_AcceptsHappyPath()
+    public async Task VerifySelfIssuedAgentToken_AcceptsHappyPath()
     {
         var key = AAuthKey.Generate();
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:demo@ap.example",
             KeyId = "demo",
             Key = key,
-        }.Build();
+        }.BuildAsync();
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var verified = verifier.VerifySelfIssuedAgentToken(jwt, key);
@@ -133,11 +159,11 @@ public class TokenVerifierTests
     }
 
     [Fact]
-    public void Verify_RejectsExpiredToken()
+    public async Task Verify_RejectsExpiredToken()
     {
         var key = AAuthKey.Generate();
         var issued = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
@@ -146,25 +172,25 @@ public class TokenVerifierTests
             Key = key,
             IssuedAt = issued,
             Lifetime = TimeSpan.FromMinutes(1),
-        }.Build();
+        }.BuildAsync();
 
-        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => issued.AddHours(1) };
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = new FakeTimeProvider(issued.AddHours(1)) };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifySelfIssuedAgentToken(jwt, key));
     }
 
     [Fact]
-    public void Verify_RejectsWrongTyp()
+    public async Task Verify_RejectsWrongTyp()
     {
         var key = AAuthKey.Generate();
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:x@ap.example",
             KeyId = "k",
             Key = key,
-        }.Build();
+        }.BuildAsync();
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
@@ -172,21 +198,23 @@ public class TokenVerifierTests
     }
 
     [Fact]
-    public void Verify_RejectsWrongAudience()
+    public async Task Verify_RejectsWrongAudience()
     {
         var key = AAuthKey.Generate();
         var rkey = AAuthKey.Generate();
-        var jwt = new ResourceTokenBuilder
+        var jwt = await new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://resource.example",
             Audience = "https://ps.example",
-            Agent = "aauth:a@ap.example",
+            PersonServer = "https://ps.example",
+            Subject = "person-1",
+            PresentedJti = "person-token-1",
             AgentJkt = key.ComputeJwkThumbprint(),
             Key = rkey,
             KeyId = "r",
-        }.Build();
+        }.BuildAsync();
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
@@ -194,18 +222,18 @@ public class TokenVerifierTests
     }
 
     [Fact]
-    public void Verify_RejectsBadSignature()
+    public async Task Verify_RejectsBadSignature()
     {
         var key = AAuthKey.Generate();
         var other = AAuthKey.Generate();
-        var jwt = new AgentTokenBuilder
+        var jwt = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:x@ap.example",
             KeyId = "k",
             Key = key,
-        }.Build();
+        }.BuildAsync();
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
@@ -229,10 +257,10 @@ public class TokenVerifierTests
             new JwksClient(new InProcessHttpClient(new ResourceJwksHandler(resKey, ResKid, ResIss))));
     }
 
-    private static string BuildResourceToken(
+    private static ValueTask<string> BuildResourceTokenAsync(
         AAuthKey signingKey,
         AAuthKey agentKey,
-        string agent = AgentId,
+        string personServer = PsAud,
         string audience = PsAud,
         DateTimeOffset? issuedAt = null,
         TimeSpan? lifetime = null)
@@ -242,30 +270,34 @@ public class TokenVerifierTests
             EgressPolicy = TestEgress.Policy,
             Issuer = ResIss,
             Audience = audience,
-            Agent = agent,
+            PersonServer = personServer,
+            Subject = "person-1",
+            PresentedJti = "person-token-1",
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = signingKey,
             KeyId = ResKid,
             Scope = "whoami",
             IssuedAt = issuedAt,
             Lifetime = lifetime ?? TimeSpan.FromMinutes(5),
-        }.Build();
+        }.BuildAsync();
 
     [Fact]
     public async Task VerifyResourceTokenAsync_AcceptsHappyPath()
     {
         var resKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = BuildResourceToken(resKey, agentKey);
+        var jwt = await BuildResourceTokenAsync(resKey, agentKey);
         var (meta, jwks) = Discovery(resKey);
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var verified = await verifier.VerifyResourceTokenAsync(
-            jwt, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks);
+            jwt, PsAud, agentKey.ComputeJwkThumbprint(), meta, jwks, expectedPersonServer: PsAud);
 
         Assert.Equal(ResourceTokenBuilder.TokenType, verified.TokenType);
         Assert.Equal(ResIss, verified.Issuer);
-        Assert.Equal(AgentId, (string?)verified.Payload["agent"]);
+        Assert.Equal(PsAud, (string?)verified.Payload["ps"]);
+        Assert.Equal("person-1", verified.Subject);
+        Assert.Null(verified.Payload["agent"]);
     }
 
     [Fact]
@@ -275,13 +307,13 @@ public class TokenVerifierTests
         var publishedKey = AAuthKey.Generate();
         var forgedKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = BuildResourceToken(forgedKey, agentKey);
+        var jwt = await BuildResourceTokenAsync(forgedKey, agentKey);
         var (meta, jwks) = Discovery(publishedKey);
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                jwt, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
+                jwt, PsAud, agentKey.ComputeJwkThumbprint(), meta, jwks));
     }
 
     [Fact]
@@ -290,13 +322,13 @@ public class TokenVerifierTests
         var resKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var issued = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var jwt = BuildResourceToken(resKey, agentKey, issuedAt: issued, lifetime: TimeSpan.FromMinutes(1));
+        var jwt = await BuildResourceTokenAsync(resKey, agentKey, issuedAt: issued, lifetime: TimeSpan.FromMinutes(1));
         var (meta, jwks) = Discovery(resKey);
 
-        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => issued.AddHours(1) };
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = new FakeTimeProvider(issued.AddHours(1)) };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                jwt, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
+                jwt, PsAud, agentKey.ComputeJwkThumbprint(), meta, jwks));
     }
 
     [Fact]
@@ -304,27 +336,27 @@ public class TokenVerifierTests
     {
         var resKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = BuildResourceToken(resKey, agentKey, audience: PsAud);
+        var jwt = await BuildResourceTokenAsync(resKey, agentKey, audience: PsAud);
         var (meta, jwks) = Discovery(resKey);
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                jwt, "https://other-ps.example", AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
+                jwt, "https://other-ps.example", agentKey.ComputeJwkThumbprint(), meta, jwks));
     }
 
     [Fact]
-    public async Task VerifyResourceTokenAsync_RejectsWrongAgent()
+    public async Task VerifyResourceTokenAsync_RejectsWrongPersonServer()
     {
         var resKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = BuildResourceToken(resKey, agentKey, agent: AgentId);
+        var jwt = await BuildResourceTokenAsync(resKey, agentKey, personServer: "https://other-ps.example");
         var (meta, jwks) = Discovery(resKey);
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                jwt, PsAud, "aauth:someone-else@ap.example", agentKey.ComputeJwkThumbprint(), meta, jwks));
+                jwt, PsAud, agentKey.ComputeJwkThumbprint(), meta, jwks, expectedPersonServer: PsAud));
     }
 
     [Fact]
@@ -334,13 +366,13 @@ public class TokenVerifierTests
         var resKey = AAuthKey.Generate();
         var boundAgentKey = AAuthKey.Generate();
         var otherAgentKey = AAuthKey.Generate();
-        var jwt = BuildResourceToken(resKey, boundAgentKey);
+        var jwt = await BuildResourceTokenAsync(resKey, boundAgentKey);
         var (meta, jwks) = Discovery(resKey);
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                jwt, PsAud, AgentId, otherAgentKey.ComputeJwkThumbprint(), meta, jwks));
+                jwt, PsAud, otherAgentKey.ComputeJwkThumbprint(), meta, jwks));
     }
 
     [Fact]
@@ -350,20 +382,20 @@ public class TokenVerifierTests
         // so the resource-token (typ/dwk) checks must reject it.
         var resKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var notAResourceToken = new AgentTokenBuilder
+        var notAResourceToken = await new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             Issuer = ResIss,
             Subject = AgentId,
             KeyId = ResKid,
             Key = resKey,
-        }.Build();
+        }.BuildAsync();
         var (meta, jwks) = Discovery(resKey);
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                notAResourceToken, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
+                notAResourceToken, PsAud, agentKey.ComputeJwkThumbprint(), meta, jwks));
     }
 
     /// <summary>

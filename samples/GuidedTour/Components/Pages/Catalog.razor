@@ -1,9 +1,7 @@
 @page "/catalog-gateway"
-@rendermode InteractiveServer
-@inject IConfiguration Configuration
+@inject NavigationManager Navigation
 
-<PageTitle>Travel Catalog Gateway</PageTitle>
-<CapabilityTourChrome CurrentValue="/catalog-gateway" ResourceLabel="Catalog"
-	ResourceUrl="@(Configuration["AAuth:Catalog"] ?? "http://localhost:5006")"
-	ShowR3AccessServer="true" />
-<AAuth.Samples.Capabilities.CatalogWalkthrough GuidedTour="true" />
+@* Flow Catalog now runs inside the standard tour; keep the old route as a redirect. *@
+@code {
+    protected override void OnInitialized() => Navigation.NavigateTo("/tour?flow=Catalog", replace: true);
+}

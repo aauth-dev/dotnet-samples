@@ -25,26 +25,29 @@ var tourUrl = builder.Configuration["GuidedTour:SelfIssuer"] ?? "http://localhos
 builder.Services.AddSingleton(new TourAgentIdentity(tourKey, TourKid, tourUrl));
 
 builder.Services.AddScoped<TourSession>();
+// Resource metadata for the federated-worker scenario, published by MapAAuthWellKnown.
+builder.Services.AddAAuthResource(options =>
+{
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Issuer = tourUrl;
+    options.SigningKeys[TourKid] = tourKey;
+    options.ScopeDescriptions = new(FederatedWorkerScenario.ScopeDescriptions);
+});
 
 var app = builder.Build();
 
 // Publish agent metadata + JWKS so verifiers (the Aria resource servers, Concierge) can
 // discover the tour's signing key when it self-issues agent tokens.
-app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+app.MapAAuthAgentWellKnown(options =>
 {
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = tourUrl,
-    Name = "Guided Tour Demo",
-    SigningKeys = new Dictionary<string, IAAuthKey> { [TourKid] = tourKey },
+    options.EgressPolicy = SampleEgress.Policy;
+    options.Issuer = tourUrl;
+    options.Name = "Guided Tour Demo";
+    options.SigningKeys = new AAuthSigningKeySet { [TourKid] = tourKey };
 });
 
 app.MapStaticAssets();
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
-{
-    EgressPolicy = SampleEgress.Policy, Issuer = tourUrl,
-    SigningKeys = new Dictionary<string, IAAuthKey> { [TourKid] = tourKey },
-    ScopeDescriptions = FederatedWorkerScenario.ScopeDescriptions,
-});
+app.MapAAuthWellKnown();
 app.UseAntiforgery();
 
 app.MapRazorComponents<App>()

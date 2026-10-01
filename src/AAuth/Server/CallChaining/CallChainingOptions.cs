@@ -15,7 +15,7 @@ public sealed class CallChainingOptions
     /// The resource's own agent signing key (must have private component).
     /// Used to sign outbound requests to downstream token endpoints.
     /// </summary>
-    public required IAAuthKey AgentKey { get; init; }
+    public required IAAuthSigner AgentKey { get; set; }
 
     /// <summary>
     /// The <see cref="ISignatureKeyProvider"/> that produces the
@@ -23,12 +23,12 @@ public sealed class CallChainingOptions
     /// <see cref="JwtSignatureKeyProvider"/> wrapping the resource's
     /// own agent token).
     /// </summary>
-    public required ISignatureKeyProvider SignatureKeyProvider { get; init; }
+    public required ISignatureKeyProvider SignatureKeyProvider { get; set; }
 
     /// <summary>
     /// Optional factory for creating the signed <see cref="HttpClient"/>
     /// used to call downstream token endpoints. When null, the handler
     /// creates a default client using <see cref="AAuthSigningHandler"/>.
     /// </summary>
-    public Func<HttpClient>? HttpClientFactory { get; init; }
+    public Func<HttpClient>? HttpClientFactory { get; set; }
 }

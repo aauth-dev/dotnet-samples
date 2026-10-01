@@ -65,6 +65,21 @@ public class KeyStoreTests : IDisposable
         Assert.Throws<FileNotFoundException>(() => store.Load("missing"));
     }
 
+    [Fact]
+    public void Load_KeyWithoutAlg_NamesTheFile()
+    {
+        var store = new FileKeyStore(_tempDir);
+        var jwk = AAuthKey.Generate().ToPrivateJwk();
+        jwk.Remove("alg");
+        Directory.CreateDirectory(_tempDir);
+        var path = Path.Combine(_tempDir, "legacy.jwk.json");
+        File.WriteAllText(path, jwk.ToJsonString());
+
+        var error = Assert.Throws<JwkValidationException>(() => store.LoadOrCreate("legacy"));
+
+        Assert.Contains(path, error.Message);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData(" ")]

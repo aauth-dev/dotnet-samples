@@ -33,28 +33,29 @@ Six Signature-Key schemes (see [Signing Schemes](signing-modes/overview.md)):
 Anonymous public requests have no signature and are not a Signature-Key scheme.
 SelfIssuing/Enrolled/Bootstrap describe credential provisioning, not an access
 mode or the `self-jwt` scheme. The Profile pseudonymous demonstrations are
-generic signing examples, not identity-based AAuth access.
+generic signing examples, not agent identity AAuth access.
 
 ### 2. Resource Access
 
 How a resource decides what the agent may do. See [Access Mode Comparison](https://explorer.aauth.dev/access/compare).
 
-Four modes:
+Five modes:
 
-- **Identity-Based** — Resource trusts the signature directly. No tokens beyond the agent token.
-- **Resource-Managed** (2-party): Resource handles its own consent and issues an opaque `AAuth-Access` token bound to the verified agent/key/account. SDK: `WithResourceManagedAccess`, `AddAAuthResourceManaged` and `ResolveAAuthAccessAsync`. Browser decisions require authenticated sessions and CSRF protection; the correlation code is not approval.
-- **PS-Asserted** (3-party) — Resource issues resource token → agent exchanges at PS → auth token. SDK: `ChallengeHandler`, `TokenExchangeClient`
-- **Federated** (4-party) — PS delegates to Access Server. SDK: same agent-side types; AS is the PS's concern.
+- **Agent Identity** (`agent-token`) — Resource authorizes the verified agent token directly.
+- **Resource-Managed** (`session-token` / `AAuth-Access`) — Resource handles its own consent and issues an opaque `AAuth-Access` response token bound to the verified agent/key/account; the agent replays it as `Authorization: AAuth <token68>`. SDK: `WithResourceManagedAccess`, `AddAAuthResourceManaged` and `ResolveAAuthAccessAsync`. Browser decisions require authenticated sessions and CSRF protection; the correlation code is not approval.
+- **Person Identity** (`person-token`) — Resource needs the PS-issued person token before it can decide what authorization to request. The token identifies the person; it is not authorization.
+- **PS Authorization** (`auth-token`, 3-party) — Agent presents a person token → resource issues a resource token naming it → agent exchanges both at PS → PS-issued auth token (`dwk=aauth-person.json`). SDK: `ChallengeHandler`, `TokenExchangeClient`
+- **Federated Authorization** (`auth-token`, 4-party) — PS delegates to the resource's Access Server, which issues the auth token (`dwk=aauth-access.json`). SDK: same agent-side types; AS is the PS's concern.
 
 ### 3. Governance (Missions)
 
 Optional layer. The agent proposes a mission — a Markdown **description** of intent plus an optional list of **tools** — and the PS approves it (§Mission Creation, §Mission Approval).
-SDK: `Mission`, `AAuthMissionHeader`
+SDK: `Mission`, `MissionClient`, `AAuthClientBuilder.WithMission`
 
 The two kinds of authority a mission governs are handled **asymmetrically**, and this is the key idea:
 
 - **Tools are *declared*.** A tool is an action the agent runs **itself** (a tool call, file write, sending a message) — no resource is involved. Because the PS can't observe a local action, the mission must name the tools up front: the approved `approved_tools` are pre-approved and resolve at the **permission endpoint** without a PS round-trip; any other action is referred to the user (§Permission Endpoint). SDK: `Mission.ApprovedTools`, `PermissionClient`.
-- **Scopes are *evaluated*, never declared.** A scope authorizes access to a remote **resource** (an API), carried in an **auth token** via the challenge → exchange → retry pattern (§Scopes). A mission proposal contains **no scopes**. Instead, when the agent later exchanges a resource token, the PS judges that requested scope *against the mission's natural-language description*: if it fits the stated intent it is granted silently (gate 2a), and prior decisions are remembered for the rest of the mission; otherwise the user is prompted (§Scopes — *"The PS evaluates requested scopes against mission context"*; §Agent Token Request). SDK: `AAuthScopeRequirement`, `AAuthVerificationResult.Scopes`.
+- **Scopes are *evaluated*, never declared.** A scope authorizes access to a remote **resource** (an API), carried in an **auth token** via the challenge → exchange → retry pattern (§Scopes). A mission proposal contains **no scopes**. Instead, when the agent later exchanges a resource token, the PS judges that requested scope *against the mission's natural-language description*: if it fits the stated intent it is granted silently (gate 2a), and prior decisions are remembered for the rest of the mission; otherwise the user is prompted (§Scopes — *"The PS evaluates requested scopes against mission context"*; §Auth Token Request). SDK: `AAuthScopeRequirement`, `AAuthVerificationResult.Scopes`.
 
 In short: **a mission lists the tools the agent may run locally, but it does not list scopes — the PS decides, per request, whether a requested resource scope fits the mission's intent.** Scopes and AS policy stay enforced by the resource and its Access Server; the mission is "a further restriction applied by the PS" (§Rationale).
 
@@ -65,15 +66,17 @@ See [Missions](https://explorer.aauth.dev/missions/compare). For the SDK surface
 | Token | Type Header | Issued By | Purpose | SDK |
 |-------|-------------|-----------|---------|-----|
 | Agent Token | `aa-agent+jwt` | Agent Provider or Self | Binds key → identity | `AgentTokenBuilder` |
-| Resource Token | `aa-resource+jwt` | Resource | Challenge: "get auth from my PS/AS" | `ResourceTokenBuilder` |
-| Auth Token | `aa-auth+jwt` | PS or AS | Proves user authorized this agent | `AuthTokenBuilder` |
+| Person Token | `aa-person+jwt` | PS | Identifies the person to one resource (not authorization) | `PersonTokenBuilder` |
+| Resource Token | `aa-resource+jwt` | Resource | Challenge: "get auth from my PS/AS"; names the presented token | `ResourceTokenBuilder` |
+| Auth Token | `aa-auth+jwt` | PS or AS | Proves the person authorized the key-bound agent | `AuthTokenBuilder` |
 | Subscribe Token | `aa-subscribe+jwt` | AP | Authorizes registration for an agent/context | `AAuth.Events.SubscribeTokenBuilder` |
 | Event Token | `aa-event+jwt` | Resource | Authenticates delivery with the resource's own signing key and no cnf | `AAuth.Events.EventTokenBuilder` |
 
 An optional `account` selects a resource-owned account, distinct from directed
 person `sub`. It must agree across the request, challenge, grant and R3 document.
-Revocation identifies a grant by `(iss, jti)`, not a globally unique bare `jti`.
-See [Wallet Protocol](workflows/wallet-protocol.md), [Catalog Gateway](workflows/catalog-gateway.md)
+Revocation identifies a grant by `(iss, jti)`, not a globally unique bare `jti`;
+`iss` is the revoker's verified signing identity, never a request member.
+See [Wallet Protocol](workflows/wallet-protocol.md), [Travel Catalog](workflows/catalog-gateway.md)
 and [Events](workflows/events.md) for runnable rejection/recovery paths.
 
 ## HTTP Headers AAuth Uses
@@ -84,8 +87,8 @@ and [Events](workflows/events.md) for runnable rejection/recovery paths.
 | `Signature-Input` | Request | Declares covered components + params | `AAuthSigningHandler` |
 | `Signature` | Request | The actual signature | `AAuthSigningHandler` |
 | `Signature-Error` | Response | Machine-readable verification error | `SignatureError` |
-| `AAuth-Requirement` | Response | What the resource needs (auth-token, interaction) | `AAuthRequirementHeader` |
-| `AAuth-Capabilities` | Request | Agent declares supported flows | `AAuthCapabilitiesHeader` |
+| `AAuth-Requirement` | Response | What is required (`person-token`, `auth-token`, `agent-token`, `interaction`, `clarification`, `claims`) | `AAuthRequirementHeader` |
+| `AAuth-Capabilities` | Request | Agent declares supported flows | `AAuthCapabilitiesHeader`, `AAuthConstants.Capabilities` |
 
 ## Further Reading
 

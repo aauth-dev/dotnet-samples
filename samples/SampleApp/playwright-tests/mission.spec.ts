@@ -2,6 +2,7 @@ import type { Page, BrowserContext } from '@playwright/test';
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent';
+import { CONSENT_ACTION } from '../../../tests/e2e/helpers/dashboard';
 
 /**
  * Mission (PS-Governed) — the Person Server is the policy-enforcement point for
@@ -18,9 +19,7 @@ import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent'
  *
  * On run, the page scripts the PS for an interactive demo and seeds `trips.read`
  * in-scope, so the three out-of-mission gates each surface their own PS consent
- * page while the two in-mission gates resolve without a prompt. Each gate hits
- * the resource with a freshly-minted agent token (a new `jti`) so the resource's
- * replay detection never rejects a second access (§Agent Token).
+ * page while the two in-mission gates resolve without a prompt.
  *
  * The approval banner (`.alert-warning`) is a single shared element reused for
  * every prompt — between two prompted gates the silent gate resolves and the
@@ -33,7 +32,7 @@ test.describe('Mission (SampleApp)', () => {
 
   /** The PS consent link surfaced while a gate is parked on user approval. */
   function approvalLink(page: Page) {
-    return page.locator('.alert-warning a[target="_blank"]');
+    return page.locator(`.alert-warning ${CONSENT_ACTION}`);
   }
 
   /** A gate-outcome card by its 1-based gate number (cards render in order). */

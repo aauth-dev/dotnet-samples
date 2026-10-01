@@ -13,7 +13,7 @@ internal static class CodeSnippets
         """;
 
     public const string SelfSignAgentToken = """
-        var agentToken = new AgentTokenBuilder
+        var agentToken = await new AgentTokenBuilder
         {
             EgressPolicy = SampleEgress.Policy,
             Issuer = "https://ap.example",
@@ -21,7 +21,7 @@ internal static class CodeSnippets
             KeyId = "sample-key-1",
             Key = key,
             PersonServer = "https://ps.example",
-        }.Build();
+        }.BuildAsync();
         """;
 
     public const string DiscoverAp = """
@@ -89,15 +89,16 @@ internal static class CodeSnippets
         """;
 
     public const string SignedGetJktJwt = """
-        // jkt-jwt mode: the durable key signs a self-issued naming JWT that
+        // Generic jkt-jwt mode: the durable key signs a self-issued naming JWT that
         // embeds its own public key in the header and binds the ephemeral
         // signing key via cnf.jwk. The ephemeral key signs the HTTP request.
-        // Supports key rotation without re-enrolment.
+        // This is a Signature-Key/AP key-refresh primitive; AAuth resource
+        // requests use jwt agent-token identity.
         //
-        // Self-anchored (Signature Keys draft-08 section 3.5): the verifier computes the durable
+        // Self-anchored (Signature Keys draft-09 section 3.5): the verifier computes the durable
         // key's thumbprint from the header jwk, checks it equals iss
         // (urn:jkt:sha-256:<thumbprint>), then verifies the naming JWT signature.
-        var namingJwt = NamingJwtBuilder.Build(durableKey, ephemeralKey);
+        var namingJwt = await NamingJwtBuilder.BuildAsync(durableKey, ephemeralKey);
 
         using var client = new AAuthClientBuilder(ephemeralKey).WithEgressPolicy(SampleEgress.Policy)
             .UseJktJwt(() => namingJwt)
@@ -108,12 +109,13 @@ internal static class CodeSnippets
         """;
 
     public const string ParseChallenge = """
-        // Parse the 401's AAuth-Requirement header
+        // Parse the 401's AAuth-Requirement: requirement=auth-token header
         var header = response.Headers
             .GetValues("AAuth-Requirement").First();
         var requirement = AAuthRequirementHeader.Parse(header);
         var resourceToken = requirement.ResourceToken;
-        // resourceToken is an aa-resource+jwt with aud = PS URL
+        // aa-resource+jwt: aud = PS (three-party) or AS (four-party); ps + sub name
+        // the person; presented_jti names the token presented; agent_jkt the key.
         """;
 
     public const string DiscoverPs = """
@@ -121,21 +123,40 @@ internal static class CodeSnippets
         var metadata = new MetadataClient(policy: SampleEgress.Policy);
         var meta = await metadata.FetchAsync(
             metadata.GetUrl("https://ps.example", "aauth-person.json"));
-        var tokenEndpoint = (string)meta["token_endpoint"];
+        var personTokenEndpoint = (string)meta["person_token_endpoint"];
+        var tokenEndpoint = (string)meta["auth_token_endpoint"];
+        """;
+
+    public const string RequestPersonToken = """
+        // POST {person_token_endpoint} { resource }, signed with the agent token.
+        var exchange = new TokenExchangeClient(signedClient, metadata);
+        var personToken = await exchange.RequestPersonTokenAsync(
+            "https://ps.example", "https://resource.example");
+        // aa-person+jwt: aud = resource, directed sub, cnf = agent key; no scope.
+        """;
+
+    public const string PresentPersonToken = """
+        // Present the person token in place of the agent token.
+        using var personClient = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
+            .UseJwt(personToken)
+            .Build();
+        var challenge = await personClient.GetAsync("https://resource.example/data");
+        // 401 AAuth-Requirement: requirement=auth-token; resource-token="..."
         """;
 
     public const string TokenExchangeDirect = """
-        // Automatic (recommended):
+        // Automatic (recommended): the challenge handler requests the person
+        // token, presents it, exchanges the resource token and retries.
         using var client = AAuthClientBuilder.Enrolled(key).WithEgressPolicy(SampleEgress.Policy)
             .RefreshingFrom(refreshEndpoint, localKeyHandle)
             .WithKeyStore(keyStore)
             .WithChallengeHandling(personServer: "https://ps.example")
             .Build();
 
-        // Or manual:
+        // Or manual: send the resource token with the token presented to the resource.
         var exchange = new TokenExchangeClient(signedClient, metadata);
         var authToken = await exchange.ExchangeAsync(
-            "https://ps.example", resourceToken);
+            "https://ps.example", resourceToken, presentedToken: personToken);
         """;
 
     public const string TokenExchangeDeferred = """
@@ -145,6 +166,7 @@ internal static class CodeSnippets
             resourceToken,
             new TokenExchangeRequest
             {
+                PresentedToken = personToken,
                 OnInteractionRequired = (interaction, ct) =>
                 {
                     Console.WriteLine($"Approve at: {interaction.BuildUserUrl()}");
@@ -162,9 +184,14 @@ internal static class CodeSnippets
         var userUrl = interaction.BuildUserUrl();
         // → "https://ps.example/interaction?code=ABCD1234"
 
+        // Start polling now. The person may decide on the Person Server's
+        // dashboard without ever opening this link.
+        var decision = new DeferredPoller(signedClient).PollAsync(pendingUri);
+
         // Present to user via browser, QR code, notification, etc.
         Process.Start(new ProcessStartInfo(userUrl)
             { UseShellExecute = true });
+        var result = await decision;
         """;
 
     public const string PollPending = """
@@ -192,19 +219,21 @@ internal static class CodeSnippets
         """;
 
     public const string R3AccountRequest = """
+        // Present the person token; the resource token echoes the account.
         using var request = new HttpRequestMessage(HttpMethod.Get,
             $"{bookings}/search_availability?account={Uri.EscapeDataString(account)}");
         request.Options.Set(AAuthRequestOptions.Account, account);
         var challenge = await client.SendAsync(request);
         var auth = await exchange.ExchangeAsync(personServer, resourceToken,
-            new TokenExchangeRequest { Account = account });
-        // Account must match the resource token, auth token and R3 document.
+            new TokenExchangeRequest { Account = account, PresentedToken = personToken });
+        // Account must match the resource token, auth token and R3 document;
+        // the person token itself never carries an account.
         """;
 
-    public const string R3ConfirmConditional = """
+    public const string R3ConfirmPerCall = """
         // Rich Resource Requests (R3): the client is the ordinary four-party
         // self-issued agent — the R3 detail rides the tokens, not the client.
-        // A CONDITIONAL operation (confirmReservation charges a deposit) can't
+        // A PER-CALL operation (confirmReservation charges a deposit) can't
         // be served outright; the resource replies 401 with a per-call PROPOSAL
         // carrying the concrete parameters, and the R3 Access Server asks the
         // user to approve that specific booking (202 → consent → poll → mint).
@@ -256,9 +285,9 @@ internal static class CodeSnippets
             .WithResourceManagedAccess()
             .WithInteractionHandling(o =>
             {
-                o.OnInteractionRequired = (url, code, ct) =>
+                o.OnInteractionRequired = (interaction, ct) =>
                 {
-                    Console.WriteLine($"Approve at: {url}");
+                    Console.WriteLine($"Approve at: {interaction.BuildUserUrl()}");
                     return Task.CompletedTask;
                 };
             })
@@ -303,35 +332,40 @@ internal static class CodeSnippets
         // From our side this looks like a normal retry — the chaining
         // happens server-side inside the Concierge:
         //   1. Concierge validates our auth_token
-        //   2. Extracts it as upstream_token
-        //   3. Calls downstream Calendar with its own agent token
-        //   4. Exchanges at PS with upstream_token → nested act
-        //   5. Retries Calendar with chained auth_token → 200
+        //   2. Requests a Calendar person token with it as upstream_token
+        //   3. Presents that person token to Calendar → resource token
+        //   4. Exchanges at the PS with presented_token + upstream_token
+        //   5. Retries Calendar with the auth token (same ps, directed sub) → 200
         using var chainClient = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
             .UseJwt(authToken) // present the auth_token directly
             .Build();
 
         var response = await chainClient.GetAsync("https://concierge.example/");
-        // 200 → combined result with full delegation chain
+        // 200 → combined result: upstream and downstream grants for the same ps
         """;
 
     public const string CallChainConvenience = """
-        // Convenience: WithCallChaining routes downstream exchanges
-        // automatically, passing upstream_token to the PS/AS.
-        // Mission: use the governing PS and its mission consent gate.
-        // No mission: use the upstream issuer's person/access metadata.
+        // Convenience: ChainFromHttpContext routes the downstream person token and
+        // auth token requests to the PS the upstream token names (its `ps`),
+        // passing it as upstream_token; a mission_s256 in the upstream token
+        // governs the downstream hop too.
         // The intermediary presents its own agent JWT in Signature-Key;
         // upstream_token is a body parameter, not a signing credential.
         // Cached grants are bound to the exact upstream authorization.
-        // Use this when building an intermediary service:
-        using var downstream = AAuthClientBuilder.SelfIssuing(myKey).WithEgressPolicy(SampleEgress.Policy)
-            .As(myIssuer, myAgentId)
-            .WithPersonServer(psUrl)
-            .WithCallChaining(httpContext) // reads upstream token from request
-            .Build();
+        // Register the intermediary's downstream agent once at startup:
+        builder.Services.AddAAuthAgent("downstream", o =>
+        {
+            o.Signer = myKey;
+            o.SelfIssued.Issuer = myIssuer;
+            o.SelfIssued.Subject = myAgentId;
+            o.PersonServer = psUrl;
+            o.ChainFromHttpContext = true; // reads the verified upstream token from the request
+        });
 
+        // In the intermediary's endpoint:
+        var downstream = clients.CreateClient("downstream");
         var result = await downstream.GetAsync("https://downstream.example/");
-        // SDK handles: challenge → exchange with upstream_token → retry
+        // SDK handles: person token → challenge → exchange with upstream_token → retry
         """;
 
     public const string FullAutomatic = """
@@ -343,18 +377,19 @@ internal static class CodeSnippets
             .WithPersonServer("https://ps.example")
             .WithKeyStore(keyStore)
             .EnrolAsync();
-        // Record enrolResult.LocalKeyHandle in app config — that's all you need
+        // Record enrolResult.LocalKeyHandle as AAuth:Agents:myapp:KeyHandle — that's all you need
 
-        // --- Application (every startup — load key by handle) ---
-        var key = keyStore.Load(localKeyHandle);
-        using var client = AAuthClientBuilder.Enrolled(key).WithEgressPolicy(SampleEgress.Policy)
-            .RefreshingFrom(refreshEndpoint, localKeyHandle)
-            .WithKeyStore(keyStore)
-            .WithChallengeHandling("https://ps.example")
-            .Build();
+        // --- Application (every startup) ---
+        // AAuth:Agents:myapp = { "KeyHandle": "…", "PersonServer": "https://ps.example",
+        //   "AgentProvider": { "RefreshEndpoint": "https://ap.example/refresh" } }
+        builder.Services.AddSingleton<IKeyStore>(keyStore);
+        builder.Services.AddAAuthAgent("myapp", builder.Configuration.GetSection("AAuth:Agents:myapp"));
 
+        // In a service or endpoint:
+        var client = clients.CreateClient("myapp");
         var response = await client.GetAsync("https://resource.example/data");
-        // 401 → exchange → poll → retry all handled transparently
+        // 401 person-token → person token → 401 resource token → exchange → poll → retry,
+        // all handled transparently
         """;
 
     // ── Mission-governed flow (§Missions, §PS Governance Endpoints) ──────────
@@ -365,7 +400,8 @@ internal static class CodeSnippets
         var meta = await metadata.FetchAsync(
             metadata.GetUrl("https://ps.example", "aauth-person.json"));
         var mission     = (string)meta["mission_endpoint"];
-        var tokenEp     = (string)meta["token_endpoint"];
+        var personEp    = (string)meta["person_token_endpoint"];
+        var tokenEp     = (string)meta["auth_token_endpoint"];
         var permission  = (string)meta["permission_endpoint"];
         """;
 
@@ -382,34 +418,43 @@ internal static class CodeSnippets
                 ],
             },
             new GovernanceOptions { OnInteractionRequired = SurfaceToUser });
-        var mission = session.Mission; // session auto-threads the claim + PS
+        var mission = session.Mission; // the session carries mission_s256 + the PS
         // SDK POSTs /mission → 202; SurfaceToUser shows the consent link,
         // then the client polls until the user approves.
         """;
 
     public const string MissionPollCreate = """
-        // The MissionClient polls the mission-pending URL internally and
-        // returns the parsed, verified Mission once the user approves.
-        // mission.Approver / mission.S256 / mission.ApprovedTools
-        var verified = mission.VerifyS256(missionHeaderS256); // s256 integrity
+        // The MissionClient polls the mission-pending URL internally and returns
+        // the parsed Mission once the user approves. The approval envelope is
+        // { s256, mission }: mission is the approved JSON, s256 its SHA-256.
+        var verified = mission.VerifyS256(s256); // integrity of the mission bytes
+        // mission.PersonServer / mission.S256 / mission.ApprovedTools / mission.ExpiresAt
+        """;
+
+    public const string MissionPersonToken = """
+        // Name the mission when requesting the person token; the PS checks it is
+        // active and copies mission_s256 into the token. There is no mission header.
+        var personToken = await exchange.RequestPersonTokenAsync(
+            "https://ps.example", "https://resource.example",
+            new TokenExchangeRequest { MissionS256 = mission.S256 });
         """;
 
     public const string MissionChallenge = """
-        // Advertise the mission so the resource binds it into the resource_token.
-        using var req = new HttpRequestMessage(HttpMethod.Get, resourceUrl);
-        req.Headers.Add(
-            AAuthMissionHeader.Name,
-            AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
-        var resp = await signedClient.SendAsync(req); // → 401 + AAuth-Requirement
+        // Present the mission person token; the resource copies its mission_s256
+        // into the resource_token.
+        using var personClient = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
+            .UseJwt(personToken)
+            .Build();
+        var resp = await personClient.GetAsync(resourceUrl); // → 401 requirement=auth-token
         var resourceToken = AAuthRequirementHeader.Parse(
             resp.Headers.GetValues(AAuthRequirementHeader.Name).First()).ResourceToken;
         """;
 
     public const string MissionExchange = """
-        // The resource_token carries the mission claim; because (resource, trips.read)
+        // The resource_token carries mission_s256; because (resource, trips.read)
         // is in the mission scope, the PS mints the auth_token SILENTLY.
-        var authToken = await exchange.ExchangeAsync("https://ps.example", resourceToken);
-        // Or, end-to-end: AAuthClientBuilder handles 401 → exchange → retry for you.
+        var authToken = await exchange.ExchangeAsync("https://ps.example", resourceToken, personToken);
+        // Or, end-to-end: WithMission + WithChallengeHandling handle person token → 401 → exchange → retry.
         """;
 
     public const string MissionReplay = """
@@ -420,12 +465,12 @@ internal static class CodeSnippets
         """;
 
     public const string MissionElevatedChallenge = """
-        // Same mission header, but the ELEVATED endpoint requires
+        // Same mission person token, but the ELEVATED endpoint requires
         // trips.book — a scope the mission never declared.
-        using var req = new HttpRequestMessage(HttpMethod.Get, elevatedUrl);
-        req.Headers.Add(AAuthMissionHeader.Name,
-            AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
-        var resp = await signedClient.SendAsync(req); // → 401 + AAuth-Requirement
+        using var personClient = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
+            .UseJwt(personToken)
+            .Build();
+        var resp = await personClient.GetAsync(elevatedUrl); // → 401 requirement=auth-token
         var resourceToken = AAuthRequirementHeader.Parse(
             resp.Headers.GetValues(AAuthRequirementHeader.Name).First()).ResourceToken;
         """;
@@ -435,7 +480,7 @@ internal static class CodeSnippets
         // cannot mint silently — it returns 202 and asks the user to decide.
         // The configured policy may request consent or deny the scope.
         var authToken = await exchange.ExchangeAsync("https://ps.example", resourceToken,
-            new TokenExchangeRequest { OnInteractionRequired = SurfaceToUser });
+            new TokenExchangeRequest { PresentedToken = personToken, OnInteractionRequired = SurfaceToUser });
         """;
 
     public const string MissionElevatedPoll = """
@@ -498,6 +543,7 @@ internal static class CodeSnippets
         var authToken = await exchange.ExchangeAsync("https://ps.example", resourceToken,
             new TokenExchangeRequest
             {
+                PresentedToken = personToken,
                 // The SDK surfaces the PS's question and lets the agent answer.
                 OnClarificationRequired = (q, _) =>
                     Task.FromResult(ClarificationResponse.Respond(
@@ -527,9 +573,10 @@ internal static class CodeSnippets
         """;
 
     public const string MissionChainForward = """
-        // The SAME mission now governs a multi-agent CALL CHAIN. WithMission binds
-        // the AAuth-Mission header; WithChallengeHandling threads the silent
-        // in-scope exchange; the Concierge forwards the mission downstream.
+        // The SAME mission now governs a multi-agent CALL CHAIN. WithMission names
+        // mission_s256 on the person token request; WithChallengeHandling threads the
+        // silent in-scope exchange; the Concierge chains with our auth token as
+        // upstream_token, so the PS governs the downstream hop by the same mission.
         using var client = AAuthClientBuilder.SelfIssuing(key).WithEgressPolicy(SampleEgress.Policy)
             .As(issuer, agentId).WithKid(keyId)
             .WithPersonServer("https://ps.example")
@@ -538,7 +585,7 @@ internal static class CodeSnippets
             .Build();
         var resp = await client.GetAsync("https://concierge.example/mission");
         // 200: { chain, upstream, concierge, downstream } — downstream is
-        // Trips's mission-bound /trips result. NO prompt: every hop in scope.
+        // Trips's /trips result carrying the same mission_s256. NO prompt: every hop in scope.
         """;
 
     public const string MissionChainLog = """

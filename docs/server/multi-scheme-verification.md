@@ -25,6 +25,11 @@ public sealed class SignatureKeyResolution
 {
     public required IAAuthKey PublicKey { get; init; }
     public required SignatureKeyParser.ParsedSignatureKeyInfo Info { get; init; }
+    public AAuth.Tokens.TokenVerifier.VerifiedToken? VerifiedToken { get; init; }
+    public IAAuthKey? IssuerKey { get; init; }
+    public string? VerifiedIdentifier { get; init; }
+    public string? KeyId { get; init; }
+    public string? DurableThumbprint { get; init; }
 }
 ```
 
@@ -41,6 +46,7 @@ builder.Services.AddAAuthResource(options =>
     options.Issuer = "https://resource.example";
 });
 
+// Auth-token and person-token `aud` is checked against the Issuer above.
 app.UseAAuthVerification();
 ```
 
@@ -51,14 +57,12 @@ app.UseAAuthVerification();
 using AAuth.Server.Verification;
 
 // AddAAuthResource registers the verifier, the discovery clients, and the
-// DefaultSignatureKeyResolver that resolves all four schemes — no manual
+// DefaultSignatureKeyResolver that resolves the supported schemes — no manual
 // HttpClient/discovery wiring.
 builder.Services.AddAAuthResource(options => options.Issuer = "https://resource.example");
 
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    AcceptedSchemes = ["jwt", "hwk", "jkt-jwt", "jwks_uri", "jwks", "self-jwt"],
-});
+app.UseAAuthVerification(options =>
+    options.AcceptedSchemes = ["jwt", "hwk", "jkt-jwt", "jwks_uri", "jwks", "self-jwt"]);
 ```
 
 </details>
@@ -68,11 +72,11 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 | Scheme | How Key Is Resolved |
 |--------|-------------------|
 | `hwk` | Validates structured public JWK members and computes the thumbprint locally |
-| `jwks_uri` | Discovers exact id/dwk metadata, validates issuer, follows jwks_uri and selects kid |
+| `jwks_uri` | Discovers exact `id`/`dwk` metadata, validates issuer, follows its `jwks_uri`, and selects `kid` |
 | `jwks` | Fetches the exact direct url and selects kid |
 | `self-jwt` | Validates the registered assertion type; issuer key verifies JWT and HTTP, with no cnf |
 | `jwt` | Extracts `cnf.jwk` from agent token, fetches AP's JWKS to verify token signature |
-| `jkt-jwt` | Self-anchored (Signature Keys draft-08 section 3.5): derives the durable key from header `jwk`, checks the thumbprint issuer, verifies the naming JWT, then returns ephemeral `cnf.jwk` |
+| `jkt-jwt` | Self-anchored (Signature Keys draft-09 section 3.5): derives the durable key from header `jwk`, checks the thumbprint issuer, verifies the naming JWT, then returns ephemeral `cnf.jwk` |
 
 ## HWK — Inline Public Key
 
@@ -87,12 +91,15 @@ After resolution, the parsed info is available via `HttpContext.Items[AAuthVerif
 ```csharp
 public sealed class ParsedSignatureKeyInfo
 {
-    public required string Scheme { get; init; }     // "hwk", "jwks_uri", "jwt", "jkt-jwt"
+    public required string Scheme { get; init; }     // "hwk", "jwks_uri", "jwks", "jwt", "self-jwt", "jkt-jwt"
+    public string Label { get; init; } = "sig";
     public IAAuthKey? ConfirmationKey { get; init; } // resolved public key
     public string? Jkt { get; init; }                // key thumbprint
-    public string? JwksUri { get; init; }            // declared JWKS URI (jwks_uri scheme)
-    public string? Kid { get; init; }                // key ID (jwks_uri scheme)
-    public string? Jwt { get; init; }                // raw agent token (jwt/jkt-jwt schemes)
+    public string? Identifier { get; init; }         // id (jwks_uri) or direct url (jwks)
+    public string? Dwk { get; init; }                // metadata document name (jwks_uri)
+    public string? JwksUri { get; init; }            // direct JWKS URL (jwks scheme)
+    public string? Kid { get; init; }                // key ID (jwks_uri/jwks schemes)
+    public string? Jwt { get; init; }                // raw assertion (jwt/self-jwt/jkt-jwt schemes)
     public JsonObject? Header { get; init; }         // parsed JWT header
     public JsonObject? Payload { get; init; }        // parsed JWT payload (claims)
 }
@@ -105,42 +112,39 @@ For non-standard schemes or additional validation:
 ```csharp
 // Sample implementation — not part of the SDK.
 // Implements AAuth.HttpSig.ISignatureKeyResolver by wrapping the SDK's
-// DefaultSignatureKeyResolver and consulting an application-provided
-// asynchronous issuer-admission callback (host-owned).
+// DefaultSignatureKeyResolver and attaching typed context for later
+// authorization. Do not deny trusted-but-unauthorized issuers from the resolver:
+// resolver failures are signature failures (401 Signature-Error). Authorization
+// policy failures after successful verification should be 403.
 public sealed class PolicyEnforcingResolver : ISignatureKeyResolver
 {
     private readonly DefaultSignatureKeyResolver _inner;
-    private readonly Func<string?, CancellationToken, Task<bool>> _isAllowedIssuer;
 
-    public PolicyEnforcingResolver(DefaultSignatureKeyResolver inner,
-        Func<string?, CancellationToken, Task<bool>> isAllowedIssuer)
-    {
-        _inner = inner;
-        _isAllowedIssuer = isAllowedIssuer;
-    }
+    public PolicyEnforcingResolver(DefaultSignatureKeyResolver inner) => _inner = inner;
 
-    public async Task<SignatureKeyResolution> ResolveAsync(
+    public Task<SignatureKeyResolution> ResolveAsync(
         SignatureKeyParser.ParsedSignatureKeyInfo info, CancellationToken ct)
     {
         // Resolve key normally
-        var resolution = await _inner.ResolveAsync(info, ct);
+        var resolutionTask = _inner.ResolveAsync(info, ct);
 
-        // Apply additional policy (e.g., deny certain agent providers)
+        // Record context for an ASP.NET authorization policy that can return 403.
         if (info.Jwt is not null)
         {
             var iss = info.Payload?["iss"]?.GetValue<string>();
-            if (!await _isAllowedIssuer(iss, ct))
-                throw new AAuthVerificationException("Agent provider not allowed");
+            // Attach `iss` to a request feature or claims transformation in real code.
         }
 
-        return resolution;
+        return resolutionTask;
     }
 }
 ```
 
 Register a custom resolver through `AddAAuthResource` — set `o.KeyResolver` and the
 SDK uses it instead of the default (it is registered via `TryAdd`, so your resolver
-wins):
+wins). Keep trust and authorization decisions in `AAuthTrustOptions`,
+`IAAuthTrustPolicy` or ASP.NET authorization policies so unauthorized but
+well-formed identities return `403`, not `401 Signature-Error`:
 
 ```csharp
 builder.Services.AddAAuthResource(options =>

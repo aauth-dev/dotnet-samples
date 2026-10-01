@@ -1,9 +1,9 @@
 # Trips — mission-governed (three-party, mission-aware) resource server
 
-Aria's trip-planning service. The **Trips** server is *mission-aware*: when the
-agent sends a signed `AAuth-Mission` header, the resource token it issues carries
-the mission object (`approver` + `s256`), so the agent's Person Server can govern
-the exchange against the human-approved mission.
+Aria's trip-planning service. The **Trips** server is *mission-aware*: the
+agent's person token names the mission as `mission_s256`, and the resource
+token the server issues copies it, so the agent's Person Server can govern the
+exchange against the human-approved mission.
 
 > **Sample only — not part of the AAuth SDK.**
 

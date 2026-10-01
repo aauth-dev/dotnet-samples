@@ -21,7 +21,7 @@ namespace AAuth.Conformance.Missions;
 /// (AAuth protocol §Mission Creation, §Mission Approval, §Permission Endpoint,
 /// §Audit Endpoint, §Interaction Endpoint). A client bound to a Person Server
 /// exposes <see cref="AAuthGovernanceClient.ProposeMissionAsync"/>, which returns a
-/// session that auto-threads the mission claim (<c>{approver, s256}</c>) and PS
+/// session that auto-threads the mission reference (<c>mission_s256</c>) and PS
 /// into every subsequent governed call.
 /// </summary>
 public class GovernanceClientBuilderTests
@@ -87,8 +87,8 @@ public class GovernanceClientBuilderTests
         var result = await session.RequestPermissionAsync(new MissionAction("SendEmail"));
 
         Assert.True(result.IsGranted);
-        Assert.Equal(session.Mission.S256, (string?)handler.LastPermissionBody?["mission"]?["s256"]);
-        Assert.Equal(Ps, (string?)handler.LastPermissionBody?["mission"]?["approver"]);
+        Assert.Equal(session.Mission.S256, (string?)handler.LastPermissionBody?["mission_s256"]);
+        Assert.False(handler.LastPermissionBody!.ContainsKey("mission"));
     }
 
     [Fact(DisplayName = "§Permission Endpoint — a pre-approved tool short-circuits to granted")]
@@ -117,7 +117,7 @@ public class GovernanceClientBuilderTests
 
         await session.RecordAuditAsync(new MissionAction("WebSearch"), description: "Looked up flights");
 
-        Assert.Equal(session.Mission.S256, (string?)handler.LastAuditBody?["mission"]?["s256"]);
+        Assert.Equal(session.Mission.S256, (string?)handler.LastAuditBody?["mission_s256"]);
         Assert.Equal("WebSearch", (string?)handler.LastAuditBody?["action"]);
     }
 
@@ -131,10 +131,10 @@ public class GovernanceClientBuilderTests
         var answer = await session.AskQuestionAsync("Refundable option?");
 
         Assert.Equal("Yes, go ahead.", answer);
-        Assert.Equal(session.Mission.S256, (string?)handler.LastInteractionBody?["mission"]?["s256"]);
+        Assert.Equal(session.Mission.S256, (string?)handler.LastInteractionBody?["mission_s256"]);
     }
 
-    [Fact(DisplayName = "§Interaction Endpoint — session proposes completion and observes termination")]
+    [Fact(DisplayName = "§Mission Completion — session proposes completion at the mission endpoint and observes termination")]
     public async Task Session_ProposeCompletion_Terminates()
     {
         var handler = new SessionHandler();
@@ -144,7 +144,10 @@ public class GovernanceClientBuilderTests
         var terminated = await session.ProposeCompletionAsync("All booked.");
 
         Assert.True(terminated);
-        Assert.Equal("completion", (string?)handler.LastInteractionBody?["type"]);
+        Assert.Equal("/mission/" + session.Mission.S256, handler.LastMissionActionPath);
+        Assert.Equal("completion", (string?)handler.LastMissionActionBody?["action"]);
+        Assert.Equal("All booked.", (string?)handler.LastMissionActionBody?["summary"]);
+        Assert.Null(handler.LastInteractionBody);
     }
 
     /// <summary>PS mock that serves the governance endpoints and captures request bodies.</summary>
@@ -153,6 +156,8 @@ public class GovernanceClientBuilderTests
         public JsonObject? LastPermissionBody { get; private set; }
         public JsonObject? LastAuditBody { get; private set; }
         public JsonObject? LastInteractionBody { get; private set; }
+        public string? LastMissionActionPath { get; private set; }
+        public JsonObject? LastMissionActionBody { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken ct)
@@ -165,12 +170,19 @@ public class GovernanceClientBuilderTests
                 {
                     ["issuer"] = Ps,
                     ["jwks_uri"] = Ps + "/jwks",
-                    ["token_endpoint"] = Ps + "/token",
+                    ["auth_token_endpoint"] = Ps + "/token",
                     ["mission_endpoint"] = Ps + "/mission",
                     ["permission_endpoint"] = Ps + "/permission",
                     ["audit_endpoint"] = Ps + "/audit",
                     ["interaction_endpoint"] = Ps + "/interaction",
                 });
+            }
+
+            if (path.StartsWith("/mission/", StringComparison.Ordinal))
+            {
+                LastMissionActionPath = path;
+                LastMissionActionBody = await ReadBody(request, ct);
+                return Json(HttpStatusCode.OK, new JsonObject { ["mission_status"] = "terminated" });
             }
 
             switch (path)
@@ -182,7 +194,6 @@ public class GovernanceClientBuilderTests
                     var tools = proposal?["tools"] as JsonArray ?? new JsonArray();
                     var blob = new JsonObject
                     {
-                        ["approver"] = Ps,
                         ["agent"] = "aauth:assistant@agent.example",
                         ["approved_at"] = "2026-04-07T14:30:00Z",
                         ["description"] = description,
@@ -190,15 +201,11 @@ public class GovernanceClientBuilderTests
                     };
                     var bytes = Encoding.UTF8.GetBytes(blob.ToJsonString());
                     var s256 = Base64UrlEncoder.Encode(SHA256.HashData(bytes));
-                    var resp = new HttpResponseMessage(HttpStatusCode.OK)
+                    return Json(HttpStatusCode.OK, new JsonObject
                     {
-                        Content = new ByteArrayContent(bytes),
-                    };
-                    resp.Content.Headers.ContentType =
-                        new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-                    resp.Headers.TryAddWithoutValidation(
-                        "AAuth-Mission", $"approver=\"{Ps}\"; s256=\"{s256}\"");
-                    return resp;
+                        ["s256"] = s256,
+                        ["mission"] = Base64UrlEncoder.Encode(bytes),
+                    });
                 }
 
                 case "/permission":
@@ -216,7 +223,6 @@ public class GovernanceClientBuilderTests
                     return type switch
                     {
                         "question" => Json(HttpStatusCode.OK, new JsonObject { ["answer"] = "Yes, go ahead." }),
-                        "completion" => Json(HttpStatusCode.OK, new JsonObject { ["mission_status"] = "terminated" }),
                         _ => new HttpResponseMessage(HttpStatusCode.OK),
                     };
                 }

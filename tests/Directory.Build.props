@@ -17,6 +17,7 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.10.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
@@ -25,6 +26,7 @@
     <Using Include="Xunit" />
     <Using Include="AAuth.Testing" />
     <Compile Include="$(MSBuildThisFileDirectory)TestEgress.cs" Link="TestEgress.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)TestEnvironment.cs" Link="TestEnvironment.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TestConsentBrowser.cs" Link="TestConsentBrowser.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TestScopeDefinitions.cs" Link="TestScopeDefinitions.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TestTokens.cs" Link="TestTokens.cs" />

@@ -14,14 +14,15 @@ public static class EventsTokens
     public const string AgentDwk = "aauth-agent.json";
     public const string ResourceDwk = "aauth-resource.json";
 
-    public static string Create(IAAuthKey key, string keyId, JsonObject payload, bool subscribe,
-        TokenVerifier? verifier = null)
+    public static async ValueTask<string> CreateAsync(IAAuthSigner key, string keyId, JsonObject payload, bool subscribe,
+        TokenVerifier? verifier = null, CancellationToken cancellationToken = default)
     {
         var header = new JsonObject { ["alg"] = key.Algorithm, ["kid"] = keyId,
             ["typ"] = subscribe ? SubscribeType : EventType };
         var input = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(header.ToJsonString())) + "."
             + Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(payload.ToJsonString()));
-        var jwt = input + "." + Base64UrlEncoder.Encode(key.Sign(Encoding.ASCII.GetBytes(input)));
+        var signature = await key.SignAsync(Encoding.ASCII.GetBytes(input), cancellationToken).ConfigureAwait(false);
+        var jwt = input + "." + Base64UrlEncoder.Encode(signature);
         Verify(jwt, key, subscribe, verifier ?? new TokenVerifier());
         return jwt;
     }
@@ -37,7 +38,7 @@ public static class EventsTokens
         var actualAudience = RequireText(payload, "aud");
         if (audience is not null && actualAudience != audience)
             throw new TokenVerificationException("Event audience mismatch.");
-        var now = verifier.Clock().ToUnixTimeSeconds();
+        var now = verifier.TimeProvider.GetUtcNow().ToUnixTimeSeconds();
         if (payload["iat"] is not JsonValue issued || !issued.TryGetValue<long>(out var iat) || iat > now
             || token.ExpiresAt.ToUnixTimeSeconds() <= now || token.ExpiresAt.ToUnixTimeSeconds() <= iat)
             throw new TokenVerificationException("Events require a current iat and a future exp.");
@@ -61,6 +62,7 @@ public static class EventsTokens
         }
         else if (payload.ContainsKey("cnf") || !AgentId.TryParse(actualAudience, out _, out _, verifier.EgressPolicy))
             throw new TokenVerificationException("Event tokens forbid cnf and require an agent audience.");
+        else RequireText(payload, "jti");
         return token;
     }
 

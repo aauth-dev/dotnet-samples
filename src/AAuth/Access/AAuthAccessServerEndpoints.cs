@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
@@ -24,25 +25,40 @@ namespace AAuth.Access;
 /// </summary>
 public sealed class AAuthAccessServerOptions
 {
-    public AAuthEgressPolicy EgressPolicy { get; init; } = AAuthEgressPolicy.Production;
-    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+    public AAuthEgressPolicy EgressPolicy { get; set; } = AAuthEgressPolicy.Production;
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
     /// <summary>HTTPS URL of this Access Server (<c>iss</c> of minted auth tokens).</summary>
-    public required string Issuer { get; init; }
+    public string Issuer { get; set; } = "";
 
     /// <summary>
-    /// The AS signing keys, keyed by <c>kid</c>. Published at the JWKS and used
-    /// to sign minted auth tokens (the first entry signs).
+    /// The AS signing keys, keyed by <c>kid</c>. Published at the JWKS; minted tokens are
+    /// signed with the active key.
     /// </summary>
-    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; init; }
+    public AAuthSigningKeySet SigningKeys { get; set; } = new();
+
+    /// <summary>
+    /// A handle in the registered <see cref="IKeyStore"/> to load the signing key from when
+    /// <see cref="SigningKeys"/> is empty.
+    /// </summary>
+    public string? KeyHandle { get; set; }
+
+    /// <summary>The <c>kid</c> for the key loaded from <see cref="KeyHandle"/> (default: its thumbprint).</summary>
+    public string? KeyId { get; set; }
+
+    /// <summary>
+    /// Serve this instance only for requests whose <c>Host</c> is the issuer's authority.
+    /// Required when several AAuth roles or instances share one host.
+    /// </summary>
+    public bool MatchIssuerHost { get; set; }
 
     /// <summary>The token endpoint path. Default <c>/token</c>.</summary>
-    public string TokenPath { get; init; } = "/token";
-    public string RevocationPath { get; init; } = "/revoke";
-    public Action<AAuthRevocationOptions>? ConfigureRevocation { get; init; }
+    public string TokenPath { get; set; } = "/token";
+    public string RevocationPath { get; set; } = "/revoke";
+    public Action<AAuthRevocationOptions>? ConfigureRevocation { get; set; }
 
     /// <summary>The pending (poll/push) path prefix. Default <c>/pending</c>.</summary>
-    public string PendingPathPrefix { get; init; } = "/pending";
+    public string PendingPathPrefix { get; set; } = "/pending";
 
     /// <summary>
     /// The fallback scope when the resource token carries none. Default empty:
@@ -50,40 +66,30 @@ public sealed class AAuthAccessServerOptions
     /// a scopeless auth token (still valid via its <c>sub</c>) rather than
     /// injecting an arbitrary scope.
     /// </summary>
-    public string DefaultScope { get; init; } = "";
+    public string DefaultScope { get; set; } = "";
 
     /// <summary>
-    /// Person Server allow-list this AS will broker for, matched on the caller's
-    /// <c>jwks_uri</c> host. <b>Open by default (spec-compliant):</b> when
-    /// <c>null</c>, any validly-signed PS is brokered — §PS-AS Trust Establishment
-    /// requires no separate registration step. An <b>empty</b> set denies all; a
-    /// non-empty set restricts (pre-established trust). Composed by AND with
-    /// <see cref="IsTrustedPersonServer"/>.
+    /// Trust for this Access Server. <see cref="AAuthTrustOptions.PersonServers"/> is
+    /// matched on the calling Person Server's identifier. <b>Open by default
+    /// (spec-compliant):</b> any validly-signed PS is brokered; §PS-AS Trust
+    /// Establishment requires no separate registration step. An <b>empty</b>
+    /// <see cref="AAuthTrustRule.Allowed"/> set denies all.
     /// </summary>
-    public IReadOnlyCollection<string>? TrustedPersonServers { get; init; }
-
-    /// <summary>
-    /// Optional trust policy for Person Servers, evaluated per caller
-    /// <c>jwks_uri</c> host and composed by AND with
-    /// <see cref="TrustedPersonServers"/>. <c>null</c> ⇒ no policy constraint.
-    /// Assign <see cref="AAuth.Server.AAuthTrust.Any"/> to state intentional open
-    /// trust explicitly.
-    /// </summary>
-    public Func<string, bool>? IsTrustedPersonServer { get; init; }
+    public AAuthTrustOptions Trust { get; set; } = new();
 
     /// <summary>
     /// Optional hook deriving baseline policy claims from the verified agent id
     /// (e.g. a demo admin-role convention). A production AS receives the
     /// principal's claims via the §Claims Required push instead.
     /// </summary>
-    public Func<string, JsonObject?>? DeriveAgentClaims { get; init; }
+    public Func<string, JsonObject?>? DeriveAgentClaims { get; set; }
 
     /// <summary>
     /// The AS-hosted login path advertised on <c>requirement=interaction</c>.
     /// Default <c>/interaction/login</c>. The caller maps this endpoint and
     /// resolves the verdict against the shared <see cref="IAccessPendingStore"/>.
     /// </summary>
-    public string InteractionLoginPath { get; init; } = "/interaction/login";
+    public string InteractionLoginPath { get; set; } = "/interaction/login";
 }
 
 /// <summary>
@@ -104,91 +110,44 @@ public static class AAuthAccessServerEndpoints
     /// <see cref="JwksClient"/>, <see cref="IAccessPolicy"/>, and
     /// <see cref="IAccessPendingStore"/> from DI.
     /// </summary>
-    public static WebApplication MapAAuthAccessServer(
-        this WebApplication app,
-        AAuthAccessServerOptions options)
+    public static WebApplication MapAAuthAccessServer(this WebApplication app, string? name = null)
     {
         ArgumentNullException.ThrowIfNull(app);
-        ArgumentNullException.ThrowIfNull(options);
-
-        if (options.SigningKeys.Count == 0)
-        {
-            throw new InvalidOperationException("AAuthAccessServerOptions.SigningKeys must contain at least one key.");
-        }
-
-        // Fail fast on misconfigured spec-constrained URLs/paths: the issuer is the
-        // auth-token `iss`/`aud` anchor (MUST be absolute https), the login path is
-        // appended with `?code=…` (so it carries no query/fragment), and each trusted
-        // Person Server is a four-party anchor (MUST be absolute https).
-        if (!AAuth.AAuthUrl.IsHttpsOrLoopback(options.Issuer, options.EgressPolicy))
-        {
-            throw new InvalidOperationException(
-                "AAuthAccessServerOptions.Issuer must be an absolute https URL (loopback http allowed for development).");
-        }
-        if (options.InteractionLoginPath is { } loginPathRaw
-            && (loginPathRaw.Contains('?') || loginPathRaw.Contains('#')))
-        {
-            throw new InvalidOperationException(
-                "AAuthAccessServerOptions.InteractionLoginPath must not contain a query or fragment.");
-        }
-        foreach (var trustedPs in options.TrustedPersonServers ?? Array.Empty<string>())
-        {
-            if (!AAuth.AAuthUrl.IsHttpsOrLoopback(trustedPs, options.EgressPolicy))
-            {
-                throw new InvalidOperationException(
-                    $"AAuthAccessServerOptions.TrustedPersonServers entry '{trustedPs}' must be an absolute https URL " +
-                    "(loopback http allowed for development).");
-            }
-        }
-
-        string signingKid = string.Empty;
-        IAAuthKey signingKey = null!;
-        foreach (var (kid, key) in options.SigningKeys)
-        {
-            signingKid = kid;
-            signingKey = key;
-            break;
-        }
+        name ??= AAuthAccessServerBuilder.DefaultName;
+        var identity = app.Services.GetKeyedService<IAAuthServerIdentity>(name)
+            ?? throw new InvalidOperationException($"No Access Server named '{name}' is registered; call AddAAuthAccessServer first.");
+        var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<AAuthAccessServerOptions>>().Get(name);
+        _ = identity.SigningKeys.Active;
 
         var issuer = options.Issuer;
-        var inventory = app.MapAAuthIssuerRevocation(issuer, AuthTokenBuilder.AccessDwk,
-            signingKey, signingKid, options.RevocationPath, options.EgressPolicy, options.TimeProvider, options.ConfigureRevocation);
+        var (routes, inScope) = AAuthServerRoles.Scope(app, issuer, options.MatchIssuerHost);
+        var inventory = RevocationEndpoint.MapIssuerRevocationCore(app, routes, inScope,
+            app.Services.GetRequiredKeyedService<AAuthRevocationService>(name), options.RevocationPath, options.ConfigureRevocation);
         var loginPath = "/" + options.InteractionLoginPath.Trim('/');
         var interactionPrefix = loginPath.Split('/', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } seg
             ? "/" + seg[0]
             : loginPath;
-
-        var trustedPsHosts = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var ps in options.TrustedPersonServers ?? Array.Empty<string>())
-        {
-            if (Uri.TryCreate(ps, UriKind.Absolute, out var psUri))
-            {
-                trustedPsHosts.Add(ps);
-            }
-        }
-
-        // Preserve null (open: broker any verifiable PS) vs. empty (deny all). The
-        // host set drives membership; the nullable form drives the open/empty split.
-        IReadOnlyCollection<string>? trustedPsHostsOrNull =
-            options.TrustedPersonServers is null ? null : trustedPsHosts;
+        var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AAuth.AccessServer");
+        AAuthServerRoles.RejectDevelopmentLoopbackInProduction(app.Services, $"Access Server '{name}'", options.EgressPolicy);
+        AAuthServerRoles.WarnOnDevelopmentLoopback(app.Services, logger, "Access Server", name, options.EgressPolicy);
 
         // Startup footgun guard (diagnostics only): warn when brokering is open by
         // default. Suppressed by any explicit policy (including AAuthTrust.Any).
         TrustConfigDiagnostics.WarnIfOpenFederation(
-            app.Services.GetService<ILoggerFactory>()?.CreateLogger("AAuth.AccessServer"),
-            trustConfigured: options.TrustedPersonServers is not null || options.IsTrustedPersonServer is not null,
+            logger,
+            trustConfigured: options.Trust.IsConfigured(AAuthTrustedParty.PersonServer, app.Services),
             "MapAAuthAccessServer",
-            "this Access Server brokers for any verifiable Person Server because no TrustedPersonServers / " +
-            "IsTrustedPersonServer policy is configured (the AAuth spec default). Configure a policy to " +
+            "this Access Server brokers for any verifiable Person Server because no Trust.PersonServers " +
+            "policy is configured (the AAuth spec default). Configure a policy to " +
             "restrict, or assign AAuthTrust.Any to declare intentional open brokering and silence this warning.");
 
         // 1. Well-known metadata + JWKS (reachable without a signature).
-        WellKnownEndpoints.MapAAuthAccessServerWellKnown(app, new AAuthAccessServerMetadataOptions
+        WellKnownEndpoints.MapAAuthAccessServerWellKnown(routes, new AAuthAccessServerMetadataOptions
         {
             EgressPolicy = options.EgressPolicy,
             Issuer = options.Issuer,
-            TokenEndpoint = $"{issuer}{options.TokenPath}",
-            SigningKeys = new Dictionary<string, IAAuthKey>(options.SigningKeys),
+            AuthTokenEndpoint = $"{issuer}{options.TokenPath}",
+            SigningKeys = options.SigningKeys,
             RevocationEndpoint = $"{issuer}{options.RevocationPath}",
         });
 
@@ -196,16 +155,18 @@ public static class AAuthAccessServerEndpoints
         //    with verified metadata discovery; the browser-facing interaction
         //    endpoints carry no signature, so exclude them.
         app.UseWhen(
-            ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
-                && ctx.Request.Path != options.RevocationPath
+            ctx => inScope(ctx)
+                && !ctx.Request.Path.StartsWithSegments("/.well-known")
+                && !ctx.Request.Path.StartsWithSegments(options.RevocationPath)
                 && !ctx.Request.Path.StartsWithSegments(interactionPrefix),
-            branch => branch.UseAAuthVerification(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy, AcceptedSchemes = ["jwks_uri", "jwt"], Clock = () => options.TimeProvider.GetUtcNow() }));
+            branch => branch.UseAAuthVerificationCore(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy, AcceptedSchemes = ["jwks_uri"], RequireBodyCoverage = true, TimeProvider = options.TimeProvider }));
 
-        var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
+        var tokenVerifier = app.Services.GetRequiredKeyedService<TokenVerifier>(name);
         var metadataClient = app.Services.GetRequiredService<MetadataClient>();
         var jwksClient = app.Services.GetRequiredService<JwksClient>();
-        var policy = app.Services.GetRequiredService<IAccessPolicy>();
-        var pending = app.Services.GetRequiredService<IAccessPendingStore>();
+        var policy = app.Services.GetRequiredKeyedService<IAccessPolicy>(name);
+        var pending = app.Services.GetRequiredKeyedService<IAccessPendingStore>(name);
+        AAuthServerRoles.WarnOnInMemoryDefaults(app.Services, logger, "Access Server", name, pending, inventory);
 
         bool IsVerifiedPersonServer(HttpContext context)
         {
@@ -220,32 +181,24 @@ public static class AAuthAccessServerEndpoints
         // scheme, its host MUST be trusted (when a trust set is configured),
         // and it MUST be the same Person Server that parked the entry. Returns
         // a failure result, or null when authorized.
-        IResult? AuthorizePsCaller(HttpContext c, AccessPendingEntry entry)
+        async Task<IResult?> AuthorizePsCallerAsync(HttpContext c, AccessPendingEntry entry)
         {
             var parsedKey = c.GetAAuthParsedKey();
-            if (entry.OwnerAgentIssuer is not null)
-            {
-                if (parsedKey?.Scheme != AAuthConstants.Schemes.Jwt
-                    || c.GetAAuthTokenType() != AAuthTokenType.AgentToken
-                    || (string?)parsedKey.Payload?["iss"] != entry.OwnerAgentIssuer
-                    || (string?)parsedKey.Payload?["sub"] != entry.OwnerAgentSubject
-                    || c.GetAAuthVerification()?.Jkt != entry.OwnerKeyThumbprint)
-                    return AAuthProblemDetails.Create("unknown_interaction", statusCode: 403);
-                return null;
-            }
             if (parsedKey is null || parsedKey.Scheme != AAuthConstants.Schemes.JwksUri)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_carrier", "expected jwks_uri scheme", statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.UnsupportedScheme,
+                    acceptedSchemes: [AAuthConstants.Schemes.JwksUri]);
             }
 
             if (!IsVerifiedPersonServer(c))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "A verified Person Server metadata role is required.", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
 
-            if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, parsedKey.Identifier!))
+            if (!await options.Trust.IsTrustedAsync(parsedKey.Identifier!, AAuthTrustedParty.PersonServer,
+                    c.RequestServices, c, cancellationToken: c.RequestAborted).ConfigureAwait(false))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", $"jwks_uri '{parsedKey.JwksUri}' is not a trusted Person Server", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
 
             if (entry.OriginPersonServerHost is not { Length: > 0 } origin
@@ -253,73 +206,70 @@ public static class AAuthAccessServerEndpoints
                 || entry.OwnerKeyThumbprint is null
                 || !string.Equals(entry.OwnerKeyThumbprint, c.GetAAuthVerification()?.Jkt, StringComparison.Ordinal))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "pending entry belongs to a different Person Server", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
 
             return null;
         }
 
-        string Mint(
-            string resourceUrl, string agentId, string scope, IAAuthKey confirmationKey,
-            string? subject, string? tenant, IReadOnlyDictionary<string, JsonNode?>? additionalClaims,
-            DateTimeOffset agentTokenExpiresAt, DateTimeOffset? authorizationExpiresAt = null,
-            JsonObject? upstreamAct = null, IReadOnlyList<string>? roles = null, IReadOnlyList<string>? groups = null,
-            JsonObject? resourceContext = null) =>
-            new AuthTokenBuilder
+        // §Auth Token Structure: `ps`, `sub`, `tenant`, `mission_s256` and `account`
+        // are copied from the verified resource token (and so from the presented
+        // token); policy supplies scope and any additional identity claims.
+        ValueTask<string> Mint(CancellationToken cancellationToken,
+            string resourceUrl, string scope, IAAuthKey confirmationKey, JsonObject resourceContext,
+            string? tenant, IReadOnlyDictionary<string, JsonNode?>? additionalClaims,
+            DateTimeOffset agentTokenExpiresAt, DateTimeOffset? authorizationExpiresAt,
+            IReadOnlyList<string>? roles = null, IReadOnlyList<string>? groups = null)
+        {
+            var (signingKid, signingKey) = options.SigningKeys.Active;
+            return new AuthTokenBuilder
             {
                 EgressPolicy = options.EgressPolicy,
                 Issuer = options.Issuer,
+                PersonServer = (string?)resourceContext["ps"]
+                    ?? throw new TokenVerificationException("Resource token is missing 'ps'."),
                 Audience = resourceUrl,
-                Agent = agentId,
                 AgentConfirmationKey = confirmationKey,
                 AgentTokenExpiresAt = agentTokenExpiresAt,
                 AuthorizationExpiresAt = authorizationExpiresAt,
                 TimeProvider = options.TimeProvider,
-                Act = upstreamAct,
-                Mission = resourceContext is null ? null : MissionClaim.FromPayload(resourceContext, options.EgressPolicy),
+                MissionS256 = MissionReference.Read(resourceContext),
                 Account = AccountBinding.Read(resourceContext),
                 Key = signingKey,
                 KeyId = signingKid,
-                Subject = subject,
+                Subject = (string?)resourceContext["sub"]
+                    ?? throw new TokenVerificationException("Resource token is missing 'sub'."),
                 Scope = scope,
-                Tenant = tenant,
+                Tenant = (string?)resourceContext["tenant"] ?? tenant,
                 Roles = roles,
                 Groups = groups,
                 Dwk = AuthTokenBuilder.AccessDwk,
                 AdditionalClaims = additionalClaims,
-            }.Build();
+            }.BuildAsync(cancellationToken);
+        }
 
         // -------------------------------------------------------------------
-        // POST {TokenPath} — the AS token endpoint (§AS Token Endpoint).
+        // POST {TokenPath} — the AS token endpoint (§PS-to-AS Token Request).
         // -------------------------------------------------------------------
-        app.MapPost(options.TokenPath, async (HttpContext ctx) =>
+        routes.MapPost(options.TokenPath, async (HttpContext ctx) =>
         {
             var parsed = ctx.GetAAuthParsedKey()!;
-
-            var direct = parsed.Scheme == AAuthConstants.Schemes.Jwt;
-            if (direct && ctx.GetAAuthTokenType() != AAuthTokenType.AgentToken)
-                return AAuthProblemDetails.Create("invalid_carrier_token", "Direct chaining requires the intermediary agent token.", statusCode: 403);
-            if (!direct && parsed.Scheme != AAuthConstants.Schemes.JwksUri)
+            // §PS-AS Federation: the PS is the only entity that calls AS token endpoints.
+            if (parsed.Scheme != AAuthConstants.Schemes.JwksUri)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_carrier", $"expected jwks_uri scheme, got {parsed.Scheme}", statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.UnsupportedScheme,
+                    acceptedSchemes: [AAuthConstants.Schemes.JwksUri]);
             }
-
-            if (!direct)
+            var personServer = parsed.Identifier!;
+            if (!IsVerifiedPersonServer(ctx))
             {
-                var jwksUri = parsed.Identifier;
-                if (!IsVerifiedPersonServer(ctx))
-                {
-                    return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "A verified Person Server metadata role is required.", statusCode: StatusCodes.Status403Forbidden);
-                }
-                if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, jwksUri!))
-                {
-                    return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", $"jwks_uri '{jwksUri}' is not a trusted Person Server", statusCode: StatusCodes.Status403Forbidden);
-                }
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
             }
-
-            // The PS host that signs this /token call owns any pending entry we
-            // park below; the pending poll/push endpoints re-pin to it (F2).
-            var originPsHost = direct ? null : parsed.Identifier;
+            if (!await options.Trust.IsTrustedAsync(personServer, AAuthTrustedParty.PersonServer,
+                    ctx.RequestServices, ctx, cancellationToken: ctx.RequestAborted).ConfigureAwait(false))
+            {
+                return AAuth.Server.AAuthProblemDetails.SignatureFailure(AAuth.Errors.SignatureErrorCode.InvalidKey);
+            }
 
             JsonObject? body;
             try
@@ -332,84 +282,75 @@ public static class AAuthAccessServerEndpoints
             }
             catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
 
-            if (direct && body?["agent_token"] is not null)
-                return AAuthProblemDetails.Create("invalid_request", "Direct chaining takes its agent token only from Signature-Key.", statusCode: 400);
-            if (direct && string.IsNullOrEmpty(StringMember(body, "upstream_token")))
-                return AAuthProblemDetails.Create("invalid_request", "Direct chaining requires upstream_token.", statusCode: 400);
-            var agentTokenJwt = direct ? parsed.Jwt : (string?)body?["agent_token"];
-            if (string.IsNullOrEmpty(agentTokenJwt))
+            var agentTokenJwt = StringMember(body, "agent_token");
+            var resourceTokenJwt = StringMember(body, "resource_token");
+            var presentedTokenJwt = StringMember(body, "presented_token");
+            if (string.IsNullOrEmpty(agentTokenJwt) || string.IsNullOrEmpty(resourceTokenJwt) || string.IsNullOrEmpty(presentedTokenJwt))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing agent_token", statusCode: StatusCodes.Status400BadRequest);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "agent_token, resource_token and presented_token are required", statusCode: StatusCodes.Status400BadRequest);
             }
 
-            var resourceTokenJwt = (string?)body?["resource_token"];
-            if (string.IsNullOrEmpty(resourceTokenJwt))
-            {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing resource_token", statusCode: StatusCodes.Status400BadRequest);
-            }
-
-            // Verify the agent token; extract the agent id + confirmation key.
+            // Verify the agent, sub-agent and upstream tokens. At the AS an upstream
+            // person token's iss / auth token's ps MUST be the signing PS; the
+            // upstream auth token's iss is not checked beyond its signature.
             AgentIssuanceContext issuance;
-            IReadOnlyList<TokenKey> sourceTokens;
             try
             {
                 issuance = await AgentIssuanceContext.VerifyAsync(
-                    agentTokenJwt, (string?)body?["subagent_token"], (string?)body?["upstream_token"],
-                    tokenVerifier, metadataClient, jwksClient,
-                    upstreamIssuer => string.Equals(upstreamIssuer, issuer, StringComparison.Ordinal)
-                        || string.Equals(upstreamIssuer, parsed.Identifier, StringComparison.Ordinal),
-                    ctx.RequestAborted);
-                if (direct && (issuance.Upstream?.Issuer != issuer
-                    || issuance.Upstream.IssuerDwk != AuthTokenBuilder.AccessDwk || issuance.Upstream.Mission is not null))
-                    throw new TokenVerificationException("Direct AS chaining requires this AS's no-mission upstream authorization.");
+                    agentTokenJwt, StringMember(body, "subagent_token"), StringMember(body, "upstream_token"), personServer,
+                    tokenVerifier, metadataClient, jwksClient, static (_, _) => ValueTask.FromResult(true), ctx.RequestAborted, TokenCredential.Agent);
             }
             catch (TokenVerificationException ex)
             {
                 return AAuthProblemDetails.TokenFailure(ex);
             }
 
-            var agentId = issuance.AgentId;
-            var agentConfirmationKey = issuance.ConfirmationKey;
-            var agentTokenExpiresAt = issuance.AgentTokenExpiresAt;
-
-            // Verify the resource token. `aud` MUST be this AS; `iss` becomes
-            // the auth token's `aud` and `scope` is echoed.
-            string audience;
-            JsonObject resourceContext;
-            var requestedScope = options.DefaultScope;
+            // §Resource Token Verification: `aud` is this AS, `agent_jkt` the key the
+            // auth token will bind, `ps` the signing PS; the presented token pairs by
+            // jti/ps/sub/mission_s256/tenant.
+            TokenVerifier.VerifiedToken resource, presented;
             try
             {
-                var verifiedResourceToken = await tokenVerifier.VerifyResourceTokenAsync(
-                    resourceTokenJwt,
-                    expectedAudience: options.Issuer,
-                    expectedAgentId: agentId,
-                    expectedAgentJkt: agentConfirmationKey.ComputeJwkThumbprint(),
-                    metadataClient, jwksClient, expectedApprover: originPsHost);
-
-                audience = (string?)verifiedResourceToken.Payload["iss"]
-                    ?? throw new TokenVerificationException("resource_token missing iss");
-                resourceContext = (JsonObject)verifiedResourceToken.Payload.DeepClone();
-                issuance.ValidateResourceContext(resourceContext, originPsHost);
-                if (direct && resourceContext["mission"] is not null)
-                    throw new TokenVerificationException("Mission authorization must be routed through its governing PS.");
-                var scopeClaim = (string?)verifiedResourceToken.Payload["scope"];
-                if (!string.IsNullOrWhiteSpace(scopeClaim))
-                {
-                    requestedScope = scopeClaim;
-                }
+                resource = await tokenVerifier.VerifyResourceTokenAsync(resourceTokenJwt, options.Issuer,
+                    issuance.ConfirmationKey.ComputeJwkThumbprint(), metadataClient, jwksClient,
+                    expectedPersonServer: personServer, cancellationToken: ctx.RequestAborted);
+                _ = resource.Account;
+                // §Token Revocation: a resource token its resource withdrew never backs an auth token.
+                if (await inventory.IsRevokedAsync(TokenRegistration.FromVerified(resource).Token, ctx.RequestAborted))
+                    throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.RevokedJwt, "The resource token has been revoked.");
             }
             catch (TokenVerificationException ex)
             {
-                var expired = ex.Code == AAuth.Errors.SignatureErrorCode.ExpiredJwt;
-                // §Token Endpoint Error Codes: invalid_resource_token / expired_resource_token
-                // are 400 (a bad token parameter in the body), not 401 — 401 is reserved for
-                // request-signature failures carrying a Signature-Error header (§Authentication
-                // Errors). The request itself was correctly signed; the resource_token is invalid.
-                return AAuth.Server.AAuthProblemDetails.Create(expired ? "expired_resource_token" : "invalid_resource_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
+                return AAuthProblemDetails.TokenFailure(ex, TokenCredential.Resource);
+            }
+            try
+            {
+                presented = await tokenVerifier.WithLocalIssuer(issuer, options.SigningKeys)
+                    .VerifyPresentedTokenAsync(presentedTokenJwt, resource, metadataClient, jwksClient, ctx.RequestAborted);
+                issuance.ValidateResourceContext(resource.Payload);
+            }
+            catch (TokenVerificationException ex)
+            {
+                return AAuthProblemDetails.TokenFailure(ex, TokenCredential.Resource);
             }
 
-            try { sourceTokens = await TokenRegistration.RegisterAsync(inventory, issuance.SourceTokens, ctx.RequestAborted); }
-            catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
+            var agentId = issuance.AgentId;
+            var agentConfirmationKey = issuance.ConfirmationKey;
+            var agentTokenExpiresAt = issuance.AgentTokenExpiresAt;
+            var ceiling = presented.ExpiresAt < issuance.ExpiresAt ? presented.ExpiresAt : issuance.ExpiresAt;
+            var audience = resource.Issuer;
+            var resourceContext = (JsonObject)resource.Payload.DeepClone();
+            var requestedScope = (string?)resource.Payload["scope"] is { } scopeClaim && !string.IsNullOrWhiteSpace(scopeClaim)
+                ? scopeClaim : options.DefaultScope;
+
+            IReadOnlyList<TokenRegistration> sourceRegistrations =
+                [.. issuance.SourceTokens, TokenRegistration.FromVerified(resource, TokenCredential.Resource),
+                    TokenRegistration.FromVerified(presented, TokenCredential.Presented)];
+            try
+            {
+                await TokenRegistration.RegisterAsync(inventory, sourceRegistrations, ctx.RequestAborted);
+            }
+            catch (TokenVerificationException ex) { return AAuthProblemDetails.SourceRevoked(ex); }
 
             var policyClaims = options.DeriveAgentClaims?.Invoke(agentId);
             AccessDecision decision;
@@ -422,39 +363,35 @@ public static class AAuthAccessServerEndpoints
                     AgentId = agentId,
                     Claims = policyClaims,
                     ResourceContext = resourceContext,
-                    PersonServerIssuer = originPsHost,
+                    PersonServerIssuer = personServer,
                     UpstreamAuthorization = issuance.Upstream,
                 });
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("policy_unavailable", ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+                return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, ex.Message);
             }
 
             if (InvalidClaimPolicy(decision))
-                return AAuthProblemDetails.Create("policy_error", "Requested or projected claims contain protocol-owned names.", statusCode: StatusCodes.Status500InternalServerError);
+                return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, "Requested or projected claims contain protocol-owned names.");
 
-            if (direct && decision.Kind == AccessDecisionKind.NeedsClaims)
-                return AAuthProblemDetails.Create("denied", "An intermediary cannot assert PS identity claims.", statusCode: 403);
-
-            void BindOwner(AccessPendingEntry entry)
+            AccessPendingEntry Park(IReadOnlyList<string>? requiredClaims = null)
             {
-                entry.OriginPersonServerHost = originPsHost;
-                entry.OwnerAgentIssuer = direct ? (string?)parsed.Payload?["iss"] : null;
-                entry.OwnerAgentSubject = direct ? (string?)parsed.Payload?["sub"] : null;
+                var entry = pending.Add(audience, requestedScope, agentId, agentConfirmationKey, agentTokenExpiresAt, policyClaims,
+                    requiredClaims, ceiling);
+                entry.OriginPersonServerHost = personServer;
+                entry.UpstreamAuthorization = issuance.Upstream;
+                entry.SourceTokens = sourceRegistrations;
+                entry.OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt;
+                entry.ResourceContext = resourceContext;
+                return entry;
             }
 
             switch (decision.Kind)
             {
                 case AccessDecisionKind.NeedsClarification:
                     {
-                        var entry = pending.Add(audience, requestedScope, agentId, agentConfirmationKey, agentTokenExpiresAt, policyClaims,
-                            authorizationExpiresAt: issuance.ExpiresAt, upstreamAct: issuance.Act);
-                        BindOwner(entry);
-                        entry.UpstreamAuthorization = issuance.Upstream;
-                        entry.SourceTokens = sourceTokens;
-                        entry.OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt;
-                        entry.ResourceContext = resourceContext;
+                        var entry = Park();
                         SetClarification(entry, decision.Clarification!);
                         return Clarification202(ctx, entry);
                     }
@@ -462,24 +399,14 @@ public static class AAuthAccessServerEndpoints
                     return AAuth.Server.AAuthProblemDetails.Create("denied", decision.Reason, statusCode: StatusCodes.Status403Forbidden);
                 case AccessDecisionKind.NeedsPayment:
                     {
-                        // §Payment Required: Location MUST be present.
-                        if (string.IsNullOrWhiteSpace(decision.PaymentUrl))
-                        {
-                            return AAuth.Server.AAuthProblemDetails.Create("policy_error", "NeedsPayment requires a payment Location", statusCode: StatusCodes.Status500InternalServerError);
-                        }
-                        ctx.Response.Headers.Location = decision.PaymentUrl;
-                        ctx.Response.Headers["Cache-Control"] = "no-store";
-                        return AAuth.Server.AAuthProblemDetails.Create("payment_required", statusCode: StatusCodes.Status402PaymentRequired);
+                        var entry = Park();
+                        entry.Status = AccessPendingStatus.PaymentRequired;
+                        entry.PaymentChallenge = decision.PaymentChallenge;
+                        return PaymentRequired402(ctx, entry, options);
                     }
                 case AccessDecisionKind.NeedsInteraction:
                     {
-                        var entry = pending.Add(audience, requestedScope, agentId, agentConfirmationKey, agentTokenExpiresAt, policyClaims,
-                            authorizationExpiresAt: issuance.ExpiresAt, upstreamAct: issuance.Act);
-                        BindOwner(entry);
-                        entry.UpstreamAuthorization = issuance.Upstream;
-                        entry.SourceTokens = sourceTokens;
-                        entry.OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt;
-                        entry.ResourceContext = resourceContext;
+                        var entry = Park();
                         ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
                         ctx.Response.Headers["Retry-After"] = "1";
                         ctx.Response.Headers["Cache-Control"] = "no-store";
@@ -489,14 +416,7 @@ public static class AAuthAccessServerEndpoints
                     }
                 case AccessDecisionKind.NeedsClaims:
                     {
-                        var entry = pending.Add(
-                            audience, requestedScope, agentId, agentConfirmationKey, agentTokenExpiresAt, policyClaims, decision.RequiredClaims,
-                            issuance.ExpiresAt, issuance.Act);
-                        BindOwner(entry);
-                        entry.UpstreamAuthorization = issuance.Upstream;
-                        entry.SourceTokens = sourceTokens;
-                        entry.OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt;
-                        entry.ResourceContext = resourceContext;
+                        var entry = Park(decision.RequiredClaims);
                         ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
                         ctx.Response.Headers["Retry-After"] = "0";
                         ctx.Response.Headers["Cache-Control"] = "no-store";
@@ -509,18 +429,17 @@ public static class AAuthAccessServerEndpoints
                 case AccessDecisionKind.Allow:
                 default:
                     var (allowTenant, allowClaims) = (decision.Tenant, decision.AdditionalClaims);
-                    return await AuthTokenResponse.CreateTrackedAsync(() => Mint(
-                            audience, agentId, requestedScope, agentConfirmationKey,
-                            decision.Subject, allowTenant, allowClaims, agentTokenExpiresAt,
-                            issuance.ExpiresAt, issuance.Act, resourceContext: resourceContext), issuance.ExpiresAt,
-                            inventory, sourceTokens, options.TimeProvider, ctx.RequestAborted);
+                    return await AuthTokenResponse.CreateTrackedAsync(ct => Mint(ct,
+                            audience, requestedScope, agentConfirmationKey, resourceContext,
+                            allowTenant, allowClaims, agentTokenExpiresAt, ceiling), ceiling,
+                            inventory, sourceRegistrations, "auth_token", options.TimeProvider, ctx.RequestAborted);
             }
         });
 
         // -------------------------------------------------------------------
         // GET {PendingPathPrefix}/{id} — the PS polls the deferred verdict.
         // -------------------------------------------------------------------
-        app.MapGet($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
+        routes.MapGet($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
         {
             var entry = pending.Get(id);
             if (entry is null)
@@ -528,13 +447,15 @@ public static class AAuthAccessServerEndpoints
                 return DeferredState.Missing(id);
             }
 
-            if (AuthorizePsCaller(ctx, entry) is { } pollFailure)
+            if (await AuthorizePsCallerAsync(ctx, entry) is { } pollFailure)
             {
                 return pollFailure;
             }
 
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
+                if (await PendingSourceFailureAsync(entry, ctx.RequestAborted) is { } sourceFailure)
+                    return sourceFailure;
                 if (entry.Status == AccessPendingStatus.Review)
                 {
                     var review = await EvaluatePendingAsync(entry, ctx);
@@ -544,15 +465,17 @@ public static class AAuthAccessServerEndpoints
                 {
                     case AccessPendingStatus.AwaitingClarification:
                         return Clarification202(ctx, entry);
+                    case AccessPendingStatus.PaymentRequired:
+                        return PaymentRequired402(ctx, entry, options);
                     case AccessPendingStatus.Allowed:
                         {
-                            if (entry.RequiredClaims?.Any(name => !AuthTokenBuilder.IsIdentityClaimAllowed(name)) == true)
-                                return AAuthProblemDetails.Create("policy_error", "Requested claims contain protocol-owned names.", statusCode: StatusCodes.Status500InternalServerError);
+                            if (ClaimsRequirement.ContainsForbiddenClaimName(entry.RequiredClaims))
+                                return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, "Requested claims contain protocol-owned names.");
                             var (tenant, roles, groups, claims) = ProjectIdentityClaims(entry.SuppliedClaims, entry.RequiredClaims);
-                            return await AuthTokenResponse.CreateTrackedAsync(() => Mint(
-                                    entry.ResourceUrl, entry.AgentId, entry.Scope, entry.AgentConfirmationKey,
-                                    entry.SuppliedSubject, tenant, claims, entry.AgentTokenExpiresAt,
-                                    entry.AuthorizationExpiresAt, entry.UpstreamAct, roles, groups, entry.ResourceContext), entry.ExpiresAt,
+                            return await AuthTokenResponse.CreateTrackedAsync(ct => Mint(ct,
+                                    entry.ResourceUrl, entry.Scope, entry.AgentConfirmationKey, entry.ResourceContext!,
+                                    tenant, claims, entry.AgentTokenExpiresAt,
+                                    entry.AuthorizationExpiresAt, roles, groups), entry.ExpiresAt,
                                     inventory, entry.SourceTokens, options.TimeProvider, ctx.RequestAborted);
                         }
                     case AccessPendingStatus.Denied:
@@ -579,9 +502,9 @@ public static class AAuthAccessServerEndpoints
 
         // -------------------------------------------------------------------
         // POST {PendingPathPrefix}/{id} — the §Claims Required push. The PS
-        // POSTs (signed) the requested identity claims incl. a directed `sub`.
+        // POSTs (signed) the requested identity claims; never `sub`.
         // -------------------------------------------------------------------
-        app.MapPost($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
+        routes.MapPost($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
         {
             var entry = pending.Get(id);
             if (entry is null)
@@ -589,13 +512,16 @@ public static class AAuthAccessServerEndpoints
                 return DeferredState.Missing(id);
             }
 
-            if (AuthorizePsCaller(ctx, entry) is { } pushFailure)
+            if (await AuthorizePsCallerAsync(ctx, entry) is { } pushFailure)
             {
                 return pushFailure;
             }
 
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
+                if (await PendingSourceFailureAsync(entry, ctx.RequestAborted) is { } sourceFailure)
+                    return sourceFailure;
+
                 JsonObject pushed;
                 try
                 {
@@ -610,9 +536,11 @@ public static class AAuthAccessServerEndpoints
                     var action = StringMember(pushed, "action");
                     var answer = StringMember(pushed, "clarification_response");
                     var replacementJwt = StringMember(pushed, "resource_token");
+                    var replacementPresentedJwt = StringMember(pushed, "presented_token");
                     if (action is not ("clarification_response" or "updated_request")
                         || (action == "clarification_response" && (string.IsNullOrWhiteSpace(answer) || pushed!.ContainsKey("resource_token")))
-                        || (action == "updated_request" && (replacementJwt is null || pushed!.ContainsKey("clarification_response")))
+                        || (action == "updated_request" && (replacementJwt is null || replacementPresentedJwt is null
+                            || pushed!.ContainsKey("clarification_response")))
                         || (pushed!.ContainsKey("justification") && StringMember(pushed, "justification") is null))
                         return AAuthProblemDetails.Create("invalid_request", "Expected matching clarification action and payload.", statusCode: StatusCodes.Status400BadRequest);
                     if (entry.ClarificationRounds >= AAuth.Agent.ClarificationExchange.DefaultMaxRounds)
@@ -627,19 +555,14 @@ public static class AAuthAccessServerEndpoints
                         catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
                         try
                         {
-                            var replacement = await tokenVerifier.VerifyResourceTokenAsync(replacementJwt!, issuer, entry.AgentId,
+                            var replacement = await tokenVerifier.VerifyResourceTokenAsync(replacementJwt!, issuer,
                                 entry.AgentConfirmationKey.ComputeJwkThumbprint(), metadataClient, jwksClient,
-                                expectedApprover: entry.OriginPersonServerHost);
-                            if (!string.Equals((string?)replacement.Payload["iss"], entry.ResourceUrl, StringComparison.Ordinal))
-                                throw new TokenVerificationException("Replacement resource issuer differs from original.");
+                                expectedPersonServer: entry.OriginPersonServerHost, cancellationToken: ctx.RequestAborted);
+                            await tokenVerifier.VerifyPresentedTokenAsync(replacementPresentedJwt!, replacement,
+                                metadataClient, jwksClient, ctx.RequestAborted);
+                            TokenVerifier.RequireSameResourceRequest(entry.ResourceContext!, replacement.Payload);
                             if (!AccountBinding.Matches(entry.Account, replacement.Account))
                                 throw new TokenVerificationException("Changing account requires a new authorization request.");
-                            var replacementMission = MissionClaim.FromPayload(replacement.Payload, options.EgressPolicy);
-                            if (entry.OwnerAgentIssuer is not null && replacementMission is not null)
-                                throw new TokenVerificationException("Mission authorization requires its governing PS.");
-                            if (entry.UpstreamAuthorization?.Mission is { } upstreamMission
-                                && (replacementMission?.Approver != upstreamMission.Approver || replacementMission.S256 != upstreamMission.S256))
-                                throw new TokenVerificationException("Replacement must retain its upstream mission.");
                             entry.Scope = (string?)replacement.Payload["scope"] ?? options.DefaultScope;
                             entry.ResourceContext = (JsonObject)replacement.Payload.DeepClone();
                         }
@@ -658,17 +581,9 @@ public static class AAuthAccessServerEndpoints
                 }
                 if (entry.Status != AccessPendingStatus.Pending || entry.RequiredClaims is not { Count: > 0 })
                     return AAuthProblemDetails.Create("invalid_request", "No claims push is pending.", statusCode: StatusCodes.Status400BadRequest);
-                if (entry.OwnerAgentIssuer is not null)
-                    return AAuthProblemDetails.Create("denied", "An intermediary cannot assert PS identity claims.", statusCode: 403);
 
-                var directedSub = StringMember(pushed, "sub");
-                if (string.IsNullOrEmpty(directedSub))
-                {
-                    return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing directed sub", statusCode: StatusCodes.Status400BadRequest);
-                }
-
-                if (pushed!.Any(claim => !AuthTokenBuilder.IsIdentityClaimAllowed(claim.Key)))
-                    return AAuthProblemDetails.Create("invalid_request", "Pushed claims contain protocol-owned names.", statusCode: StatusCodes.Status400BadRequest);
+                if (pushed!.Any(claim => !ClaimsRequirement.IsRequestableClaimName(claim.Key)))
+                    return AAuthProblemDetails.Create("invalid_request", "Pushed claims contain protocol-owned names (including sub).", statusCode: StatusCodes.Status400BadRequest);
 
                 if (pushed.ContainsKey("tenant") && StringMember(pushed, "tenant") is null)
                     return AAuthProblemDetails.Create("invalid_request", "tenant must be a string.");
@@ -677,7 +592,6 @@ public static class AAuthAccessServerEndpoints
                         || values.Any(value => value is not JsonValue item || !item.TryGetValue<string>(out _))))
                         return AAuthProblemDetails.Create("invalid_request", $"{name} must be an array of strings.");
 
-                entry.SuppliedSubject = directedSub;
                 entry.SuppliedClaims = pushed;
 
                 var merged = entry.Claims is null ? new JsonObject() : (JsonObject)entry.Claims.DeepClone();
@@ -704,11 +618,11 @@ public static class AAuthAccessServerEndpoints
                 }
                 catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
                 {
-                    return AAuth.Server.AAuthProblemDetails.Create("policy_unavailable", ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+                    return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, ex.Message);
                 }
 
                 if (InvalidClaimPolicy(decision))
-                    return AAuthProblemDetails.Create("policy_error", "Requested or projected claims contain protocol-owned names.", statusCode: StatusCodes.Status500InternalServerError);
+                    return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, "Requested or projected claims contain protocol-owned names.");
 
                 switch (decision.Kind)
                 {
@@ -716,10 +630,10 @@ public static class AAuthAccessServerEndpoints
                         {
                             entry.Status = AccessPendingStatus.Allowed;
                             var (tenant, roles, groups, claims) = ProjectIdentityClaims(pushed, entry.RequiredClaims);
-                            return await AuthTokenResponse.CreateTrackedAsync(() => Mint(
-                                    entry.ResourceUrl, entry.AgentId, entry.Scope, entry.AgentConfirmationKey,
-                                    directedSub, tenant, claims, entry.AgentTokenExpiresAt,
-                                    entry.AuthorizationExpiresAt, entry.UpstreamAct, roles, groups, entry.ResourceContext), entry.ExpiresAt,
+                            return await AuthTokenResponse.CreateTrackedAsync(ct => Mint(ct,
+                                    entry.ResourceUrl, entry.Scope, entry.AgentConfirmationKey, entry.ResourceContext!,
+                                    tenant, claims, entry.AgentTokenExpiresAt,
+                                    entry.AuthorizationExpiresAt, roles, groups), entry.ExpiresAt,
                                     inventory, entry.SourceTokens, options.TimeProvider, ctx.RequestAborted);
                         }
                     case AccessDecisionKind.Deny:
@@ -731,14 +645,22 @@ public static class AAuthAccessServerEndpoints
                         return Clarification202(ctx, entry);
                     case AccessDecisionKind.NeedsInteraction:
                         entry.RequiredClaims = null;
+                        entry.PaymentChallenge = null;
                         entry.Browser.Renew();
                         ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
                         ctx.Response.Headers.RetryAfter = "1";
+                        ctx.Response.Headers.CacheControl = "no-store";
                         ctx.Response.Headers[AAuthRequirementHeader.Name] = Interaction.Format($"{issuer}{loginPath}", entry.Browser.Code, options.EgressPolicy);
                         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+                    case AccessDecisionKind.NeedsPayment:
+                        entry.RequiredClaims = null;
+                        entry.PaymentChallenge = decision.PaymentChallenge;
+                        entry.Status = AccessPendingStatus.PaymentRequired;
+                        return PaymentRequired402(ctx, entry, options);
                     case AccessDecisionKind.NeedsClaims:
                     default:
                         entry.RequiredClaims = decision.RequiredClaims ?? entry.RequiredClaims;
+                        entry.PaymentChallenge = null;
                         ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
                         ctx.Response.Headers["Retry-After"] = "0";
                         ctx.Response.Headers["Cache-Control"] = "no-store";
@@ -751,11 +673,11 @@ public static class AAuthAccessServerEndpoints
             });
         });
 
-        app.MapDelete($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
+        routes.MapDelete($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
         {
             var entry = pending.Get(id);
             if (entry is null) return DeferredState.Missing(id);
-            if (AuthorizePsCaller(ctx, entry) is { } failure) return failure;
+            if (await AuthorizePsCallerAsync(ctx, entry) is { } failure) return failure;
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, () =>
             {
                 entry.Lifecycle.Cancel();
@@ -785,6 +707,15 @@ public static class AAuthAccessServerEndpoints
             return Results.Json(body, statusCode: StatusCodes.Status202Accepted);
         }
 
+        async Task<IResult?> PendingSourceFailureAsync(AccessPendingEntry entry, System.Threading.CancellationToken ct)
+        {
+            if (await AAuthSourceGuard.CheckAsync(inventory, entry.SourceTokens, options.TimeProvider, ct) is not { } failure)
+                return null;
+            entry.Status = AccessPendingStatus.Denied;
+            entry.DenyReason = failure.Detail();
+            return failure.ToPendingResult();
+        }
+
         async Task<IResult?> EvaluatePendingAsync(AccessPendingEntry entry, HttpContext ctx)
         {
             var decision = await policy.EvaluateAsync(new AccessPolicyRequest
@@ -799,16 +730,14 @@ public static class AAuthAccessServerEndpoints
                 PersonServerIssuer = entry.OriginPersonServerHost,
                 UpstreamAuthorization = entry.UpstreamAuthorization,
             }, ctx.RequestAborted);
-            if (InvalidClaimPolicy(decision)) return AAuthProblemDetails.Create("policy_error", statusCode: 500);
-            if (entry.OwnerAgentIssuer is not null && decision.Kind == AccessDecisionKind.NeedsClaims)
-                return AAuthProblemDetails.Create("denied", "An intermediary cannot assert PS identity claims.", statusCode: 403);
+            if (InvalidClaimPolicy(decision)) return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError);
             switch (decision.Kind)
             {
                 case AccessDecisionKind.Allow:
                     entry.Status = AccessPendingStatus.Allowed;
-                    return await AuthTokenResponse.CreateTrackedAsync(() => Mint(entry.ResourceUrl, entry.AgentId, entry.Scope,
-                        entry.AgentConfirmationKey, decision.Subject ?? entry.SuppliedSubject, decision.Tenant,
-                        decision.AdditionalClaims, entry.AgentTokenExpiresAt, entry.AuthorizationExpiresAt, entry.UpstreamAct, resourceContext: entry.ResourceContext),
+                    return await AuthTokenResponse.CreateTrackedAsync(ct => Mint(ct, entry.ResourceUrl, entry.Scope,
+                        entry.AgentConfirmationKey, entry.ResourceContext!, decision.Tenant,
+                        decision.AdditionalClaims, entry.AgentTokenExpiresAt, entry.AuthorizationExpiresAt),
                         entry.ExpiresAt, inventory, entry.SourceTokens, options.TimeProvider, ctx.RequestAborted);
                 case AccessDecisionKind.Deny:
                     entry.Status = AccessPendingStatus.Denied;
@@ -820,11 +749,13 @@ public static class AAuthAccessServerEndpoints
                     SetClarification(entry, decision.Clarification!);
                     return Clarification202(ctx, entry);
                 case AccessDecisionKind.NeedsPayment:
-                    ctx.Response.Headers.Location = decision.PaymentUrl;
-                    return AAuthProblemDetails.Create("payment_required", statusCode: 402);
+                    entry.PaymentChallenge = decision.PaymentChallenge;
+                    entry.Status = AccessPendingStatus.PaymentRequired;
+                    return PaymentRequired402(ctx, entry, options);
                 default:
                     entry.Status = AccessPendingStatus.Pending;
                     entry.RequiredClaims = decision.RequiredClaims;
+                    entry.PaymentChallenge = null;
                     if (decision.Kind == AccessDecisionKind.NeedsInteraction) entry.Browser.Renew();
                     return null;
             }
@@ -834,12 +765,28 @@ public static class AAuthAccessServerEndpoints
     private static string? StringMember(JsonObject? body, string name) =>
         body?[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 
-    // Project the pushed identity claims into (tenant, additional claims). The
-    // directed `sub` is emitted separately as the token's `sub`; `tenant` is a
-    // first-class named claim (§Auth Token), the rest are additional claims.
+    // Project the pushed identity claims into (tenant, roles, groups, additional
+    // claims). `sub` is never pushed; it is the resource token's.
     private static bool InvalidClaimPolicy(AccessDecision decision) =>
-        decision.RequiredClaims?.Any(name => !AuthTokenBuilder.IsIdentityClaimAllowed(name)) == true
+        ClaimsRequirement.ContainsForbiddenClaimName(decision.RequiredClaims)
         || decision.AdditionalClaims?.Keys.Any(AuthTokenBuilder.IsReservedClaim) == true;
+
+    private static IResult PaymentRequired402(HttpContext ctx, AccessPendingEntry entry, AAuthAccessServerOptions options)
+    {
+        ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
+        ctx.Response.Headers.RetryAfter = "0";
+        ctx.Response.Headers.CacheControl = "no-store";
+        if (entry.PaymentChallenge?.WwwAuthenticate is { Count: > 0 } challenges)
+        {
+            foreach (var challenge in challenges)
+            {
+                ctx.Response.Headers.Append("WWW-Authenticate", challenge);
+            }
+        }
+        return entry.PaymentChallenge?.Body is { } body
+            ? Results.Json(body, statusCode: StatusCodes.Status402PaymentRequired)
+            : AAuthProblemDetails.Create("payment_required", statusCode: StatusCodes.Status402PaymentRequired);
+    }
 
     private static (string? Tenant, IReadOnlyList<string>? Roles, IReadOnlyList<string>? Groups, IReadOnlyDictionary<string, JsonNode?>? Claims) ProjectIdentityClaims(
         JsonObject? pushed, IReadOnlyList<string>? requiredClaims)
