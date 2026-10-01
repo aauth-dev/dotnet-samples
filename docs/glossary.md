@@ -96,7 +96,7 @@ Canonical expansions follow the AAuth specification drafts under
 | **ABAC** | Attribute-Based Access Control | Authorization by attributes pushed to the AS (e.g. tenant, group). |
 | **Identity-Based** | _(access mode)_ | Two-party: the resource decides from the signature alone. |
 | **Resource-Managed** | _(access mode)_ | Two-party: the resource runs its own authorization (interaction/OAuth/policy). |
-| **PS-Asserted** | _(access mode)_ | Three-party: the resource delegates to the agent's PS. |
+| **PS authorization** | _(access mode)_ | Three-party: the resource delegates authorization to the agent's PS. |
 | **Federated** | _(access mode)_ | Four-party: the resource has its own AS; the PS federates to it. |
 
 ## Well-known documents & HTTP headers

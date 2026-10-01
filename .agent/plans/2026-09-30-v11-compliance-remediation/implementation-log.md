@@ -1325,6 +1325,114 @@ Gates:
 - e2e: typecheck clean; full Playwright 79 passed, 1 skipped (one new test
   since Phase 10).
 
+### [2026-10-01] [Phase 12] Docs sweep and claim restoration
+
+RESOLVED. R19 rewrote the public docs to draft-11 terminology and restored
+README / `SPEC-VERSION.md` claims only for phases whose DoD is ticked in
+`implementation-plan.md`. The remaining deliberate deviations are documented in
+`aauth-spec/SPEC-VERSION.md`: Q2 development-only loopback identifiers, Q1
+one-identical-request-per-second-per-key (linked to dickhardt/AAuth#222), Q19
+consumed AP tokens over 24 h warning-only, and Phase 5 in-flight revocation
+polling. Historical Phase 1/7 deviations are recorded there as sample-specific
+or superseded rather than active spec deviations.
+
+CHECKLIST:
+
+- [x] DOC-01 / D01-02 / D01-03 — closed by Phase 12 docs rewrite
+      (`docs/getting-started.md` person-token → resource-token →
+      `presented_token` flow).
+- [x] DOC-02 / D02-01 — closed by Phase 12 docs rewrite plus Phase 11 sample
+      signing lessons (generic `jwks_uri`/`jwks`/`hwk`, AAuth agents use
+      `jwt`; Q31).
+- [x] DOC-03 / D03-01 — closed by Phase 1 R01 audience binding docs and tests.
+- [x] DOC-04 / D06-01 — closed by Phase 3 R03 authorization endpoint
+      person-token requirement; Phase 12 removed the remaining stale prose.
+- [x] DOC-05 / D07-01 — closed by Phase 5 R05 intermediary-owned interaction
+      chaining; Phase 12 docs inventory confirms no published warning remains.
+- [x] DOC-06 / D07-03 — closed by Phase 6 R04 R3 single-use gate and retained
+      result guidance.
+- [x] DOC-07 / D09-02 — closed by Phase 8 R12 governance endpoint mapping.
+- [x] D01-01, D02-03, D10-06 — closed by Phase 12 five access-mode tables in
+      README, docs entry points, signing overview and package README.
+- [x] D01-04 — closed by Phase 12 auth-token `sub` required wording in the
+      getting-started walkthrough.
+- [x] D02-02 — closed by Phase 12 `jkt-jwt` AP-refresh-only wording and
+      re-authorization guidance after key change.
+- [x] D03-02 — closed by Phase 5 R06 source guard and documented polling
+      revocation guard.
+- [x] D03-03 — closed by Phase 3 R03 `AgentTokenRequired` enforcement and
+      current challenge middleware docs.
+- [x] D03-04 — closed by Phase 12 resolver guidance: signature resolution is
+      not issuer authorization; post-verification denials are 403.
+- [x] D04-001 — closed by Phase 12 issuer-aware role guidance and existing
+      claim issuer mapping docs.
+- [x] D04-002, D08-05, D10-03 — closed by Phase 7 R09 mission evaluator and
+      expiry negative controls.
+- [x] D05-01 — closed by Phase 8 R12 / Phase 10 relay behavior and current
+      mission-governance docs (`424 interaction_unavailable` fallback).
+- [x] D05-02 — closed by Phase 7 R09 reasoned `TerminateAsync`.
+- [x] D05-03 — closed by Phase 10 PS-first relay semantics and mission
+      governance client docs that continue polling the resource `Location`.
+- [x] D06-02 — closed by Phase 9 PS-AS collapse implementation and docs.
+- [x] D06-03 — closed by Phase 12 `requirement=claims` deferred response
+      headers (`Retry-After`, `Cache-Control: no-store`).
+- [x] D06-04 — closed by Phase 12 deferred/resource-managed examples using
+      `Location` plus structured `AAuth-Requirement`.
+- [x] D06-05 — closed by Phase 12 removal of invented resource-token `error`
+      claim guidance.
+- [x] D07-02 — closed by Phase 5 R05 full upstream provenance and updated
+      call-chaining guidance.
+- [x] D07-04 — closed by Phase 12 R3 document shape wording with required
+      `vocabulary`.
+- [x] D07-05 — closed by Phase 11 sample pending endpoint cutover to registered
+      `410 invalid_code`.
+- [x] D08-01 — closed by Phase 12 `SignatureError.Format` examples beginning
+      with `error=`.
+- [x] D08-02 — closed by Phase 12 revocation error table
+      (`unsupported_iss`, `rate_limited`, `revocation_unsupported`,
+      `revocation_unavailable`).
+- [x] D08-03 — closed by Phase 12 configuration reference expansion for
+      verification, resource metadata, discovery, revocation, resource-managed,
+      token exchange, R3 and Events options.
+- [x] D09-01, D10-05 — closed by Phase 3 R02 four-party trust and docs caveat.
+- [x] D10-01, D10-02, D10-04 — closed by Phase 5 revocation/deferred polling
+      and Phase 6 R3 single-use; positive README and `SPEC-VERSION.md` claims
+      restored with test-class citations.
+- [x] D10-07 — closed by Phase 12 draft-11 baseline updates in README,
+      `src/AAuth.Events/README.md` and `tests/AAuth.Conformance/README.md`.
+- [x] D01-05 — closed by Phase 12 advanced AP `keyStore` walkthrough already
+      compiling under `SnippetCompilationTests`.
+- [x] D02-04 — closed by Phase 12 `using AAuth.HttpSig;` in manual signing
+      snippets.
+- [x] D02-05 — closed by Phase 12 key-management `*.jwk.json` filenames.
+- [x] D03-05 — closed by Phase 12 resource metadata table for `access_mode`,
+      `additional_signature_components`, display/logo/docs/TOS/policy fields and
+      `AdditionalMetadata`.
+- [x] D03-06 — closed by Phase 12 multi-scheme wording and Signature Keys
+      draft-09 `jkt-jwt` citation.
+- [x] D04-003 — closed by current token issuance/federated access anchors and
+      link tests.
+- [x] D05-04 — closed by Phase 12 removal of invented
+      `invalid_carrier_token` guidance.
+- [x] D06-06 — closed by Phase 12 resource-managed overview including person
+      tokens as valid `jwt` carriers.
+- [x] D06-07 — closed by Phase 12 `using AAuth.Crypto;` in federated snippets.
+- [x] D07-07 — closed by Phase 12 `jkt-jwt` Signature Keys draft-09 citations.
+- [x] D08-04 — closed by Phase 12 nullable-vs-effective defaults for
+      `TokenRefreshThreshold` and `EgressPolicy`.
+- [x] D08-06 — closed by Phase 12 observability source attribution
+      (`DeferredExchange` / `AccessServerClient`).
+
+Validation:
+
+- Release build gate emitted no warning/error lines.
+- Four unit/conformance projects passed: AAuth.Tests 1850, AAuth.Conformance
+  1403, AAuth.R3.Tests 339, AAuth.Events.Tests 89.
+- Docs inventory refresh passed and updated `docs-surface-map.md`.
+- Snippet/link docs gate passed: 108 tests.
+- `dotnet run --project tools/ApiSurface -c Release -- . --write` passed; no
+  `api-surface-map.md` diff was produced, so R19 added no public API.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 7] R09 owner-edited sample compatibility

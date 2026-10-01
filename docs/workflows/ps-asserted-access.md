@@ -1,4 +1,4 @@
-# PS-Asserted Access (Three-Party)
+# PS Authorization Access (Three-Party)
 
 > [Live demo](https://explorer.aauth.dev/access/ps-asserted) | [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
 
@@ -137,7 +137,7 @@ var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 using var refresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
     .WithKeyStore(keyStore).Build();
 
-builder.Services.AddAAuthAgent("ps-asserted", options =>
+builder.Services.AddAAuthAgent("ps-authorization", options =>
 {
     options.Signer = key!;
     options.PersonServer = "https://ps.example";
@@ -145,7 +145,7 @@ builder.Services.AddAAuthAgent("ps-asserted", options =>
 });
 ```
 
-This registers a named `HttpClient` with signing + automatic challenge handling. Inject via `IHttpClientFactory.CreateClient("ps-asserted")`. The `ChallengeHandler` intercepts 401 responses, obtains the person token and
+This registers a named `HttpClient` with signing + automatic challenge handling. Inject via `IHttpClientFactory.CreateClient("ps-authorization")`. The `ChallengeHandler` intercepts 401 responses, obtains the person token and
 exchanges the resource token at the PS, and retries transparently.
 
 See [Dependency Injection](../reference/dependency-injection.md) for full options reference.
@@ -199,7 +199,7 @@ parks a `202` deferred consent). See
 | Status | Header/Token | Cause |
 |--------|-------------|-------|
 | 401 | `Signature-Error: invalid_signature` | Signature doesn't verify at resource |
-| 401 | Resource token with `error` claim | Resource rejects agent identity |
+| 401 | `Signature-Error: error=invalid_signature` or `application/problem+json` | Resource rejects malformed credentials or local policy before issuing a token |
 | 403 | Auth token denied | PS issued auth token but resource policy still denies |
 | 202 | Pending URL from PS | Deferred consent — user approval required |
 

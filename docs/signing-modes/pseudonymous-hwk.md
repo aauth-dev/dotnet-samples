@@ -32,6 +32,8 @@ var response = await client.GetAsync("https://resource.example/data");
 <summary>Manual Setup</summary>
 
 ```csharp
+using AAuth.HttpSig;
+
 var provider = new HwkSignatureKeyProvider(key);
 var handler = new AAuthSigningHandler(key, provider)
 {

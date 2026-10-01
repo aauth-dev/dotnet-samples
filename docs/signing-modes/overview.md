@@ -11,7 +11,7 @@ Every conveyed key requires a fully specified `alg`: Ed25519 or ES256.
 |------|--------|--------------------:|-----------------|
 | Anonymous | (none) | No Signature-Key header | Nothing |
 | Pseudonymous | `sig=hwk` | `sig=hwk;kty="OKP";crv="Ed25519";x="<key>";alg="Ed25519"` | Public-key possession; locally computed thumbprint |
-| Key Rotation | `sig=jkt-jwt` | `sig=jkt-jwt;jwt="<jkt-s256+jwt>"` | A durable key's thumbprint (stable pseudonym) delegating to a rotatable ephemeral key via a self-issued naming JWT |
+| Key Rotation / AP Refresh | `sig=jkt-jwt` | `sig=jkt-jwt;jwt="<jkt-s256+jwt>"` | AP key-refresh ceremony or explicit generic Signature-Key demo; not an AAuth resource-request credential |
 | Server Identity | `sig=jwks_uri` | `sig=jwks_uri;id="<issuer>";dwk="<metadata-name>";kid="<key-id>"` | Metadata-verified signer identifier |
 | Direct Key URL | `sig=jwks` | `sig=jwks;url="<jwks-url>";kid="<key-id>"` | Exact JWKS URL identifies signer |
 | Self-Issued Assertion | `sig=self-jwt` | `sig=self-jwt;jwt="<assertion>"` | Same discovered key verifies JWT and HTTP; no cnf |
@@ -22,9 +22,9 @@ Every conveyed key requires a fully specified `alg`: Ed25519 or ES256.
 | Mode | Use Case | Requires |
 |------|----------|----------|
 | Anonymous | Public endpoints, no access control | Nothing |
-| Pseudonymous (`hwk`) | Accountable access, rate-limiting by key | Just a keypair |
-| Key Rotation (`jkt-jwt`) | Pseudonymous access where the request-signing key must rotate without re-enrolment | A durable key + an ephemeral key (and the ability to mint naming JWTs) |
-| Server Identity (`jwks_uri`) | Server signing with role metadata discovery | Signer identifier, metadata name and published kid |
+| Pseudonymous (`hwk`) | Generic Signature-Key endpoints that deliberately accept bare key possession | Just a keypair |
+| Key Rotation (`jkt-jwt`) | AP key-refresh ceremony or a generic Signature-Key endpoint that deliberately accepts self-anchored delegation | A durable key + an ephemeral key (and the ability to mint naming JWTs) |
+| Server Identity (`jwks_uri`) | PS/AS/AP/resource server signing with role metadata discovery | Signer identifier, metadata name and published kid |
 | JWT (`jwt`) | All five AAuth resource access modes; agent/auth/subscribe token purpose depends on the endpoint | Token issuer and matching cnf key; PS only for PS-asserted/federated flows |
 
 ### Role and trust
@@ -78,6 +78,8 @@ using var direct = new AAuthClientBuilder(key).UseJwt(preAcquiredToken).Build();
 <summary>Manual Setup (ISignatureKeyProvider)</summary>
 
 ```csharp
+using AAuth.HttpSig;
+
 ISignatureKeyProvider provider = mode switch
 {
     "hwk"      => new HwkSignatureKeyProvider(key),
@@ -127,8 +129,9 @@ The access mode determines which signing modes are valid:
 |-------------|--------------------:|-----|
 | **Identity-Based** | `jwt` | The resource authorizes the verified agent identity. |
 | **Resource-Managed** (two-party) | `jwt` | The agent token authenticates; the resource manages its opaque authorization token. |
-| **PS-Asserted** (three-party) | `jwt` only | The resource issues a `resource_token` with `aud=PS`. The PS must verify the agent's identity via the agent token (`aa-agent+jwt`), which requires `scheme=jwt` in `Signature-Key`. |
-| **Federated** (four-party) | `jwt` only | Same as PS-Asserted — the PS federates with the AS, but the agent-side requirement is identical: present the agent token via `scheme=jwt`. |
+| **Person Identity** | `jwt` only | The resource requires a PS-issued `aa-person+jwt` before minting a resource token. |
+| **PS Authorization** (three-party) | `jwt` only | The resource issues a `resource_token` only after seeing a person/auth token. The PS must verify the agent's identity via the agent token (`aa-agent+jwt`), and the resource/auth/person carriers all use `scheme=jwt` in `Signature-Key`. |
+| **Federated** (four-party) | `jwt` only | Same agent-side requirement as PS authorization; the PS federates with the AS after receiving the bound `resource_token` + `presented_token` pair. |
 
 The Profile sample's `/pseudonymous`, `/identified` and `/anchored` routes are
 generic signing demonstrations. They do not implement the AAuth identity-based

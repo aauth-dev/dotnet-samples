@@ -60,7 +60,7 @@ The SDK creates child Activity spans for key operations:
 |-----------|--------|-------------|
 | `AAuth.TokenExchange` | `TokenExchangeClient` | Token exchange request to Person Server |
 | `AAuth.ChallengeExchange` | `ChallengeHandler` | Full challenge-exchange-retry cycle |
-| `AAuth.DeferredPoll` | `TokenExchangeClient` | Deferred polling loop |
+| `AAuth.DeferredPoll` | `DeferredExchange` / `AccessServerClient` | Deferred polling loop |
 
 ## Tag Constants
 

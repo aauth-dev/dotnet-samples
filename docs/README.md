@@ -1,8 +1,9 @@
 # AAuth .NET SDK Documentation
 
 The AAuth .NET SDK (`AAuth` NuGet package) supports agent-side JWT signing,
-server-side verification, six Signature-Key schemes and four resource access
-modes. Generic signing demonstrations are separate from AAuth resource access.
+server-side verification, five draft-11 resource access modes and generic
+Signature-Key schemes for non-AAuth demonstrations. AAuth agent requests use
+`jwt`; `hwk`, `jwks_uri`, `jwks` and `jkt-jwt` are not AAuth agent credentials.
 
 - [Interactive Protocol Explorer](https://explorer.aauth.dev/)
 - [AAuth Protocol Specification](../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md)
@@ -29,7 +30,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 
 - [Identity-Based Access](workflows/identity-based-access.md)
 - [Resource-Managed Access](workflows/resource-managed-access.md)
-- [PS-Asserted Access](workflows/ps-asserted-access.md)
+- [PS authorization access](workflows/ps-asserted-access.md)
 - [Federated Access](workflows/federated-access.md)
 - [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md)
 - [Deferred Consent](workflows/deferred-consent.md)
@@ -102,7 +103,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `HwkSignatureKeyProvider` | `sig=hwk` — inline public key |
 | `JwksUriSignatureKeyProvider` | `sig=jwks_uri` — JWKS-discoverable identity |
 | `JwtSignatureKeyProvider` | `sig=jwt` — agent/auth token inline |
-| `JktJwtSignatureKeyProvider` | `sig=jkt-jwt` — key rotation mode |
+| `JktJwtSignatureKeyProvider` | `sig=jkt-jwt` — generic/AP key-refresh ceremony |
 | `BootstrapBuilder` | Fluent builder for AP enrollment (CLI/desktop agents) |
 | `ChallengeHandlingOptions` | Options for automatic 401 challenge handling |
 | `InteractionHandlingOptions` | Options for deferred/interaction handling |

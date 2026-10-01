@@ -45,13 +45,13 @@ using AAuth.Errors;
 
 // Formatting (server-side)
 var header = SignatureError.Format(SignatureErrorCode.InvalidSignature);
-// → "invalid_signature"
+// → "error=invalid_signature"
 
 // With details
 var detailedHeader = SignatureError.Format(
     SignatureErrorCode.InvalidInput,
     requiredInput: new[] { "@method", "@authority", "@path" });
-// → "invalid_input;required_input=\"@method\" \"@authority\" \"@path\""
+// → "error=invalid_input;required_input=\"@method\" \"@authority\" \"@path\""
 
 // Parsing (agent-side)
 var receivedHeader = response.Headers.TryGetValues("Signature-Error", out var values)
@@ -152,6 +152,23 @@ asking a PS or AS to exchange a resource token bound to the revoked auth token.
 A request that is already pending reports a revocation while polling instead
 (`403 revoked` with `detail` naming the resource, presented, upstream, or
 agent dependency; see [Polling Errors](#polling-errors-deferred-consent)).
+
+## Revocation Errors
+
+Revocation endpoints use `application/problem+json` bodies with closed,
+machine-readable codes:
+
+| Error | Status | Meaning |
+|-------|--------|---------|
+| `unsupported_iss` | 400 | The revocation names an issuer this endpoint cannot process. |
+| `rate_limited` | 429 | The revocation is temporarily rate-limited; the response includes `Retry-After`. |
+| `revocation_unsupported` | 501 | This endpoint or issuer does not support the requested revocation operation. |
+| `revocation_unavailable` | 503 | The revocation dependency is unavailable; retry later. |
+
+Successful revocation is idempotent and returns an empty success once the local
+cascade is terminal. A pending request that depends on a revoked token is not
+reported through the token endpoint; polling returns `403 revoked` as listed
+below.
 
 When the PS returns a non-success status with a structured AAuth error body
 (`{ "error": ..., "detail": ... }`), the exchange throws a typed

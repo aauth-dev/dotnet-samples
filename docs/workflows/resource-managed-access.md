@@ -6,7 +6,14 @@
 
 The resource handles authorization itself — via user interaction, existing OAuth/OIDC, or internal policy. After authorization, the resource returns an opaque access token for subsequent calls. Two-party only (agent + resource).
 
-This is the AAuth mode for resources that authorize requests themselves — the role a first-party OAuth deployment fills when a service runs its own authorization server alongside its API. The resource is both the authority that mints the opaque token and the API that accepts it, and that token MAY wrap an existing OAuth access token. When authorization is instead delegated to a separate authority, that authority is a Person Server or Access Server — see [PS-asserted](ps-asserted-access.md) and [federated](federated-access.md) access.
+This is the AAuth mode for resources that authorize requests themselves — the
+role a first-party OAuth deployment fills when a service runs its own
+authorization server alongside its API. The resource is both the authority that
+mints the opaque token and the API that accepts it, and that token MAY wrap an
+existing OAuth access token. When authorization is delegated to a separate
+authority, that authority is a Person Server or Access Server — see
+[PS authorization](ps-asserted-access.md) and [federated](federated-access.md)
+access.
 
 Runnable demo: the **Inbox** resource server (`samples/MockResourceServers/Inbox`, `:5004`) and the SampleApp [`/inbox`](http://localhost:5240/inbox) page / GuidedTour **Resource-Managed** flow.
 
@@ -31,7 +38,7 @@ sequenceDiagram
     participant User
     Note over Agent: Setup complete: self-issued or AP-enrolled agent JWT
     Agent->>Resource: GET /data (jwt + HTTP proof)
-    Resource-->>Agent: 202 + AAuth-Requirement: interaction (url, code)
+    Resource-->>Agent: 202 + Location + requirement=interaction; url; code
     User->>Resource: Completes interaction at resource's page
     Agent->>Resource: GET /pending/<id> (poll)
     Resource-->>Agent: 200 + AAuth-Access: <opaque-token>
@@ -118,8 +125,8 @@ app.MapGet("/messages", async (HttpContext ctx) =>
     if (info is not null)
         return Results.Ok(new { scope = info.Scope, messages });
 
-    // No token yet → 202 + AAuth-Requirement: interaction (url + code + poll
-    // Location all sourced from the module options).
+    // No token yet → 202 with Location, Retry-After, Cache-Control: no-store and
+    // AAuth-Requirement: requirement=interaction; url=...; code=...
     return ctx.RequireAAuthInteraction("inbox.read");
 }).RequireAAuthSignature();
 
@@ -191,11 +198,11 @@ See [Dependency Injection](../reference/dependency-injection.md) for full refere
 | Status | Header | Cause |
 |--------|--------|-------|
 | 401 | `Signature-Error: invalid_signature` | Signature doesn't verify |
-| 202 | `AAuth-Requirement: interaction` | Authorization pending — user interaction required |
+| 202 | `AAuth-Requirement: requirement=interaction; url=...; code=...` plus `Location` | Authorization pending — user interaction required |
 | 403 | *(none)* | Interaction completed but access denied by resource policy |
 
 ## Further Reading
 
 - [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
 - [Identity-Based Access](identity-based-access.md)
-- [PS-Asserted Access](ps-asserted-access.md)
+- [PS authorization access](ps-asserted-access.md)

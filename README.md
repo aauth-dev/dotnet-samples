@@ -11,7 +11,7 @@ The [AAuth protocol](https://aauth.dev) SDK for .NET — agent-to-resource autho
 
 ## What is AAuth?
 
-AAuth is a four-party authorization protocol for AI agents. Every HTTP request carries a cryptographic signature; protocol tokens are proof-of-possession bound. See the [protocol spec](aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md) for full details.
+AAuth is a four-party authorization protocol for AI agents. Every HTTP request carries a cryptographic signature; protocol tokens are proof-of-possession bound. See the [protocol spec](aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md) for full details.
 
 The four parties are:
 
@@ -32,13 +32,14 @@ persistence and draft limitations.
 
 ## Access Modes
 
-AAuth supports four resource access modes. Each adds parties and capabilities, and they build on one another — adoption is incremental. Run `make demo` (no Docker) to start every service plus both UIs, then follow the demo column below. For the live-Keycloak federated experience, use `make demo-keycloak`.
+AAuth supports five resource access modes. Each adds parties and capabilities, and they build on one another — adoption is incremental. Run `make demo` (no Docker) to start every service plus both UIs, then follow the demo column below. For the live-Keycloak federated experience, use `make demo-keycloak`.
 
 | Mode | Parties | When to Use | Signing | See it in the demos |
 |------|---------|-------------|---------|---------------------|
 | **Identity-Based** | Agent + Resource | Resource authorizes verified agent identity | `jwt` | Profile `/identified` accepts agent JWT; generic signing demonstrations are separate |
 | **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization without an external PS or AS | `jwt` plus opaque AAuth-Access | GuidedTour → [**Resource-Managed (Two-Party)**](http://localhost:5400/tour?flow=ResourceManaged); SampleApp → [`/inbox`](http://localhost:5240/inbox) |
-| **PS-Asserted** (three-party) | Agent + Resource + PS | Resource accepts identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from any Person Server | `jwt` | GuidedTour → [**PS-Asserted (Direct Grant)**](http://localhost:5400/tour?flow=Autonomous) and [**PS-Asserted (Deferred)**](http://localhost:5400/tour?flow=Deferred); SampleApp → [`/calendar`](http://localhost:5240/calendar) and [`/calendar-deferred`](http://localhost:5240/calendar-deferred) |
+| **Person Identity** | Agent + Resource + PS | Resource requires a PS-issued person token before issuing an auth-token challenge | `jwt` with a person token | Intermediate step in PS authorization; see [Getting Started](docs/getting-started.md#three-party-flow-deep-dive) |
+| **PS Authorization** (three-party) | Agent + Resource + PS | Resource accepts consent and identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from a trusted Person Server | `jwt` | GuidedTour → [**PS Authorization (Direct Grant)**](http://localhost:5400/tour?flow=Autonomous) and [**PS Authorization (Deferred)**](http://localhost:5400/tour?flow=Deferred); SampleApp → [`/calendar`](http://localhost:5240/calendar) and [`/calendar-deferred`](http://localhost:5240/calendar-deferred) |
 | **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` | GuidedTour → [**Federated (Four-Party)**](http://localhost:5400/tour?flow=Federated); SampleApp → [`/wallet`](http://localhost:5240/wallet). Live Keycloak consent: `make demo-keycloak` |
 
 GuidedTour runs on [http://localhost:5400](http://localhost:5400) and SampleApp on [http://localhost:5240](http://localhost:5240). The GuidedTour home page lists every flow; pick one to walk it step by step. See [Getting Started](docs/getting-started.md#supported-flows) for the full breakdown of each mode.
@@ -124,7 +125,9 @@ for explicitly generic Signature Keys endpoints; it is not an AAuth access mode.
 
 ### Three-Party Flow (Agent → Resource → Person Server)
 
-The PS-Asserted flow is the primary authorization model. The resource delegates authorization to the agent's Person Server, which prompts the user for consent:
+The PS authorization flow is the primary authorization model. The resource first
+asks for a person token, then issues a resource token bound to that presented
+person token, and the agent exchanges both at the Person Server:
 
 ```mermaid
 sequenceDiagram
@@ -134,8 +137,12 @@ sequenceDiagram
     participant User
 
     Agent->>Resource: GET /data (signed, agent token)
-    Resource-->>Agent: 401 + resource_token (aud=PS)
-    Agent->>PS: POST /token (signed, resource_token)
+    Resource-->>Agent: 401 + requirement=person-token
+    Agent->>PS: POST /person (signed, resource)
+    PS-->>Agent: person_token
+    Agent->>Resource: GET /data (signed, person_token)
+    Resource-->>Agent: 401 + requirement=auth-token; resource_token
+    Agent->>PS: POST /token (signed, resource_token + presented_token)
     PS->>User: Consent prompt (scope, justification)
     User-->>PS: Grant consent
     PS-->>Agent: auth_token (aa-auth+jwt)
@@ -317,22 +324,23 @@ This SDK targets **draft-11** of the AAuth protocol specification:
 | [HTTP Signature Keys](aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt) | 09 |
 
 The pinned source is commit `178e9e68b6578e4d6f7d0bf30f33b4c38833e3a1`,
-published 2026-09-25. Person tokens and all five resource access modes, presented-token
-exchanges, `mission_s256` missions (with updates, resources and expiry),
-parent-mediated sub-agents, call chaining through the person's PS, `{jti, exp}`
-revocation with cascades, and `202` auth-token delivery are implemented.
-
-> **Compliance remediation in progress (2026-09-30).** A
-> [draft-11 audit](.agent/plans/2026-09-30-v11-compliance-audit/research.md) found
-> that these features are not yet fully conformant: revocation cascades,
-> `202` delivery polling, mission expiry on pending paths, call-chaining
-> provenance, R3 per-call single use, and four-party trust. See the
-> [remediation plan](.agent/plans/2026-09-30-v11-compliance-remediation/implementation-plan.md). Optional
-`accept_signature_algs` advertisement, `aauth-resource` links, Budgets, R3
-release gating, X.509/cached carriers and third-party login hosting are not
-implemented. Platform attestation, production stores/policies and native push
-transports remain deployment responsibilities. Events delivery deduplicates on
-`(iss, jti)`.
+published 2026-09-25. The locally validated implementation covers person tokens
+and all five resource access modes (`PersonServerMapperTests`,
+`AuthorizationEndpointTests`, `ResourceManagedFlowTests`,
+`FourPartyTrustTests`), presented-token exchanges and four-party trust
+(`DeferredFederationTests`, `FourPartyTrustTests`), `mission_s256` missions with
+updates, resources and expiry (`MissionS256Tests`, `MissionPersonTokenIssuanceTests`,
+`MissionTerminatedTests`), parent-mediated sub-agents (`AgentIdTests`,
+`AgentTokenVerificationTests`), call chaining through the person's PS
+(`CallChainingTests`, `CallChainingHandlerTests`), `{jti, exp}` revocation with
+cascades (`RevocationLifecycleTests`, `PersonTokenRevocationCascadeTests`,
+`AgentTokenRevocationCascadeTests`), `202` auth-token delivery and polling
+(`AuthTokenDeliveryTests`, `PollingErrorTests`), and R3 per-call single use
+(`ResourceR3Tests`). Optional `accept_signature_algs`
+advertisement, `aauth-resource` links, Budgets, R3 release gating,
+X.509/cached carriers and third-party login hosting are not implemented.
+Platform attestation, production stores/policies and native push transports
+remain deployment responsibilities. Events delivery deduplicates on `(iss, jti)`.
 
 Local Release, stub and Keycloak policy-mode browser gates pass. External
 interop against third-party draft-11 deployments has not been run.

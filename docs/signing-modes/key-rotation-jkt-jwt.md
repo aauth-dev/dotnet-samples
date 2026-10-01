@@ -1,4 +1,4 @@
-# Key Rotation with jkt-jwt
+# AP Key Refresh with jkt-jwt
 
 ## Overview
 
@@ -8,14 +8,16 @@ The scheme is **self-anchored**: the durable public key travels in the naming
 JWT's header, and the issuer is that key's own thumbprint — so a verifier needs
 no external lookup. Access stays **pseudonymous**. Defined in
 [`draft-hardt-httpbis-signature-key-09`](../../aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt)
-section 3.5. This is an AP refresh or explicitly generic Signature Keys scheme;
-AAuth resource access presents the returned agent JWT with its matching key.
+section 3.5. Draft-11 AAuth uses this scheme only in the Agent Provider key-refresh
+ceremony (`#keying-material`, L2196) or in explicitly generic Signature-Key
+demonstrations. AAuth resource, PS and AS requests present the returned
+`aa-agent+jwt`, `aa-person+jwt` or `aa-auth+jwt` under `sig=jwt`.
 
 ## When to Use
 
-- Rotating the request-signing key without re-enrolling
+- Refreshing an AP-issued agent token while rotating the request-signing key
 - Hardware-backed durable keys that delegate to software ephemeral keys
-- Two-key bootstrap refresh (agent ↔ AP) and pseudonymous resource access
+- Two-key bootstrap refresh (agent ↔ AP) and explicitly generic Signature-Key endpoints
 
 ### Why this scheme exists (enclave delegation)
 
@@ -27,9 +29,11 @@ ephemeral software key, which signs the actual requests.
 
 An AP can additionally validate platform attestation at enrollment if its
 deployment supports that ceremony. This SDK's samples use software keys and
-signed enrollment, not hardware attestation. The AP binds the durable key to
-its enrollment record; generic resource verification alone does not establish
-provider or device trust. See [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md)
+signed enrollment, not hardware attestation. The AP binds the durable key to its enrollment record and returns an agent JWT
+bound to the ephemeral key. Resource-facing AAuth requests then use that JWT
+with `sig=jwt`; old auth tokens bound to the previous key require
+re-authorization after the key changes. Generic verification alone does not
+establish provider or device trust. See [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md)
 for the implemented two-key refresh and [platform limits](../advanced/platform-attestation.md).
 
 ## Code Example
@@ -55,6 +59,8 @@ using var client = new AAuthClientBuilder(ephemeralKey)
 <summary>Manual Setup</summary>
 
 ```csharp
+using AAuth.HttpSig;
+
 var provider = new JktJwtSignatureKeyProvider(() => namingJwt);
 var handler = new AAuthSigningHandler(ephemeralKey, provider)
 {
@@ -74,11 +80,14 @@ payload: { "iss": "urn:jkt:sha-256:<durable-thumbprint>",
            "cnf": { "jwk": { …ephemeral public key… } } }
 ```
 
-## What the Resource Sees
+## What the AP or Generic Verifier Sees
 
 - `Signature-Key: sig=jkt-jwt;jwt="<jkt-s256+jwt>"` (a single `jwt` parameter)
 - The reported pseudonym is the **durable** key's thumbprint — stable across
   ephemeral-key rotation.
+
+An AAuth resource does not see `sig=jkt-jwt` for normal AAuth access. It sees the
+agent, person or auth JWT returned by the AP/PS/AS under `sig=jwt`.
 
 ## Verification (self-anchored, section 3.5)
 

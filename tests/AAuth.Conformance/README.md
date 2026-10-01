@@ -6,8 +6,8 @@ protocol specification.
 ## Spec version under test
 
 See [`aauth-spec/SPEC-VERSION.md`](../../aauth-spec/SPEC-VERSION.md). At the time
-of writing: commit `c090879ea2254d4af43a7253c7715f8d6530eb26`
-(tag `draft-hardt-oauth-aauth-protocol-01`).
+of writing: draft-11, commit `178e9e68b6578e4d6f7d0bf30f33b4c38833e3a1`
+(tag `draft-hardt-oauth-aauth-protocol-11`).
 
 When the spec version bumps, run this suite first — failures here generally
 indicate either a spec drift to absorb or a real conformance regression.
@@ -22,12 +22,13 @@ Tests are grouped by spec section. Each test:
 - Lives in a folder named after the spec area
   (`AgentTokens/`, `HttpSignatures/`, `ResourceTokens/`, `Discovery/`, ...).
 
-## Scope today (Phase 2)
+## Scope today
 
-Issuer-side coverage for agent, resource, and (transitively, via the
-verification tests) auth tokens; receiver-side coverage for agent tokens
-and the AAuth HTTP signature profile; discovery endpoints (resource
-metadata + JWKS).
+Coverage includes issuer and receiver behavior for agent, person, resource and
+auth tokens; resource-managed/session-token access; four-party trust; deferred
+polling; revocation cascades; missions; sub-agents; call chaining; HTTP
+Signature-Key/JWT verification; and discovery endpoints. R3 and Events companion
+coverage lives in their own unit projects.
 
 ## Section → file map
 

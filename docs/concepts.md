@@ -39,11 +39,12 @@ generic signing examples, not identity-based AAuth access.
 
 How a resource decides what the agent may do. See [Access Mode Comparison](https://explorer.aauth.dev/access/compare).
 
-Four modes:
+Five modes:
 
 - **Identity-Based** — Resource trusts the signature directly. No tokens beyond the agent token.
 - **Resource-Managed** (2-party): Resource handles its own consent and issues an opaque `AAuth-Access` token bound to the verified agent/key/account. SDK: `WithResourceManagedAccess`, `AddAAuthResourceManaged` and `ResolveAAuthAccessAsync`. Browser decisions require authenticated sessions and CSRF protection; the correlation code is not approval.
-- **PS-Asserted** (3-party) — Agent presents a person token → resource issues a resource token naming it → agent exchanges both at PS → auth token. SDK: `ChallengeHandler`, `TokenExchangeClient`
+- **Person Identity** — Resource needs the PS-issued person token before it can decide what authorization to request. The token identifies the person; it is not authorization.
+- **PS Authorization** (3-party) — Agent presents a person token → resource issues a resource token naming it → agent exchanges both at PS → auth token. SDK: `ChallengeHandler`, `TokenExchangeClient`
 - **Federated** (4-party) — PS delegates to Access Server. SDK: same agent-side types; AS is the PS's concern.
 
 ### 3. Governance (Missions)

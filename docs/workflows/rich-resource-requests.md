@@ -64,7 +64,8 @@ The **Access Server** — not the resource — decides which operations to grant
 and which to make per-call, from the document's `operations` and its own policy
 (r3 §Auth Token Extensions). The dedicated Bookings AS is configured to treat
 `confirmReservation` as per-call (override via `R3AccessServer:PerCallOperations`);
-the R3 document itself carries only the spec fields (`operations` + `display`):
+the R3 document itself carries the required spec fields (`vocabulary`,
+`operations`, and `display`):
 
 - **`r3_granted`** — `searchAvailability`, `holdReservation`: served immediately.
 - **`r3_per_call`** — `confirmReservation`: charges a non-refundable deposit, so it

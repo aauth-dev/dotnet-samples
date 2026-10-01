@@ -52,7 +52,7 @@ app.UseAAuthVerification();
 using AAuth.Server.Verification;
 
 // AddAAuthResource registers the verifier, the discovery clients, and the
-// DefaultSignatureKeyResolver that resolves all four schemes — no manual
+// DefaultSignatureKeyResolver that resolves the supported schemes — no manual
 // HttpClient/discovery wiring.
 builder.Services.AddAAuthResource(options => options.Issuer = "https://resource.example");
 
@@ -71,7 +71,7 @@ app.UseAAuthVerification(options =>
 | `jwks` | Fetches the exact direct url and selects kid |
 | `self-jwt` | Validates the registered assertion type; issuer key verifies JWT and HTTP, with no cnf |
 | `jwt` | Extracts `cnf.jwk` from agent token, fetches AP's JWKS to verify token signature |
-| `jkt-jwt` | Self-anchored (Signature Keys draft-08 section 3.5): derives the durable key from header `jwk`, checks the thumbprint issuer, verifies the naming JWT, then returns ephemeral `cnf.jwk` |
+| `jkt-jwt` | Self-anchored (Signature Keys draft-09 section 3.5): derives the durable key from header `jwk`, checks the thumbprint issuer, verifies the naming JWT, then returns ephemeral `cnf.jwk` |
 
 ## HWK — Inline Public Key
 
@@ -104,42 +104,39 @@ For non-standard schemes or additional validation:
 ```csharp
 // Sample implementation — not part of the SDK.
 // Implements AAuth.HttpSig.ISignatureKeyResolver by wrapping the SDK's
-// DefaultSignatureKeyResolver and consulting an application-provided
-// asynchronous issuer-admission callback (host-owned).
+// DefaultSignatureKeyResolver and attaching typed context for later
+// authorization. Do not deny trusted-but-unauthorized issuers from the resolver:
+// resolver failures are signature failures (401 Signature-Error). Authorization
+// policy failures after successful verification should be 403.
 public sealed class PolicyEnforcingResolver : ISignatureKeyResolver
 {
     private readonly DefaultSignatureKeyResolver _inner;
-    private readonly Func<string?, CancellationToken, Task<bool>> _isAllowedIssuer;
 
-    public PolicyEnforcingResolver(DefaultSignatureKeyResolver inner,
-        Func<string?, CancellationToken, Task<bool>> isAllowedIssuer)
-    {
-        _inner = inner;
-        _isAllowedIssuer = isAllowedIssuer;
-    }
+    public PolicyEnforcingResolver(DefaultSignatureKeyResolver inner) => _inner = inner;
 
-    public async Task<SignatureKeyResolution> ResolveAsync(
+    public Task<SignatureKeyResolution> ResolveAsync(
         SignatureKeyParser.ParsedSignatureKeyInfo info, CancellationToken ct)
     {
         // Resolve key normally
-        var resolution = await _inner.ResolveAsync(info, ct);
+        var resolutionTask = _inner.ResolveAsync(info, ct);
 
-        // Apply additional policy (e.g., deny certain agent providers)
+        // Record context for an ASP.NET authorization policy that can return 403.
         if (info.Jwt is not null)
         {
             var iss = info.Payload?["iss"]?.GetValue<string>();
-            if (!await _isAllowedIssuer(iss, ct))
-                throw new AAuthVerificationException("Agent provider not allowed");
+            // Attach `iss` to a request feature or claims transformation in real code.
         }
 
-        return resolution;
+        return resolutionTask;
     }
 }
 ```
 
 Register a custom resolver through `AddAAuthResource` — set `o.KeyResolver` and the
 SDK uses it instead of the default (it is registered via `TryAdd`, so your resolver
-wins):
+wins). Keep trust and authorization decisions in `AAuthTrustOptions`,
+`IAAuthTrustPolicy` or ASP.NET authorization policies so unauthorized but
+well-formed identities return `403`, not `401 Signature-Error`:
 
 ```csharp
 builder.Services.AddAAuthResource(options =>

@@ -46,6 +46,8 @@ builder.Services.AddAAuthResource(options =>
     options.Issuer = "https://resource.example";
     options.SigningKeys["key-1"] = signingKey;
     options.Name = "My Resource API";
+    options.Description = "Calendar and document APIs";
+    options.AccessMode = AAuthConstants.AccessModes.AuthToken;
     options.ScopeDescriptions = new Dictionary<string, string>
     {
         ["read"] = "Read access to your data",
@@ -56,6 +58,10 @@ builder.Services.AddAAuthResource(options =>
     options.AuthorizationEndpoint = "https://resource.example/authorize";
     options.RevocationEndpoint = "https://resource.example/revoke";
     options.DocumentationUri = "https://docs.resource.example";
+    options.LogoUri = "https://resource.example/logo.svg";
+    options.TosUri = "https://resource.example/terms";
+    options.PolicyUri = "https://resource.example/privacy";
+    options.AdditionalMetadata["support_uri"] = "https://resource.example/support";
 });
 
 var app = builder.Build();
@@ -71,12 +77,19 @@ app.MapAAuthWellKnown();
 | `Issuer` | Yes | The resource's canonical URL (used as `iss` in resource tokens) |
 | `SigningKeys` | Conditional | `AAuthSigningKeySet`: every key is published at the JWKS and tokens are signed with the active key; required to issue resource tokens or make signed calls, optional for verification-only resources |
 | `Name` | No | Human-readable name for the resource (`name`) |
+| `Description` | No | Human-readable Markdown/plain description (`description`) |
+| `LogoUri` | No | Light-mode logo URL (`logo_uri`) |
+| `LogoDarkUri` | No | Dark-mode logo URL (`logo_dark_uri`) |
 | `DocumentationUri` | No | Developer-documentation URL (`documentation_uri`) |
+| `TosUri` | No | Terms-of-service URL (`tos_uri`) |
+| `PolicyUri` | No | Privacy/security policy URL (`policy_uri`) |
 | `ScopeDescriptions` | No | Scope → description map (displayed during consent) |
 | `SignatureWindow` | No | Signature validity window in seconds (advertised to agents) |
 | `AdditionalSignatureComponents` | No | Additional HTTP signature components agents must cover, emitted as `additional_signature_components` |
+| `AccessMode` | No | Advisory `access_mode`: `agent-token`, `person-token`, `session-token`, `auth-token`, or R3 `per-call` |
 | `AuthorizationEndpoint` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | No | URL of the revocation endpoint |
+| `AdditionalMetadata` | No | Extension members merged into the well-known document. It cannot shadow typed fields. |
 
 ## Published Endpoint
 
@@ -86,7 +99,12 @@ The extension maps `GET /.well-known/aauth-resource.json` returning:
 {
   "issuer": "https://resource.example",
   "name": "My Resource API",
+  "description": "Calendar and document APIs",
+  "access_mode": "auth-token",
   "documentation_uri": "https://docs.resource.example",
+  "logo_uri": "https://resource.example/logo.svg",
+  "tos_uri": "https://resource.example/terms",
+  "policy_uri": "https://resource.example/privacy",
   "jwks_uri": "https://resource.example/.well-known/jwks.json",
   "scope_descriptions": {
     "read": "Read access to your data",

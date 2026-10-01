@@ -152,9 +152,9 @@ JSON object `parameters`; audit entries also preserve JSON object `result`.
 
 > **Carrier-type guard.** The governed endpoints require the request to carry the
 > expected token type. When the wrong carrier is presented (e.g. an auth token
-> where the mission flow expects an agent token), the mapper refuses with `403`
-> `invalid_carrier_token` — an authorization failure on a valid signature, not a
-> `401` authentication failure.
+> where the mission flow expects an agent token), the mapper reports the relevant
+> closed-table token or polling error. It is an authorization failure on a valid
+> signature, not a `401` authentication failure.
 
 ## Parsing requests by hand
 

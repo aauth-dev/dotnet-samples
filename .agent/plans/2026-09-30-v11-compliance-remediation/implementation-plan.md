@@ -545,10 +545,10 @@ already landed:
 
 **Definition of Done**
 
-- [ ] Every Phase 4 docs finding in the audit is closed (checklist in the
+- [x] Every Phase 4 docs finding in the audit is closed (checklist in the
       log).
-- [ ] The snippet, link and docs-inventory gates pass.
-- [ ] Every README and `SPEC-VERSION.md` claim cites a passing conformance test
+- [x] The snippet, link and docs-inventory gates pass.
+- [x] Every README and `SPEC-VERSION.md` claim cites a passing conformance test
       class.
 
 ## Phase 13 — Independent internal review and re-audit

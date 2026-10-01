@@ -1,6 +1,6 @@
 # Deferred Consent (User Approval)
 
-> [PS-Asserted Demo](https://explorer.aauth.dev/access/ps-asserted)
+> [PS authorization demo](https://explorer.aauth.dev/access/ps-asserted)
 
 Overview: When the Person Server doesn't have standing consent for the requested access, it returns a 202 with an interaction URL and a pending URL. The agent must present the interaction to the user and poll the pending URL until the PS mints the auth token.
 
@@ -14,12 +14,12 @@ sequenceDiagram
     Resource-->>Agent: 401 + resource token
     Agent->>PS: POST /token (resource_token, presented_token)
     Note over PS: Verifies resource token<br/>(typ/dwk/sig, exp/iat, aud, agent_jkt, ps)<br/>and the presented token it names
-    PS-->>Agent: 202 + {interaction_url, pending_url, code}
+    PS-->>Agent: 202 + Location + Retry-After + no-store + requirement=interaction
     Agent->>User: Present interaction URL + code
     User->>PS: Approve at interaction page
     loop Poll pending URL
         Agent->>PS: GET /pending/<id>
-        PS-->>Agent: 202 (still pending)
+        PS-->>Agent: 202 + Location + Retry-After + no-store
     end
     PS-->>Agent: 200 + auth token
     Agent->>Resource: GET /data (auth token)
@@ -27,6 +27,17 @@ sequenceDiagram
 ```
 
 ## Manual Polling
+
+A deferred response carries the poll target in `Location`, the interaction
+details in a structured `AAuth-Requirement`, and cache/poll controls:
+
+```http
+HTTP/1.1 202 Accepted
+Location: https://ps.example/pending/abc123
+Retry-After: 5
+Cache-Control: no-store
+AAuth-Requirement: requirement=interaction; url="https://ps.example/interaction"; code="abc123"
+```
 
 ```csharp
 using AAuth.Agent;
@@ -173,6 +184,6 @@ class BrowserPresenter : IInteractionPresenter
 
 ## Further Reading
 
-- [PS-Asserted Access](ps-asserted-access.md)
+- [PS authorization access](ps-asserted-access.md)
 - [Interaction Chaining](../advanced/interaction-chaining.md) — what an intermediary does when *its* downstream hop returns this same `202` and there is no user attached to the inbound request.
 - [Error Handling](../advanced/error-handling.md)

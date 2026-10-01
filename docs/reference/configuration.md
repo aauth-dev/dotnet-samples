@@ -357,7 +357,7 @@ delegates or instances; every other member binds from configuration, such as
 | `AgentToken` | `string?` | One identity source | Already-held agent JWT; no implicit enrollment |
 | `AgentTokenFactory` | `Func<string>?` | One identity source | *Code-only.* Returns the current agent JWT |
 | `TokenRefresher` | `ITokenRefresher?` | One identity source | *Code-only.* Auto-refresh before token expiry; can renew an already-held agent token |
-| `TokenRefreshThreshold` | `TimeSpan?` | No | Refresh window before `exp` (default 5 minutes) |
+| `TokenRefreshThreshold` | `TimeSpan?` | No | Refresh window before `exp`; property default is `null`, resolved by builders/handlers to the draft-11 five-minute effective default |
 | `SelfIssued` | `AAuthSelfIssuedAgentOptions` | One identity source | Self-issued identity (keys below) |
 | `AgentProvider` | `AAuthAgentProviderOptions` | One identity source | Enrolled identity (keys below); requires `KeyHandle` |
 | `JwksUri` | `AAuthJwksUriIdentityOptions` | One identity source | Server identity (keys below) |
@@ -373,7 +373,7 @@ delegates or instances; every other member binds from configuration, such as
 | `ChainFromHttpContext` | `bool` | No | Chain the current request's verified upstream auth token |
 | `EnableResourceManagedAccess` | `bool` | No | Capture and replay `AAuth-Access` (resource-managed) |
 | `AAuthAccessStore` | `IAAuthAccessStore?` | No | *Code-only.* Per-origin `AAuth-Access` store (default in-memory) |
-| `EgressPolicy` | `AAuthEgressPolicy?` | No | *Code-only.* Egress policy (default `Production`) |
+| `EgressPolicy` | `AAuthEgressPolicy?` | No | *Code-only.* Egress policy; property default is `null`, resolved by builders/handlers to `Production` unless development loopback origins are configured |
 | `DevelopmentLoopbackOrigins` | `string[]?` | No | Loopback origins a development agent may call |
 | `InnerHandler` | `HttpMessageHandler?` | No | *Code-only.* Transport under the signer |
 | `TransportContract` | `AAuthTransportContract?` | No | *Code-only.* Egress guarantee of `InnerHandler` |
@@ -479,6 +479,116 @@ cover resource-required components without an `invalid_input` retry.
 | `PreferWaitSeconds` | `int?` | null | Sends `Prefer: wait=N` to long-poll |
 | `MinPollInterval` | `TimeSpan` | zero | Optional minimum delay between polls |
 | `OnPoll` | `Action<HttpResponseMessage>?` | null | Per-poll callback |
+
+### TokenExchangeClientOptions
+
+Primitive client options for direct `TokenExchangeClient` construction. Builder
+and DI paths set these from shared services.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `VerifyAuthTokenSignature` | `bool` | `true` | Verify returned auth-token issuer signatures through metadata/JWKS before accepting them. Structural/context checks always run. |
+| `JwksClient` | `JwksClient?` | `null` | Cached JWKS client for returned auth-token verification; direct callers can pass a shared instance. |
+
+### AAuthResourcePipelineOptions (MapAAuthResource)
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AccountSelector` | `Func<HttpContext,string?>?` | `null` | Selects the resource account for account-bound challenges and verification. |
+| `AccessMode` | `AAuthAccessMode` | `RequireAuthToken` | Pipeline access gate: identity, person-token, auth-token, agent-token, or resource-managed pass-through. |
+| `Trust` | `AAuthTrustOptions` | `new()` (open) | Trust applied by the unified resource pipeline. |
+| `DefaultScopes` | `string?` | `null` | Default scopes to request in resource tokens. |
+
+### AAuthResourceManagedOptions (AddAAuthResourceManaged)
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ConsentUrl` | `string` | required | Absolute consent URL advertised in `requirement=interaction`; must not include query or fragment. |
+| `PollPath` | `string` | `/pending` | Deferred-response `Location` path prefix; `MapAAuthInteractionPoll` serves `{PollPath}/{code}`. |
+| `TokenTtl` | `TimeSpan` | 30 minutes | Lifetime of issued opaque `AAuth-Access` tokens. |
+| `CodeTtl` | `TimeSpan` | 10 minutes | Lifetime of pending interaction codes. |
+
+### AAuthRevocationOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `IsAcceptedIssuer` | `Func<string,bool>?` | `null` (deny) | Verified server identities this endpoint accepts revocations from. Assign `AAuthTrust.Any` for any verified issuer. |
+| `MaxTokenLifetime` | `TimeSpan` | 24 hours | Latest accepted `exp`, bounding unseen revocation retention. |
+| `Limits` | `RevocationLimits?` | `new()` | Per-issuer entry/rate limits; `null` disables them. |
+| `DeferAfter` | `TimeSpan` | 20 seconds | Hold an in-progress cascade before answering `202` with a pending URL. |
+| `ReportDownstream` | `bool` | `true` | Include downstream cascade results in successful responses. |
+| `RevokeGrantAsync` | `Func<TokenGrant,CancellationToken,Task<RevocationDownstreamError?>>?` | `null` | Generic endpoint hook for downstream revocation; role endpoints use their registered revocation service. |
+
+### AAuthHeldInvocationOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `PathPrefix` | `string` | `/aauth/held` | Held-invocation poll path prefix. |
+| `PendingLifetime` | `TimeSpan` | 10 minutes | Default lifetime for an unexecuted held invocation. |
+| `TimeProvider` | `TimeProvider` | System | Clock for pending expiry. |
+
+### CallChainingOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AgentKey` | `IAAuthSigner` | required | Resource's own agent signing key for downstream requests. |
+| `SignatureKeyProvider` | `ISignatureKeyProvider` | required | Produces the downstream `Signature-Key`, usually a `JwtSignatureKeyProvider` over the resource's agent token. |
+| `HttpClientFactory` | `Func<HttpClient>?` | `null` | Optional signed client factory for downstream token endpoints. |
+
+### GovernanceOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `OnInteractionRequired` | `Func<Interaction,CancellationToken,Task>?` | `null` | Handles PS governance `requirement=interaction`. |
+| `OnClarificationRequired` | `Func<ClarificationRequirement,CancellationToken,Task<ClarificationResponse>>?` | `null` | Handles governance clarification rounds. |
+| `MaxClarificationRounds` | `int` | 5 | Clarification rounds before aborting. |
+| `PollerOptions` | `DeferredPollerOptions?` | `null` | Optional deferred-response polling overrides. |
+
+### AAuthFederationOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `TransportContract` | `AAuthTransportContract?` | `null` | Transport admission guarantee for federation-specific HTTP clients. |
+
+### R3AccessTokenEndpointOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier policy for R3 document fetches. |
+| `FetchTransportContract` | `AAuthTransportContract?` | `null` | Admission guarantee for custom R3 fetch transport. |
+| `Issuer` | `string` | required | AS issuer for R3 auth tokens. |
+| `SigningKeys` | `AAuthSigningKeySet` | required | AS signing keys. |
+| `TokenPath` | `string` | `/token` | R3 AS token endpoint path. |
+| `Trust` | `AAuthTrustOptions` | `new()` (open) | Person Servers this R3 AS will broker for. |
+| `FetchAndVerifyAsync` | `Func<HttpContext,string,string,string,CancellationToken,Task<byte[]>>?` | `null` | Custom signed R3 document fetch/verification callback. |
+| `FetchHttpMessageHandler` | `HttpMessageHandler?` | `null` | Handler for default signed R3 document fetches. |
+| `AuditSink` | `IR3AuditSink` | required | Durable audit persistence required before token release. |
+| `TimeProvider` | `TimeProvider` | System | Clock for issuance and pending consent. |
+| `VocabularySchemas` | `R3VocabularySchemas` | Standard | Accepted R3 vocabularies. |
+| `OperationValidator` | `IR3OperationValidator?` | `null` | Validates referenced operations against authoritative definitions. |
+| `AuthoritativeDefinitions` | `IR3AuthoritativeDefinitionProvider?` | `null` | Supplies resource-defined operation inventories. |
+| `IsOperationAllowed` | `Func<R3OperationIdentity,bool>?` | `null` | AS policy for outright operation grants. |
+| `IsProposalAllowed` | `Func<R3ProposalDocument,bool>?` | `null` | AS policy for concrete per-call proposals. |
+| `IsScopeAllowed` | `Func<string,string,bool>?` | `null` | AS policy for non-R3 scopes. |
+| `IsPerCallOperation` | `Func<R3OperationIdentity,bool>?` | `null` | Marks operations that require per-call approval. |
+| `RequireProposalConsent` | `bool` | `false` | Parks per-call proposals behind human consent. |
+| `BrowserConsent` | `BrowserConsentSessions?` | `null` | Browser session helper for proposal consent. |
+| `ConsentPath` | `string` | `/interaction/consent` | Browser consent path for per-call proposals. |
+| `PendingPath` | `string` | `/pending` | Poll path used after per-call proposal consent. |
+
+### AAuthEventsOptions and AAuthSubscriptionEndpointOptions
+
+| Type | Property | Type | Default | Description |
+|------|----------|------|---------|-------------|
+| `AAuthEventsOptions` | `EgressPolicy` | `AAuthEgressPolicy` | `Production` | URL/identifier policy for Events metadata/JWKS. |
+| `AAuthEventsOptions` | `TimeProvider` | `TimeProvider` | System | Clock for Events token verification. |
+| `AAuthEventsOptions` | `InnerHandler` | `HttpMessageHandler?` | `null` | Optional Events transport. |
+| `AAuthEventsOptions` | `TransportContract` | `AAuthTransportContract?` | `null` | Admission guarantee for `InnerHandler`. |
+| `AAuthSubscriptionEndpointOptions` | `Resource` | `string?` | registered resource issuer | Resource identifier for protected subscription registration. |
+| `AAuthSubscriptionEndpointOptions` | `Operation` | `string` | `""` | Operation name authorized by the subscribe token/ticket. |
+| `AAuthSubscriptionEndpointOptions` | `ProtectedChannel` | `bool` | `false` | Whether registration requires a protected ticket. |
+| `AAuthSubscriptionEndpointOptions` | `ValidateParameters` | `Func<JsonObject,bool>?` | `null` | Validates optional registration parameters; omitted body is accepted only when this is `null`. |
+| `AAuthSubscriptionEndpointOptions` | `SubscriptionLifetime` | `TimeSpan?` | `null` | Optional server-side subscription lifetime. |
 
 ## Extensibility Patterns
 

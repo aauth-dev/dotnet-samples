@@ -107,8 +107,8 @@ Keys are stored as JWK JSON files:
 
 ```
 ~/.aauth/keys/
-├── agent-signing-key.json    // { "kty": "OKP", "crv": "Ed25519", "x": "...", "d": "..." }
-└── backup-key.json
+├── agent-signing-key.jwk.json    // { "kty": "OKP", "crv": "Ed25519", "x": "...", "d": "..." }
+└── backup-key.jwk.json
 ```
 
 ## Choosing a Backend
@@ -177,13 +177,19 @@ public sealed class AzureKeyVaultStore : IKeyStore
 
 ## Key Rotation
 
-For key rotation with continuity, use the `jkt-jwt` signing mode:
+For AP key refresh with continuity, use the `jkt-jwt` signing mode only for the
+agent ↔ AP refresh ceremony. AAuth resource-facing requests continue to use
+`sig=jwt` with the agent, person or auth token returned by the AP/PS/AS.
 
-1. Generate new key, store in `IKeyStore`
-2. Create a delegation JWT from old key to new key
-3. Use `JktJwtSignatureKeyProvider` — resource sees the same identity
+1. Generate the new ephemeral key and store it in `IKeyStore`.
+2. Create a delegation JWT from the durable key to the new key.
+3. Call the AP refresh endpoint with `JktJwtSignatureKeyProvider`.
+4. Rebuild the resource client with the returned agent JWT and new key.
 
-See [Key Rotation (jkt-jwt)](../signing-modes/key-rotation-jkt-jwt.md) for details.
+Old auth tokens remain bound to their original confirmation key; after the AP
+returns a token bound to a different key, obtain fresh person/auth tokens for
+resource access. See [AP Key Refresh (jkt-jwt)](../signing-modes/key-rotation-jkt-jwt.md)
+for details.
 
 ## Issuer Signing Key Rotation
 

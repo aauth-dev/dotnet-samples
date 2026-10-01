@@ -71,7 +71,7 @@ builder.Services.AddAAuthAgent("federated", options =>
 
 See [Dependency Injection](../reference/dependency-injection.md) for full reference.
 
-## Key Difference from PS-Asserted
+## Key Difference from PS Authorization
 
 The resource token `aud` = AS URL (not PS URL). The PS recognizes this and federates to the AS rather than issuing the auth token itself.
 
@@ -84,6 +84,7 @@ a signed server-to-server call to the AS and relays the AS-minted auth token bac
 to the agent.
 
 ```csharp
+using AAuth.Crypto;
 using AAuth.Person;
 
 builder.Services.AddAAuthPersonServer(configure: options =>
@@ -119,6 +120,7 @@ be the calling PS), evaluates policy through a pluggable
 
 ```csharp
 using AAuth.Access;
+using AAuth.Crypto;
 
 // Register the Access Server with its policy decision point (stub | keycloak).
 // Deferred decisions (§Claims Required / interactive consent) park in the
@@ -314,6 +316,8 @@ decision, it answers the PS's token request with `202` and
 ```http
 HTTP/1.1 202 Accepted
 Location: https://as.example/pending/xyz
+Retry-After: 5
+Cache-Control: no-store
 AAuth-Requirement: requirement=claims
 Content-Type: application/json
 
@@ -372,6 +376,6 @@ by configuring the Access Server with `AccessServer:RequireClaims` (e.g.
 
 ## Further Reading
 
-- [PS-Asserted Access](ps-asserted-access.md)
+- [PS authorization access](ps-asserted-access.md)
 - [Mock Access Server](../../samples/MockAccessServers/Federated/README.md)
 - [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
