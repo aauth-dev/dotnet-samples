@@ -38,8 +38,8 @@ evaluates policy and mints the auth token.
   6. For a deferred decision, returns `202` and parks it in an
      `IAccessPendingStore` — `requirement=interaction` (stub consent screen or
      Keycloak login) or `requirement=claims` with the claim names in the body's
-     `required_claims` (§Claims Required); the PS then pushes a directed `sub` +
-     claims to the `Location` and resumes polling.
+     `required_claims` (§Claims Required); the PS then pushes the requested
+     identity claims other than `sub` to the `Location` and resumes polling.
   7. Mints an `aa-auth+jwt` with `dwk = aauth-access.json`, `iss` = this AS,
      `aud` = the resource, bound to the agent's key.
 
@@ -68,7 +68,7 @@ dotnet run --project samples/MockAccessServers/Federated
 | `AAuth:SignatureWindow` | `60` | Max age (seconds) for the RFC 9421 signature. |
 | `MockAccessServer:TrustedPersonServers` | `[http://localhost:5100]` | Person Servers allowed to federate (matched by `jwks_uri` host). |
 | `AccessServer:PolicyProvider` | `stub` | Policy engine: `stub` or `keycloak`. |
-| `AccessServer:RequireClaims` | `[]` | (`stub` only) identity claims to demand via §Claims Required, e.g. `AccessServer__RequireClaims__0=email`. |
+| `AccessServer:RequireClaims` | `[]` | (`stub` only) identity claims to demand via §Claims Required, e.g. `AccessServer__RequireClaims__0=email`. Protocol-owned names such as `sub` are ignored/rejected; the presented token already identifies the person. |
 | `AccessServer:Keycloak:Authority` | `http://localhost:8080/realms/aauth` | Keycloak realm (OIDC issuer). |
 | `AccessServer:Keycloak:ClientId` | `aauth-access-server` | Confidential client the AS authenticates as. |
 | `AccessServer:Keycloak:ClientSecret` | — | Client secret for the AS client. |

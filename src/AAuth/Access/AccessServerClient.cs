@@ -11,6 +11,7 @@ using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.Tokens;
+using Microsoft.AspNetCore.Http;
 
 namespace AAuth.Access;
 
@@ -25,12 +26,12 @@ namespace AAuth.Access;
 /// <c>Signature-Key</c>. The caller supplies an <see cref="HttpClient"/>
 /// wrapped in an <see cref="HttpSig.AAuthSigningHandler"/> configured for the
 /// <c>jwks_uri</c> scheme, just like any other outbound AAuth request.</para>
-/// <para>This client recognises a <c>402 Payment Required</c> response and
-/// surfaces it as <see cref="AAuthPaymentRequiredException"/>; payment
-/// settlement is out of scope for AAuth. A <c>202 requirement=claims</c>
+/// <para>This client recognises a <c>402 Payment Required</c> response,
+/// dispatches <see cref="AccessServerRequest.OnPaymentRequired"/>, then polls
+/// the AS pending <c>Location</c> after settlement. A <c>202 requirement=claims</c>
 /// response (§Claims Required) drives the identity-claims push: the requested
 /// claim names are handed to <see cref="AccessServerRequest.OnClaimsRequired"/>,
-/// the returned claims (including a directed <c>sub</c>) are POSTed — signed —
+/// the returned claims (never <c>sub</c>) are POSTed — signed —
 /// to the AS's pending <c>Location</c> URL, and the client then resumes polling
 /// for the issued auth token. When the AS asks for claims but no
 /// <see cref="AccessServerRequest.OnClaimsRequired"/> handler is configured the
@@ -142,16 +143,6 @@ public sealed class AccessServerClient
 
         try
         {
-            // 402 Payment Required — recognised but settlement is out of scope.
-            if (response.StatusCode == HttpStatusCode.PaymentRequired)
-            {
-                var location = response.Headers.Location?.ToString();
-                var challenge = response.Headers.WwwAuthenticate.Count > 0
-                    ? response.Headers.WwwAuthenticate.ToString()
-                    : null;
-                throw new AAuthPaymentRequiredException(location, challenge);
-            }
-
             // Deferred response: the AS needs interaction (consent) and/or
             // identity claims before it can issue an auth token. Per spec
             // §Trust Establishment these mechanisms COMPOSE onto a single
@@ -161,7 +152,7 @@ public sealed class AccessServerClient
             const int maxCompositionSteps = 16;
             var compositionSteps = 0;
             Interaction? deliveredInteraction = null;
-            while (response.StatusCode == HttpStatusCode.Accepted)
+            while (response.StatusCode is HttpStatusCode.Accepted or HttpStatusCode.PaymentRequired)
             {
                 if (++compositionSteps > maxCompositionSteps)
                 {
@@ -170,13 +161,42 @@ public sealed class AccessServerClient
                         $"Access Server exceeded {maxCompositionSteps} composed deferred-requirement steps without issuing an auth token.");
                 }
 
+                if (response.StatusCode == HttpStatusCode.PaymentRequired)
+                {
+                    activePendingUrl = ResolveSameOriginLocation(response, tokenEndpointUri, asUri);
+                    var challenge = await AAuthPaymentChallenge.FromResponseAsync(response, cancellationToken)
+                        .ConfigureAwait(false);
+                    response.Dispose();
+                    if (request.OnPaymentRequired is null)
+                    {
+                        throw new NotSupportedException(
+                            "Access Server returned 402 Payment Required, but no OnPaymentRequired handler is configured.");
+                    }
+                    var settlement = await request.OnPaymentRequired(new AAuthPaymentSettlementContext
+                    {
+                        Challenge = challenge,
+                        AccessServerOrigin = asUri.GetLeftPart(UriPartial.Authority),
+                        PendingUrl = activePendingUrl,
+                    }, cancellationToken).ConfigureAwait(false)
+                        ?? throw new InvalidOperationException(
+                            "AccessServerRequest.OnPaymentRequired returned null; expected a settlement result.");
+                    if (!settlement.Settled)
+                    {
+                        throw new AAuthTokenExchangeException(
+                            "denied", "payment settlement is unavailable", StatusCodes.Status403Forbidden, true);
+                    }
+                    response = await PollDeferredAsync(activePendingUrl, request.PollerOptions, deliveredInteraction, cancellationToken)
+                        .ConfigureAwait(false);
+                    continue;
+                }
+
                 var requirement = ExtractRequirementType(response);
                 activePendingUrl = ResolveSameOriginLocation(response, tokenEndpointUri, asUri);
 
                 // requirement=claims (§Claims Required) is a spec-mandated
                 // active identity-claims PUSH: read the requested claim names,
-                // ask the caller to supply them (incl. a directed `sub`), POST
-                // them signed to the Location, then resume polling the same URL.
+                // ask the caller to supply them (never `sub`), POST them signed
+                // to the Location, then resume polling the same URL.
                 if (requirement == ClarificationRequirement.RequirementType)
                 {
                     if (request.OnClarificationRequired is null)
@@ -203,7 +223,7 @@ public sealed class AccessServerClient
                     }
 
                     var claimsRequirement = await ExtractClaimsRequirementAsync(response, cancellationToken).ConfigureAwait(false);
-                    if (claimsRequirement.RequiredClaims.Any(name => !AuthTokenBuilder.IsIdentityClaimAllowed(name)))
+                    if (ClaimsRequirement.ContainsForbiddenClaimName(claimsRequirement.RequiredClaims))
                         throw new TokenVerificationException("Requested identity claims contain protocol-owned names.");
                     var claimsPendingUrl = ResolveSameOriginLocation(response, tokenEndpointUri, asUri);
                     response.Dispose();

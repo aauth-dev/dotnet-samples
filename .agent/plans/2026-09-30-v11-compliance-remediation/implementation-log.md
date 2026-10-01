@@ -1081,6 +1081,43 @@ Gates:
 - The docs gates pass.
 - e2e: full Playwright 78 passed, 1 skipped.
 
+### [2026-09-30] [Phase 9] R07 — Federation: collapse and payment
+
+RESOLVED.
+
+- Added explicit PS-AS collapse declarations keyed by verified resource issuer,
+  linked AS role name and expected AS issuer. Declared collapse resolves the
+  local AS role, fails closed on missing/mismatched linkage, evaluates the
+  local `IAccessPolicy`, and mints AS-shaped auth tokens with
+  `dwk=aauth-access.json`; undeclared `aud == PS` remains three-party.
+- Replaced payment-URL-shaped `NeedsPayment` with a payment challenge. AS
+  `402` responses now use the pending URL as `Location`; payment protocol data
+  stays in `WWW-Authenticate`/body. `AccessServerClient` composes
+  `402 -> settle -> poll -> 202 claims -> 200`, and the PS payment settler
+  receives only challenge, AS origin and pending URL. Missing/declined
+  settlement becomes polling `403 denied` with detail
+  `payment settlement is unavailable`.
+- Enforced the `sub` rule on both sides: AS claim requirements/pushed claims
+  reject protocol-owned names including `sub`; PS claims projection and
+  `ClaimsResponse` never send `sub`. The federated Keycloak callback filters
+  forbidden required-claim names before parking claims.
+- Updated the federated workflow docs, sample README, docs inventory and API
+  surface map. Required gates were run and green; Keycloak/Playwright e2e were
+  not run in this slice per the implementation brief.
+
+### [2026-10-01] [Phase 9] Gates and wrap-up
+
+RESOLVED.
+
+Gates:
+
+- The build is clean.
+- Tests: AAuth.Tests 1833, Conformance 1398, R3 339, Events 89.
+- The docs gates pass.
+- e2e: full Playwright 78 passed, 1 skipped.
+- Keycloak profile (`KEYCLOAK_E2E=1`): every `federated` spec passed (4);
+  container removed.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 7] R09 owner-edited sample compatibility

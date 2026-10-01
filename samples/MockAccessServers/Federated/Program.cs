@@ -314,6 +314,12 @@ app.MapGet("/interaction/callback", async (HttpContext ctx, string? code, string
                 // Keycloak gathered a claim requirement (need_info). Transition the
                 // entry into §Claims Required; the PS's ongoing poll sees
                 // requirement=claims and pushes the attributes on the same URL.
+                if (AAuth.Headers.ClaimsRequirement.ContainsForbiddenClaimName(decision.RequiredClaims))
+                {
+                    entry.Status = AccessPendingStatus.Denied;
+                    entry.DenyReason = "policy requested protocol-owned claims";
+                    return Results.Content(InteractionHtml("Access denied", "The policy requested unsupported identity claims."), "text/html");
+                }
                 entry.RequiredClaims = decision.RequiredClaims;
                 return Results.Content(InteractionHtml(
                     "More information needed",

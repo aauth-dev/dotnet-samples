@@ -150,6 +150,13 @@ public static class AAuthConstants
         public const string AdditionalSignatureComponents = "additional_signature_components";
     }
 
+    /// <summary>Common JWT/identity claim names used by the AAuth protocol.</summary>
+    public static class Claims
+    {
+        /// <summary>The directed subject claim. It is never requested with <c>requirement=claims</c>.</summary>
+        public const string Subject = "sub";
+    }
+
     /// <summary>
     /// Mission termination reasons (#mission-management). The set is open: a recipient
     /// that does not recognize a reason keeps the <c>terminated</c> state and treats the

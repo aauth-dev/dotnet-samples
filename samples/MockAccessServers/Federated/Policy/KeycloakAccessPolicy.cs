@@ -243,7 +243,8 @@ public sealed class KeycloakAccessPolicy : IAccessPolicy, IInteractiveAccessPoli
         {
             foreach (var claim in claims)
             {
-                if ((string?)claim?["name"] is { Length: > 0 } name)
+                if ((string?)claim?["name"] is { Length: > 0 } name
+                    && AAuth.Headers.ClaimsRequirement.IsRequestableClaimName(name))
                 {
                     names.Add(name);
                 }

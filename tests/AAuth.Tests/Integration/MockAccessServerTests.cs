@@ -161,6 +161,7 @@ public class MockAccessServerTests : IDisposable
     [InlineData("mission")]
     [InlineData("account")]
     [InlineData("exp")]
+    [InlineData("sub")]
     public async Task Token_RejectsProtocolOwnedClaimRequests(string claim)
     {
         using var factory = CreateFactory(builder => builder.UseSetting("AccessServer:RequireClaims:0", claim));
@@ -182,6 +183,7 @@ public class MockAccessServerTests : IDisposable
     [InlineData("act")]
     [InlineData("mission")]
     [InlineData("account")]
+    [InlineData("sub")]
     public async Task ClaimsPush_RejectsProtocolOwnedClaims(string claim)
     {
         using var factory = CreateFactory(builder => builder.UseSetting("AccessServer:RequireClaims:0", "email"));

@@ -101,7 +101,7 @@ public sealed class AccessDecision
         string? reason = null,
         string? interactionUrl = null,
         IReadOnlyList<string>? requiredClaims = null,
-        string? paymentUrl = null,
+        AAuthPaymentChallenge? paymentChallenge = null,
         string? tenant = null,
         IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null)
     {
@@ -109,7 +109,7 @@ public sealed class AccessDecision
         Reason = reason;
         InteractionUrl = interactionUrl;
         RequiredClaims = requiredClaims;
-        PaymentUrl = paymentUrl;
+        PaymentChallenge = paymentChallenge;
         Tenant = tenant;
         AdditionalClaims = additionalClaims;
     }
@@ -134,11 +134,8 @@ public sealed class AccessDecision
     /// </summary>
     public IReadOnlyList<string>? RequiredClaims { get; }
 
-    /// <summary>
-    /// The payment URL advertised in the <c>Location</c> header
-    /// (<see cref="AccessDecisionKind.NeedsPayment"/>, §Payment Required).
-    /// </summary>
-    public string? PaymentUrl { get; }
+    /// <summary>Payment-protocol details for <see cref="AccessDecisionKind.NeedsPayment"/>.</summary>
+    public AAuthPaymentChallenge? PaymentChallenge { get; }
 
     /// <summary>
     /// Optional <c>tenant</c> claim asserted on an allow, used only when the
@@ -167,9 +164,12 @@ public sealed class AccessDecision
     public static AccessDecision NeedsClaims(IReadOnlyList<string> requiredClaims)
         => new(AccessDecisionKind.NeedsClaims, requiredClaims: requiredClaims);
 
-    /// <summary>Require payment, advertising a payment URL in the <c>Location</c> header.</summary>
-    public static AccessDecision NeedsPayment(string paymentUrl)
-        => new(AccessDecisionKind.NeedsPayment, paymentUrl: paymentUrl);
+    /// <summary>
+    /// Require payment. The endpoint supplies the polling <c>Location</c>;
+    /// <paramref name="challenge"/> carries payment-protocol details.
+    /// </summary>
+    public static AccessDecision NeedsPayment(AAuthPaymentChallenge challenge)
+        => new(AccessDecisionKind.NeedsPayment, paymentChallenge: challenge);
 
     public static AccessDecision NeedsClarification(string question, int? timeoutSeconds = null,
         IReadOnlyList<string>? options = null)

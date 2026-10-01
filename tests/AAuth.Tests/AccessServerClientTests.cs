@@ -207,23 +207,102 @@ public class AccessServerClientTests
     }
 
     [Fact]
-    public async Task FederateAsync_ThrowsPaymentRequired_On402()
+    public async Task FederateAsync_SettlesPaymentThenComposesClaims_On402()
+    {
+        var agentKey = AAuthKey.Generate();
+        var authToken = await BuildAuthTokenAsync(agentKey, audience: ResourceUrl, scope: "whoami");
+        AAuthPaymentSettlementContext? paymentSeen = null;
+        var stub = new StubAccessServer(
+            tokenResponse: () =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.PaymentRequired)
+                {
+                    Content = JsonContent.Create(new { invoice = "42" }),
+                };
+                response.Headers.Location = new Uri($"{AsIssuer}/pending/pay");
+                response.Headers.TryAddWithoutValidation("WWW-Authenticate", "Payment method=\"stripe\"");
+                return response;
+            },
+            claimsResponse: _ => Ok(authToken),
+            pendingGetResponse: () =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = JsonContent.Create(new { status = "pending", required_claims = new[] { "email" } }),
+                };
+                response.Headers.Location = new Uri($"{AsIssuer}/pending/pay");
+                response.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, "requirement=claims");
+                return response;
+            });
+        var client = BuildClient(stub);
+
+        var request = NewRequest(agentKey);
+        request = new AccessServerRequest
+        {
+            AuthorizationExpiresAt = request.AuthorizationExpiresAt,
+            ResourceToken = request.ResourceToken,
+            AgentToken = request.AgentToken,
+            ExpectedAudience = request.ExpectedAudience,
+            ExpectedSubject = request.ExpectedSubject,
+            ExpectedPersonServer = request.ExpectedPersonServer,
+            PresentedToken = request.PresentedToken,
+            PresentedTokenExpiresAt = request.PresentedTokenExpiresAt,
+            AgentKey = request.AgentKey,
+            RequestedScope = request.RequestedScope,
+            OnPaymentRequired = (payment, _) =>
+            {
+                paymentSeen = payment;
+                return Task.FromResult(AAuthPaymentSettlementResult.Success);
+            },
+            OnClaimsRequired = (_, _) => Task.FromResult(new ClaimsResponse
+            {
+                Claims = new Dictionary<string, JsonNode?> { ["email"] = "demo@person.example" },
+            }),
+        };
+        var result = await client.FederateAsync(AsIssuer, request);
+
+        Assert.Equal(authToken, result);
+        Assert.NotNull(paymentSeen);
+        Assert.Equal($"{AsIssuer}/pending/pay", paymentSeen!.PendingUrl.ToString());
+        Assert.Equal(AsIssuer, paymentSeen.AccessServerOrigin);
+        Assert.Equal("Payment", paymentSeen.Challenge.Scheme);
+        Assert.Equal("demo@person.example", (string?)stub.LastClaimsPushBody!["email"]);
+        Assert.False(stub.LastClaimsPushBody.ContainsKey("sub"));
+    }
+
+    [Fact]
+    public async Task FederateAsync_DeniesPayment_WhenSettlementUnavailable()
     {
         var agentKey = AAuthKey.Generate();
         var stub = new StubAccessServer(() =>
         {
             var response = new HttpResponseMessage(HttpStatusCode.PaymentRequired);
-            response.Headers.Location = new Uri("https://pay.as.test/invoice/42");
-            response.Headers.TryAddWithoutValidation("WWW-Authenticate", "x402 realm=\"as.test\"");
+            response.Headers.Location = new Uri($"{AsIssuer}/pending/pay");
+            response.Headers.TryAddWithoutValidation("WWW-Authenticate", "Payment method=\"stripe\"");
             return response;
         });
-        var client = BuildClient(stub);
 
-        var ex = await Assert.ThrowsAsync<AAuthPaymentRequiredException>(
-            () => client.FederateAsync(AsIssuer, NewRequest(agentKey)));
+        var request = NewRequest(agentKey);
+        request = new AccessServerRequest
+        {
+            AuthorizationExpiresAt = request.AuthorizationExpiresAt,
+            ResourceToken = request.ResourceToken,
+            AgentToken = request.AgentToken,
+            ExpectedAudience = request.ExpectedAudience,
+            ExpectedSubject = request.ExpectedSubject,
+            ExpectedPersonServer = request.ExpectedPersonServer,
+            PresentedToken = request.PresentedToken,
+            PresentedTokenExpiresAt = request.PresentedTokenExpiresAt,
+            AgentKey = request.AgentKey,
+            RequestedScope = request.RequestedScope,
+            OnPaymentRequired = (_, _) => Task.FromResult(AAuthPaymentSettlementResult.Declined),
+        };
+        var ex = await Assert.ThrowsAsync<AAuthTokenExchangeException>(
+            () => BuildClient(stub).FederateAsync(AsIssuer, request));
 
-        Assert.Equal("https://pay.as.test/invoice/42", ex.Location);
-        Assert.Contains("x402", ex.Challenge);
+        Assert.Equal("denied", ex.ErrorCode);
+        Assert.Equal(403, ex.StatusCode);
+        Assert.Equal("payment settlement is unavailable", ex.Detail);
     }
 
     [Fact]

@@ -145,8 +145,10 @@ or an `IAccessPolicy` registered in DI. The pending store resolves from
 in-memory default; resolve it in your own endpoints with
 `[FromKeyedServices(AAuthAccessServerBuilder.DefaultName)] IAccessPendingStore`. The
 policy returns one of `Allow` / `Deny` / `NeedsInteraction` / `NeedsClaims` /
-`NeedsPayment`; the helper maps those to a minted auth token, `403`, or a `202`
-that parks the decision and advertises the requirement to the PS.
+`NeedsPayment`; the helper maps those to a minted auth token, `403`, a `202`
+that parks the decision and advertises the requirement to the PS, or a `402`
+whose `Location` is the AS pending URL. Payment protocol details live in
+`WWW-Authenticate` and/or the response body, not in the `Location`.
 
 > `Trust.PersonServers` follows the same open-by-default rule: unset brokers
 > for any *verifiable* Person Server (the spec's "no separate registration
@@ -230,7 +232,77 @@ In the GuidedTour pick **Federated** mode; in the SampleApp open the
 
 ## PS-AS Collapse
 
-When the PS and AS are the same server, the wire protocol is unchanged — it's just an internal evaluation. No code changes needed on either side.
+When the PS and AS are the same origin, roles are still distinct. Collapse is
+an explicit declaration: the Person Server configuration names the verified
+resource issuer, the linked local Access Server role instance, and the expected
+AS issuer. A declared collapse runs the local `IAccessPolicy` internally and
+mints an AS-verdict auth token with `dwk=aauth-access.json`. If the linked AS is
+missing or its issuer differs from the declaration, the request fails closed;
+the SDK never silently falls back to three-party PS assertion. Undeclared
+`aud == PS` requests remain normal three-party access and mint
+`dwk=aauth-person.json`.
+
+```csharp
+builder.Services
+    .AddAAuthPersonServer(configure: options =>
+    {
+        options.Issuer = "https://ps.example";
+        options.SigningKeys = new AAuthSigningKeySet("ps-key", AAuthKey.Generate());
+    })
+    .UseCollocatedAccessServer(
+        resourceIssuer: "https://wallet.example",
+        accessServerName: "LocalWalletAs",
+        expectedAccessServerIssuer: "https://ps.example");
+
+builder.Services
+    .AddAAuthAccessServer("LocalWalletAs", options =>
+    {
+        options.Issuer = "https://ps.example";
+        options.SigningKeys = new AAuthSigningKeySet("as-key", AAuthKey.Generate());
+    })
+    .UsePolicy(new DemoAccessPolicy());
+
+sealed class DemoAccessPolicy : AAuth.Access.IAccessPolicy
+{
+    public Task<AAuth.Access.AccessDecision> EvaluateAsync(
+        AAuth.Access.AccessPolicyRequest request,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(AAuth.Access.AccessDecision.Allow());
+}
+```
+
+## Payment-required federation
+
+An AS may answer the PS-to-AS token request with `402 Payment Required`. The
+SDK owns the loop mechanics: validate the same-origin pending `Location`, call
+the PS payment settler, poll the same URL, and compose any later `202`
+requirements (claims, interaction, clarification) until `200` or a terminal
+error.
+
+```csharp
+builder.Services
+    .AddAAuthPersonServer(configure: options =>
+    {
+        options.Issuer = "https://ps.example";
+        options.SigningKeys = new AAuthSigningKeySet("ps-key", AAuthKey.Generate());
+    })
+    .WithFederation()
+    .UsePaymentSettler(new DemoPaymentSettler());
+
+sealed class DemoPaymentSettler : AAuth.Access.IAAuthPaymentSettler
+{
+    public Task<AAuth.Access.AAuthPaymentSettlementResult> SettleAsync(
+        AAuth.Access.AAuthPaymentSettlementContext context,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(AAuth.Access.AAuthPaymentSettlementResult.Success);
+}
+```
+
+`IAAuthPaymentSettler` receives only the payment challenge, AS origin, and
+pending URL. It never receives resource, person, agent, or auth JWTs. The
+default billing cache is keyed by AS issuer and payment scheme. If no settler is
+registered, or settlement is declined, the PS pending request ends as registered
+polling error `403 denied` with detail `payment settlement is unavailable`.
 
 ## Identity-Claims Push (`requirement=claims`)
 

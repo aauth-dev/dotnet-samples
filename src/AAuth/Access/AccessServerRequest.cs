@@ -91,6 +91,14 @@ public sealed class AccessServerRequest
     public Func<Interaction, CancellationToken, Task>? OnInteractionRequired { get; init; }
 
     /// <summary>
+    /// Invoked when the AS returns <c>402 Payment Required</c>. The callback
+    /// receives only the payment challenge, AS origin, and pending URL, never
+    /// token material. Returning <see cref="AAuthPaymentSettlementResult.Declined"/>
+    /// denies the token request.
+    /// </summary>
+    public Func<AAuthPaymentSettlementContext, CancellationToken, Task<AAuthPaymentSettlementResult>>? OnPaymentRequired { get; init; }
+
+    /// <summary>
     /// Invoked when the AS returns <c>202 requirement=claims</c> (§Claims
     /// Required) to request identity claims it needs for a policy decision.
     /// The callback receives the requested claim names and returns a

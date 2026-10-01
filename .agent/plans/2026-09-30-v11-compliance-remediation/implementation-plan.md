@@ -450,14 +450,14 @@ one critical-section design (RT-3 conflict 3).
 
 **Definition of Done**
 
-- [ ] A declared collapse produces an AS-verdict token with
+- [x] A declared collapse produces an AS-verdict token with
       `dwk=aauth-access.json`. A declared collapse with its linked AS missing
       fails closed.
-- [ ] 402 → settle → poll → 202 claims → 200 completes. With no settler, the
+- [x] 402 → settle → poll → 202 claims → 200 completes. With no settler, the
       result is 403 `denied` with a detail. The settler never receives a JWT.
-- [ ] An AS requesting `sub` in `requirement=claims` is rejected, and the PS
+- [x] An AS requesting `sub` in `requirement=claims` is rejected, and the PS
       never sends `sub`.
-- [ ] The gates, including Keycloak, are green.
+- [x] The gates, including Keycloak, are green.
 
 ## Phase 10 — Agent client behaviour (R15)
 

@@ -120,6 +120,14 @@ public sealed class AAuthPersonServerOptions
     public AAuthTrustOptions Trust { get; set; } = new();
 
     /// <summary>
+    /// Explicit PS-AS collapse declarations keyed by verified resource issuer,
+    /// linked AS role name, and expected AS issuer. Undeclared <c>aud == PS</c>
+    /// requests remain three-party.
+    /// </summary>
+    public IList<AAuthCollapsedFederationDeclaration> CollapsedFederation { get; } =
+        new List<AAuthCollapsedFederationDeclaration>();
+
+    /// <summary>
     /// The §Interaction Endpoint path advertised in the PS metadata
     /// (<c>interaction_endpoint</c>), where agents POST mission interaction /
     /// payment / question / completion requests. Distinct from
@@ -260,6 +268,7 @@ public static class AAuthPersonServerEndpoints
         var enrollmentStore = app.Services.GetRequiredKeyedService<IPersonResourceEnrollmentStore>(name);
         var subjectDeriver = app.Services.GetRequiredKeyedService<IPersonSubjectDeriver>(name);
         var store = app.Services.GetRequiredKeyedService<IPersonPendingStore>(name);
+        var collapsePolicy = app.Services.GetRequiredKeyedService<IAAuthCollapsedFederationPolicy>(name);
         var observers = app.Services.GetKeyedServices<IPersonPendingObserver>(name)
             .Concat(app.Services.GetServices<IPersonPendingObserver>()).Distinct().ToArray();
         var pending = observers.Length == 0 ? store : new ObservedPersonPendingStore(store, observers);
@@ -404,6 +413,38 @@ public static class AAuthPersonServerEndpoints
                 TimeProvider = options.TimeProvider,
                 Key = signingKey,
                 KeyId = signingKid,
+                Subject = subject,
+                Scope = scope,
+                Tenant = tenant,
+                Roles = roles,
+                Groups = groups,
+                AdditionalClaims = additionalClaims,
+                MissionS256 = missionS256,
+            }.BuildAsync(cancellationToken);
+        }
+
+        ValueTask<string> MintCollapsedAuth(CancellationToken cancellationToken,
+            IAAuthServerIdentity accessIdentity, AAuthAccessServerOptions accessOptions,
+            string resourceUrl, string scope, IAAuthKey confirmationKey,
+            string subject, string? tenant, IReadOnlyList<string>? roles, IReadOnlyList<string>? groups,
+            IReadOnlyDictionary<string, JsonNode?>? additionalClaims, string? missionS256,
+            DateTimeOffset agentTokenExpiresAt, DateTimeOffset? authorizationExpiresAt, string? account = null)
+        {
+            var (signingKid, signingKey) = accessIdentity.SigningKeys.Active;
+            return new AuthTokenBuilder
+            {
+                EgressPolicy = accessOptions.EgressPolicy,
+                Issuer = accessIdentity.Issuer,
+                PersonServer = issuer,
+                Audience = resourceUrl,
+                Account = account,
+                AgentConfirmationKey = confirmationKey,
+                AgentTokenExpiresAt = agentTokenExpiresAt,
+                AuthorizationExpiresAt = authorizationExpiresAt,
+                TimeProvider = accessOptions.TimeProvider,
+                Key = signingKey,
+                KeyId = signingKid,
+                Dwk = AuthTokenBuilder.AccessDwk,
                 Subject = subject,
                 Scope = scope,
                 Tenant = tenant,
@@ -1055,6 +1096,13 @@ public static class AAuthPersonServerEndpoints
                     resourceAudience, prompt, capabilities, agentAsserted);
             }
 
+            var collapsed = await TryHandleCollapsedAsync(ctx, issuance!, resourceTokenJwt, presentedTokenJwt,
+                prompt, capabilities, agentAsserted);
+            if (collapsed.Handled)
+            {
+                return collapsed.Result!;
+            }
+
             return await HandleThreePartyAsync(ctx, issuance!, resourceTokenJwt, presentedTokenJwt, prompt, capabilities, agentAsserted);
         });
 
@@ -1663,6 +1711,245 @@ public static class AAuthPersonServerEndpoints
             }
         }
 
+        async Task<(bool Handled, IResult? Result)> TryHandleCollapsedAsync(
+            HttpContext ctx, AgentIssuanceContext issuance, string resourceTokenJwt, string presentedTokenJwt,
+            string? prompt, IReadOnlyList<string>? capabilities, AgentAssertedContent? agentAsserted,
+            PersonPendingEntry? resumed = null)
+        {
+            TokenVerifier.VerifiedToken resource, presented;
+            try
+            {
+                (resource, presented) = await VerifyPairAsync(resourceTokenJwt, presentedTokenJwt, issuer,
+                    issuance.ConfirmationKey.ComputeJwkThumbprint(), ctx.RequestAborted);
+                issuance.ValidateResourceContext(resource.Payload);
+            }
+            catch (TokenVerificationException ex)
+            {
+                return (true, AAuthProblemDetails.TokenFailure(ex, TokenCredential.Resource));
+            }
+
+            var audience = resource.Issuer;
+            var resourceContext = (JsonObject)resource.Payload.DeepClone();
+            var requestedScope = (string?)resource.Payload["scope"] is { } scopeClaim && !string.IsNullOrWhiteSpace(scopeClaim)
+                ? scopeClaim : options.DefaultScope;
+            var collapse = await collapsePolicy.EvaluateAsync(new AAuthCollapsedFederationContext
+            {
+                Services = app.Services,
+                HttpContext = ctx,
+                PersonServerName = name,
+                PersonServerIssuer = issuer,
+                ResourceIssuer = audience,
+                ResourceTokenPayload = resourceContext,
+                Scope = requestedScope,
+                Account = resource.Account,
+                PresentedToken = presented,
+            }, ctx.RequestAborted).ConfigureAwait(false);
+            if (!collapse.Declared)
+            {
+                return (false, null);
+            }
+
+            var accessServerName = collapse.AccessServerName!;
+            var expectedAccessIssuer = collapse.ExpectedAccessServerIssuer!;
+            var accessIdentity = app.Services.GetKeyedService<IAAuthServerIdentity>(accessServerName);
+            if (accessIdentity is null)
+            {
+                return (true, AAuthProblemDetails.Create("server_error",
+                    $"Collapsed federation declares linked Access Server '{accessServerName}', but that role is not registered.",
+                    statusCode: StatusCodes.Status500InternalServerError));
+            }
+            if (!string.Equals(accessIdentity.Issuer, expectedAccessIssuer, StringComparison.Ordinal)
+                || !string.Equals(accessIdentity.Issuer, issuer, StringComparison.Ordinal))
+            {
+                return (true, AAuthProblemDetails.Create("server_error",
+                    "Collapsed federation linked Access Server issuer does not match the declared PS-AS issuer.",
+                    statusCode: StatusCodes.Status500InternalServerError));
+            }
+            var accessPolicy = app.Services.GetKeyedService<IAccessPolicy>(accessServerName);
+            if (accessPolicy is null)
+            {
+                return (true, AAuthProblemDetails.Create("server_error",
+                    $"Collapsed federation linked Access Server '{accessServerName}' has no access policy.",
+                    statusCode: StatusCodes.Status500InternalServerError));
+            }
+            var accessOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<AAuthAccessServerOptions>>()
+                .Get(accessServerName);
+
+            var resolvedPerson = await ResolvePresentedPersonKeyAsync(audience, resource.Subject!, ctx.RequestAborted);
+            if (resolvedPerson.Failure is not null) return (true, resolvedPerson.Failure);
+            var personKey = resolvedPerson.PersonKey!.Value;
+            var missionS256 = resource.MissionS256;
+            var ceiling = Earliest(issuance.ExpiresAt, presented.ExpiresAt);
+            if (missionS256 is not null)
+            {
+                try
+                {
+                    if ((await ValidateMissionAsync(missionS256, issuance.AgentId, issuance.Upstream)).ExpiresAt is { } missionExpiry)
+                        ceiling = Earliest(ceiling, missionExpiry);
+                }
+                catch (AAuthTokenExchangeException ex)
+                {
+                    return (true, ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode));
+                }
+            }
+            var bound = await BindAgentAsync(issuance, personKey, ctx.RequestAborted);
+            if (bound.Failure is not null) return (true, bound.Failure);
+            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, resource, presented, missionS256,
+                bound.Registration, ctx.RequestAborted);
+            if (sourceFailure is not null) return (true, sourceFailure);
+            var sourceTokens = registered!;
+
+            PersonPendingEntry Park()
+            {
+                var entry = resumed ?? pending.Add(audience, requestedScope, issuance.AgentId, issuance.ConfirmationKey,
+                    issuance.AgentTokenExpiresAt, missionS256, ceiling);
+                entry.IssuanceExpiresAt = issuance.ExpiresAt;
+                BindOwner(ctx, entry);
+                BindResource(entry, resourceTokenJwt, issuer, issuance.ConfirmationKey);
+                entry.PresentedToken = presentedTokenJwt;
+                entry.PersonSubject = resource.Subject;
+                entry.PersonKey = personKey;
+                entry.PersonTenant = resource.Tenant;
+                entry.SourceTokens = sourceTokens;
+                entry.UpstreamAuthorization = issuance.Upstream;
+                entry.Prompt = prompt;
+                entry.Capabilities = capabilities;
+                entry.AgentAsserted = agentAsserted;
+                entry.ResumeAuthorization = async active =>
+                    (await TryHandleCollapsedAsync(active, issuance, entry.ResourceToken!, entry.PresentedToken!,
+                        prompt, capabilities, agentAsserted, entry)).Result!;
+                return entry;
+            }
+
+            IdentityAssertion assertion;
+            if (resumed?.Status == PersonPendingStatus.Allowed && resumed.PersonKey is { } approvedKey)
+            {
+                assertion = IdentityAssertion.Assert(approvedKey, resumed.Subject, resumed.Tenant, resumed.Roles,
+                    resumed.Groups, resumed.AdditionalClaims);
+            }
+            else
+            {
+                assertion = await asserter.AssertAsync(new IdentityAssertionRequest
+                {
+                    ResourceUrl = audience,
+                    Account = resource.Account,
+                    AgentKeyThumbprint = issuance.ConfirmationKey.ComputeJwkThumbprint(),
+                    Scope = requestedScope,
+                    AgentId = issuance.AgentId,
+                    AgentIssuer = issuance.AgentIssuer,
+                    Subject = resource.Subject,
+                    PersonKey = personKey,
+                    MissionS256 = missionS256,
+                    LoginHint = (string?)resourceContext["login_hint"],
+                    Prompt = prompt,
+                    Capabilities = capabilities,
+                    AgentAsserted = agentAsserted,
+                    ResourceContext = resourceContext,
+                    UpstreamAuthorization = issuance.Upstream,
+                }, ctx.RequestAborted);
+            }
+
+            switch (assertion.Kind)
+            {
+                case IdentityAssertionKind.Deny:
+                    return (true, AAuthProblemDetails.Create("denied", assertion.Reason, statusCode: StatusCodes.Status403Forbidden));
+                case IdentityAssertionKind.NeedsConsent:
+                    return (true, Pending202(ctx, Park(), options, interactionUrl));
+            }
+            if (assertion.PersonKey is { } assertedKey && assertedKey != personKey)
+            {
+                return (true, AAuthProblemDetails.Create("denied", "The asserted person key does not match the presented token.",
+                    statusCode: StatusCodes.Status403Forbidden));
+            }
+
+            var policyClaims = accessOptions.DeriveAgentClaims?.Invoke(issuance.AgentId);
+            JsonObject? suppliedClaims = null;
+            IReadOnlyList<string>? requiredClaims = null;
+            AccessDecision decision;
+            for (var step = 0; ; step++)
+            {
+                if (step >= 8)
+                {
+                    return (true, AAuthProblemDetails.Create("server_error",
+                        "Collapsed Access Server policy did not reach a terminal decision.",
+                        statusCode: StatusCodes.Status500InternalServerError));
+                }
+                decision = await accessPolicy.EvaluateAsync(new AccessPolicyRequest
+                {
+                    ResourceUrl = audience,
+                    Scope = requestedScope,
+                    AgentId = issuance.AgentId,
+                    Claims = suppliedClaims ?? policyClaims,
+                    ResourceContext = resourceContext,
+                    PersonServerIssuer = issuer,
+                    UpstreamAuthorization = issuance.Upstream,
+                }, ctx.RequestAborted);
+                if (ClaimsRequirement.ContainsForbiddenClaimName(decision.RequiredClaims)
+                    || decision.AdditionalClaims?.Keys.Any(AuthTokenBuilder.IsReservedClaim) == true)
+                {
+                    return (true, AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError,
+                        "Requested or projected claims contain protocol-owned names."));
+                }
+                if (decision.Kind != AccessDecisionKind.NeedsClaims)
+                {
+                    break;
+                }
+                requiredClaims = decision.RequiredClaims;
+                var claimsAssertion = await asserter.AssertAsync(new IdentityAssertionRequest
+                {
+                    ResourceUrl = audience,
+                    Account = resource.Account,
+                    AgentKeyThumbprint = issuance.ConfirmationKey.ComputeJwkThumbprint(),
+                    Scope = requestedScope,
+                    AgentId = issuance.AgentId,
+                    AgentIssuer = issuance.AgentIssuer,
+                    Subject = resource.Subject,
+                    PersonKey = personKey,
+                    RequiredClaims = requiredClaims,
+                    MissionS256 = missionS256,
+                    LoginHint = (string?)resourceContext["login_hint"],
+                    Prompt = prompt,
+                    Capabilities = capabilities,
+                    AgentAsserted = agentAsserted,
+                    ResourceContext = resourceContext,
+                    UpstreamAuthorization = issuance.Upstream,
+                }, ctx.RequestAborted);
+                if (claimsAssertion.Kind != IdentityAssertionKind.Assert)
+                {
+                    return (true, AAuthProblemDetails.Create("denied", claimsAssertion.Reason ?? "PS consent was not asserted.",
+                        statusCode: StatusCodes.Status403Forbidden));
+                }
+                suppliedClaims = new JsonObject();
+                foreach (var (claim, value) in ProjectClaims(claimsAssertion, requiredClaims!))
+                {
+                    suppliedClaims[claim] = value?.DeepClone();
+                }
+            }
+
+            switch (decision.Kind)
+            {
+                case AccessDecisionKind.Deny:
+                    return (true, AAuthProblemDetails.Create("denied", decision.Reason, statusCode: StatusCodes.Status403Forbidden));
+                case AccessDecisionKind.NeedsPayment:
+                    return (true, AAuthProblemDetails.Create("denied", "payment settlement is unavailable",
+                        statusCode: StatusCodes.Status403Forbidden));
+                case AccessDecisionKind.NeedsInteraction:
+                case AccessDecisionKind.NeedsClarification:
+                    return (true, AAuthProblemDetails.Create("denied",
+                        "Collapsed Access Server policy returned a deferred requirement that is unavailable on the collapse path.",
+                        statusCode: StatusCodes.Status403Forbidden));
+            }
+
+            var (tenant, roles, groups, additionalClaims) = ProjectCollapsedClaims(assertion, suppliedClaims, requiredClaims, decision);
+            return (true, await AuthTokenResponse.CreateTrackedAsync(ct => MintCollapsedAuth(ct, accessIdentity,
+                accessOptions, audience, requestedScope, issuance.ConfirmationKey, resource.Subject!, tenant,
+                roles, groups, additionalClaims, missionS256, issuance.AgentTokenExpiresAt, ceiling, resource.Account),
+                ceiling, inventory, sourceTokens, "auth_token", options.TimeProvider, ctx.RequestAborted,
+                provenance: ProvenanceFor(sourceTokens, issuance.Upstream, issuance.AgentId,
+                    AAuthConstants.TokenTypes.AuthToken, audience, resource.Subject!,
+                    TokenRegistration.FromVerified(presented).Token)));
+        }
+
         // ---- four-party (federated) handler --------------------------------
         async Task<IResult> HandleFederatedAsync(
             HttpContext ctx, AgentIssuanceContext issuance, string resourceTokenJwt, string presentedTokenJwt,
@@ -1945,6 +2232,27 @@ public static class AAuthPersonServerEndpoints
                     entry.FirstAnswer.TrySetResult();
                     return Task.CompletedTask;
                 },
+                OnPaymentRequired = async (payment, ct) =>
+                {
+                    var billingCache = app.Services.GetRequiredKeyedService<IAAuthBillingRelationshipCache>(name);
+                    if (await billingCache.IsEstablishedAsync(resourceAudience, payment.Challenge.Scheme, ct).ConfigureAwait(false))
+                    {
+                        return AAuthPaymentSettlementResult.Success;
+                    }
+                    var settler = (app.Services as IKeyedServiceProvider)?.GetKeyedService<IAAuthPaymentSettler>(name)
+                        ?? app.Services.GetService<IAAuthPaymentSettler>();
+                    if (settler is null)
+                    {
+                        return AAuthPaymentSettlementResult.Declined;
+                    }
+                    var result = await settler.SettleAsync(payment, ct).ConfigureAwait(false);
+                    if (result.Settled)
+                    {
+                        await billingCache.MarkEstablishedAsync(resourceAudience, payment.Challenge.Scheme, ct)
+                            .ConfigureAwait(false);
+                    }
+                    return result;
+                },
                 // The AS needs identity claims (§Claims Required) beyond the presented
                 // token's identity. The PS is the identity authority — answer via the
                 // same asserter, projecting only the requested claims (never `sub`).
@@ -2016,13 +2324,6 @@ public static class AAuthPersonServerEndpoints
                     entry.Error = ex.ErrorCode;
                     entry.ErrorStatus = ex.StatusCode;
                     entry.ErrorDetail = ex.Detail;
-                    entry.Status = PersonPendingStatus.Denied;
-                }
-                catch (AAuthPaymentRequiredException ex)
-                {
-                    entry.Error = "payment_required";
-                    entry.ErrorStatus = StatusCodes.Status402PaymentRequired;
-                    entry.ErrorLocation = ex.Location;
                     entry.Status = PersonPendingStatus.Denied;
                 }
                 catch (Exception ex)
@@ -2264,6 +2565,42 @@ public static class AAuthPersonServerEndpoints
             }
         }
         return result;
+    }
+
+    private static (string? Tenant, IReadOnlyList<string>? Roles, IReadOnlyList<string>? Groups, IReadOnlyDictionary<string, JsonNode?>? Claims)
+        ProjectCollapsedClaims(IdentityAssertion assertion, JsonObject? suppliedClaims, IReadOnlyList<string>? requiredClaims,
+            AccessDecision decision)
+    {
+        string? tenant = decision.Tenant ?? assertion.Tenant;
+        IReadOnlyList<string>? roles = assertion.Roles;
+        IReadOnlyList<string>? groups = assertion.Groups;
+        var additional = new Dictionary<string, JsonNode?>(StringComparer.Ordinal);
+        if (assertion.AdditionalClaims is not null)
+        {
+            foreach (var (name, value) in assertion.AdditionalClaims)
+            {
+                if (!AuthTokenBuilder.IsReservedClaim(name)) additional[name] = value?.DeepClone();
+            }
+        }
+        if (suppliedClaims is not null && requiredClaims is not null)
+        {
+            foreach (var name in requiredClaims)
+            {
+                if (suppliedClaims[name] is not { } node) continue;
+                if (name == "tenant") tenant = (string?)node;
+                else if (name == "roles") roles = node.AsArray().Select(value => value!.GetValue<string>()).ToArray();
+                else if (name == "groups") groups = node.AsArray().Select(value => value!.GetValue<string>()).ToArray();
+                else if (!AuthTokenBuilder.IsReservedClaim(name)) additional[name] = node.DeepClone();
+            }
+        }
+        if (decision.AdditionalClaims is not null)
+        {
+            foreach (var (name, value) in decision.AdditionalClaims)
+            {
+                if (!AuthTokenBuilder.IsReservedClaim(name)) additional[name] = value?.DeepClone();
+            }
+        }
+        return (tenant, roles, groups, additional.Count > 0 ? additional : null);
     }
 
     // Peek the `aud` claim of a (possibly unverified) compact JWT without

@@ -399,14 +399,10 @@ public static class AAuthAccessServerEndpoints
                     return AAuth.Server.AAuthProblemDetails.Create("denied", decision.Reason, statusCode: StatusCodes.Status403Forbidden);
                 case AccessDecisionKind.NeedsPayment:
                     {
-                        // §Payment Required: Location MUST be present.
-                        if (string.IsNullOrWhiteSpace(decision.PaymentUrl))
-                        {
-                            return AAuth.Server.AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, "NeedsPayment requires a payment Location");
-                        }
-                        ctx.Response.Headers.Location = decision.PaymentUrl;
-                        ctx.Response.Headers["Cache-Control"] = "no-store";
-                        return AAuth.Server.AAuthProblemDetails.Create("payment_required", statusCode: StatusCodes.Status402PaymentRequired);
+                        var entry = Park();
+                        entry.Status = AccessPendingStatus.PaymentRequired;
+                        entry.PaymentChallenge = decision.PaymentChallenge;
+                        return PaymentRequired402(ctx, entry, options);
                     }
                 case AccessDecisionKind.NeedsInteraction:
                     {
@@ -469,9 +465,11 @@ public static class AAuthAccessServerEndpoints
                 {
                     case AccessPendingStatus.AwaitingClarification:
                         return Clarification202(ctx, entry);
+                    case AccessPendingStatus.PaymentRequired:
+                        return PaymentRequired402(ctx, entry, options);
                     case AccessPendingStatus.Allowed:
                         {
-                            if (entry.RequiredClaims?.Any(name => !AuthTokenBuilder.IsIdentityClaimAllowed(name)) == true)
+                            if (ClaimsRequirement.ContainsForbiddenClaimName(entry.RequiredClaims))
                                 return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, "Requested claims contain protocol-owned names.");
                             var (tenant, roles, groups, claims) = ProjectIdentityClaims(entry.SuppliedClaims, entry.RequiredClaims);
                             return await AuthTokenResponse.CreateTrackedAsync(ct => Mint(ct,
@@ -584,7 +582,7 @@ public static class AAuthAccessServerEndpoints
                 if (entry.Status != AccessPendingStatus.Pending || entry.RequiredClaims is not { Count: > 0 })
                     return AAuthProblemDetails.Create("invalid_request", "No claims push is pending.", statusCode: StatusCodes.Status400BadRequest);
 
-                if (pushed!.Any(claim => !AuthTokenBuilder.IsIdentityClaimAllowed(claim.Key)))
+                if (pushed!.Any(claim => !ClaimsRequirement.IsRequestableClaimName(claim.Key)))
                     return AAuthProblemDetails.Create("invalid_request", "Pushed claims contain protocol-owned names (including sub).", statusCode: StatusCodes.Status400BadRequest);
 
                 if (pushed.ContainsKey("tenant") && StringMember(pushed, "tenant") is null)
@@ -647,14 +645,22 @@ public static class AAuthAccessServerEndpoints
                         return Clarification202(ctx, entry);
                     case AccessDecisionKind.NeedsInteraction:
                         entry.RequiredClaims = null;
+                        entry.PaymentChallenge = null;
                         entry.Browser.Renew();
                         ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
                         ctx.Response.Headers.RetryAfter = "1";
+                        ctx.Response.Headers.CacheControl = "no-store";
                         ctx.Response.Headers[AAuthRequirementHeader.Name] = Interaction.Format($"{issuer}{loginPath}", entry.Browser.Code, options.EgressPolicy);
                         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+                    case AccessDecisionKind.NeedsPayment:
+                        entry.RequiredClaims = null;
+                        entry.PaymentChallenge = decision.PaymentChallenge;
+                        entry.Status = AccessPendingStatus.PaymentRequired;
+                        return PaymentRequired402(ctx, entry, options);
                     case AccessDecisionKind.NeedsClaims:
                     default:
                         entry.RequiredClaims = decision.RequiredClaims ?? entry.RequiredClaims;
+                        entry.PaymentChallenge = null;
                         ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
                         ctx.Response.Headers["Retry-After"] = "0";
                         ctx.Response.Headers["Cache-Control"] = "no-store";
@@ -743,11 +749,13 @@ public static class AAuthAccessServerEndpoints
                     SetClarification(entry, decision.Clarification!);
                     return Clarification202(ctx, entry);
                 case AccessDecisionKind.NeedsPayment:
-                    ctx.Response.Headers.Location = decision.PaymentUrl;
-                    return AAuthProblemDetails.Create("payment_required", statusCode: 402);
+                    entry.PaymentChallenge = decision.PaymentChallenge;
+                    entry.Status = AccessPendingStatus.PaymentRequired;
+                    return PaymentRequired402(ctx, entry, options);
                 default:
                     entry.Status = AccessPendingStatus.Pending;
                     entry.RequiredClaims = decision.RequiredClaims;
+                    entry.PaymentChallenge = null;
                     if (decision.Kind == AccessDecisionKind.NeedsInteraction) entry.Browser.Renew();
                     return null;
             }
@@ -760,8 +768,25 @@ public static class AAuthAccessServerEndpoints
     // Project the pushed identity claims into (tenant, roles, groups, additional
     // claims). `sub` is never pushed; it is the resource token's.
     private static bool InvalidClaimPolicy(AccessDecision decision) =>
-        decision.RequiredClaims?.Any(name => !AuthTokenBuilder.IsIdentityClaimAllowed(name)) == true
+        ClaimsRequirement.ContainsForbiddenClaimName(decision.RequiredClaims)
         || decision.AdditionalClaims?.Keys.Any(AuthTokenBuilder.IsReservedClaim) == true;
+
+    private static IResult PaymentRequired402(HttpContext ctx, AccessPendingEntry entry, AAuthAccessServerOptions options)
+    {
+        ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
+        ctx.Response.Headers.RetryAfter = "0";
+        ctx.Response.Headers.CacheControl = "no-store";
+        if (entry.PaymentChallenge?.WwwAuthenticate is { Count: > 0 } challenges)
+        {
+            foreach (var challenge in challenges)
+            {
+                ctx.Response.Headers.Append("WWW-Authenticate", challenge);
+            }
+        }
+        return entry.PaymentChallenge?.Body is { } body
+            ? Results.Json(body, statusCode: StatusCodes.Status402PaymentRequired)
+            : AAuthProblemDetails.Create("payment_required", statusCode: StatusCodes.Status402PaymentRequired);
+    }
 
     private static (string? Tenant, IReadOnlyList<string>? Roles, IReadOnlyList<string>? Groups, IReadOnlyDictionary<string, JsonNode?>? Claims) ProjectIdentityClaims(
         JsonObject? pushed, IReadOnlyList<string>? requiredClaims)

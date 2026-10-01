@@ -11,6 +11,7 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
+using AAuth.Person;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -104,6 +105,61 @@ public class MockPersonServerFederationTests
     }
 
     [Fact]
+    public async Task Token_CollapsesToLocalAccessPolicy_WhenResourceDeclaresCoHostedAs()
+    {
+        var agentKey = AAuthKey.Generate();
+        var policy = new CollapsePolicy();
+        using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read", collapsedPolicy: policy);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
+
+        using var response = await http.PostAsJsonAsync("/token",
+            await TokenRequestAsync(http, agentKey, audience: PsIssuer, scope: "wallet.read"));
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        var payload = DecodePayload((string)body!["auth_token"]!);
+        Assert.Equal(PsIssuer, (string?)payload["iss"]);
+        Assert.Equal(PsIssuer, (string?)payload["ps"]);
+        Assert.Equal(ResourceUrl, (string?)payload["aud"]);
+        Assert.Equal(AuthTokenBuilder.AccessDwk, (string?)payload["dwk"]);
+        Assert.Equal(1, policy.Calls);
+        Assert.Equal("collapse", (string?)payload["collapse_policy"]);
+    }
+
+    [Fact]
+    public async Task Token_CollapseDeclarationFailsClosed_WhenLinkedAsMissing()
+    {
+        var agentKey = AAuthKey.Generate();
+        using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read", declareCollapseWithoutAs: true);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
+
+        using var response = await http.PostAsJsonAsync("/token",
+            await TokenRequestAsync(http, agentKey, audience: PsIssuer, scope: "wallet.read"));
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("server_error", (string?)body!["error"]);
+        Assert.Contains("linked Access Server", (string?)body["detail"]);
+    }
+
+    [Fact]
+    public async Task Token_FederatedPaymentWithoutSettler_ReturnsDenied()
+    {
+        var agentKey = AAuthKey.Generate();
+        using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read", paymentRequired: true);
+        using var http = await BuildSignedAgentClientAsync(factory, agentKey, AgentId);
+
+        using var response = await http.PostAsJsonAsync("/token",
+            await TokenRequestAsync(http, agentKey, audience: AsIssuer, scope: "wallet.read"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("denied", (string?)body!["error"]);
+        Assert.Equal("payment settlement is unavailable", (string?)body["detail"]);
+    }
+
+    [Fact]
     public async Task Token_RelaysAccessServerInteraction_ThenMintsAfterCompletion()
     {
         // When the AS returns 202 requirement=interaction (interactive login),
@@ -164,7 +220,9 @@ public class MockPersonServerFederationTests
     // Helpers
     // ----------------------------------------------------------------
     private static WebApplicationFactory<MockPersonServer.Entry> BuildFactory(
-        AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null)
+        AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null,
+        CollapsePolicy? collapsedPolicy = null, bool declareCollapseWithoutAs = false,
+        bool paymentRequired = false)
     {
         return new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
         {
@@ -176,14 +234,34 @@ public class MockPersonServerFederationTests
                 services.RemoveAll<MetadataClient>();
                 services.RemoveAll<JwksClient>();
                 services.AddSingleton(new MetadataClient(
-                    new InProcessHttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
+                    new InProcessHttpClient(new FederatedStub(agentKey, agentId, scope, interactive, paymentRequired))));
                 services.AddSingleton(new JwksClient(
-                    new InProcessHttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
+                    new InProcessHttpClient(new FederatedStub(agentKey, agentId, scope, interactive, paymentRequired))));
 
                 // Route the PS→AS federation transport at the same in-process AS.
                 services.AddHttpClient(AAuthPersonServerBuilder.FederationHttpClientName)
-                    .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope, interactive));
+                    .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope, interactive, paymentRequired));
                 services.Configure<AAuthFederationOptions>(options => options.TransportContract = AAuthTransportContract.InProcessOnly);
+                if (collapsedPolicy is not null || declareCollapseWithoutAs)
+                {
+                    const string localAsName = "LocalAccessServer";
+                    services.Configure<AAuthPersonServerOptions>(AAuthPersonServerBuilder.DefaultName, options =>
+                        options.CollapsedFederation.Add(new AAuthCollapsedFederationDeclaration
+                        {
+                            ResourceIssuer = ResourceUrl,
+                            AccessServerName = localAsName,
+                            ExpectedAccessServerIssuer = PsIssuer,
+                        }));
+                    if (collapsedPolicy is not null)
+                    {
+                        services.AddAAuthAccessServer(localAsName, options =>
+                        {
+                            options.EgressPolicy = TestEgress.Policy;
+                            options.Issuer = PsIssuer;
+                            options.SigningKeys = new AAuthSigningKeySet("collapse-as", AAuthKey.Generate());
+                        }).UsePolicy(collapsedPolicy);
+                    }
+                }
             });
         });
     }
@@ -249,6 +327,20 @@ public class MockPersonServerFederationTests
         public void Complete() => _completed = true;
     }
 
+    private sealed class CollapsePolicy : IAccessPolicy
+    {
+        public int Calls { get; private set; }
+
+        public Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult(AccessDecision.Allow(additionalClaims: new Dictionary<string, JsonNode?>
+            {
+                ["collapse_policy"] = "collapse",
+            }));
+        }
+    }
+
     /// <summary>
     /// In-process stub for BOTH the resource (wallet.test) and the Access
     /// Server (as.test): serves their well-known metadata + JWKS for discovery,
@@ -263,17 +355,20 @@ public class MockPersonServerFederationTests
         private readonly string _agentId;
         private readonly string _scope;
         private readonly InteractiveAsState? _interactive;
+        private readonly bool _paymentRequired;
         private DateTimeOffset _agentTokenExpiresAt;
         private DateTimeOffset _presentedExpiresAt;
         private DateTimeOffset _resourceExpiresAt;
         private string _subject = "";
 
-        public FederatedStub(AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null)
+        public FederatedStub(AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null,
+            bool paymentRequired = false)
         {
             _agentKey = agentKey;
             _agentId = agentId;
             _scope = scope;
             _interactive = interactive;
+            _paymentRequired = paymentRequired;
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -292,6 +387,16 @@ public class MockPersonServerFederationTests
                 _subject = (string)presented["sub"]!;
                 _presentedExpiresAt = DateTimeOffset.FromUnixTimeSeconds((long)presented["exp"]!);
                 _resourceExpiresAt = DateTimeOffset.FromUnixTimeSeconds((long)resource["exp"]!);
+                if (_paymentRequired)
+                {
+                    var payment = new HttpResponseMessage(HttpStatusCode.PaymentRequired)
+                    {
+                        Content = JsonContent.Create(new { invoice = "wallet-demo" }),
+                    };
+                    payment.Headers.Location = new Uri($"{AsIssuer}/pending/pay");
+                    payment.Headers.TryAddWithoutValidation("WWW-Authenticate", "Payment method=\"stripe\"");
+                    return payment;
+                }
                 // Interactive AS: defer with a 202 requirement=interaction.
                 if (_interactive is not null)
                 {

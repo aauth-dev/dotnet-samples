@@ -107,6 +107,53 @@ public sealed class AAuthPersonServerBuilder
     /// <inheritdoc cref="UseTokenInventory{T}()"/>
     public AAuthPersonServerBuilder UseTokenInventory(IJtiStore inventory) => Use(inventory);
 
+    /// <summary>Replace the payment settler used for AS <c>402</c> federation challenges.</summary>
+    public AAuthPersonServerBuilder UsePaymentSettler<T>() where T : class, IAAuthPaymentSettler => Use<IAAuthPaymentSettler, T>();
+
+    /// <inheritdoc cref="UsePaymentSettler{T}()"/>
+    public AAuthPersonServerBuilder UsePaymentSettler(IAAuthPaymentSettler settler) => Use(settler);
+
+    /// <inheritdoc cref="UsePaymentSettler{T}()"/>
+    public AAuthPersonServerBuilder UsePaymentSettler(Func<IServiceProvider, IAAuthPaymentSettler> factory) => Use(factory);
+
+    /// <summary>Replace the billing relationship cache (default <see cref="InMemoryAAuthBillingRelationshipCache"/>).</summary>
+    public AAuthPersonServerBuilder UseBillingRelationshipCache<T>() where T : class, IAAuthBillingRelationshipCache
+        => Use<IAAuthBillingRelationshipCache, T>();
+
+    /// <inheritdoc cref="UseBillingRelationshipCache{T}()"/>
+    public AAuthPersonServerBuilder UseBillingRelationshipCache(IAAuthBillingRelationshipCache cache) => Use(cache);
+
+    /// <inheritdoc cref="UseBillingRelationshipCache{T}()"/>
+    public AAuthPersonServerBuilder UseBillingRelationshipCache(Func<IServiceProvider, IAAuthBillingRelationshipCache> factory)
+        => Use(factory);
+
+    /// <summary>
+    /// Declare that <paramref name="resourceIssuer"/> chose a collocated local AS role.
+    /// The linked AS must exist and its issuer must match <paramref name="expectedAccessServerIssuer"/>
+    /// (or the PS issuer when omitted), otherwise requests fail closed.
+    /// </summary>
+    public AAuthPersonServerBuilder UseCollocatedAccessServer(
+        string resourceIssuer,
+        string accessServerName = AAuthAccessServerBuilder.DefaultName,
+        string? expectedAccessServerIssuer = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(resourceIssuer);
+        ArgumentException.ThrowIfNullOrWhiteSpace(accessServerName);
+        return Configure(options => options.CollapsedFederation.Add(new AAuthCollapsedFederationDeclaration
+        {
+            ResourceIssuer = resourceIssuer,
+            AccessServerName = accessServerName,
+            ExpectedAccessServerIssuer = expectedAccessServerIssuer ?? options.Issuer,
+        }));
+    }
+
+    /// <summary>Replace the collapse declaration policy.</summary>
+    public AAuthPersonServerBuilder UseCollocatedAccessServer(IAAuthCollapsedFederationPolicy policy) => Use(policy);
+
+    /// <inheritdoc cref="UseCollocatedAccessServer(IAAuthCollapsedFederationPolicy)"/>
+    public AAuthPersonServerBuilder UseCollocatedAccessServer(Func<IServiceProvider, IAAuthCollapsedFederationPolicy> factory)
+        => Use(factory);
+
     /// <summary>
     /// Enable four-party PS→AS federation. The PS signs token requests as itself
     /// (<c>jwks_uri</c> scheme, active key) through the named
@@ -218,9 +265,14 @@ public static class AAuthPersonServerServiceCollectionExtensions
         services.TryAddKeyedSingleton<IPersonSubjectDeriver>(name, (sp, key) =>
             sp.GetService<IPersonSubjectDeriver>() ?? new HmacPersonSubjectDeriver(
                 sp.GetRequiredService<IOptionsMonitor<AAuthPersonServerOptions>>(), (string)key!));
+        services.TryAddKeyedSingleton<IAAuthCollapsedFederationPolicy>(name, (sp, key) =>
+            sp.GetService<IAAuthCollapsedFederationPolicy>() ?? new ConfiguredCollapsedFederationPolicy(
+                sp.GetRequiredService<IOptionsMonitor<AAuthPersonServerOptions>>().Get((string)key!).CollapsedFederation.ToArray()));
         services.TryAddKeyedSingleton<TokenVerifier>(name, (sp, key) => sp.GetService<TokenVerifier>() ?? Verifier(sp, (string)key!));
         services.TryAddKeyedSingleton<IJtiStore>(name, (sp, key) => sp.GetService<IJtiStore>()
             ?? new InMemoryJtiStore(sp.GetRequiredService<IOptionsMonitor<AAuthPersonServerOptions>>().Get((string)key!).TimeProvider));
+        services.TryAddKeyedSingleton<IAAuthBillingRelationshipCache>(name, (sp, _) =>
+            sp.GetService<IAAuthBillingRelationshipCache>() ?? new InMemoryAAuthBillingRelationshipCache());
         services.TryAddKeyedSingleton<AAuthRevocationService>(name, (sp, key) => AAuthRevocationService.ForIdentity(sp,
             sp.GetRequiredKeyedService<IAAuthServerIdentity>(key), sp.GetRequiredKeyedService<IJtiStore>(key),
             sp.GetRequiredService<IOptionsMonitor<AAuthPersonServerOptions>>().Get((string)key!).TimeProvider, key,
@@ -292,6 +344,17 @@ internal sealed class PersonServerOptionsValidator(IServiceProvider services) : 
         {
             if (!AAuthUrl.IsHttpsOrLoopback(trustedAs, options.EgressPolicy))
                 failures.Add($"AAuthPersonServerOptions.Trust.AccessServers entry '{trustedAs}' must be an absolute https URL " +
+                    "(loopback http allowed for development).");
+        }
+        foreach (var declaration in options.CollapsedFederation)
+        {
+            if (!AAuthUrl.IsHttpsOrLoopback(declaration.ResourceIssuer, options.EgressPolicy))
+                failures.Add($"AAuthPersonServerOptions.CollapsedFederation resource '{declaration.ResourceIssuer}' must be an absolute https URL " +
+                    "(loopback http allowed for development).");
+            if (string.IsNullOrWhiteSpace(declaration.AccessServerName))
+                failures.Add("AAuthPersonServerOptions.CollapsedFederation entries must name a linked Access Server role.");
+            if (!AAuthUrl.IsHttpsOrLoopback(declaration.ExpectedAccessServerIssuer, options.EgressPolicy))
+                failures.Add($"AAuthPersonServerOptions.CollapsedFederation expected AS issuer '{declaration.ExpectedAccessServerIssuer}' must be an absolute https URL " +
                     "(loopback http allowed for development).");
         }
     }

@@ -28,7 +28,7 @@ public sealed record ClaimsResponse
         var body = new JsonObject();
         foreach (var (name, value) in Claims)
         {
-            if (!AuthTokenBuilder.IsIdentityClaimAllowed(name))
+            if (!ClaimsRequirement.IsRequestableClaimName(name))
                 throw new System.InvalidOperationException($"Claim '{name}' is protocol-owned.");
             body[name] = value?.DeepClone();
         }

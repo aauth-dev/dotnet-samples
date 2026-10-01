@@ -51,6 +51,7 @@ public enum AccessPendingStatus
     Denied,
     AwaitingClarification,
     Review,
+    PaymentRequired,
 }
 
 /// <summary>A parked federated access decision.</summary>
@@ -67,6 +68,7 @@ public sealed class AccessPendingEntry
     public List<string> ClarificationAnswers { get; } = [];
     public int ClarificationRounds { get; set; }
     public JsonObject? ResourceContext { get; set; }
+    public AAuthPaymentChallenge? PaymentChallenge { get; set; }
     public string? Account => AAuth.Tokens.AccountBinding.Read(ResourceContext);
 
     /// <summary>The resource URL the auth token will be audienced to.</summary>
