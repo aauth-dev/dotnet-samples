@@ -65,7 +65,8 @@ public static class R3AccessTokenEndpoint
         // human consent (r3 §Per-Call Proposals, Flow step 2 + §Audit Log Integrity).
         async Task<string> MintAndAuditAsync(AuthMintParts parts, AgentIssuanceContext issuance, string resourceIssuer, CancellationToken ct)
         {
-            var claims = R3AuthClaims.AuthToken(parts.Uri, parts.S256, parts.Granted, parts.PerCall, options.VocabularySchemas);
+            var claims = R3AuthClaims.AuthToken(parts.Uri, parts.S256, parts.Granted, parts.PerCall,
+                options.VocabularySchemas, options.EgressPolicy);
             var (signingKid, signingKey) = options.SigningKeys.Active;
             var token = await new AuthTokenBuilder
             {
@@ -182,7 +183,7 @@ public static class R3AccessTokenEndpoint
                 verifiedPresented = await tokenVerifier.VerifyPresentedTokenAsync(
                     presentedToken, verifiedResource, metadata, jwks, context.RequestAborted);
                 issuance.ValidateResourceContext(verifiedResource.Payload);
-                r3DocumentClaims = R3ClaimReader.ReadResourceDocument(verifiedResource.Payload)
+                r3DocumentClaims = R3ClaimReader.ReadResourceDocument(verifiedResource.Payload, options.EgressPolicy)
                     ?? throw new TokenVerificationException("resource_token missing r3_uri/r3_s256");
             }
             catch (TokenVerificationException ex)

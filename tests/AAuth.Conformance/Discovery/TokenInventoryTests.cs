@@ -43,9 +43,12 @@ public class TokenInventoryTests
         var grant = new TokenGrant(new TokenKey("https://ps.example", "grant"), "https://r.example", expiry);
         Assert.False(await store.RegisterGrantAsync([source], grant));
         await store.RegisterAsync(source, expiry);
+        Assert.True(await store.ContainsTokenAsync(source));
         await store.RevokeAsync(source, expiry);
+        Assert.True(await store.ContainsTokenAsync(source));
         Assert.False(await store.RegisterGrantAsync([source], grant));
         Assert.Empty(await store.GetGrantsAsync(source));
+        Assert.False(await store.ContainsTokenAsync(new TokenKey("https://ap.example", "missing")));
     }
 
     [Fact(DisplayName = "§Token Revocation — an unseen token is recorded and refused when later presented")]

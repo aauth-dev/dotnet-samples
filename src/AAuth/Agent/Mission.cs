@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -159,14 +160,14 @@ public sealed class Mission
         var description = (string?)json["description"]
             ?? throw new InvalidOperationException("Mission blob missing required 'description'.");
         if (json["approved_at"] is not JsonValue approvedAtValue
-            || !DateTimeOffset.TryParse((string?)approvedAtValue, out var approvedAt))
+            || !TryParseIsoTimestamp((string?)approvedAtValue, out var approvedAt))
         {
             throw new InvalidOperationException("Mission blob missing or invalid 'approved_at'.");
         }
         DateTimeOffset? expiresAt = null;
         if (json["expires_at"] is { } expiresNode)
         {
-            if (expiresNode is not JsonValue expiresValue || !DateTimeOffset.TryParse((string?)expiresValue, out var parsedExpiry))
+            if (expiresNode is not JsonValue expiresValue || !TryParseIsoTimestamp((string?)expiresValue, out var parsedExpiry))
                 throw new InvalidOperationException("Mission blob has an invalid 'expires_at'.");
             expiresAt = parsedExpiry;
         }
@@ -185,6 +186,21 @@ public sealed class Mission
             S256 = ComputeS256(bytes),
             RawBytes = bytes,
         };
+    }
+
+    private static bool TryParseIsoTimestamp(string? value, out DateTimeOffset timestamp)
+    {
+        timestamp = default;
+        string[] formats =
+        [
+            "O",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
+            "yyyy-MM-dd'T'HH:mm:sszzz",
+            "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz",
+        ];
+        return value is not null && DateTimeOffset.TryParseExact(
+            value, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out timestamp);
     }
 
     /// <summary>Verify that <paramref name="expected"/> matches the <see cref="S256"/> of the stored blob bytes.</summary>

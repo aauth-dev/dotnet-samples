@@ -33,6 +33,11 @@ public interface IJtiStore
     /// </summary>
     Task<bool> IsRevokedAsync(TokenKey token, CancellationToken ct = default);
 
+    /// <summary>
+    /// Check whether <paramref name="token"/> is still present in the local token inventory.
+    /// </summary>
+    Task<bool> ContainsTokenAsync(TokenKey token, CancellationToken ct = default);
+
     /// <summary>Atomically attach a grant to known live sources, rejecting revoked local ancestry and dependency cycles.</summary>
     Task<bool> RegisterGrantAsync(IReadOnlyCollection<TokenKey> sources, TokenGrant grant, CancellationToken ct = default);
 

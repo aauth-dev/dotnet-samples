@@ -2,11 +2,14 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using AAuth.R3.Model;
 using AAuth.Server;
+using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.R3.Tests;
 
 public class R3VocabularyTests
 {
+    private static readonly string ValidS256 = Base64UrlEncoder.Encode(new byte[32]);
+
     [Fact]
     public void ExplicitNullParameterRoundTripsAndBindsExactRetry()
     {
@@ -19,7 +22,7 @@ public class R3VocabularyTests
         Assert.Null(parameter.DeepClone().Json);
         Assert.Null(R3Parameter.Inline(null).Json);
         Assert.Equal(parameter, R3Parameter.Inline(null));
-        Assert.NotEqual(parameter, R3Parameter.Digest("hash"));
+        Assert.NotEqual(parameter, R3Parameter.Digest(ValidS256));
         Assert.Throws<ArgumentException>(() => new R3PresentedParameters(new Dictionary<string, R3Parameter> { ["description"] = null! }));
         Assert.Throws<InvalidOperationException>(() => (document with { Parameters = new Dictionary<string, R3Parameter> { ["description"] = null! } }).Validate());
         Assert.Throws<InvalidOperationException>(() => (document with { Parameters = new Dictionary<string, R3Parameter> { [""] = parameter } }).Validate());
@@ -28,7 +31,7 @@ public class R3VocabularyTests
         var store = new R3ProposalStore();
         var enforcement = new R3Enforcement(store, new Uri("https://resource.test"), singleUseGate: new InMemorySingleUseGate());
         var identity = R3OperationIdentity.Mcp("update");
-        var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash", R3Grant.Mcp(), R3Grant.Mcp("update"));
+        var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", ValidS256, R3Grant.Mcp(), R3Grant.Mcp("update"));
         var perCall = enforcement.Evaluate(claims, identity, document.Parameters);
         Assert.Equal(R3EnforcementDecisionKind.PerCall, perCall.Kind);
         var approved = Approved(perCall.ProposalUri!, perCall.ProposalS256!, claims.PerCall!);
@@ -43,7 +46,7 @@ public class R3VocabularyTests
 
     [Theory]
     [InlineData("{\"description\":null,\"description\":null}")]
-    [InlineData("{\"description\":{\"s256\":\"hash\",\"s256\":\"hash\"}}")]
+    [InlineData("{\"description\":{\"s256\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"s256\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}}")]
     [InlineData("{\"description\":[{\"text\":null,\"text\":1}]}")]
     public void DuplicateParameterMembersRejectStructurally(string parameters)
     {

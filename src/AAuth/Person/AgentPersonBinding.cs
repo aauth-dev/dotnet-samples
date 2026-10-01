@@ -50,10 +50,11 @@ public static class AgentPersonBinding
     {
         ArgumentNullException.ThrowIfNull(inventory);
         ArgumentNullException.ThrowIfNull(bindingStore);
-        var binding = await bindingStore.RevokeAsync(personServer, agentIssuer, agentId, cancellationToken).ConfigureAwait(false);
-        if (binding is not null)
-            await RevokeAsync(inventory, binding, cancellationToken).ConfigureAwait(false);
-        return binding;
+        var binding = await bindingStore.GetAsync(personServer, agentIssuer, agentId, cancellationToken).ConfigureAwait(false);
+        if (binding is null)
+            return null;
+        await RevokeAsync(inventory, binding, cancellationToken).ConfigureAwait(false);
+        return await bindingStore.RevokeAsync(personServer, agentIssuer, agentId, cancellationToken).ConfigureAwait(false);
     }
 
     internal static TokenRegistration Registration(AgentPersonBindingRecord binding)

@@ -335,7 +335,8 @@ updates, resources and expiry (`MissionS256Tests`, `MissionPersonTokenIssuanceTe
 (`CallChainingTests`, `CallChainingHandlerTests`), `{jti, exp}` revocation with
 cascades (`RevocationLifecycleTests`, `PersonTokenRevocationCascadeTests`,
 `AgentTokenRevocationCascadeTests`), `202` auth-token delivery and polling
-(`AuthTokenDeliveryTests`, `PollingErrorTests`), and R3 per-call single use
+(`ChallengeHandlerTests` deferred auth-token cases, `HeldInvocationTests`,
+`PollingErrorTests`), and R3 per-call single use
 (`ResourceR3Tests`). Optional `accept_signature_algs`
 advertisement, `aauth-resource` links, Budgets, R3 release gating,
 X.509/cached carriers and third-party login hosting are not implemented.

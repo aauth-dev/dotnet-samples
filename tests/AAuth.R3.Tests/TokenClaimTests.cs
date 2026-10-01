@@ -10,6 +10,8 @@ namespace AAuth.R3.Tests;
 
 public class TokenClaimTests
 {
+    private static readonly string ValidS256 = Base64UrlEncoder.Encode(new byte[32]);
+
     [Theory]
     [InlineData("r3_uri", "null")]
     [InlineData("r3_s256", "null")]
@@ -27,7 +29,7 @@ public class TokenClaimTests
     [InlineData(true)]
     public void EmptyGrantedClaimsRoundTripWithoutAuthorizingUnlistedOperations(bool perCall)
     {
-        var payload = new JsonObject(R3AuthClaims.AuthToken("https://resource.test/r3/doc", "hash",
+        var payload = new JsonObject(R3AuthClaims.AuthToken("https://resource.test/r3/doc", ValidS256,
             R3Grant.Mcp(), perCall ? R3Grant.Mcp("book") : null));
         var claims = R3ClaimReader.ReadAuthToken(payload);
         Assert.Empty(claims.Granted.Operations);
@@ -40,11 +42,11 @@ public class TokenClaimTests
     [Fact]
     public void Draft11WireNames_PerCallClaimAndNoDocumentVersion()
     {
-        var claims = R3AuthClaims.AuthToken("https://resource.test/r3/doc", "hash", R3Grant.Mcp("a"), R3Grant.Mcp("b"));
+        var claims = R3AuthClaims.AuthToken("https://resource.test/r3/doc", ValidS256, R3Grant.Mcp("a"), R3Grant.Mcp("b"));
         Assert.Contains("r3_per_call", claims.Keys);
         Assert.DoesNotContain("r3_conditional", claims.Keys);
 
-        var legacy = new JsonObject(R3AuthClaims.AuthToken("https://resource.test/r3/doc", "hash", R3Grant.Mcp("a")))
+        var legacy = new JsonObject(R3AuthClaims.AuthToken("https://resource.test/r3/doc", ValidS256, R3Grant.Mcp("a")))
         {
             ["r3_conditional"] = JsonNode.Parse("{\"vocabulary\":\"urn:aauth:vocabulary:mcp\",\"operations\":[{\"tool\":\"b\"}]}"),
         };
@@ -68,7 +70,7 @@ public class TokenClaimTests
         var agentKey = AAuthKey.Generate();
         var claims = R3AuthClaims.AuthToken(
             "https://resource.test/r3/doc",
-            "abc123",
+            ValidS256,
             R3Grant.Mcp("search_trip_options", "hold_itinerary"),
             R3Grant.Mcp("book_trip"));
 
@@ -106,6 +108,35 @@ public class TokenClaimTests
         {
             [R3AuthClaims.S256Claim] = "abc123",
         }));
+    }
+
+    [Theory]
+    [InlineData("http://resource.test/r3/doc", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    [InlineData("https://resource.test/r3/doc", "hash")]
+    public void ResourceClaims_RejectNonHttpsUriAndMalformedDigest(string uri, string s256)
+    {
+        Assert.Throws<InvalidOperationException>(() => R3AuthClaims.ResourceDocument(uri, s256));
+        Assert.Throws<InvalidOperationException>(() => R3AuthClaims.ValidateResourcePair(new JsonObject
+        {
+            [R3AuthClaims.UriClaim] = uri,
+            [R3AuthClaims.S256Claim] = s256,
+        }));
+    }
+
+    [Fact]
+    public void AuthClaims_AllowLoopbackOnlyWithExplicitDevelopmentPolicy()
+    {
+        var payload = new JsonObject
+        {
+            [R3AuthClaims.UriClaim] = "http://localhost:5005/r3/doc",
+            [R3AuthClaims.S256Claim] = ValidS256,
+            [R3AuthClaims.GrantedClaim] = JsonNode.Parse("{\"vocabulary\":\"urn:aauth:vocabulary:mcp\",\"operations\":[]}"),
+        };
+
+        Assert.Throws<InvalidOperationException>(() => R3ClaimReader.ReadAuthToken(payload));
+        var claims = R3ClaimReader.ReadAuthToken(payload, egressPolicy: TestEgress.Policy);
+
+        Assert.Equal("http://localhost:5005/r3/doc", claims.Uri);
     }
 
     [Fact]
@@ -150,7 +181,7 @@ public class TokenClaimTests
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var presented = R3TestData.VerifyPersonToken(await R3TestData.PersonTokenAsync(psKey, agentKey), psKey, agentKey);
-        var token = await R3TestData.ResourceTokenAsync(resourceKey, presented, agentKey, "https://resource.test/r3/doc", "abc123");
+        var token = await R3TestData.ResourceTokenAsync(resourceKey, presented, agentKey, "https://resource.test/r3/doc", ValidS256);
 
         var parsed = AAuthRequirementHeader.Parse(AAuthRequirementHeader.FormatAuthToken(token));
 

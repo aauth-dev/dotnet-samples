@@ -51,21 +51,36 @@ public class AuthTokenDeliveryTests
         string? account = null,
         string? dwk = null)
     {
-        return await new AuthTokenBuilder
+        var effectiveIssuer = issuer ?? AsIssuer;
+        var effectivePersonServer = personServer ?? PsIssuer;
+        var effectiveDwk = dwk ?? AuthTokenBuilder.AccessDwk;
+        var builderDwk = effectiveDwk is AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk
+            ? effectiveDwk
+            : AuthTokenBuilder.AccessDwk;
+        var builderPersonServer = builderDwk == AuthTokenBuilder.PersonDwk ? effectiveIssuer : effectivePersonServer;
+        var token = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = issuer ?? AsIssuer,
+            Issuer = effectiveIssuer,
             Audience = audience ?? ResourceAudience,
-            PersonServer = personServer ?? PsIssuer,
+            PersonServer = builderPersonServer,
             AgentConfirmationKey = agentConfirmationKey ?? _agentKey,
             Key = _asKey,
             KeyId = AsKid,
             Scope = scope ?? "data.read",
             Subject = subject ?? Subject,
             Account = account,
-            Dwk = dwk ?? AuthTokenBuilder.AccessDwk,
+            Dwk = builderDwk,
         }.BuildAsync();
+        if (effectiveDwk == builderDwk && effectivePersonServer == builderPersonServer)
+            return token;
+        var payload = (JsonObject)JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(token.Split('.')[1]))!;
+        payload["dwk"] = effectiveDwk;
+        payload["ps"] = effectivePersonServer;
+        return await JwtWriter.SignCompactAsync(
+            new JsonObject { ["alg"] = "Ed25519", ["typ"] = AuthTokenBuilder.TokenType, ["kid"] = AsKid },
+            payload, _asKey);
     }
 
     private AuthTokenResponseValidator CreateValidator()

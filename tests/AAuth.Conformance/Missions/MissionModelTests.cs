@@ -120,6 +120,25 @@ public class MissionModelTests
             () => Mission.FromBlob(Encoding.UTF8.GetBytes(body), Ps));
     }
 
+    [Theory(DisplayName = "§Mission Approval — approved_at and expires_at require strict ISO 8601")]
+    [InlineData("September 30, 2026", null)]
+    [InlineData("2026-04-07 14:30:00", null)]
+    [InlineData("2026-04-07T14:30:00", null)]
+    [InlineData("2026-04-07T14:30:00Z", "October 1, 2026")]
+    public void FromBlob_RejectsNonIsoTimestamps(string approvedAt, string? expiresAt)
+    {
+        var body = new JsonObject
+        {
+            ["agent"] = "aauth:assistant@agent.example",
+            ["approved_at"] = approvedAt,
+            ["description"] = "d",
+        };
+        if (expiresAt is not null) body["expires_at"] = expiresAt;
+
+        Assert.Throws<InvalidOperationException>(() =>
+            Mission.FromBlob(Encoding.UTF8.GetBytes(body.ToJsonString()), Ps));
+    }
+
     [Fact(DisplayName = "§Mission Approval — empty blob throws")]
     public void FromBlob_EmptyBody_Throws()
     {

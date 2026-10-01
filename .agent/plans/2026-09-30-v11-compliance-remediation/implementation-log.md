@@ -1433,6 +1433,147 @@ Validation:
 - `dotnet run --project tools/ApiSurface -c Release -- . --write` passed; no
   `api-surface-map.md` diff was produced, so R19 added no public API.
 
+### [2026-10-01] [Phase 13] Review and re-audit fixes
+
+- [x] RA-CHAIN-001 — `IJtiStore` now exposes `ContainsTokenAsync`, and
+      `AAuthSourceGuard` fails closed when any registered source dependency is
+      no longer present in the inventory. Missing source records are reported
+      as terminal revocation-style failures with inventory detail before the
+      PS sends to the AS and during the in-flight monitor. Negative controls:
+      `DeferredFederationTests.MissingPresentedTokenInventoryTerminatesBeforeFederationSend`,
+      existing `DeferredFederationTests.RevokedPresentedTokenCancelsInFlightFederationSend`,
+      and `TokenInventoryTests.MissingOrRevokedSource_CannotCreateGrant`.
+- [x] RA-HIGH-001 / A19-HIGH-003 — AS policy transport failures now use the
+      closed token-endpoint table via `TokenErrorCode.ServerError` (HTTP 500);
+      `policy_unavailable` was added to the removed-code source scan. Negative
+      controls: `DeferredFederationTests.AccessPolicyTransportFailure_ReturnsRegisteredServerError`,
+      `DeferredFederationTests.AccessPolicyPendingReevaluationFailure_ReturnsRegisteredServerError`,
+      and `PollingErrorTests.RemovedCodes_DoNotAppearInSrc`.
+- [x] SDK-07 review P1 — `AgentPersonBinding.RevokeAsync` now reads the live
+      binding, revokes the inventory generation first, then marks the binding
+      store revoked. If inventory revocation fails, the old binding remains in
+      place and re-binding is refused. Negative control:
+      `AgentPersonBindingTests.RevokeAsync_RevokeInventoryBeforeBindingStore`.
+- [x] Review P2 / C1 — removed the delegating `ChallengeHandler` compatibility
+      constructor and its backward-compatible test, and removed
+      `TourSession.CanSwitchMode`. The remaining `ChallengeHandler`
+      constructor is the call-chaining form with optional defaults. Negative
+      control: `ChallengeHandlerTests.ThrowsWhenBothNull`; API removal is
+      recorded by `ApiSurface --write`.
+- [x] A23-005 — `R3AuthClaims` rejects non-HTTPS `r3_uri` by default. R3
+      samples opt into loopback only through explicit Development egress policy
+      (`R3Challenge`, `R3AccessTokenEndpoint`, `R3ClaimReader`, `R3Enforcement`).
+      Negative controls: `TokenClaimTests.ResourceClaims_RejectNonHttpsUriAndMalformedDigest`
+      and `TokenClaimTests.AuthClaims_AllowLoopbackOnlyWithExplicitDevelopmentPolicy`.
+- [x] A23-006 — `R3Parameter` digest parameters and `r3_s256` producers now
+      require canonical unpadded base64url SHA-256 (32 bytes). Negative
+      controls: `R3ModelTests.ParameterDigest_RejectsMalformedS256` and
+      `TokenClaimTests.ResourceClaims_RejectNonHttpsUriAndMalformedDigest`.
+- [x] A16-005 — mission `approved_at` / `expires_at` parsing now uses strict
+      ISO 8601 round-trip/exact offset formats with invariant culture. Negative
+      control: `MissionModelTests.FromBlob_RejectsNonIsoTimestamps`.
+- [x] A10-03 — `AuthTokenBuilder` rejects out-of-set `Dwk` and PS-issued auth
+      tokens whose `PersonServer` differs from `Issuer`; verifier-negative
+      tests that need malformed wire tokens now hand-sign after valid minting.
+      Negative controls:
+      `AuthTokenBuilderTests.Build_RejectsInvalidDwkAndMismatchedPsIssuer`
+      and `AuthTokenBuilderTests.Build_AllowsAccessDwkForFederatedAsIssuer`.
+- [x] A16-004 partial — the default mission evaluator now performs the same
+      fixed-hash comparisons for absent and foreign missions before returning
+      `mission_not_found`; no sleep/padding was added because the cheap
+      in-memory path can do equivalent work directly. Negative control:
+      `GovernanceEndpointMapperTests.MissionNotFound_AbsentAndForeignUseSameStoreOperations`.
+
+Validation:
+
+- Release warning/error grep gate emitted no lines.
+- Four unit/conformance projects passed: AAuth.Tests 1853,
+  AAuth.Conformance 1411, AAuth.R3.Tests 345, AAuth.Events.Tests 89.
+- Docs inventory refresh passed and updated `docs-surface-map.md`; snippet/link
+  docs gate passed: 108 tests.
+- `dotnet run --project tools/ApiSurface -c Release -- . --write` passed.
+  Public API removals: `TourSession.CanSwitchMode`, old
+  `ChallengeHandler` constructor. Public API additions/changes:
+  `IJtiStore.ContainsTokenAsync`, `IAgentPersonBindingStore.GetAsync`,
+  policy-aware `R3ClaimReader.ReadAuthToken`, policy-aware `R3Enforcement`
+  constructor, and the unified `ChallengeHandler` constructor.
+- `dotnet build AAuth.slnx -v q -nologo` passed.
+- Full Playwright suite passed: 79 passed, 1 skipped, 0 failed.
+
+### [2026-10-01] [Phase 13] Independent review, re-audit and final gates
+
+RESOLVED.
+
+**Independent review (`rubber-duck`):** 0 P0, 1 P1.
+
+- P1, SDK-07 binding revocation ordering: fixed. The inventory is revoked
+  first; there is an inventory-failure test.
+- P2, C1 shims: fixed. The old `ChallengeHandler` constructor and
+  `TourSession.CanSwitchMode` are removed.
+- P2, stale deviation entries: superseded (see the entry below).
+- P2, wrong `202` claim citations: README and `SPEC-VERSION.md` now cite the
+  `ChallengeHandlerTests` deferred auth-token cases and `HeldInvocationTests`.
+- Plan hygiene: the Phase 1 gate box is ticked; its evidence is in the
+  Phase 1 entry.
+- The six high-risk spot checks were all CONFIRMED: SDK-01, SDK-02, SDK-03,
+  SDK-04, SDK-05/Q7, and the SDK-07 design.
+
+**Re-audit** (five adversarial agents, reports in [reaudit/](reaudit/)):
+
+| Area | FIXED | PARTIAL | NOT FIXED | REGRESSED |
+|---|---|---|---|---|
+| RA-verify | 11 | 0 | 5 | 0 |
+| RA-ps | 11 | 1 | 1 | 0 |
+| RA-pending | 16 | 2 | 1 | 0 |
+| RA-chain | 7 | 1 | 1 | 0 |
+| RA-agent-r3 | 13 | 0 | 2 | 0 |
+
+New HIGH findings and their fixes:
+
+- RA-CHAIN-001 (the source guard did not fail closed on lost inventory
+  records): fixed with an `IJtiStore.ContainsTokenAsync` presence check.
+- RA-HIGH-001 (`503 policy_unavailable`): fixed; it now maps to
+  `server_error`.
+
+LOW items fixed: A23-005, A23-006, A16-005, A10-03, and the A16-004 timing
+part.
+
+Remaining "not fixed" or "partial" items, each closed by ruling:
+
+- **A11-02 (agent-token `ps` vs the PS endpoint).** Rejected in the audit:
+  `ps` is informational (L523), and the PS of an authorization is the person
+  token's `iss`. The governance-only check (Q15) stands.
+- **A18-002 / RA-CHAIN-002 (future `iat` on an upstream token answers
+  `clock_skew`).** Rejected in the audit: #common-verification L2320
+  explicitly allows `clock_skew` for a token carried as a request parameter.
+- **A13-04 (token-exchange interactions are not relayed to the PS).** Q21:
+  PS-originated interactions are never relayed back to the PS.
+- **A20-001 partial.** Closed by RA-CHAIN-001.
+- **INFO items A03-INFO-001/002, A05-03, A09-INFO-001.** Deliberate
+  limitations listed in `SPEC-VERSION.md` (cached scheme,
+  `accept_signature_algs`, AAuth #199, the R3 `per-call` mode).
+
+Final gates:
+
+- The Release build is clean.
+- Tests: AAuth.Tests 1853, Conformance 1411, R3 345, Events 89.
+- The docs inventory, snippet and link gates pass.
+- e2e: full Playwright `--retries=0` 79 passed, 1 skipped.
+- Keycloak profile (`KEYCLOAK_E2E=1`): every `federated` spec passed (4);
+  container removed.
+- ApiSurface: +1192/-459 against `v0.10.0-alpha.1` (Phase 0 snapshot
+  +910/-408). The delta is reviewed per phase in the entries above.
+  Intentional removals include:
+  - `ChallengeOptions.AllowedSignatureKeySchemes`;
+  - automatic two-key refresh (`RefreshMode`, `LatestEphemeralKey`);
+  - `TokenErrorCode.MissionTerminated`;
+  - legacy `IMissionStore.GetAsync(s256)` and `SetStateAsync`;
+  - the old `AAuthInteractionChainedException.Interaction`;
+  - `R3DocumentReaderPolicy.IsEntitledPersonServer`;
+  - the fixed-key `AgentPersonBinding` APIs;
+  - the old `ChallengeHandler` constructor;
+  - `TourSession.CanSwitchMode`.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 7] R09 owner-edited sample compatibility
@@ -1527,6 +1668,21 @@ path (L558) records `administrative` instead of `completed`.
 Phase 11 removes both members once the owner's MockPersonServer edits are
 committed. The sample then moves to `GetAsync(ps, s256)` and
 `TerminateAsync(ps, s256, Completed | Revoked)`.
+
+### [2026-10-01] [Phase 13] Superseded deviation entries
+
+RESOLVED. The following deviation entries are closed:
+
+- "[Phase 7] R09 owner-edited sample compatibility" and "[Phase 7] Legacy
+  IMissionStore members kept for the owner-edited sample" are superseded by
+  Phase 11a (`0bd74e0`). The sample moved to `GetAsync(ps, s256)` and
+  `TerminateAsync(..., reason)`, and the legacy members are deleted.
+- "[Phase 7] R10 compatibility-limited enrollment strictness" and "[Phase 7]
+  R10 binding revocation inventory limit" are superseded by the Phase 7 R10
+  follow-up (`8b33eb2`): no inference shims, and binding generations.
+- "[Phase 5] In-flight revocation uses polling, not notification" stands.
+  Phase 13 adds an inventory presence check (RA-CHAIN-001), so lost source
+  records also fail closed.
 
 ## Open questions / inputs needed
 

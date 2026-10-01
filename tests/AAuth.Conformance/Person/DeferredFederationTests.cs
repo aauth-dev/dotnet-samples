@@ -54,6 +54,46 @@ public class DeferredFederationTests
         Assert.Equal("read", fixture.AsEntry.Scope);
     }
 
+    private sealed class ResettableJtiStore : IJtiStore
+    {
+        private InMemoryJtiStore _inner = new();
+
+        public void Reset() => _inner = new InMemoryJtiStore();
+
+        public Task<bool> TryRecordRequestAsync(string requestKey, DateTimeOffset expiration, CancellationToken ct = default)
+            => _inner.TryRecordRequestAsync(requestKey, expiration, ct);
+
+        public Task<bool> RegisterAsync(TokenKey token, DateTimeOffset expiration, CancellationToken ct = default)
+            => _inner.RegisterAsync(token, expiration, ct);
+
+        public Task RevokeAsync(TokenKey token, DateTimeOffset expiresAt, CancellationToken ct = default)
+            => _inner.RevokeAsync(token, expiresAt, ct);
+
+        public Task<bool> IsRevokedAsync(TokenKey token, CancellationToken ct = default)
+            => _inner.IsRevokedAsync(token, ct);
+
+        public Task<bool> ContainsTokenAsync(TokenKey token, CancellationToken ct = default)
+            => _inner.ContainsTokenAsync(token, ct);
+
+        public Task<bool> RegisterGrantAsync(IReadOnlyCollection<TokenKey> sources, TokenGrant grant, CancellationToken ct = default)
+            => _inner.RegisterGrantAsync(sources, grant, ct);
+
+        public Task<bool> CheckProvenanceQuotaAsync(UpstreamCallerRecord caller, string resource, CancellationToken ct = default)
+            => _inner.CheckProvenanceQuotaAsync(caller, resource, ct);
+
+        public Task<IReadOnlyList<TokenGrant>> GetGrantsAsync(TokenKey source, CancellationToken ct = default)
+            => _inner.GetGrantsAsync(source, ct);
+
+        public Task<TokenGrant?> GetGrantAsync(TokenKey token, CancellationToken ct = default)
+            => _inner.GetGrantAsync(token, ct);
+
+        public Task RecordSubjectAsync(TokenKey token, string subject, CancellationToken ct = default)
+            => _inner.RecordSubjectAsync(token, subject, ct);
+
+        public Task<string?> GetSubjectAsync(TokenKey token, CancellationToken ct = default)
+            => _inner.GetSubjectAsync(token, ct);
+    }
+
     [Theory]
     [InlineData("tenant", "{}")]
     [InlineData("tenant", "[]")]
@@ -384,6 +424,57 @@ public class DeferredFederationTests
         Assert.Equal("jwt", fixture.DirectRequest!.Scheme);
         Assert.Null(fixture.Policy.Last);
         Assert.Null(fixture.Store.Last);
+    }
+
+    [Fact]
+    public async Task MissingPresentedTokenInventoryTerminatesBeforeFederationSend()
+    {
+        var asserter = new ConsentAsserter(IdentityAssertion.NeedsConsent());
+        await using var fixture = await Fixture.CreateAsync("immediate", asserter);
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read"));
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        var requirement = Interaction.FromRequirement(AAuthRequirementHeader.Parse(
+            initial.Headers.GetValues("AAuth-Requirement").Single()))!;
+
+        fixture.Inventory.Reset();
+        asserter.Verdict = IdentityAssertion.Assert(new AAuthPersonKey("approved"), "approved");
+        using var browser = fixture.PersonApp.GetTestClient();
+        browser.BaseAddress = new Uri(Fixture.PsIssuer);
+        using var decision = await TestConsentBrowser.DecideAsync(browser,
+            "/interaction?code=" + requirement.Code, "/interaction/approve");
+        Assert.Equal(HttpStatusCode.NoContent, decision.StatusCode);
+
+        using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        var problem = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("revoked", (string?)problem["error"]);
+        Assert.Contains("inventory", (string?)problem["detail"], StringComparison.OrdinalIgnoreCase);
+        Assert.Null(fixture.Policy.Last);
+        Assert.Null(fixture.Store.Last);
+    }
+
+    [Fact]
+    public async Task AccessPolicyTransportFailure_ReturnsRegisteredServerError()
+    {
+        await using var fixture = await Fixture.CreateAsync("policy-down");
+        using var response = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal("server_error", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+    }
+
+    [Fact]
+    public async Task AccessPolicyPendingReevaluationFailure_ReturnsRegisteredServerError()
+    {
+        await using var fixture = await Fixture.CreateAsync("claims-policy-down", requiredClaims: ["email"]);
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", await fixture.BodyAsync("read", agentToken: true));
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+
+        using var response = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location,
+            new JsonObject { ["email"] = "person@example.test" });
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal("server_error", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
     }
 
     [Theory]
@@ -829,11 +920,19 @@ public class DeferredFederationTests
             Issuer = variant == "upstream-trust" ? "https://other-resource.test" : Fixture.PsIssuer,
             Dwk = variant == "upstream-trust" ? AuthTokenBuilder.AccessDwk : AuthTokenBuilder.PersonDwk,
             Audience = variant == "upstream-audience" ? "https://other.test" : "https://ap.test",
-            PersonServer = variant == "upstream-ps" ? "https://other-ps.test" : Fixture.PsIssuer,
+            PersonServer = Fixture.PsIssuer,
             Subject = "upstream-person", AgentConfirmationKey = AAuthKey.Generate(),
             Key = variant == "upstream-trust" ? fixture.ResourceKey : fixture.PsKey, KeyId = "key",
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2), Scope = "upstream.read", MissionS256 = mission,
         }.BuildAsync();
+        if (variant == "upstream-ps")
+        {
+            var payload = Payload(upstream);
+            payload["ps"] = "https://other-ps.test";
+            upstream = await JwtWriter.SignCompactAsync(
+                new JsonObject { ["alg"] = "Ed25519", ["typ"] = AuthTokenBuilder.TokenType, ["kid"] = "key" },
+                payload, fixture.PsKey);
+        }
         var resourceMission = variant switch
         {
             "mission-missing" => null,
@@ -1313,6 +1412,11 @@ public class DeferredFederationTests
             if (outcome == "hold" && request.ClarificationHistory.Count > 0) return Held.Task.WaitAsync(cancellationToken);
             if (outcome == "reconsent") return Task.FromResult(request.InteractionId is not null && request.ClarificationHistory.Count == 0
                 ? AccessDecision.NeedsClarification("Review the request", 30) : AccessDecision.NeedsInteraction());
+            if (outcome == "policy-down") throw new HttpRequestException("policy transport failed");
+            if (outcome == "claims-policy-down")
+                return request.Claims is null
+                    ? Task.FromResult(AccessDecision.NeedsClaims(requiredClaims ?? ["email"]))
+                    : throw new HttpRequestException("policy transport failed");
             if (outcome == "interaction") return Task.FromResult(AccessDecision.NeedsInteraction());
             if (outcome is "repeat" or "local-repeat" || (request.ClarificationHistory.Count == 0 && request.Scope != "read"))
                 return Task.FromResult(AccessDecision.NeedsClarification("Why this scope?", outcome == "timeout" ? 1 : 30));
@@ -1358,7 +1462,7 @@ public class DeferredFederationTests
         public required string AgentToken;
         public required Policy Policy;
         public required Store Store;
-        public required IJtiStore Inventory;
+        public required ResettableJtiStore Inventory;
         public required IPersonResourceEnrollmentStore Enrollments;
         public required Discovery DiscoveryTransport;
         public required Logs Logs { get; init; }
@@ -1533,7 +1637,7 @@ public class DeferredFederationTests
             var personBuilder = WebApplication.CreateBuilder();
             personBuilder.WebHost.UseTestServer();
             var logs = new Logs();
-            var inventory = new InMemoryJtiStore();
+            var inventory = new ResettableJtiStore();
             var enrollments = new InMemoryPersonResourceEnrollmentStore();
             personBuilder.Logging.AddProvider(logs);
             personBuilder.Services.AddSingleton(metadata).AddSingleton(jwks).AddSingleton(new TokenVerifier())

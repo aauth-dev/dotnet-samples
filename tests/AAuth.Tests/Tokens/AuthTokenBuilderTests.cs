@@ -176,4 +176,47 @@ public class AuthTokenBuilderTests
             KeyId = "k",
         }.BuildAsync());
     }
+
+    [Theory]
+    [InlineData("not-a-dwk", "https://ps.example")]
+    [InlineData(AuthTokenBuilder.PersonDwk, "https://other-ps.example")]
+    public async Task Build_RejectsInvalidDwkAndMismatchedPsIssuer(string dwk, string personServer)
+    {
+        var key = AAuthKey.Generate();
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await new AuthTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
+            Issuer = "https://ps.example",
+            Audience = "https://resource.example",
+            PersonServer = personServer,
+            Subject = "person-1",
+            AgentConfirmationKey = key,
+            Key = key,
+            KeyId = "k",
+            Dwk = dwk,
+        }.BuildAsync());
+    }
+
+    [Fact]
+    public async Task Build_AllowsAccessDwkForFederatedAsIssuer()
+    {
+        var key = AAuthKey.Generate();
+        var jwt = await new AuthTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
+            Issuer = "https://as.example",
+            Audience = "https://resource.example",
+            PersonServer = "https://ps.example",
+            Subject = "person-1",
+            AgentConfirmationKey = key,
+            Key = key,
+            KeyId = "k",
+            Dwk = AuthTokenBuilder.AccessDwk,
+        }.BuildAsync();
+        var payload = (JsonObject)JsonNode.Parse(Base64UrlEncoder.DecodeBytes(jwt.Split('.')[1]))!;
+        Assert.Equal(AuthTokenBuilder.AccessDwk, (string?)payload["dwk"]);
+        Assert.Equal("https://ps.example", (string?)payload["ps"]);
+    }
 }

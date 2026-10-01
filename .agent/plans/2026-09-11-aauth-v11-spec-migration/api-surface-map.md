@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 243 changed public-source files, 1186 added/replacement declarations, 455 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 244 changed public-source files, 1192 added/replacement declarations, 459 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -680,6 +680,7 @@ Public owners: `GuidedTour.TourSession`, `GuidedTour`.
 Concept/decision: [sample-runtime](#sample-runtime). Source: [TourSession.cs](../../../samples/GuidedTour/TourSession.cs).
 
 ```diff
+- GuidedTour.TourSession: public bool CanSwitchMode
 - GuidedTour.TourSession: public string ? WorkerConsentUrl { get ; private set ; }
 - GuidedTour: public sealed class TourSession : IAsyncDisposable
 + GuidedTour.TourSession: public Interaction ? CurrentInteraction
@@ -1149,6 +1150,14 @@ Concept/decision: [r3](#r3). Source: [R3Operation.cs](../../../src/AAuth.R3/Mode
 
 Public owners: `AAuth.R3.Model.R3OperationConverter`, `AAuth.R3.Model.R3Operation`, `AAuth.R3.Model`.
 
+### src/AAuth.R3/Model/R3Parameter.cs
+
+Concept/decision: [r3](#r3). Source: [R3Parameter.cs](../../../src/AAuth.R3/Model/R3Parameter.cs).
+
+Public signatures unchanged (15); behavior reviewed under r3.
+
+Public owners: `AAuth.R3.Model.R3Parameter`, `AAuth.R3.Model.R3PresentedParameters`, `AAuth.R3.Model`.
+
 ### src/AAuth.R3/Model/R3ProposalDocument.cs
 
 Concept/decision: [r3](#r3). Source: [R3ProposalDocument.cs](../../../src/AAuth.R3/Model/R3ProposalDocument.cs).
@@ -1315,10 +1324,12 @@ Concept/decision: [r3](#r3). Source: [R3ClaimReader.cs](../../../src/AAuth.R3/R3
 
 ```diff
 - AAuth.R3.R3ClaimReader: public sealed record AuthTokenClaims ( string Uri , string S256 , R3Grant Granted , R3Grant ? Conditional )
+- AAuth.R3.R3ClaimReader: public static AuthTokenClaims ReadAuthToken ( JsonObject payload , R3VocabularySchemas ? schemas = null )
 + AAuth.R3.R3ClaimReader.AuthTokenClaims: public DateTimeOffset ? ExpiresAt { get ; init ; }
 + AAuth.R3.R3ClaimReader.AuthTokenClaims: public string ? Issuer { get ; init ; }
 + AAuth.R3.R3ClaimReader.AuthTokenClaims: public string ? Jti { get ; init ; }
 + AAuth.R3.R3ClaimReader: public sealed record AuthTokenClaims ( string Uri , string S256 , R3Grant Granted , R3Grant ? PerCall )
++ AAuth.R3.R3ClaimReader: public static AuthTokenClaims ReadAuthToken ( JsonObject payload , R3VocabularySchemas ? schemas = null , AAuthEgressPolicy ? egressPolicy = null )
 ```
 
 Public owners: `AAuth.R3.R3ClaimReader.AuthTokenClaims`, `AAuth.R3.R3ClaimReader.ResourceDocumentClaims`, `AAuth.R3.R3ClaimReader`, `AAuth.R3`.
@@ -1360,7 +1371,7 @@ Concept/decision: [r3](#r3). Source: [R3Enforcement.cs](../../../src/AAuth.R3/R3
 - AAuth.R3.R3EnforcementDecision: public IResult ToResult ( HttpContext context , R3Challenge challenge , string agent , string agentJkt , string ? scope = null )
 - AAuth.R3.R3EnforcementDecision: public static R3EnforcementDecision Conditional ( string proposalUri , string proposalS256 )
 - AAuth.R3.R3EnforcementDecisionKind: Conditional
-+ AAuth.R3.R3Enforcement: public R3Enforcement ( R3ProposalStore proposalStore , Uri resourceBaseUri , string proposalPathPrefix = "/r3/proposals" , R3VocabularySchemas ? schemas = null , IAAuthSingleUseGate ? singleUseGate = null )
++ AAuth.R3.R3Enforcement: public R3Enforcement ( R3ProposalStore proposalStore , Uri resourceBaseUri , string proposalPathPrefix = "/r3/proposals" , R3VocabularySchemas ? schemas = null , IAAuthSingleUseGate ? singleUseGate = null , AAuthEgressPolicy ? egressPolicy = null )
 + AAuth.R3.R3EnforcementDecision: public R3SingleUse ? SingleUseGrant { get ; init ; }
 + AAuth.R3.R3EnforcementDecision: public async Task < IResult > ToResultAsync ( HttpContext context , R3Challenge challenge , TokenVerifier . VerifiedToken verifiedAuthToken , string ? scope = null )
 + AAuth.R3.R3EnforcementDecision: public static R3EnforcementDecision PerCall ( string proposalUri , string proposalS256 )
@@ -1784,7 +1795,11 @@ Public owners: `AAuth.Agent.AgentProviderTokenRefresher.RefresherBuilder`, `AAut
 
 Concept/decision: [agent-clients](#agent-clients). Source: [ChallengeHandler.cs](../../../src/AAuth/Agent/ChallengeHandler.cs).
 
-Public signatures unchanged (9); behavior reviewed under agent-clients.
+```diff
+- AAuth.Agent.ChallengeHandler: public ChallengeHandler ( TokenExchangeClient exchange , AAuthTokenHolder holder , TokenVerifier verifier , MetadataClient metadata , JwksClient jwks , string ? personServer , Func < Interaction , CancellationToken , Task > ? onInteractionRequired , DeferredPollerOptions ? pollerOptions , Func < string ? > ? upstreamTokenProvider )
+- AAuth.Agent.ChallengeHandler: public ChallengeHandler ( TokenExchangeClient exchange , AAuthTokenHolder holder , TokenVerifier verifier , MetadataClient metadata , JwksClient jwks , string personServer , Func < Interaction , CancellationToken , Task > ? onInteractionRequired = null , DeferredPollerOptions ? pollerOptions = null )
++ AAuth.Agent.ChallengeHandler: public ChallengeHandler ( TokenExchangeClient exchange , AAuthTokenHolder holder , TokenVerifier verifier , MetadataClient metadata , JwksClient jwks , string ? personServer , Func < Interaction , CancellationToken , Task > ? onInteractionRequired = null , DeferredPollerOptions ? pollerOptions = null , Func < string ? > ? upstreamTokenProvider = null )
+```
 
 Public owners: `AAuth.Agent.ChallengeHandler`, `AAuth.Agent`.
 
@@ -2897,8 +2912,10 @@ Concept/decision: [consent](#consent). Source: [AgentPersonBindingStore.cs](../.
 ```diff
 + AAuth.Person.AgentPersonBindingRecord: public AAuth . Server . TokenKey InventoryKey
 + AAuth.Person.IAgentPersonBindingStore: Task < AgentPersonBindingRecord ? > BindOrVerifyAsync ( AgentPersonBindingContext binding , CancellationToken cancellationToken = default )
++ AAuth.Person.IAgentPersonBindingStore: Task < AgentPersonBindingRecord ? > GetAsync ( string personServer , string agentIssuer , string agentId , CancellationToken cancellationToken = default )
 + AAuth.Person.IAgentPersonBindingStore: Task < AgentPersonBindingRecord ? > RevokeAsync ( string personServer , string agentIssuer , string agentId , CancellationToken cancellationToken = default )
 + AAuth.Person.InMemoryAgentPersonBindingStore: public Task < AgentPersonBindingRecord ? > BindOrVerifyAsync ( AgentPersonBindingContext binding , CancellationToken cancellationToken = default )
++ AAuth.Person.InMemoryAgentPersonBindingStore: public Task < AgentPersonBindingRecord ? > GetAsync ( string personServer , string agentIssuer , string agentId , CancellationToken cancellationToken = default )
 + AAuth.Person.InMemoryAgentPersonBindingStore: public Task < AgentPersonBindingRecord ? > RevokeAsync ( string personServer , string agentIssuer , string agentId , CancellationToken cancellationToken = default )
 + AAuth.Person: public interface IAgentPersonBindingStore
 + AAuth.Person: public sealed class InMemoryAgentPersonBindingStore : IAgentPersonBindingStore
@@ -3580,6 +3597,7 @@ Concept/decision: [revocation](#revocation). Source: [IJtiStore.cs](../../../src
 - AAuth.Server.IJtiStore: Task < bool > RevokeAsync ( TokenKey token , CancellationToken ct = default )
 + AAuth.Server.IJtiStore: Task < TokenGrant ? > GetGrantAsync ( TokenKey token , CancellationToken ct = default )
 + AAuth.Server.IJtiStore: Task < bool > CheckProvenanceQuotaAsync ( UpstreamCallerRecord caller , string resource , CancellationToken ct = default )
++ AAuth.Server.IJtiStore: Task < bool > ContainsTokenAsync ( TokenKey token , CancellationToken ct = default )
 + AAuth.Server.IJtiStore: Task < string ? > GetSubjectAsync ( TokenKey token , CancellationToken ct = default )
 + AAuth.Server.IJtiStore: Task RecordSubjectAsync ( TokenKey token , string subject , CancellationToken ct = default )
 + AAuth.Server.IJtiStore: Task RevokeAsync ( TokenKey token , DateTimeOffset expiresAt , CancellationToken ct = default )
@@ -3597,6 +3615,7 @@ Concept/decision: [revocation](#revocation). Source: [InMemoryJtiStore.cs](../..
 + AAuth.Server.InMemoryJtiStore: public InMemoryJtiStore ( TimeProvider ? timeProvider = null , int capacity = 100_000 , TimeSpan ? retention = null , int provenanceResourceQuota = 1_000 )
 + AAuth.Server.InMemoryJtiStore: public Task < TokenGrant ? > GetGrantAsync ( TokenKey token , CancellationToken ct = default )
 + AAuth.Server.InMemoryJtiStore: public Task < bool > CheckProvenanceQuotaAsync ( UpstreamCallerRecord caller , string resource , CancellationToken ct = default )
++ AAuth.Server.InMemoryJtiStore: public Task < bool > ContainsTokenAsync ( TokenKey token , CancellationToken ct = default )
 + AAuth.Server.InMemoryJtiStore: public Task < string ? > GetSubjectAsync ( TokenKey token , CancellationToken ct = default )
 + AAuth.Server.InMemoryJtiStore: public Task RecordSubjectAsync ( TokenKey token , string subject , CancellationToken ct = default )
 + AAuth.Server.InMemoryJtiStore: public Task RevokeAsync ( TokenKey token , DateTimeOffset expiresAt , CancellationToken ct = default )

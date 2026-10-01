@@ -1895,6 +1895,9 @@ public class PersonServerMapperTests
         public Task<AgentPersonBindingRecord?> BindOrVerifyAsync(AgentPersonBindingContext binding, CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("store unavailable");
 
+        public Task<AgentPersonBindingRecord?> GetAsync(string personServer, string agentIssuer, string agentId, CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentPersonBindingRecord?>(null);
+
         public Task<AgentPersonBindingRecord?> RevokeAsync(string personServer, string agentIssuer, string agentId, CancellationToken cancellationToken = default)
             => Task.FromResult<AgentPersonBindingRecord?>(null);
     }

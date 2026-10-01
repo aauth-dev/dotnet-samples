@@ -94,6 +94,17 @@ public sealed class InMemoryJtiStore : IJtiStore
         }
     }
 
+    public Task<bool> ContainsTokenAsync(TokenKey token, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            MaybeCleanup();
+            return Task.FromResult(_tokens.ContainsKey(token));
+        }
+    }
+
     public void Cleanup()
     {
         lock (_gate)

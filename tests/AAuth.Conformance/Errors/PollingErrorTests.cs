@@ -195,6 +195,7 @@ public class PollingErrorTests
             "untrusted_person_server",
             "untrusted_access_server",
             "policy_error",
+            "policy_unavailable",
         };
         var matches = Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
             .SelectMany(path => File.ReadLines(path).Select((line, index) => new { path, line, index }))

@@ -734,31 +734,6 @@ public class ChallengeHandlerTests
             upstreamTokenProvider: null));
     }
 
-    [Fact(DisplayName = "ChallengeHandler — backward-compatible constructor still works")]
-    public async Task BackwardCompatibleConstructor_Works()
-    {
-        string? capturedTokenEndpoint = null;
-        var exchangeHandler = new CapturingExchangeHandler(req =>
-        {
-            capturedTokenEndpoint = req.RequestUri?.GetLeftPart(UriPartial.Authority);
-        });
-
-        var holder = new AAuthTokenHolder("initial-token");
-        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = ExchangeClient(exchangeHandler, metaClient);
-
-        // Use original constructor signature (non-nullable personServer)
-        var challengeHandler = new ChallengeHandler(exchangeClient, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)), PsUrl)
-        {
-            InnerHandler = SignedResource(),
-        };
-
-        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
-        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
-
-        Assert.Equal(PsUrl, capturedTokenEndpoint);
-    }
-
     // ── Prefer header on initial exchange ───────────────────────────────────
 
     [Fact(DisplayName = "TokenExchangeClient — initial POST includes Prefer: wait=N when configured")]

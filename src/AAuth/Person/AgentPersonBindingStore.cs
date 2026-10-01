@@ -37,6 +37,9 @@ public interface IAgentPersonBindingStore
     /// </summary>
     Task<AgentPersonBindingRecord?> BindOrVerifyAsync(AgentPersonBindingContext binding, CancellationToken cancellationToken = default);
 
+    /// <summary>Returns the live binding, if any, without changing it.</summary>
+    Task<AgentPersonBindingRecord?> GetAsync(string personServer, string agentIssuer, string agentId, CancellationToken cancellationToken = default);
+
     /// <summary>Revokes the binding so a later request can enroll a new person.</summary>
     Task<AgentPersonBindingRecord?> RevokeAsync(string personServer, string agentIssuer, string agentId, CancellationToken cancellationToken = default);
 }
@@ -72,6 +75,17 @@ public sealed class InMemoryAgentPersonBindingStore : IAgentPersonBindingStore
             if (_bindings.TryUpdate(key, replacement, current))
                 return Task.FromResult<AgentPersonBindingRecord?>(ToRecord(binding, replacement));
         }
+    }
+
+    /// <inheritdoc />
+    public Task<AgentPersonBindingRecord?> GetAsync(string personServer, string agentIssuer, string agentId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var key = (personServer, agentIssuer, agentId);
+        if (!_bindings.TryGetValue(key, out var current) || current.Revoked)
+            return Task.FromResult<AgentPersonBindingRecord?>(null);
+        return Task.FromResult<AgentPersonBindingRecord?>(new AgentPersonBindingRecord(
+            personServer, agentIssuer, agentId, current.PersonKey, current.Generation));
     }
 
     /// <inheritdoc />

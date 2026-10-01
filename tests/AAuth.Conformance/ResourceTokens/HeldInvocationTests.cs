@@ -49,6 +49,9 @@ public sealed class HeldInvocationTests
         builder.WebHost.UseTestServer();
         builder.Services.AddAAuthHeldInvocations(options => options.TimeProvider = clock);
         var inventory = new InMemoryJtiStore(clock);
+        var resourcePayload = TokenVerifier.DecodeJsonSegment(ResourceToken.Split('.')[1], "payload");
+        await inventory.RegisterAsync(new TokenKey((string)resourcePayload["iss"]!, (string)resourcePayload["jti"]!),
+            DateTimeOffset.FromUnixTimeSeconds((long)resourcePayload["exp"]!));
         builder.Services.AddSingleton<IJtiStore>(inventory);
         var app = builder.Build();
         var executions = 0;

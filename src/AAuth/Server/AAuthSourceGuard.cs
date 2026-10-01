@@ -21,6 +21,8 @@ internal static class AAuthSourceGuard
         {
             if (await inventory.IsRevokedAsync(source.Token, cancellationToken).ConfigureAwait(false))
                 return AAuthSourceGuardFailure.Revoked(source);
+            if (!await inventory.ContainsTokenAsync(source.Token, cancellationToken).ConfigureAwait(false))
+                return AAuthSourceGuardFailure.Missing(source);
         }
         foreach (var source in sources)
         {
@@ -96,9 +98,10 @@ internal static class AAuthSourceGuard
     }
 }
 
-internal readonly record struct AAuthSourceGuardFailure(bool IsRevoked, TokenRegistration Source)
+internal readonly record struct AAuthSourceGuardFailure(bool IsRevoked, TokenRegistration Source, bool IsMissing = false)
 {
     public static AAuthSourceGuardFailure Revoked(TokenRegistration source) => new(true, source);
+    public static AAuthSourceGuardFailure Missing(TokenRegistration source) => new(true, source, IsMissing: true);
     public static AAuthSourceGuardFailure Expired(TokenRegistration source) => new(false, source);
 
     public IResult ToFreshResult(IReadOnlyCollection<TokenRegistration> sources, DateTimeOffset now, IResult? otherwise = null)
@@ -126,6 +129,8 @@ internal readonly record struct AAuthSourceGuardFailure(bool IsRevoked, TokenReg
             _ when Source.TokenType == AuthTokenBuilder.TokenType => "auth token",
             _ => SyntheticDependency(Source.Token.TokenId),
         };
+        if (IsMissing)
+            return $"The {noun} is no longer present in the token inventory.";
         return $"The {noun} was {(IsRevoked ? "revoked" : "expired")}.";
     }
 

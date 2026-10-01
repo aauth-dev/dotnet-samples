@@ -150,6 +150,14 @@ public sealed class AuthTokenBuilder
         {
             throw new InvalidOperationException("PersonServer must be an absolute https:// URL (or http://localhost).");
         }
+        if (Dwk is not PersonDwk and not AccessDwk)
+        {
+            throw new InvalidOperationException("Dwk must be aauth-person.json for PS-issued tokens or aauth-access.json for AS-issued tokens.");
+        }
+        if (Dwk == PersonDwk && !string.Equals(PersonServer, Issuer, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("PS-issued auth tokens must have PersonServer equal to Issuer.");
+        }
         var (iat, exp) = TokenClaims.Lifetime(IssuedAt, Lifetime, AgentTokenExpiresAt, AuthorizationExpiresAt, TimeProvider);
         var jti = TokenId ?? Guid.NewGuid().ToString("N");
 

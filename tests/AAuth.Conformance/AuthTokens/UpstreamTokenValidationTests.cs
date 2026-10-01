@@ -63,21 +63,38 @@ public class UpstreamTokenValidationTests
         AAuthKey? key = null,
         string? kid = null)
     {
-        return await new AuthTokenBuilder
+        var effectiveIssuer = issuer ?? PsIssuer;
+        var effectivePersonServer = personServer ?? PsIssuer;
+        var effectiveDwk = dwk ?? AuthTokenBuilder.PersonDwk;
+        var builderDwk = effectiveDwk is AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk
+            ? effectiveDwk
+            : AuthTokenBuilder.PersonDwk;
+        var builderPersonServer = builderDwk == AuthTokenBuilder.PersonDwk ? effectiveIssuer : effectivePersonServer;
+        var signingKey = key ?? _psKey;
+        var signingKid = kid ?? PsKid;
+        var token = await new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = issuer ?? PsIssuer,
+            Issuer = effectiveIssuer,
             Audience = audience ?? Intermediary,
-            PersonServer = personServer ?? PsIssuer,
+            PersonServer = builderPersonServer,
             Subject = "user-123",
             AgentConfirmationKey = _agentKey,
-            Key = key ?? _psKey,
-            KeyId = kid ?? PsKid,
-            Dwk = dwk ?? AuthTokenBuilder.PersonDwk,
+            Key = signingKey,
+            KeyId = signingKid,
+            Dwk = builderDwk,
             Scope = "data.read",
             MissionS256 = missionS256,
         }.BuildAsync();
+        if (effectiveDwk == builderDwk && effectivePersonServer == builderPersonServer)
+            return token;
+        var payload = (JsonObject)JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(token.Split('.')[1]))!;
+        payload["dwk"] = effectiveDwk;
+        payload["ps"] = effectivePersonServer;
+        return await JwtWriter.SignCompactAsync(
+            new JsonObject { ["alg"] = "Ed25519", ["typ"] = AuthTokenBuilder.TokenType, ["kid"] = signingKid },
+            payload, signingKey);
     }
 
     private Task<string> BuildAsAuthTokenAsync(string? missionS256 = null) => BuildAuthTokenAsync(

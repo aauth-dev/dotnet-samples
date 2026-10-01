@@ -87,7 +87,7 @@ app.MapGet("/catalog/{service}", async (string service, HttpContext context) =>
             .ChallengeAsync(context, document.Uri, document.S256);
     }
     var payload = context.GetAAuthParsedKey()!.Payload!;
-    var decision = new R3Enforcement(documents, new Uri(issuer)).Evaluate(payload, operation);
+    var decision = new R3Enforcement(documents, new Uri(issuer), egressPolicy: SampleEgress.Policy).Evaluate(payload, operation);
     return decision.Kind == R3EnforcementDecisionKind.Granted
         ? Results.Json(new { service, operationId = OperationId(service), entries, sub = identity.Subject, issuer = identity.Issuer,
             grant = payload["r3_granted"] })

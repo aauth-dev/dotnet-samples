@@ -33,8 +33,9 @@ mode (`PersonServerMapperTests`, `AuthorizationEndpointTests`),
 person's PS (`CallChainingTests`, `CallChainingHandlerTests`), `{jti, exp}`
 revocation with cascades (`RevocationLifecycleTests`,
 `PersonTokenRevocationCascadeTests`, `AgentTokenRevocationCascadeTests`),
-`202` auth-token delivery and polling (`AuthTokenDeliveryTests`,
-`PollingErrorTests`), and R3 per-call single use (`ResourceR3Tests`).
+`202` auth-token delivery and polling (`ChallengeHandlerTests` deferred
+auth-token cases, `HeldInvocationTests`, `PollingErrorTests`), and R3 per-call
+single use (`ResourceR3Tests`).
 Signature Keys draft-09 and the R3 and Events editor's copies at the draft-11
 tag are included. Bootstrap draft-02 remains informational. Budgets and
 `accept_signature_algs` advertisement are not implemented. No snapshot bytes

@@ -209,7 +209,7 @@ app.MapMethods("/search_availability", ["GET", "POST"], async (HttpContext ctx) 
 {
     var auth = await VerifyAuthOrChallengeAsync(ctx, supportedOperations);
     if (auth.Result is not null) { return auth.Result; }
-    var decision = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
+    var decision = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload, egressPolicy: SampleEgress.Policy);
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, SearchAvailability);
     if (enforcement.Result is not null) return enforcement.Result;
     return await CompleteAsync(enforcement.SingleUse, () => new
@@ -236,7 +236,7 @@ app.MapMethods("/hold_reservation", ["GET", "POST"], async (HttpContext ctx) =>
 {
     var auth = await VerifyAuthOrChallengeAsync(ctx, supportedOperations);
     if (auth.Result is not null) { return auth.Result; }
-    var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
+    var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload, egressPolicy: SampleEgress.Policy);
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, HoldReservation);
     if (enforcement.Result is not null) return enforcement.Result;
     return await CompleteAsync(enforcement.SingleUse, () => new
@@ -258,7 +258,7 @@ app.MapPost("/confirm_reservation", async (HttpContext ctx) =>
     var auth = await VerifyAuthOrChallengeAsync(ctx, supportedOperations);
     if (auth.Result is not null) { return auth.Result; }
 
-    var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
+    var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload, egressPolicy: SampleEgress.Policy);
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, ConfirmReservation);
     if (enforcement.Result is not null) return enforcement.Result;
     var parameters = enforcement.Parameters!;
@@ -421,7 +421,7 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
         {
             return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("untrusted_auth_token_issuer", issuer, statusCode: StatusCodes.Status403Forbidden));
         }
-        R3ClaimReader.ReadAuthToken(verified.Payload);
+        R3ClaimReader.ReadAuthToken(verified.Payload, egressPolicy: SampleEgress.Policy);
         await TokenRegistration.RegisterAsync(tokenInventory, [TokenRegistration.FromVerified(verified)], ctx.RequestAborted);
         return new AuthOutcome(verified, null);
     }
@@ -549,7 +549,7 @@ async Task<IReadOnlyDictionary<string, R3Parameter>> ReadReservationParametersAs
 
 async Task<OperationOutcome> EnforceOperationAsync(HttpContext context, TokenVerifier.VerifiedToken token, string operation)
 {
-    var claims = R3ClaimReader.ReadAuthToken(token.Payload);
+    var claims = R3ClaimReader.ReadAuthToken(token.Payload, egressPolicy: SampleEgress.Policy);
     var proposals = context.RequestServices.GetRequiredService<R3ProposalStore>();
     try
     {

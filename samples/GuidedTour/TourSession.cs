@@ -160,9 +160,6 @@ public sealed partial class TourSession : IAsyncDisposable
         Mode is TourMode.Identity ? SigningMode :
         SigningMode.Jwt;
 
-    /// <summary>Kept for backwards compatibility — always true now that the picker is always rendered.</summary>
-    public bool CanSwitchMode => true;
-
     /// <summary>
     /// The base URL of the resource server the current flow targets. The Aria
     /// suite splits the old single resource into four servers, one per access

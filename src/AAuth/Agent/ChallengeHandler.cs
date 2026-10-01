@@ -56,30 +56,6 @@ public sealed class ChallengeHandler : DelegatingHandler
     private readonly ConcurrentDictionary<string, IReadOnlyList<string>> _learnedComponents
         = new(StringComparer.Ordinal);
 
-    /// <summary>Create the challenge handler.</summary>
-    /// <param name="exchange">Token exchange client (configured with the agent token).</param>
-    /// <param name="holder">Shared carrier-token holder used by the signer.</param>
-    /// <param name="personServer">PS issuer URL where resource tokens are exchanged.</param>
-    /// <param name="onInteractionRequired">
-    /// Optional callback invoked when the PS returns <c>202 + requirement=interaction</c>
-    /// during the embedded exchange. Hosts wire this to "display URL to user" UI.
-    /// When <see langword="null"/>, a deferred PS response surfaces as an exception.
-    /// </param>
-    /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
-    public ChallengeHandler(
-        TokenExchangeClient exchange,
-        AAuthTokenHolder holder,
-        TokenVerifier verifier,
-        MetadataClient metadata,
-        JwksClient jwks,
-        string personServer,
-        Func<Interaction, CancellationToken, Task>? onInteractionRequired = null,
-        DeferredPollerOptions? pollerOptions = null)
-        : this(exchange, holder, verifier, metadata, jwks, personServer, onInteractionRequired, pollerOptions,
-               upstreamTokenProvider: null)
-    {
-    }
-
     /// <summary>Create the challenge handler with call-chaining support.</summary>
     /// <param name="exchange">Token exchange client (configured with the agent token).</param>
     /// <param name="holder">Shared carrier-token holder used by the signer.</param>
@@ -101,9 +77,9 @@ public sealed class ChallengeHandler : DelegatingHandler
         MetadataClient metadata,
         JwksClient jwks,
         string? personServer,
-        Func<Interaction, CancellationToken, Task>? onInteractionRequired,
-        DeferredPollerOptions? pollerOptions,
-        Func<string?>? upstreamTokenProvider)
+        Func<Interaction, CancellationToken, Task>? onInteractionRequired = null,
+        DeferredPollerOptions? pollerOptions = null,
+        Func<string?>? upstreamTokenProvider = null)
     {
         ArgumentNullException.ThrowIfNull(exchange);
         ArgumentNullException.ThrowIfNull(holder);

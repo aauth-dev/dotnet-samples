@@ -128,7 +128,7 @@ blast radius is small.
       identifier.
 - [x] A sample test shows `aauth:demo@attacker.example` gets no admin claims.
 - [x] The README and `SPEC-VERSION.md` claims match the audit status.
-- [ ] The gates are green.
+- [x] The gates are green.
 
 ## Phase 2 — Signing producer, metadata and identifiers (R13, R16, R17)
 
@@ -561,12 +561,12 @@ already landed:
 
 **Definition of Done**
 
-- [ ] The review report is recorded in the log, and every P0/P1 is fixed or
+- [x] The review report is recorded in the log, and every P0/P1 is fixed or
       ruled.
-- [ ] The re-audit finds no CRITICAL or HIGH in the re-run areas.
-- [ ] The final gate run is green, including Keycloak and full Playwright
+- [x] The re-audit finds no CRITICAL or HIGH in the re-run areas.
+- [x] The final gate run is green, including Keycloak and full Playwright
       `--retries=0`.
-- [ ] The `ApiSurface` diff has been reviewed against the Phase 0 snapshot, and
+- [x] The `ApiSurface` diff has been reviewed against the Phase 0 snapshot, and
       every removal is intentional and listed.
 
 ## Out of scope

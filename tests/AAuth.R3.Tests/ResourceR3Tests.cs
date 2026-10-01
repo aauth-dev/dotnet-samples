@@ -438,9 +438,10 @@ public class ResourceR3Tests
         }.BuildAsync();
         var verifiedAuthToken = new AAuth.Tokens.TokenVerifier { EgressPolicy = TestEgress.Policy }
             .VerifyAuthToken(authToken, asKey, R3TestData.ResourceIssuer, agentKey);
+        var proposalS256 = R3Hash.ComputeS256("proposal"u8);
         var decision = R3EnforcementDecision.PerCall(
-            "https://resource.test/r3/proposals/proposal-hash",
-            "proposal-hash");
+            "https://resource.test/r3/proposals/" + proposalS256,
+            proposalS256);
         var context = new DefaultHttpContext
         {
             RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider(),

@@ -381,6 +381,26 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         Assert.Equal(absent, foreignPs);
     }
 
+    [Fact(DisplayName = "§Mission Endpoint Errors — absent and foreign missions take the same default store operations")]
+    public async Task MissionNotFound_AbsentAndForeignUseSameStoreOperations()
+    {
+        var store = new SpyMissionStore();
+        var foreignS256 = Mission.ComputeS256(Encoding.UTF8.GetBytes("foreign-agent"));
+        await store.SaveAsync(new StoredMission(foreignS256, Ps, "aauth:other@agent.example", ReadOnlyMemory<byte>.Empty));
+        store.ResetCounts();
+
+        var absent = await MissionStatusEvaluator.EvaluateAsync(store, Ps,
+            Mission.ComputeS256(Encoding.UTF8.GetBytes("absent")), "aauth:assistant@agent.example", TimeProvider.System);
+        var absentCounts = store.Counts;
+        store.ResetCounts();
+        var foreign = await MissionStatusEvaluator.EvaluateAsync(store, Ps,
+            foreignS256, "aauth:assistant@agent.example", TimeProvider.System);
+
+        Assert.Equal(MissionStatusEvaluationKind.NotFound, absent.Kind);
+        Assert.Equal(MissionStatusEvaluationKind.NotFound, foreign.Kind);
+        Assert.Equal(absentCounts, store.Counts);
+    }
+
     private static async Task<(HttpStatusCode Status, string? ContentType, string Body, string Headers)> CaptureNotFoundAsync(
         HttpClient client, string s256)
     {
@@ -418,14 +438,23 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
     private sealed class SpyMissionStore : IMissionStore
     {
         private readonly InMemoryMissionStore _inner = new();
+        public (int Gets, int Terminates) Counts { get; private set; }
+
+        public void ResetCounts() => Counts = default;
 
         public Task SaveAsync(StoredMission mission, CancellationToken ct = default)
             => _inner.SaveAsync(mission, ct);
 
         public Task<StoredMission?> GetAsync(string personServer, string s256, CancellationToken ct = default)
-            => _inner.GetAsync(personServer, s256, ct);
+        {
+            Counts = (Counts.Gets + 1, Counts.Terminates);
+            return _inner.GetAsync(personServer, s256, ct);
+        }
 
         public Task TerminateAsync(string personServer, string s256, string terminationReason, CancellationToken ct = default)
-            => _inner.TerminateAsync(personServer, s256, terminationReason, ct);
+        {
+            Counts = (Counts.Gets, Counts.Terminates + 1);
+            return _inner.TerminateAsync(personServer, s256, terminationReason, ct);
+        }
     }
 }

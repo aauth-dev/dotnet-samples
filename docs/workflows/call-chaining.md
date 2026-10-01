@@ -237,7 +237,10 @@ against that agent's binding, so revoking the binding blocks the agent, even
 after it refreshes its agent token, and every chain that started from it. A
 later enrollment creates a new binding generation; it does not un-revoke the old
 chains. Register the inventory and the binding store on the Person Server
-builder so the host holds both:
+builder so the host holds both. Binding revocation records the inventory
+generation before opening the binding store for a future enrollment; if the
+inventory write fails, the old binding remains live and no new person can bind
+against still-live grants.
 
 ```csharp
 var inventory = new InMemoryJtiStore();   // use a durable IJtiStore in production
@@ -367,7 +370,11 @@ The full PS validator performs §Upstream Token Verification steps 1–5:
    `revoked_upstream_token`
 
 Every PS-issued person/auth token and every federated AS auth token is recorded
-atomically with grant registration. Provenance records are pruned at token
+atomically with grant registration. Before the PS presents a source token to an
+AS, it rechecks both revocation and local inventory presence for the registered
+source dependencies. Losing the inventory for a pending request is treated as a
+terminal revocation-style failure rather than allowing the token to be sent
+without proof it is still live. Provenance records are pruned at token
 `exp + skew`, and the default inventory enforces per-agent distinct-resource
 quotas: quota breach returns `429 invalid_request` before a token is minted.
 Failures map to `invalid_upstream_token`, `expired_upstream_token`, or

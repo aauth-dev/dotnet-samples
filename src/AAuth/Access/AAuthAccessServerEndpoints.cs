@@ -369,7 +369,7 @@ public static class AAuthAccessServerEndpoints
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("policy_unavailable", ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+                return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, ex.Message);
             }
 
             if (InvalidClaimPolicy(decision))
@@ -618,7 +618,7 @@ public static class AAuthAccessServerEndpoints
                 }
                 catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
                 {
-                    return AAuth.Server.AAuthProblemDetails.Create("policy_unavailable", ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+                    return AAuthProblemDetails.TokenEndpoint(TokenErrorCode.ServerError, ex.Message);
                 }
 
                 if (InvalidClaimPolicy(decision))

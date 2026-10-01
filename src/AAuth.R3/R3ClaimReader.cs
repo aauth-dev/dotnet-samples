@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using AAuth.Discovery;
 using AAuth.R3.Model;
 
 namespace AAuth.R3;
@@ -28,6 +29,18 @@ public static class R3ClaimReader
     {
         ArgumentNullException.ThrowIfNull(payload);
         R3AuthClaims.ValidateResourcePair(payload);
+        return ReadResourceDocumentCore(payload);
+    }
+
+    internal static ResourceDocumentClaims? ReadResourceDocument(JsonObject payload, AAuthEgressPolicy egressPolicy)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        R3AuthClaims.ValidateResourcePair(payload, egressPolicy);
+        return ReadResourceDocumentCore(payload);
+    }
+
+    private static ResourceDocumentClaims? ReadResourceDocumentCore(JsonObject payload)
+    {
         var uri = (string?)payload[R3AuthClaims.UriClaim];
         var s256 = (string?)payload[R3AuthClaims.S256Claim];
         if (uri is null && s256 is null)
@@ -37,11 +50,16 @@ public static class R3ClaimReader
         return new ResourceDocumentClaims(uri!, s256!) { Account = AAuth.Tokens.AccountBinding.Read(payload) };
     }
 
-    public static AuthTokenClaims ReadAuthToken(JsonObject payload, R3VocabularySchemas? schemas = null)
+    public static AuthTokenClaims ReadAuthToken(JsonObject payload, R3VocabularySchemas? schemas = null, AAuthEgressPolicy? egressPolicy = null)
     {
         ArgumentNullException.ThrowIfNull(payload);
-        var doc = ReadResourceDocument(payload)
+        var doc = (egressPolicy is null ? ReadResourceDocument(payload) : ReadResourceDocument(payload, egressPolicy))
             ?? throw new InvalidOperationException("R3 auth token claims require r3_uri and r3_s256.");
+        return ReadAuthTokenCore(payload, doc, schemas);
+    }
+
+    private static AuthTokenClaims ReadAuthTokenCore(JsonObject payload, ResourceDocumentClaims doc, R3VocabularySchemas? schemas)
+    {
         var granted = ReadGrant(payload[R3AuthClaims.GrantedClaim], schemas)
             ?? throw new InvalidOperationException("R3 auth token claims require r3_granted.");
         if (payload.ContainsKey(R3AuthClaims.PerCallClaim) && payload[R3AuthClaims.PerCallClaim] is null)

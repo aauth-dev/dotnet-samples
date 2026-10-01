@@ -37,9 +37,11 @@ internal static class MissionStatusEvaluator
         var stored = await store.GetAsync(personServer, missionS256, cancellationToken).ConfigureAwait(false);
         var agentMatches = FixedEquals(stored?.Agent, expectedAgent);
         var upstreamMatches = upstreamMissionS256 is not null && FixedEquals(upstreamMissionS256, missionS256);
+        var s256Matches = FixedEquals(stored?.S256, missionS256);
+        var personServerMatches = FixedEquals(stored?.PersonServer, personServer);
         var authorized = stored is not null
-            && FixedEquals(stored.S256, missionS256)
-            && FixedEquals(stored.PersonServer, personServer)
+            && s256Matches
+            && personServerMatches
             && (agentMatches || upstreamMatches);
         if (!authorized)
         {

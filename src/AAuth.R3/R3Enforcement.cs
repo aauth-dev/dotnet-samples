@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.R3.Model;
 using AAuth.Server;
@@ -15,15 +16,17 @@ public sealed class R3Enforcement
     private readonly string _proposalPathPrefix;
     private readonly R3VocabularySchemas _schemas;
     private readonly IAAuthSingleUseGate? _singleUseGate;
+    private readonly AAuthEgressPolicy _egressPolicy;
 
     public R3Enforcement(R3ProposalStore proposalStore, Uri resourceBaseUri, string proposalPathPrefix = "/r3/proposals",
-        R3VocabularySchemas? schemas = null, IAAuthSingleUseGate? singleUseGate = null)
+        R3VocabularySchemas? schemas = null, IAAuthSingleUseGate? singleUseGate = null, AAuthEgressPolicy? egressPolicy = null)
     {
         _proposalStore = proposalStore;
         _resourceBaseUri = resourceBaseUri;
         _proposalPathPrefix = proposalPathPrefix;
         _schemas = schemas ?? R3VocabularySchemas.Standard;
         _singleUseGate = singleUseGate;
+        _egressPolicy = egressPolicy ?? AAuthEgressPolicy.Production;
     }
 
     public R3EnforcementDecision Evaluate(
@@ -94,7 +97,7 @@ public sealed class R3Enforcement
     }
 
     public R3EnforcementDecision Evaluate(JsonObject verifiedAuthTokenPayload, R3OperationIdentity operation, IReadOnlyDictionary<string, R3Parameter>? parameters = null, string? approvedProposalS256 = null, string? expectedAccount = null) =>
-        Evaluate(R3ClaimReader.ReadAuthToken(verifiedAuthTokenPayload, _schemas), operation, parameters, approvedProposalS256: approvedProposalS256, expectedAccount: expectedAccount);
+        Evaluate(R3ClaimReader.ReadAuthToken(verifiedAuthTokenPayload, _schemas, _egressPolicy), operation, parameters, approvedProposalS256: approvedProposalS256, expectedAccount: expectedAccount);
 
     private R3EnforcementDecision EvaluateApprovedProposalRetry(
         R3ClaimReader.AuthTokenClaims claims,

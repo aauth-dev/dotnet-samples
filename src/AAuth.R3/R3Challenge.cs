@@ -64,7 +64,7 @@ public sealed class R3Challenge
         ArgumentException.ThrowIfNullOrEmpty(agentJkt);
         EgressPolicy.ValidateIdentifier(ResourceIssuer);
         EgressPolicy.ValidateIdentifier(Audience);
-        R3AuthClaims.ResourceDocument(r3Uri, r3S256);
+        R3AuthClaims.ResourceDocument(r3Uri, r3S256, EgressPolicy);
         if (operationValidator is null)
         {
             throw new InvalidOperationException("R3 operation validation requires an IR3OperationValidator.");
