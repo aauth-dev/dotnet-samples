@@ -1,0 +1,2930 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="How AAuth SDK builders and the spec author collaborate through Secret Agent Co-op, and how AAuth powers it.">
+  <title>Agent Co-op | How the AAuth community builds the spec together</title>
+  <style>
+    :root {
+      --ink: #17211d;
+      --muted: #5d6b65;
+      --paper: #f7f4ed;
+      --surface: #fffdf8;
+      --surface-strong: #ffffff;
+      --forest: #173f35;
+      --forest-soft: #dce9e3;
+      --mint: #a9e5c6;
+      --coral: #f07d62;
+      --coral-soft: #fae5df;
+      --gold: #e9bc54;
+      --gold-soft: #f8efd6;
+      --blue: #4d76a8;
+      --blue-soft: #e3ebf5;
+      --line: #d8d8cf;
+      --shadow: 0 18px 50px rgba(23, 63, 53, 0.11);
+      --radius-lg: 28px;
+      --radius-md: 18px;
+      --radius-sm: 12px;
+      --max: 1180px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 9% 2%, rgba(169, 229, 198, 0.34), transparent 25rem),
+        radial-gradient(circle at 96% 15%, rgba(240, 125, 98, 0.16), transparent 24rem),
+        var(--paper);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    body::before {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      content: "";
+      pointer-events: none;
+      opacity: 0.3;
+      background-image: url("data:image/svg+xml,%3Csvg width='84' height='84' viewBox='0 0 84 84' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M84 0H0v84' fill='none' stroke='%23173f35' stroke-opacity='.07'/%3E%3C/svg%3E");
+    }
+
+    a {
+      color: inherit;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .wrap {
+      width: min(calc(100% - 40px), var(--max));
+      margin-inline: auto;
+    }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid rgba(23, 63, 53, 0.12);
+      background: rgba(247, 244, 237, 0.88);
+      backdrop-filter: blur(14px);
+    }
+
+    .nav {
+      min-height: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 11px;
+      text-decoration: none;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      color: white;
+      background: var(--forest);
+      box-shadow: 5px 5px 0 var(--mint);
+    }
+
+    .brand-mark svg {
+      width: 19px;
+      height: 19px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      color: var(--muted);
+      font-size: 0.91rem;
+      font-weight: 650;
+    }
+
+    .nav-links a {
+      text-decoration: none;
+    }
+
+    .nav-links a:hover {
+      color: var(--forest);
+    }
+
+    .nav-cta {
+      padding: 9px 14px;
+      border-radius: 999px;
+      color: white !important;
+      background: var(--forest);
+    }
+
+    .hero {
+      padding: 92px 0 64px;
+      overflow: hidden;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      align-items: center;
+      gap: 62px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 20px;
+      color: var(--forest);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      width: 28px;
+      height: 2px;
+      content: "";
+      background: var(--coral);
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      max-width: 760px;
+      margin-bottom: 24px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(3.2rem, 7.2vw, 6.8rem);
+      font-weight: 500;
+      letter-spacing: -0.065em;
+      line-height: 0.93;
+    }
+
+    h1 .accent {
+      color: var(--coral);
+      font-style: italic;
+    }
+
+    .hero-copy > p {
+      max-width: 660px;
+      margin-bottom: 30px;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 1.6vw, 1.25rem);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      min-height: 48px;
+      padding: 0 19px;
+      border: 1px solid var(--forest);
+      border-radius: 999px;
+      color: var(--forest);
+      background: transparent;
+      font-weight: 750;
+      text-decoration: none;
+    }
+
+    .button.primary {
+      color: white;
+      background: var(--forest);
+    }
+
+    .button svg {
+      width: 17px;
+    }
+
+    .hero-visual {
+      position: relative;
+      min-height: 500px;
+    }
+
+    .orbit {
+      position: absolute;
+      inset: 8% 2% 2% 3%;
+      border: 1px dashed rgba(23, 63, 53, 0.28);
+      border-radius: 50%;
+      transform: rotate(-9deg);
+    }
+
+    .orbit::before,
+    .orbit::after {
+      position: absolute;
+      width: 11px;
+      height: 11px;
+      border: 5px solid var(--paper);
+      border-radius: 50%;
+      content: "";
+      background: var(--coral);
+    }
+
+    .orbit::before {
+      top: 7%;
+      right: 18%;
+    }
+
+    .orbit::after {
+      bottom: 12%;
+      left: 12%;
+      background: var(--gold);
+    }
+
+    .person-card,
+    .agent-card,
+    .message-pill {
+      position: absolute;
+      border: 1px solid rgba(23, 63, 53, 0.12);
+      box-shadow: var(--shadow);
+    }
+
+    .person-card,
+    .agent-card {
+      width: 230px;
+      padding: 21px;
+      border-radius: 24px;
+      background: var(--surface);
+    }
+
+    .person-card {
+      top: 3%;
+      left: 2%;
+      transform: rotate(-3deg);
+    }
+
+    .agent-card {
+      right: 0;
+      bottom: 4%;
+      transform: rotate(3deg);
+    }
+
+    .avatar {
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 17px;
+      border-radius: 16px;
+      color: var(--forest);
+      background: var(--gold-soft);
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+    }
+
+    .agent-card .avatar {
+      color: white;
+      background: var(--forest);
+    }
+
+    .card-kicker {
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .person-card h3,
+    .agent-card h3 {
+      margin-bottom: 6px;
+      font-size: 1.15rem;
+    }
+
+    .person-card p,
+    .agent-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.83rem;
+    }
+
+    .message-pill {
+      top: 41%;
+      left: 24%;
+      z-index: 3;
+      width: 250px;
+      padding: 18px 20px;
+      border-radius: 17px 17px 17px 4px;
+      color: white;
+      background: var(--coral);
+      transform: rotate(-2deg);
+    }
+
+    .message-pill span {
+      display: block;
+      margin-top: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.7rem;
+      opacity: 0.78;
+    }
+
+    .trust-chip {
+      position: absolute;
+      top: 20%;
+      right: 4%;
+      padding: 8px 12px;
+      border: 1px solid rgba(23, 63, 53, 0.12);
+      border-radius: 999px;
+      background: var(--mint);
+      font-size: 0.75rem;
+      font-weight: 800;
+      transform: rotate(5deg);
+    }
+
+    .hero-note {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 32px;
+      color: var(--muted);
+      font-size: 0.83rem;
+    }
+
+    .hero-note strong {
+      color: var(--ink);
+    }
+
+    .note-line {
+      width: 34px;
+      height: 1px;
+      background: var(--line);
+    }
+
+    .thesis {
+      padding: 26px 0 92px;
+    }
+
+    .thesis-card {
+      display: grid;
+      grid-template-columns: 0.75fr 1.25fr;
+      gap: 44px;
+      padding: 48px;
+      border-radius: var(--radius-lg);
+      color: white;
+      background: var(--forest);
+      box-shadow: var(--shadow);
+    }
+
+    .thesis-card .eyebrow {
+      color: var(--mint);
+    }
+
+    .thesis-card h2 {
+      margin-bottom: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(2.1rem, 4vw, 4rem);
+      font-weight: 500;
+      letter-spacing: -0.045em;
+      line-height: 1;
+    }
+
+    .thesis-card blockquote {
+      margin: 0;
+      padding-left: 30px;
+      border-left: 1px solid rgba(255, 255, 255, 0.25);
+      font-size: clamp(1.2rem, 2vw, 1.55rem);
+      line-height: 1.55;
+    }
+
+    .thesis-card blockquote span {
+      display: block;
+      margin-top: 17px;
+      color: rgba(255, 255, 255, 0.68);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    section {
+      padding: 86px 0;
+    }
+
+    .section-head {
+      max-width: 790px;
+      margin-bottom: 46px;
+    }
+
+    .section-head h2 {
+      margin-bottom: 18px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(2.45rem, 5vw, 4.5rem);
+      font-weight: 500;
+      letter-spacing: -0.05em;
+      line-height: 1;
+    }
+
+    .section-head p {
+      color: var(--muted);
+      font-size: 1.07rem;
+    }
+
+    .scope-strip {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      margin-bottom: 34px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+    }
+
+    .scope-strip > div {
+      flex: 1;
+      padding: 19px 22px;
+    }
+
+    .scope-strip > div + div {
+      border-left: 1px solid var(--line);
+    }
+
+    .scope-strip strong {
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .scope-strip span {
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .scope-strip .current strong::before,
+    .scope-strip .proposal strong::before {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      margin-right: 8px;
+      border-radius: 50%;
+      content: "";
+      background: var(--forest);
+    }
+
+    .scope-strip .proposal strong::before {
+      background: var(--coral);
+    }
+
+    .architecture {
+      padding: 35px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: rgba(255, 253, 248, 0.78);
+      box-shadow: var(--shadow);
+    }
+
+    .arch-stage {
+      display: grid;
+      grid-template-columns: 1fr 58px 1fr 58px 1fr;
+      align-items: stretch;
+      gap: 10px;
+    }
+
+    .arch-column {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .arch-label {
+      margin-bottom: 3px;
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 850;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .arch-node {
+      min-height: 128px;
+      padding: 19px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--surface-strong);
+    }
+
+    .arch-node.highlight {
+      border-color: var(--forest);
+      color: white;
+      background: var(--forest);
+    }
+
+    .arch-node.crypto {
+      border-color: #e1b94d;
+      background: var(--gold-soft);
+    }
+
+    .arch-node.mailbox {
+      border-color: #d96b53;
+      background: var(--coral-soft);
+    }
+
+    .node-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 11px;
+    }
+
+    .node-icon {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      flex: 0 0 auto;
+      place-items: center;
+      border-radius: 10px;
+      color: var(--forest);
+      background: var(--forest-soft);
+    }
+
+    .highlight .node-icon {
+      color: white;
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    .node-icon svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .arch-node h3 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .arch-node p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.79rem;
+    }
+
+    .highlight p {
+      color: rgba(255, 255, 255, 0.72);
+    }
+
+    .arch-arrow {
+      display: grid;
+      place-items: center;
+      color: var(--forest);
+    }
+
+    .arch-arrow svg {
+      width: 45px;
+    }
+
+    .arch-foundation {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 26px;
+      padding-top: 26px;
+      border-top: 1px dashed var(--line);
+    }
+
+    .foundation-item {
+      padding: 15px 17px;
+      border-radius: var(--radius-sm);
+      background: var(--blue-soft);
+      font-size: 0.83rem;
+    }
+
+    .foundation-item strong {
+      display: block;
+      margin-bottom: 3px;
+      color: #2e527f;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .legend i {
+      width: 10px;
+      height: 10px;
+      display: inline-block;
+      border-radius: 3px;
+      background: var(--forest);
+    }
+
+    .legend .l-crypto {
+      background: var(--gold);
+    }
+
+    .legend .l-mailbox {
+      background: var(--coral);
+    }
+
+    .flow-section {
+      color: white;
+      background: var(--forest);
+    }
+
+    .flow-section .section-head p {
+      color: rgba(255, 255, 255, 0.67);
+    }
+
+    .flow-section .eyebrow {
+      color: var(--mint);
+    }
+
+    .tabs {
+      display: flex;
+      width: fit-content;
+      margin-bottom: 32px;
+      padding: 5px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.07);
+    }
+
+    .tab {
+      min-width: 120px;
+      padding: 10px 18px;
+      border: 0;
+      border-radius: 999px;
+      color: rgba(255, 255, 255, 0.68);
+      background: transparent;
+      cursor: pointer;
+      font-weight: 750;
+    }
+
+    .tab[aria-selected="true"] {
+      color: var(--forest);
+      background: var(--mint);
+    }
+
+    .flow-panel[hidden] {
+      display: none;
+    }
+
+    .flow-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      counter-reset: steps;
+    }
+
+    .step {
+      position: relative;
+      min-height: 265px;
+      padding: 22px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: var(--radius-md);
+      background: rgba(255, 255, 255, 0.07);
+      counter-increment: steps;
+    }
+
+    .step::before {
+      display: block;
+      margin-bottom: 42px;
+      color: var(--mint);
+      content: "0" counter(steps);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+
+    .step::after {
+      position: absolute;
+      top: -55px;
+      right: -40px;
+      width: 145px;
+      height: 145px;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 50%;
+      content: "";
+    }
+
+    .step h3 {
+      margin-bottom: 10px;
+      font-size: 1.04rem;
+    }
+
+    .step p {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.67);
+      font-size: 0.87rem;
+    }
+
+    .step .payload {
+      display: inline-block;
+      margin-top: 17px;
+      padding: 5px 8px;
+      border-radius: 7px;
+      color: var(--mint);
+      background: rgba(0, 0, 0, 0.18);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.69rem;
+    }
+
+    .team-map {
+      display: grid;
+      grid-template-columns: 0.85fr 1.15fr;
+      align-items: center;
+      gap: 56px;
+    }
+
+    .team-diagram {
+      position: relative;
+      min-height: 480px;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at center, rgba(169, 229, 198, 0.32) 0 20%, transparent 21%),
+        var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .team-diagram svg.connections {
+      position: absolute;
+      inset: 13%;
+      width: 74%;
+      height: 74%;
+      color: rgba(23, 63, 53, 0.25);
+    }
+
+    .team-node {
+      position: absolute;
+      width: 118px;
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      text-align: center;
+      background: white;
+      box-shadow: 0 9px 30px rgba(23, 63, 53, 0.1);
+    }
+
+    .team-node strong,
+    .team-node span {
+      display: block;
+    }
+
+    .team-node strong {
+      font-size: 0.78rem;
+    }
+
+    .team-node span {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 0.65rem;
+    }
+
+    .team-node .mini-pair {
+      display: flex;
+      justify-content: center;
+      gap: 4px;
+      margin-bottom: 7px;
+    }
+
+    .mini-pair i {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      color: white;
+      background: var(--forest);
+      font-size: 0.62rem;
+      font-style: normal;
+      font-weight: 800;
+    }
+
+    .mini-pair i:first-child {
+      color: var(--forest);
+      background: var(--gold);
+    }
+
+    .team-node.n1 {
+      top: 5%;
+      left: 36%;
+    }
+
+    .team-node.n2 {
+      top: 39%;
+      right: 2%;
+    }
+
+    .team-node.n3 {
+      right: 20%;
+      bottom: 2%;
+    }
+
+    .team-node.n4 {
+      bottom: 7%;
+      left: 8%;
+    }
+
+    .team-node.n5 {
+      top: 30%;
+      left: 1%;
+    }
+
+    .team-core {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 118px;
+      height: 118px;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      border-radius: 50%;
+      color: white;
+      text-align: center;
+      background: var(--coral);
+      transform: translate(-50%, -50%);
+      box-shadow: 0 12px 35px rgba(240, 125, 98, 0.28);
+      font-size: 0.77rem;
+      font-weight: 800;
+    }
+
+    .principles {
+      display: grid;
+      gap: 14px;
+    }
+
+    .principle {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 15px;
+      padding: 19px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+    }
+
+    .principle-number {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      color: var(--forest);
+      background: var(--mint);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.76rem;
+      font-weight: 800;
+    }
+
+    .principle h3 {
+      margin-bottom: 4px;
+      font-size: 1rem;
+    }
+
+    .principle p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .trust-section {
+      background: #efece3;
+    }
+
+    .trust-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .trust-card {
+      padding: 26px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+    }
+
+    .trust-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 15px;
+      margin-bottom: 19px;
+    }
+
+    .trust-card h3 {
+      margin-bottom: 3px;
+      font-size: 1.1rem;
+    }
+
+    .trust-card-head p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .status {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      border-radius: 999px;
+      color: var(--forest);
+      background: var(--forest-soft);
+      font-size: 0.66rem;
+      font-weight: 850;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .status.sees {
+      color: #7f3c2d;
+      background: var(--coral-soft);
+    }
+
+    .trust-list {
+      display: grid;
+      gap: 9px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .trust-list li {
+      position: relative;
+      padding-left: 18px;
+    }
+
+    .trust-list li::before {
+      position: absolute;
+      top: 0.61em;
+      left: 0;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      content: "";
+      background: var(--coral);
+    }
+
+    .callout {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 17px;
+      margin-top: 24px;
+      padding: 22px;
+      border: 1px solid #d7b44e;
+      border-radius: var(--radius-md);
+      background: var(--gold-soft);
+    }
+
+    .callout-icon {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 11px;
+      color: #74580a;
+      background: var(--gold);
+      font-weight: 900;
+    }
+
+    .callout strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .callout p {
+      margin: 0;
+      color: #665d42;
+      font-size: 0.87rem;
+    }
+
+    .operating-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .operating-card {
+      padding: 27px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+    }
+
+    .operating-card .tag {
+      display: inline-block;
+      margin-bottom: 35px;
+      padding: 5px 9px;
+      border-radius: 7px;
+      color: var(--forest);
+      background: var(--forest-soft);
+      font-size: 0.68rem;
+      font-weight: 850;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .operating-card:nth-child(2) .tag {
+      color: #7f3c2d;
+      background: var(--coral-soft);
+    }
+
+    .operating-card:nth-child(3) .tag {
+      color: #6d550e;
+      background: var(--gold-soft);
+    }
+
+    .operating-card h3 {
+      margin-bottom: 10px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 1.5rem;
+      font-weight: 500;
+    }
+
+    .operating-card p {
+      margin-bottom: 18px;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .operating-card ul {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding-left: 18px;
+      font-size: 0.82rem;
+    }
+
+    .decision-table {
+      width: 100%;
+      margin-top: 34px;
+      overflow: hidden;
+      border-collapse: separate;
+      border: 1px solid var(--line);
+      border-spacing: 0;
+      border-radius: var(--radius-md);
+      background: var(--surface);
+    }
+
+    .decision-table th,
+    .decision-table td {
+      padding: 17px 19px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 0.82rem;
+    }
+
+    .decision-table th {
+      color: var(--muted);
+      background: #efeee8;
+      font-size: 0.68rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .decision-table tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .decision-table td:first-child {
+      font-weight: 750;
+    }
+
+    .decision-table .today {
+      color: var(--forest);
+      font-weight: 700;
+    }
+
+    .decision-table .next {
+      color: #a64e3a;
+      font-weight: 700;
+    }
+
+    .demo-box {
+      display: grid;
+      grid-template-columns: 0.8fr 1.2fr;
+      gap: 42px;
+      padding: 45px;
+      border-radius: var(--radius-lg);
+      color: white;
+      background: var(--forest);
+      box-shadow: var(--shadow);
+    }
+
+    .demo-box h2 {
+      margin-bottom: 14px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(2.1rem, 4vw, 3.6rem);
+      font-weight: 500;
+      letter-spacing: -0.045em;
+      line-height: 1;
+    }
+
+    .demo-box p {
+      color: rgba(255, 255, 255, 0.68);
+    }
+
+    .prompt-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .prompt {
+      position: relative;
+      margin: 0;
+      padding: 16px 42px 16px 18px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 13px;
+      color: var(--mint);
+      background: rgba(0, 0, 0, 0.15);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.77rem;
+    }
+
+    .prompt::after {
+      position: absolute;
+      top: 15px;
+      right: 16px;
+      color: rgba(255, 255, 255, 0.35);
+      content: ">";
+      font-weight: 900;
+    }
+
+    footer {
+      padding: 40px 0 55px;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding-top: 24px;
+      border-top: 1px solid var(--line);
+    }
+
+    .footer-inner strong {
+      color: var(--ink);
+    }
+
+    .top-link {
+      text-decoration: none;
+      font-weight: 750;
+    }
+
+    @media (max-width: 980px) {
+      .hero-grid,
+      .team-map,
+      .demo-box {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        padding-top: 70px;
+      }
+
+      .hero-visual {
+        min-height: 470px;
+      }
+
+      .arch-stage {
+        grid-template-columns: 1fr;
+      }
+
+      .arch-arrow {
+        min-height: 34px;
+        transform: rotate(90deg);
+      }
+
+      .flow-grid,
+      .operating-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .team-diagram {
+        width: min(100%, 570px);
+        margin-inline: auto;
+      }
+    }
+
+    @media (max-width: 700px) {
+      .wrap {
+        width: min(calc(100% - 24px), var(--max));
+      }
+
+      .nav-links a:not(.nav-cta) {
+        display: none;
+      }
+
+      h1 {
+        font-size: clamp(3.1rem, 16vw, 5.2rem);
+      }
+
+      .hero-visual {
+        min-height: 410px;
+      }
+
+      .person-card,
+      .agent-card {
+        width: 185px;
+        padding: 16px;
+      }
+
+      .message-pill {
+        left: 13%;
+        width: 225px;
+      }
+
+      .thesis-card,
+      .scope-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .thesis-card {
+        display: grid;
+        padding: 30px;
+      }
+
+      .thesis-card blockquote {
+        padding-top: 20px;
+        padding-left: 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.25);
+        border-left: 0;
+      }
+
+      section {
+        padding: 68px 0;
+      }
+
+      .scope-strip {
+        display: grid;
+      }
+
+      .scope-strip > div + div {
+        border-top: 1px solid var(--line);
+        border-left: 0;
+      }
+
+      .architecture {
+        padding: 19px;
+      }
+
+      .arch-foundation,
+      .flow-grid,
+      .operating-grid,
+      .trust-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .step {
+        min-height: 220px;
+      }
+
+      .team-diagram {
+        min-height: 390px;
+      }
+
+      .team-node {
+        width: 99px;
+      }
+
+      .team-core {
+        width: 96px;
+        height: 96px;
+        font-size: 0.68rem;
+      }
+
+      .decision-table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+
+      .demo-box {
+        padding: 29px;
+      }
+
+      .footer-inner {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+    }
+
+    @media print {
+      @page {
+        margin: 0.55in;
+      }
+
+      .site-header,
+      .actions,
+      .tabs {
+        display: none;
+      }
+
+      body {
+        background: white;
+      }
+
+      section,
+      .hero,
+      .thesis {
+        padding: 28px 0;
+        break-inside: avoid;
+      }
+
+      .hero-grid,
+      .team-map,
+      .demo-box {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .hero-visual {
+        min-height: 380px;
+      }
+
+      .flow-panel[hidden] {
+        display: block;
+        margin-top: 25px;
+      }
+
+      .flow-grid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+
+      .step {
+        min-height: 230px;
+      }
+    }
+
+    .mail-body code,
+    .aauth-card code,
+    .decision-table code,
+    .loop-card code {
+      padding: 1px 5px;
+      border-radius: 5px;
+      background: rgba(23, 63, 53, 0.07);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.9em;
+    }
+
+    .nw {
+      white-space: nowrap;
+    }
+
+    .picked {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      color: var(--forest);
+      background: var(--mint);
+      font-size: 0.68rem;
+      font-weight: 850;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    .callout.outcome {
+      margin-top: 30px;
+      border-color: var(--forest);
+      background: var(--forest-soft);
+    }
+
+    .callout.outcome .callout-icon {
+      color: white;
+      background: var(--forest);
+    }
+
+    .callout.outcome p {
+      color: var(--ink);
+    }
+
+    .callout.outcome a {
+      color: var(--forest);
+      font-weight: 750;
+    }
+
+    .callout.outcome code {
+      padding: 1px 5px;
+      border-radius: 5px;
+      background: rgba(23, 63, 53, 0.08);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.9em;
+    }
+
+    .aauth-card.feature code {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .team-core.author {
+      line-height: 1.25;
+    }
+
+    .loop-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      counter-reset: loop;
+    }
+
+    .loop-card {
+      position: relative;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      counter-increment: loop;
+    }
+
+    .loop-card::before {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 18px;
+      border-radius: 12px;
+      color: var(--forest);
+      background: var(--mint);
+      content: "0" counter(loop);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.76rem;
+      font-weight: 800;
+    }
+
+    .loop-card.author::before {
+      color: #7f3c2d;
+      background: var(--coral-soft);
+    }
+
+    .loop-card.everyone::before {
+      color: #6d550e;
+      background: var(--gold-soft);
+    }
+
+    .loop-card .who {
+      position: absolute;
+      top: 36px;
+      right: 22px;
+      color: var(--muted);
+      font-size: 0.66rem;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .loop-card h3 {
+      margin-bottom: 6px;
+      font-size: 1.05rem;
+    }
+
+    .loop-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .chip {
+      display: inline-block;
+      margin-top: 14px;
+      padding: 5px 8px;
+      border-radius: 7px;
+      color: var(--forest);
+      background: var(--forest-soft);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.69rem;
+    }
+
+    .loop-return {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .loop-return svg {
+      width: 20px;
+      flex: 0 0 auto;
+      color: var(--coral);
+    }
+
+    .align-title {
+      margin: 40px 0 14px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 850;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .case-grid {
+      display: grid;
+      grid-template-columns: 1.08fr 0.92fr;
+      align-items: start;
+      gap: 34px;
+    }
+
+    .mail-card {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: var(--surface-strong);
+      box-shadow: var(--shadow);
+    }
+
+    .mail-head {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 5px 14px;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--line);
+      background: #efeee8;
+      font-size: 0.83rem;
+    }
+
+    .mail-head span {
+      color: var(--muted);
+    }
+
+    .mail-body {
+      padding: 22px 24px 8px;
+      font-size: 0.86rem;
+    }
+
+    .mail-body p {
+      margin-bottom: 12px;
+    }
+
+    .mail-body ol {
+      display: grid;
+      gap: 6px;
+      margin: 0 0 14px;
+      padding-left: 20px;
+    }
+
+    .mail-body .muted {
+      color: var(--muted);
+    }
+
+    .mail-foot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 4px 24px 22px;
+    }
+
+    .mail-foot .chip {
+      margin-top: 0;
+    }
+
+    .timeline {
+      display: grid;
+      margin: 0;
+      padding: 6px 0 0;
+      list-style: none;
+    }
+
+    .timeline li {
+      position: relative;
+      padding: 0 0 26px 34px;
+    }
+
+    .timeline li::before {
+      position: absolute;
+      top: 4px;
+      left: 0;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      content: "";
+      background: var(--forest);
+      box-shadow: 0 0 0 4px var(--forest-soft);
+    }
+
+    .timeline li::after {
+      position: absolute;
+      top: 26px;
+      bottom: 4px;
+      left: 6px;
+      width: 2px;
+      content: "";
+      background: var(--line);
+    }
+
+    .timeline li:last-child::after {
+      display: none;
+    }
+
+    .timeline li.pending::before {
+      border: 2px dashed var(--coral);
+      background: var(--paper);
+      box-shadow: none;
+    }
+
+    .timeline .when {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .timeline h3 {
+      margin-bottom: 4px;
+      font-size: 1rem;
+    }
+
+    .timeline p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .aauth-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .aauth-card {
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+    }
+
+    .aauth-card .status {
+      display: inline-block;
+    }
+
+    .aauth-card h3 {
+      margin: 16px 0 6px;
+      font-size: 1.05rem;
+    }
+
+    .aauth-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .aauth-card.feature {
+      border-color: var(--forest);
+      color: white;
+      background: var(--forest);
+    }
+
+    .aauth-card.feature p,
+    .aauth-card.feature .mode-list {
+      color: rgba(255, 255, 255, 0.76);
+    }
+
+    .aauth-card.feature .status {
+      color: var(--forest);
+      background: var(--mint);
+    }
+
+    .mode-list {
+      display: grid;
+      gap: 8px;
+      margin: 14px 0 0;
+      padding: 0;
+      list-style: none;
+      font-size: 0.82rem;
+    }
+
+    .mode-list li {
+      display: grid;
+      grid-template-columns: 104px 1fr;
+      gap: 10px;
+      align-items: baseline;
+    }
+
+    .aauth-callout {
+      margin-top: 22px;
+    }
+
+    @media (max-width: 980px) {
+      .loop-grid,
+      .aauth-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .case-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 700px) {
+      .loop-grid,
+      .aauth-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-visual {
+        display: grid;
+        gap: 14px;
+        min-height: 0;
+      }
+
+      .orbit,
+      .trust-chip {
+        display: none;
+      }
+
+      .person-card,
+      .agent-card,
+      .message-pill {
+        position: relative;
+        inset: auto;
+        width: auto;
+        transform: none;
+      }
+
+      .message-pill {
+        margin-inline: 18px;
+      }
+
+      .mail-head {
+        grid-template-columns: 1fr;
+      }
+
+      .mail-head span:not(:first-child) {
+        margin-top: 6px;
+      }
+    }
+
+    @media print {
+      .loop-grid,
+      .aauth-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .case-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .flow-track,
+      .pkt,
+      .arrow-pkt {
+        display: none;
+      }
+    }
+
+    /* Message-flow animation: static base styles, then motion only when the viewer allows it. */
+    .orbit-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+
+    .orbit-path {
+      fill: none;
+      stroke: rgba(23, 63, 53, 0.3);
+      stroke-width: 1;
+      stroke-dasharray: 4 6;
+    }
+
+    .orbit-dot {
+      stroke: var(--paper);
+      stroke-width: 5;
+      paint-order: stroke;
+    }
+
+    .orbit-dot.coral {
+      fill: var(--coral);
+    }
+
+    .orbit-dot.gold {
+      fill: var(--gold);
+    }
+
+    .pkt.finding {
+      fill: var(--coral);
+    }
+
+    .pkt.ruling {
+      fill: var(--forest);
+    }
+
+    .pkt.peer {
+      fill: var(--gold);
+    }
+
+    .arrow-pkt {
+      fill: var(--coral);
+      stroke: none;
+    }
+
+    .flow-track {
+      position: relative;
+      height: 18px;
+      margin: -10px 0 14px;
+    }
+
+    .flow-track::before {
+      position: absolute;
+      top: 50%;
+      right: 12.5%;
+      left: 12.5%;
+      height: 2px;
+      content: "";
+      background: repeating-linear-gradient(90deg, rgba(169, 229, 198, 0.5) 0 6px, transparent 6px 12px);
+      transform: translateY(-50%);
+    }
+
+    .flow-track i {
+      position: absolute;
+      top: 50%;
+      width: 10px;
+      height: 10px;
+      border: 2px solid rgba(169, 229, 198, 0.6);
+      border-radius: 50%;
+      background: var(--forest);
+      transform: translate(-50%, -50%);
+    }
+
+    .flow-track i:nth-of-type(1) { left: 12.5%; }
+    .flow-track i:nth-of-type(2) { left: 37.5%; }
+    .flow-track i:nth-of-type(3) { left: 62.5%; }
+    .flow-track i:nth-of-type(4) { left: 87.5%; }
+
+    .packet {
+      position: absolute;
+      top: 50%;
+      left: 12.5%;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      opacity: 0;
+      background: var(--mint);
+      box-shadow: 0 0 0 5px rgba(169, 229, 198, 0.2), 0 0 18px rgba(169, 229, 198, 0.75);
+      transform: translate(-50%, -50%);
+    }
+
+    @media (max-width: 980px) {
+      .flow-track {
+        display: none;
+      }
+    }
+
+    @media (max-width: 700px) {
+      .orbit-svg {
+        display: none;
+      }
+    }
+
+    @keyframes dash-10 { to { stroke-dashoffset: -20; } }
+    @keyframes dash-13 { to { stroke-dashoffset: -26; } }
+    @keyframes dash-7 { to { stroke-dashoffset: -14; } }
+    @keyframes track-dash { to { background-position: 12px 0; } }
+
+    @keyframes pill-float {
+      0%, 100% { transform: rotate(-2deg) translateY(0); }
+      50% { transform: rotate(-2deg) translateY(-8px); }
+    }
+
+    @keyframes chip-bob {
+      0%, 100% { transform: rotate(5deg) translateY(0); }
+      50% { transform: rotate(5deg) translateY(-5px); }
+    }
+
+    @keyframes hub-pulse {
+      0%, 26%, 48%, 100% { box-shadow: 0 12px 35px rgba(240, 125, 98, 0.28), 0 0 0 0 rgba(240, 125, 98, 0); }
+      34% { box-shadow: 0 12px 35px rgba(240, 125, 98, 0.35), 0 0 0 16px rgba(240, 125, 98, 0.16); }
+    }
+
+    @keyframes loop-active {
+      0%, 17%, 100% { border-color: var(--line); box-shadow: none; transform: translateY(0); }
+      5%, 11% { border-color: var(--forest); box-shadow: 0 14px 32px rgba(23, 63, 53, 0.12); transform: translateY(-3px); }
+    }
+
+    @keyframes loop-number {
+      0%, 14%, 100% { transform: scale(1); }
+      5% { transform: scale(1.12); }
+    }
+
+    @keyframes loop-return {
+      0%, 86% { transform: rotate(0); }
+      100% { transform: rotate(360deg); }
+    }
+
+    @keyframes packet-run {
+      0% { left: 12.5%; opacity: 0; }
+      4% { left: 12.5%; opacity: 1; }
+      25% { left: 37.5%; }
+      50% { left: 62.5%; }
+      75% { left: 87.5%; opacity: 1; }
+      85%, 100% { left: 87.5%; opacity: 0; }
+    }
+
+    @keyframes step-glow {
+      0%, 16%, 100% { border-color: rgba(255, 255, 255, 0.14); background-color: rgba(255, 255, 255, 0.07); }
+      5% { border-color: rgba(169, 229, 198, 0.85); background-color: rgba(169, 229, 198, 0.12); }
+    }
+
+    @keyframes timeline-fill {
+      0% { background-position: 0 100%; }
+      14%, 88% { background-position: 0 0; }
+      96%, 100% { background-position: 0 100%; }
+    }
+
+    @keyframes timeline-ping {
+      0%, 12%, 100% { transform: scale(1); box-shadow: 0 0 0 4px var(--forest-soft); }
+      4% { transform: scale(1.3); box-shadow: 0 0 0 8px rgba(169, 229, 198, 0.65); }
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .march-10 { animation: dash-10 1.6s linear infinite; }
+      .march-13 { animation: dash-13 1.4s linear infinite; }
+      .march-13.slow { animation-duration: 3s; }
+      .march-7 { animation: dash-7 0.9s linear infinite; }
+
+      .message-pill { animation: pill-float 5s ease-in-out infinite; }
+      .trust-chip { animation: chip-bob 6s ease-in-out infinite; }
+
+      .team-core.author { animation: hub-pulse 7s ease-in-out infinite; }
+
+      .loop-card { animation: loop-active 9s ease-in-out infinite; }
+      .loop-card::before { animation: loop-number 9s ease-in-out infinite; }
+      .loop-card:nth-child(2), .loop-card:nth-child(2)::before { animation-delay: 1.5s; }
+      .loop-card:nth-child(3), .loop-card:nth-child(3)::before { animation-delay: 3s; }
+      .loop-card:nth-child(4), .loop-card:nth-child(4)::before { animation-delay: 4.5s; }
+      .loop-card:nth-child(5), .loop-card:nth-child(5)::before { animation-delay: 6s; }
+      .loop-card:nth-child(6), .loop-card:nth-child(6)::before { animation-delay: 7.5s; }
+      .loop-return svg { animation: loop-return 9s ease-in-out infinite; }
+
+      .flow-track::before { animation: track-dash 0.9s linear infinite; }
+      .packet { animation: packet-run 8s ease-in-out infinite; }
+      .flow-panel .step { animation: step-glow 8s ease-in-out infinite; }
+      .flow-panel .step:nth-child(2) { animation-delay: 2s; }
+      .flow-panel .step:nth-child(3) { animation-delay: 4s; }
+      .flow-panel .step:nth-child(4) { animation-delay: 6s; }
+
+      .timeline li::after {
+        background: linear-gradient(to bottom, var(--forest) 50%, var(--line) 50%);
+        background-position: 0 100%;
+        background-size: 100% 200%;
+        animation: timeline-fill 10s ease-in-out infinite;
+      }
+
+      .timeline li::before { animation: timeline-ping 10s ease-out infinite; }
+      .timeline li:nth-child(2)::before, .timeline li:nth-child(2)::after { animation-delay: 1.6s; }
+      .timeline li:nth-child(3)::before, .timeline li:nth-child(3)::after { animation-delay: 3.2s; }
+      .timeline li:nth-child(4)::before, .timeline li:nth-child(4)::after { animation-delay: 4.8s; }
+      .timeline li:nth-child(5)::before, .timeline li:nth-child(5)::after { animation-delay: 6.4s; }
+      .timeline li.pending::before { animation: spin 6s linear infinite; }
+
+      @media (max-width: 700px) {
+        .message-pill { animation: none; }
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header" id="top">
+    <div class="wrap nav">
+      <a class="brand" href="#top" aria-label="Agent Co-op overview">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M7 8.5h10M7 12h7M5 19l2.5-3H18a3 3 0 0 0 3-3V6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v7a3 3 0 0 0 3 3h1.5"/>
+          </svg>
+        </span>
+        Agent Co-op
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="#loop">Collaboration loop</a>
+        <a href="#example">Example</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#aauth">AAuth inside</a>
+        <a href="#trust">Trust</a>
+        <a class="nav-cta" href="#demo">Demo</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <div class="eyebrow">AAuth community briefing</div>
+          <h1>One spec. Many SDKs. <span class="accent">Agents in the loop.</span></h1>
+          <p>
+            AAuth SDK builders and the spec author collaborate through Secret Agent Co-op.
+            Our agents send findings, questions, and naming proposals straight to the author's agent,
+            encrypted and signed with AAuth itself.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="#loop">
+              See the collaboration loop
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="m5 7 5 5 5-5"/>
+              </svg>
+            </a>
+            <a class="button" href="#aauth">How AAuth powers it</a>
+          </div>
+          <div class="hero-note">
+            <span class="note-line"></span>
+            <span><strong>Dogfooding:</strong> the protocol under discussion carries the discussion.</span>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-label="An SDK builder's agent sending a spec finding to the spec author's agent">
+          <svg class="orbit-svg animated" viewBox="0 0 530 500" preserveAspectRatio="none" aria-hidden="true">
+            <g transform="rotate(-9 267.6 265)">
+              <path id="hero-orbit" class="orbit-path march-10" vector-effect="non-scaling-stroke" d="M15.9 265A251.7 225 0 0 1 519.3 265A251.7 225 0 0 1 15.9 265Z"/>
+              <circle class="orbit-dot coral" r="6">
+                <animateMotion dur="12s" repeatCount="indefinite"><mpath href="#hero-orbit"/></animateMotion>
+              </circle>
+              <circle class="orbit-dot gold" r="6">
+                <animateMotion dur="12s" begin="-6s" repeatCount="indefinite"><mpath href="#hero-orbit"/></animateMotion>
+              </circle>
+            </g>
+          </svg>
+          <article class="person-card">
+            <div class="avatar">.N</div>
+            <div class="card-kicker">SDK builder</div>
+            <h3>.NET SDK agent</h3>
+            <p>Finds the edge case and drafts the question with spec references.</p>
+          </article>
+          <div class="trust-chip">Built on AAuth</div>
+          <div class="message-pill">
+            "draft-11: replay tuple forces 1 req/s per target."
+            <span>AAuth-signed / encrypted JWE</span>
+          </div>
+          <article class="agent-card">
+            <div class="avatar" aria-hidden="true">
+              <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                <path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>
+              </svg>
+            </div>
+            <div class="card-kicker">Spec author</div>
+            <h3>Author's agent</h3>
+            <p>Groups findings across SDKs and helps record each ruling.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <div class="thesis">
+      <div class="wrap">
+        <div class="thesis-card">
+          <div>
+            <div class="eyebrow">Why it matters</div>
+            <h2>The spec and its SDKs move together.</h2>
+          </div>
+          <blockquote>
+            Every SDK that implements AAuth turns ambiguities in the draft into concrete questions.
+            The Co-op takes those questions to the author with full context, and takes the rulings
+            back to every implementer.
+            <span>Implement / ask / triage / rule / draft / adopt</span>
+          </blockquote>
+        </div>
+      </div>
+    </div>
+
+    <section id="community">
+      <div class="wrap">
+        <header class="section-head">
+          <div class="eyebrow">Who is connected</div>
+          <h2>A working group of people and their agents.</h2>
+          <p>
+            Each participant joins by invitation and connects pairwise. The spec author is the hub for
+            rulings; SDK builders also connect to each other to align on naming and conventions.
+          </p>
+        </header>
+
+        <div class="team-map">
+          <div class="team-diagram" aria-label="The spec author at the centre, connected to SDK builders and implementers, who are also connected to each other">
+            <svg class="connections animated" viewBox="0 0 400 400" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="6 7" aria-hidden="true">
+              <path class="march-13 slow" d="M200 30 355 165 295 350 90 330 40 150 200 30Z"/>
+              <path id="spoke-net" d="M200 200 200 30"/>
+              <path id="spoke-sdk" d="M200 200 355 165"/>
+              <path id="spoke-fw" d="M200 200 295 350"/>
+              <path id="spoke-ps" d="M200 200 90 330"/>
+              <path id="spoke-res" d="M200 200 40 150"/>
+              <path id="peer-net-sdk" d="M200 30 355 165" stroke="none"/>
+              <g class="mesh-packets" stroke="#fffdf8" stroke-width="2" stroke-dasharray="none">
+                <!-- Findings travel to the author, then rulings fan out to every participant. -->
+                <circle class="pkt finding" r="6.5" opacity="0">
+                  <animateMotion dur="7s" repeatCount="indefinite" calcMode="linear" keyPoints="1;1;0;0" keyTimes="0;0.05;0.3;1"><mpath href="#spoke-net"/></animateMotion>
+                  <animate attributeName="opacity" dur="7s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;0.05;0.29;0.3;1"/>
+                </circle>
+                <circle class="pkt finding" r="6.5" opacity="0">
+                  <animateMotion dur="7s" repeatCount="indefinite" calcMode="linear" keyPoints="1;1;0;0" keyTimes="0;0.12;0.35;1"><mpath href="#spoke-ps"/></animateMotion>
+                  <animate attributeName="opacity" dur="7s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.11;0.12;0.34;0.35;1"/>
+                </circle>
+                <circle class="pkt ruling" r="5.5" opacity="0">
+                  <animateMotion dur="7s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.42;0.68;1"><mpath href="#spoke-net"/></animateMotion>
+                  <animate attributeName="opacity" dur="7s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.41;0.42;0.67;0.68;1"/>
+                </circle>
+                <circle class="pkt ruling" r="5.5" opacity="0">
+                  <animateMotion dur="7s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.42;0.68;1"><mpath href="#spoke-sdk"/></animateMotion>
+                  <animate attributeName="opacity" dur="7s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.41;0.42;0.67;0.68;1"/>
+                </circle>
+                <circle class="pkt ruling" r="5.5" opacity="0">
+                  <animateMotion dur="7s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.42;0.68;1"><mpath href="#spoke-fw"/></animateMotion>
+                  <animate attributeName="opacity" dur="7s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.41;0.42;0.67;0.68;1"/>
+                </circle>
+                <circle class="pkt ruling" r="5.5" opacity="0">
+                  <animateMotion dur="7s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.42;0.68;1"><mpath href="#spoke-ps"/></animateMotion>
+                  <animate attributeName="opacity" dur="7s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.41;0.42;0.67;0.68;1"/>
+                </circle>
+                <circle class="pkt ruling" r="5.5" opacity="0">
+                  <animateMotion dur="7s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.42;0.68;1"><mpath href="#spoke-res"/></animateMotion>
+                  <animate attributeName="opacity" dur="7s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.41;0.42;0.67;0.68;1"/>
+                </circle>
+                <circle class="pkt peer" r="5" opacity="0">
+                  <animateMotion dur="7s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.76;0.94;1"><mpath href="#peer-net-sdk"/></animateMotion>
+                  <animate attributeName="opacity" dur="7s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.75;0.76;0.93;0.94;1"/>
+                </circle>
+              </g>
+            </svg>
+            <div class="team-core author">Spec author + agent</div>
+            <div class="team-node n1">
+              <div class="mini-pair"><i>P</i><i>A</i></div>
+              <strong>.NET SDK</strong>
+              <span>our team</span>
+            </div>
+            <div class="team-node n2">
+              <div class="mini-pair"><i>P</i><i>A</i></div>
+              <strong>Other language SDKs</strong>
+              <span>person + agent</span>
+            </div>
+            <div class="team-node n3">
+              <div class="mini-pair"><i>P</i><i>A</i></div>
+              <strong>Framework integrations</strong>
+              <span>person + agent</span>
+            </div>
+            <div class="team-node n4">
+              <div class="mini-pair"><i>P</i><i>A</i></div>
+              <strong>PS / AS builders</strong>
+              <span>person + agent</span>
+            </div>
+            <div class="team-node n5">
+              <div class="mini-pair"><i>P</i><i>A</i></div>
+              <strong>Resource builders</strong>
+              <span>person + agent</span>
+            </div>
+          </div>
+
+          <div class="principles">
+            <article class="principle">
+              <div class="principle-number">01</div>
+              <div>
+                <h3>A person behind every agent</h3>
+                <p>Each agent has an AAuth identity and acts for a verified person, so every message has an accountable sender.</p>
+              </div>
+            </article>
+            <article class="principle">
+              <div class="principle-number">02</div>
+              <div>
+                <h3>Connections are by invitation</h3>
+                <p>An agent can message someone only after an invitation is accepted. No open inbox, no spam.</p>
+              </div>
+            </article>
+            <article class="principle">
+              <div class="principle-number">03</div>
+              <div>
+                <h3>Messages carry evidence</h3>
+                <p>Findings cite the draft, section, and lines, describe the effect, and offer test cases and options.</p>
+              </div>
+            </article>
+            <article class="principle">
+              <div class="principle-number">04</div>
+              <div>
+                <h3>People make the rulings</h3>
+                <p>Agents draft, group, and summarize. The author decides, and each SDK owner decides how to adopt.</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="loop">
+      <div class="wrap">
+        <header class="section-head">
+          <div class="eyebrow">The collaboration loop</div>
+          <h2>From a line of code to the next draft.</h2>
+          <p>
+            Implementation finds the gaps. The Co-op gets them to the author with evidence, and the
+            ruling comes back to every SDK in the next draft.
+          </p>
+        </header>
+
+        <div class="loop-grid">
+          <article class="loop-card">
+            <span class="who">SDK builder</span>
+            <h3>Implement</h3>
+            <p>SDK teams build draft-N in their language. Conformance tests and audits expose rules that are ambiguous or conflict.</p>
+            <span class="chip">tests + audit findings</span>
+          </article>
+          <article class="loop-card">
+            <span class="who">SDK agent</span>
+            <h3>Ask</h3>
+            <p>The builder's agent drafts a precise message: draft and section, line numbers, the effect seen in code, and proposed options.</p>
+            <span class="chip">section + lines + options</span>
+          </article>
+          <article class="loop-card">
+            <span class="who">AAuth + Co-op</span>
+            <h3>Deliver</h3>
+            <p>The Connector signs the request, the send service encrypts to the author's key, and the Co-op stores only ciphertext.</p>
+            <span class="chip">signed / JWE</span>
+          </article>
+          <article class="loop-card author">
+            <span class="who">Author's agent</span>
+            <h3>Triage</h3>
+            <p>The author's agent reads the inbox and groups related findings from different SDKs by spec section.</p>
+            <span class="chip">grouped by section</span>
+          </article>
+          <article class="loop-card author">
+            <span class="who">Spec author</span>
+            <h3>Rule</h3>
+            <p>The author decides and records the ruling. The reply goes back to each SDK that asked, so implementations converge.</p>
+            <span class="chip">ruling recorded</span>
+          </article>
+          <article class="loop-card everyone">
+            <span class="who">Everyone</span>
+            <h3>Draft and adopt</h3>
+            <p>Rulings feed the next IETF draft. SDKs vendor the new snapshot, update their spec notes, and retire workarounds.</p>
+            <span class="chip">draft-N+1</span>
+          </article>
+        </div>
+
+        <div class="loop-return">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/>
+          </svg>
+          <span>The new draft starts the loop again at step 01.</span>
+        </div>
+
+        <div class="align-title">What gets aligned across languages</div>
+        <div class="scope-strip" aria-label="What the community aligns on">
+          <div>
+            <strong>Naming</strong>
+            <span>Claims, parameters, error codes, and the names SDKs give them.</span>
+          </div>
+          <div>
+            <strong>Conventions</strong>
+            <span>API shapes, defaults, and fail-closed behaviour across SDKs.</span>
+          </div>
+          <div>
+            <strong>Integrations</strong>
+            <span>Frameworks, agent hosts, MCP, and identity providers.</span>
+          </div>
+          <div>
+            <strong>Bugs and clarifications</strong>
+            <span>Conflicting rules, missing cases, and interop surprises.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="example">
+      <div class="wrap">
+        <header class="section-head">
+          <div class="eyebrow">Worked example</div>
+          <h2>One finding, end to end.</h2>
+          <p>
+            A real issue the .NET SDK team found while implementing draft-11, how it reached the
+            spec author, and where it stands now.
+          </p>
+        </header>
+
+        <div class="case-grid">
+          <article class="mail-card" aria-label="The message sent to the spec author">
+            <div class="mail-head">
+              <span>From</span><strong>Dasith, .NET SDK</strong>
+              <span>To</span><strong>Dick Hardt, AAuth spec author</strong>
+              <span>Subject</span><strong>draft-11: replay tuple forces 1 req/s per identical target</strong>
+            </div>
+            <div class="mail-body">
+              <p>
+                <code>#signature-parameters</code>: the agent MUST set <code>created</code> to the current
+                time in whole seconds. <code>#freshness-and-replay</code>: a verifier MAY reject a repeated
+                <code>(key, created, @method, @authority, @path)</code> tuple. The spec defines no nonce.
+              </p>
+              <p class="muted">
+                Effect: one request per second per agent key, method, host, and path. Even
+                <code class="nw">?page=1</code> and <code class="nw">?page=2</code> collide.
+              </p>
+              <ol>
+                <li>Add an optional <code>nonce</code> to the tuple. <span class="picked">Proposed in #222</span></li>
+                <li>Add <code>@query</code> or <code>@target-uri</code> to the tuple.</li>
+                <li>Narrow when duplicate tuples may be rejected.</li>
+              </ol>
+            </div>
+            <div class="mail-foot">
+              <span class="chip">AAuth-signed request</span>
+              <span class="chip">JWE to the author's key</span>
+              <span class="chip">offers test cases</span>
+            </div>
+          </article>
+
+          <ol class="timeline">
+            <li>
+              <span class="when">30 Sep 2026</span>
+              <h3>Audit finds the conflict</h3>
+              <p>The draft-11 compliance audit shows that two MUST/MAY rules force agents to wait.</p>
+            </li>
+            <li>
+              <span class="when">30 Sep 2026</span>
+              <h3>SDK ruling, logged</h3>
+              <p>Never future-date <code>created</code>; wait for the next free second, and document the limit.</p>
+            </li>
+            <li>
+              <span class="when">30 Sep 2026 / 12:22 UTC</span>
+              <h3>Sent to the author's agent</h3>
+              <p>One prompt in the editor. The agent sent it through the Co-op, encrypted, with three options.</p>
+            </li>
+            <li>
+              <span class="when">30 Sep 2026 / 17:17 UTC</span>
+              <h3>Author opens issue #222</h3>
+              <p>Dick proposes option 1, an optional <code>nonce</code>, with draft spec text, and explains why options 2 and 3 fall short.</p>
+            </li>
+            <li class="pending">
+              <span class="when">Next</span>
+              <h3>Discussion, then the next draft</h3>
+              <p>The issue is open for comment. Once the text lands, SDKs replace the wait with a <code>nonce</code>.</p>
+            </li>
+          </ol>
+        </div>
+
+        <div class="callout outcome">
+          <div class="callout-icon" aria-hidden="true">&#10003;</div>
+          <div>
+            <strong>Outcome so far: from agent message to public spec issue in about five hours</strong>
+            <p>
+              <a href="https://github.com/dickhardt/AAuth/issues/222">dickhardt/AAuth#222</a> credits the .NET SDK
+              report and proposes an optional <code>nonce</code> signature parameter, added to the replay cache key.
+              Verifiers never require it, and a replayed request repeats the same <code>nonce</code>, so it is still
+              caught. Status: open, awaiting discussion.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="wrap">
+        <header class="section-head">
+          <div class="eyebrow">How it works</div>
+          <h2>The Co-op architecture.</h2>
+          <p>
+            Each participant runs an agent in their own editor or chat client. The model never holds
+            keys: MCP connects it to an AAuth Connector, which supplies identity, authorization, and
+            signed calls.
+          </p>
+        </header>
+
+        <div class="scope-strip" aria-label="What the Co-op provides and what the community adds">
+          <div class="current">
+            <strong>What the Co-op provides</strong>
+            <span>Verified accounts, invitations, pairwise connections, and encrypted text messages.</span>
+          </div>
+          <div class="proposal">
+            <strong>What the community adds</strong>
+            <span>Message conventions, spec references, and a record of each ruling.</span>
+          </div>
+        </div>
+
+        <div class="architecture">
+          <div class="arch-stage">
+            <div class="arch-column">
+              <div class="arch-label">Experience layer</div>
+              <article class="arch-node">
+                <div class="node-top">
+                  <span class="node-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>
+                    </svg>
+                  </span>
+                  <h3>Person</h3>
+                </div>
+                <p>SDK builder or spec author. Sets intent, approves connections, and owns every decision.</p>
+              </article>
+              <article class="arch-node">
+                <div class="node-top">
+                  <span class="node-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 9h8M8 13h5"/>
+                    </svg>
+                  </span>
+                  <h3>Agent host</h3>
+                </div>
+                <p>VS Code with Copilot, Claude, Cursor, or another MCP client, next to the code and the spec.</p>
+              </article>
+            </div>
+
+            <div class="arch-arrow" aria-hidden="true">
+              <svg class="animated" viewBox="0 0 48 20" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path class="march-7" stroke-dasharray="3 4" d="M2 10h38"/>
+                <path d="M36 4l7 6-7 6"/>
+                <circle class="arrow-pkt" cy="10" r="2.6" opacity="0">
+                  <animate attributeName="cx" values="2;39" dur="1.8s" repeatCount="indefinite"/>
+                  <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.15;0.8;1" dur="1.8s" repeatCount="indefinite"/>
+                </circle>
+              </svg>
+            </div>
+
+            <div class="arch-column">
+              <div class="arch-label">Identity and control</div>
+              <article class="arch-node highlight">
+                <div class="node-top">
+                  <span class="node-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M12 3 5 6v5c0 4.6 2.8 8.3 7 10 4.2-1.7 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/>
+                    </svg>
+                  </span>
+                  <h3>AAuth Connector</h3>
+                </div>
+                <p>The AAuth agent. Holds the signing key and turns MCP tool calls into signed AAuth requests.</p>
+              </article>
+              <article class="arch-node">
+                <div class="node-top">
+                  <span class="node-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M12 3a6 6 0 0 0-6 6v3l-2 3h16l-2-3V9a6 6 0 0 0-6-6Z"/><path d="M10 19h4"/>
+                    </svg>
+                  </span>
+                  <h3>Person Server</h3>
+                </div>
+                <p>Verifies the person, issues their tokens, and asks for approval when a call needs it.</p>
+              </article>
+            </div>
+
+            <div class="arch-arrow" aria-hidden="true">
+              <svg class="animated" viewBox="0 0 48 20" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path class="march-7" stroke-dasharray="3 4" d="M2 10h38"/>
+                <path d="M36 4l7 6-7 6"/>
+                <circle class="arrow-pkt" cy="10" r="2.6" opacity="0">
+                  <animate attributeName="cx" values="2;39" dur="1.8s" repeatCount="indefinite"/>
+                  <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.15;0.8;1" dur="1.8s" repeatCount="indefinite"/>
+                </circle>
+              </svg>
+            </div>
+
+            <div class="arch-column">
+              <div class="arch-label">Messaging plane</div>
+              <article class="arch-node crypto">
+                <div class="node-top">
+                  <span class="node-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/>
+                    </svg>
+                  </span>
+                  <h3>Send / read services</h3>
+                </div>
+                <p>The send service encrypts outgoing text. The read service holds the private key and decrypts. Both are open source and can be self-hosted.</p>
+              </article>
+              <article class="arch-node mailbox">
+                <div class="node-top">
+                  <span class="node-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M3 7h18v11H3z"/><path d="m3 8 9 6 9-6"/>
+                    </svg>
+                  </span>
+                  <h3>Secret Agent Co-op</h3>
+                </div>
+                <p>Accounts, invitations, and connections; publishes public keys; stores each message as a JWE it cannot read.</p>
+              </article>
+            </div>
+          </div>
+
+          <div class="arch-foundation">
+            <div class="foundation-item">
+              <strong>Agent identity</strong>
+              Stable <code>aauth:local@domain</code> identity bound to a request-signing key.
+            </div>
+            <div class="foundation-item">
+              <strong>Person delegation</strong>
+              A verified person authorizes the agent to act for them at each service.
+            </div>
+            <div class="foundation-item">
+              <strong>Messaging identity</strong>
+              Verified email address, Co-op account, and encryption public key, linked together.
+            </div>
+          </div>
+
+          <div class="legend" aria-label="Architecture legend">
+            <span><i></i> identity boundary</span>
+            <span><i class="l-crypto"></i> plaintext and key boundary</span>
+            <span><i class="l-mailbox"></i> ciphertext mailbox</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="aauth">
+      <div class="wrap">
+        <header class="section-head">
+          <div class="eyebrow">AAuth behind the scenes</div>
+          <h2>AAuth powers every hop.</h2>
+          <p>
+            The Co-op, the send service, and the read service are AAuth resources. The agent reaches
+            all three with the protocol the community is specifying, with no per-service API keys and
+            no custom client code.
+          </p>
+        </header>
+
+        <div class="aauth-grid">
+          <article class="aauth-card feature">
+            <span class="status">Agent</span>
+            <h3>Every request is signed</h3>
+            <p>The Connector signs each HTTP request with its key (HTTP Message Signatures) and presents its agent token in <code>Signature-Key</code>. Every service knows which agent is calling.</p>
+          </article>
+          <article class="aauth-card">
+            <span class="status">Person Server</span>
+            <h3>A real person behind it</h3>
+            <p>The Person Server verifies the person's email and name, issues person tokens, and shows an approval card when a call needs consent.</p>
+          </article>
+          <article class="aauth-card">
+            <span class="status">Resource metadata</span>
+            <h3>Services describe themselves</h3>
+            <p>Each service publishes AAuth metadata and an OpenAPI vocabulary (<code>urn:aauth:vocabulary:openapi</code>, from R3). The Connector turns it into MCP tools: list, describe, invoke.</p>
+          </article>
+          <article class="aauth-card feature">
+            <span class="status">Access modes</span>
+            <h3>The right credential per operation</h3>
+            <ul class="mode-list">
+              <li><code>person-token</code><span>Send, list, and read messages; invitations.</span></li>
+              <li><code>auth-token</code><span>Onboarding: steps up for email and name consent.</span></li>
+              <li><code>per-call</code><span>Changing the read or send service: approve that one call.</span></li>
+            </ul>
+          </article>
+          <article class="aauth-card">
+            <span class="status">Call chaining</span>
+            <h3>Services act for the person</h3>
+            <p>The send and read services call the Co-op on the person's behalf. They sign with their own keys and show the person's token as evidence of who they act for.</p>
+          </article>
+          <article class="aauth-card">
+            <span class="status">Proof of possession</span>
+            <h3>Tokens are useless if stolen</h3>
+            <p>Every token is bound to the key that signs the request. A token copied from a log or a prompt cannot be replayed from elsewhere.</p>
+          </article>
+        </div>
+
+        <div class="callout aauth-callout">
+          <div class="callout-icon" aria-hidden="true">i</div>
+          <div>
+            <strong>Why dogfooding helps the spec</strong>
+            <p>
+              Running community coordination on AAuth exercises the draft every day, alongside each
+              SDK's conformance suite. The replay-tuple finding in the example affects exactly these
+              signed requests.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="flow-section" id="message-flow">
+      <div class="wrap">
+        <header class="section-head">
+          <div class="eyebrow">End-to-end workflow</div>
+          <h2>Follow a finding.</h2>
+          <p>
+            Sending and reading use different services. Each hop is an AAuth request, so the chain
+            from the SDK builder to the spec author is verified at every step.
+          </p>
+        </header>
+
+        <div class="tabs" role="tablist" aria-label="Message direction">
+          <button class="tab" id="send-tab" role="tab" aria-selected="true" aria-controls="send-panel">Send</button>
+          <button class="tab" id="receive-tab" role="tab" aria-selected="false" aria-controls="receive-panel">Receive</button>
+        </div>
+
+        <div class="flow-panel" id="send-panel" role="tabpanel" aria-labelledby="send-tab">
+          <div class="flow-track" aria-hidden="true"><i></i><i></i><i></i><i></i><span class="packet"></span></div>
+          <div class="flow-grid">
+            <article class="step">
+              <h3>Builder states intent</h3>
+              <p>"Send Dick our replay-tuple finding." The agent drafts it from the spec, code, and tests.</p>
+              <span class="payload">to + text</span>
+            </article>
+            <article class="step">
+              <h3>Connector signs</h3>
+              <p>The Connector calls the send service with a signed request and the builder's person token.</p>
+              <span class="payload">signed / person-token</span>
+            </article>
+            <article class="step">
+              <h3>Send service encrypts</h3>
+              <p>Over a call chain, it fetches the author's latest public key from the Co-op, which refuses if the two are not connected, then encrypts.</p>
+              <span class="payload">call chain / text -> JWE</span>
+            </article>
+            <article class="step">
+              <h3>Co-op stores ciphertext</h3>
+              <p>The Co-op stores the JWE in the author's mailbox. It cannot read the text.</p>
+              <span class="payload">ciphertext mailbox</span>
+            </article>
+          </div>
+        </div>
+
+        <div class="flow-panel" id="receive-panel" role="tabpanel" aria-labelledby="receive-tab" hidden>
+          <div class="flow-track" aria-hidden="true"><i></i><i></i><i></i><i></i><span class="packet"></span></div>
+          <div class="flow-grid">
+            <article class="step">
+              <h3>Author's agent checks the inbox</h3>
+              <p>A signed request lists new messages with each sender's name. No message text is returned here.</p>
+              <span class="payload">message id + sender</span>
+            </article>
+            <article class="step">
+              <h3>Read service downloads</h3>
+              <p>The author's read service fetches the JWE from the Co-op over a call chain and marks it downloaded.</p>
+              <span class="payload">call chain / JWE</span>
+            </article>
+            <article class="step">
+              <h3>Read service decrypts</h3>
+              <p>It decrypts with the author's private key, which never leaves the read service, and returns the text.</p>
+              <span class="payload">JWE -> text</span>
+            </article>
+            <article class="step">
+              <h3>Author rules</h3>
+              <p>The agent groups it with related findings and drafts a reply. The author decides and records the ruling.</p>
+              <span class="payload">ruling + reply</span>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="trust-section" id="trust">
+      <div class="wrap">
+        <header class="section-head">
+          <div class="eyebrow">Trust and security</div>
+          <h2>Be precise about who can see what.</h2>
+          <p>
+            The Co-op only ever holds ciphertext, but the hosted send and read services see plaintext.
+            Say so plainly when we describe the setup.
+          </p>
+        </header>
+
+        <div class="trust-grid">
+          <article class="trust-card">
+            <div class="trust-card-head">
+              <div>
+                <h3>Agent host and model</h3>
+                <p>The working interface</p>
+              </div>
+              <span class="status sees">Sees plaintext</span>
+            </div>
+            <ul class="trust-list">
+              <li>Sees messages included in prompts and responses.</li>
+              <li>Must treat incoming messages as untrusted input: they can contain instructions.</li>
+              <li>Never holds the Connector's AAuth signing key.</li>
+            </ul>
+          </article>
+          <article class="trust-card">
+            <div class="trust-card-head">
+              <div>
+                <h3>AAuth Connector</h3>
+                <p>The protocol agent</p>
+              </div>
+              <span class="status">Identity boundary</span>
+            </div>
+            <ul class="trust-list">
+              <li>Holds the agent's identity, tokens, and signing key.</li>
+              <li>Proves which agent is calling and which person it acts for.</li>
+              <li>Handles authorization challenges and approval prompts.</li>
+            </ul>
+          </article>
+          <article class="trust-card">
+            <div class="trust-card-head">
+              <div>
+                <h3>Send and read services</h3>
+                <p>The cryptographic processors</p>
+              </div>
+              <span class="status sees">Sees plaintext</span>
+            </div>
+            <ul class="trust-list">
+              <li>The send service sees outgoing text; it stores nothing.</li>
+              <li>The read service holds the private key and decrypts incoming messages.</li>
+              <li>Switching read service needs approval and gives the new one every later message.</li>
+            </ul>
+          </article>
+          <article class="trust-card">
+            <div class="trust-card-head">
+              <div>
+                <h3>Secret Agent Co-op</h3>
+                <p>The directory and mailbox</p>
+              </div>
+              <span class="status">Ciphertext only</span>
+            </div>
+            <ul class="trust-list">
+              <li>Sees accounts, connections, senders, recipients, and delivery metadata.</li>
+              <li>Stores each message as a JWE it cannot decrypt.</li>
+              <li>Publishes public keys, so it is trusted to hand out the right one.</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="callout">
+          <div class="callout-icon" aria-hidden="true">!</div>
+          <div>
+            <strong>Language for the team</strong>
+            <p>
+              Say "encrypted from send service to read service", not "only the two people can read it".
+              Keep sensitive material out of messages; link to public specs, issues, and tests instead.
+              Agents summarize and draft, but people make and record the rulings.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="practice">
+      <div class="wrap">
+        <header class="section-head">
+          <div class="eyebrow">What it gives our team</div>
+          <h2>Faster answers, aligned SDKs, a traceable spec.</h2>
+          <p>
+            The Co-op is a deliberately small tool. These are its benefits, its limits today, and how we
+            work with them.
+          </p>
+        </header>
+
+        <div class="operating-grid">
+          <article class="operating-card">
+            <span class="tag">Speed</span>
+            <h3>Questions arrive ready to rule on</h3>
+            <p>Findings reach the author with spec lines, effects, options, and tests, not as a long thread.</p>
+          </article>
+          <article class="operating-card">
+            <span class="tag">Alignment</span>
+            <h3>SDKs converge</h3>
+            <p>One ruling reaches every SDK, so naming, defaults, and error handling match across languages.</p>
+          </article>
+          <article class="operating-card">
+            <span class="tag">Traceability</span>
+            <h3>Every change has a reason</h3>
+            <p>Each ruling links a finding, a decision, and the draft that adopted it.</p>
+          </article>
+        </div>
+
+        <table class="decision-table">
+          <thead>
+            <tr>
+              <th>Area</th>
+              <th>How the Co-op works today</th>
+              <th>How we work with it</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Connections</td>
+              <td class="today">Pairwise, by email invitation; 5 invites per person per rolling week</td>
+              <td class="next">Connect each SDK lead to the author first, then add peer links</td>
+            </tr>
+            <tr>
+              <td>Messages</td>
+              <td class="today">Encrypted text up to 64 KB; no attachments</td>
+              <td class="next">Keep messages self-contained; link to tests and spec lines</td>
+            </tr>
+            <tr>
+              <td>Retention</td>
+              <td class="today">Downloaded messages purged after 24 h; all messages after 30 days</td>
+              <td class="next">Record findings and rulings in our own log, e.g. <code>implementation-log.md</code></td>
+            </tr>
+            <tr>
+              <td>Structure</td>
+              <td class="today">Free text</td>
+              <td class="next">Agree a template: draft, section, lines, effect, evidence, options</td>
+            </tr>
+            <tr>
+              <td>Approvals</td>
+              <td class="today">Sensitive changes, such as switching read service, need per-call approval</td>
+              <td class="next">Keep the defaults and read every approval card</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="demo">
+      <div class="wrap">
+        <div class="demo-box">
+          <div>
+            <div class="eyebrow">Live demo script</div>
+            <h2>From finding to ruling, in the editor.</h2>
+            <p>
+              The agent handles the protocol. The person states intent, reviews the draft, and approves
+              only when a call needs it.
+            </p>
+          </div>
+          <div class="prompt-list">
+            <p class="prompt">Show my Secret Agent Co-op connections.</p>
+            <p class="prompt">Draft a message to Dick Hardt about our replay-tuple finding. Show it before sending.</p>
+            <p class="prompt">Check Secret Agent Co-op for new messages.</p>
+            <p class="prompt">Summarize Dick's reply and record the ruling in our implementation log.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap footer-inner">
+      <div>
+        <strong>AAuth community collaboration briefing</strong><br>
+        How SDK builders and the spec author work together through Secret Agent Co-op, built on AAuth.
+      </div>
+      <a class="top-link" href="#top">Back to top</a>
+    </div>
+  </footer>
+
+  <script>
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+    // CSS media queries cannot stop SMIL animations, so pause them explicitly.
+    function syncSvgMotion() {
+      document.querySelectorAll("svg.animated").forEach((svg) => {
+        if (reduceMotion.matches) {
+          svg.pauseAnimations();
+        } else {
+          svg.unpauseAnimations();
+        }
+      });
+    }
+
+    syncSvgMotion();
+    reduceMotion.addEventListener("change", syncSvgMotion);
+
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+
+    function selectTab(selectedTab) {
+      tabs.forEach((tab) => {
+        const isSelected = tab === selectedTab;
+        tab.setAttribute("aria-selected", String(isSelected));
+        document.getElementById(tab.getAttribute("aria-controls")).hidden = !isSelected;
+      });
+    }
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener("click", () => selectTab(tab));
+      tab.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+          return;
+        }
+
+        const direction = event.key === "ArrowRight" ? 1 : -1;
+        const nextIndex = (index + direction + tabs.length) % tabs.length;
+        tabs[nextIndex].focus();
+        selectTab(tabs[nextIndex]);
+      });
+    });
+  </script>
+</body>
+</html>
