@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using AAuth;
 using AAuth.Access;
 using AAuth.Agent;
 using AAuth.Crypto;
@@ -574,7 +575,10 @@ public class DeferredFederationTests
         const string mission = Fixture.MissionS256;
         await fixture.PersonApp.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
             mission, Fixture.PsIssuer, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty)
-        { State = terminated ? MissionState.Terminated : MissionState.Active });
+        {
+            State = terminated ? MissionState.Terminated : MissionState.Active,
+            TerminationReason = terminated ? AAuthConstants.MissionTerminationReasons.Revoked : null,
+        });
         using var result = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync(scope, mission: mission, account: "work"));
         Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
         Assert.Equal(terminated ? "mission_terminated" : "denied", (await result.Content.ReadFromJsonAsync<JsonObject>())!["error"]!.GetValue<string>());
@@ -622,13 +626,15 @@ public class DeferredFederationTests
             Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);
         }
         consent.Decision = MissionTokenConsentDecision.Grant();
-        if (terminate) await missions.SetStateAsync(mission, MissionState.Terminated);
+        if (terminate) await missions.TerminateAsync(Fixture.PsIssuer, mission, AAuthConstants.MissionTerminationReasons.Revoked);
         using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
         if (!terminate && result.StatusCode == HttpStatusCode.Forbidden) return;
         Assert.Equal(terminate ? HttpStatusCode.Forbidden : HttpStatusCode.OK, result.StatusCode);
         if (terminate)
         {
-            Assert.Equal("mission_terminated", (await result.Content.ReadFromJsonAsync<JsonObject>())!["error"]!.GetValue<string>());
+            var body = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+            Assert.Equal("mission_terminated", body["error"]!.GetValue<string>());
+            Assert.Equal("revoked", body["termination_reason"]!.GetValue<string>());
             Assert.Null(fixture.Policy.Last);
             Assert.Equal(0, asserter.Calls);
         }
@@ -666,11 +672,33 @@ public class DeferredFederationTests
         await store.SaveAsync(new StoredMission(Fixture.MissionS256, Fixture.PsIssuer, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty));
         using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read", mission: Fixture.MissionS256));
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
-        await store.SetStateAsync(Fixture.MissionS256, MissionState.Terminated);
+        await store.TerminateAsync(Fixture.PsIssuer, Fixture.MissionS256, AAuthConstants.MissionTerminationReasons.Revoked);
         fixture.Store.MarkAllowed(fixture.AsEntry.Id);
         using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
         Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
         Assert.Equal("mission_terminated", (string?)(await result.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Equal("revoked", (await store.GetAsync(Fixture.PsIssuer, Fixture.MissionS256))!.TerminationReason);
+    }
+
+    [Fact]
+    public async Task MissionExpiryWhileAsWaitsPreventsDelivery()
+    {
+        await using var fixture = await Fixture.CreateAsync("interaction", missionConsent: new MissionConsent(MissionTokenConsentDecision.Grant()));
+        var store = fixture.PersonApp.Services.GetRequiredService<IMissionStore>();
+        await store.SaveAsync(new StoredMission(Fixture.MissionS256, Fixture.PsIssuer, "aauth:demo@ap.test", ReadOnlyMemory<byte>.Empty));
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync("read", mission: Fixture.MissionS256));
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        await store.SaveAsync((await store.GetAsync(Fixture.PsIssuer, Fixture.MissionS256))! with
+        {
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1),
+        });
+        fixture.Store.MarkAllowed(fixture.AsEntry.Id);
+        using var result = await PollAsync(fixture.Agent, initial.Headers.Location!);
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        var body = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("mission_terminated", (string?)body["error"]);
+        Assert.Equal("expired", (string?)body["termination_reason"]);
+        Assert.Equal("expired", (await store.GetAsync(Fixture.PsIssuer, Fixture.MissionS256))!.TerminationReason);
     }
 
     [Fact]

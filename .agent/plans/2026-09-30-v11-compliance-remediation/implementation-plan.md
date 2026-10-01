@@ -395,11 +395,11 @@ one critical-section design (RT-3 conflict 3).
       claims emitted.
 - [x] The default `sub` differs across two resources and stays stable across
       signing-key rotation. HMAC key rotation keeps existing subjects.
-- [ ] A mission past `expires_at` gets `403 mission_terminated` with
+- [x] A mission past `expires_at` gets `403 mission_terminated` with
       `termination_reason=expired` on the pending, federated, person and
       governance paths.
-- [ ] Completion records `completed`.
-- [ ] Absent, foreign-agent and foreign-PS missions produce identical
+- [x] Completion records `completed`.
+- [x] Absent, foreign-agent and foreign-PS missions produce identical
       responses (spy-store contract test).
 - [ ] An `updated_request` with a shorter-lived or revoked replacement bounds
       or denies the grant. A longer-lived replacement recomputes the ceiling.

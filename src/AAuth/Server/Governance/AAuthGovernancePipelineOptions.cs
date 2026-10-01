@@ -11,6 +11,10 @@ namespace AAuth.Server.Governance;
 public sealed class AAuthGovernancePipelineOptions
 {
     public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
+
+    /// <summary>Clock used for deferred governance expiry and mission <c>expires_at</c> checks.</summary>
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
     /// <summary>
     /// Route prefix prepended to each endpoint path (default empty). For example,
     /// set <c>"/governance"</c> to mount at <c>/governance/permission</c>.

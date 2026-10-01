@@ -92,9 +92,11 @@ if (!mission.VerifyS256(s256))
 A mission is either `Active` or `Terminated` (§Mission Management). There is no
 `pending`/`denied`/`completed` ladder: approval produces an active mission, and
 the PS moves it to terminated on completion, revocation, supersession, or when
-its `expires_at` passes. After termination the PS answers governed requests with
-`403 mission_terminated`; a mission that does not exist or is not this agent's
-is `404 mission_not_found` (see
+its `expires_at` passes. The reason is stored next to the mission as an open
+string (`completed`, `revoked`, `expired`, `superseded`, `administrative`, or a
+local value), not as another state. After termination the PS answers governed
+requests with `403 mission_terminated`; a mission that does not exist, belongs
+to another agent, or belongs to another PS is `404 mission_not_found` (see
 [Error Handling](error-handling.md#mission-termination)).
 
 ### Tools vs scopes

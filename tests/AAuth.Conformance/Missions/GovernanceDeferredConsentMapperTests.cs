@@ -167,15 +167,18 @@ public class GovernanceDeferredConsentMapperTests
         if (changedOwner)
             await missions.SaveAsync(new StoredMission(mission.S256, Ps, "aauth:foreign@agent.example", mission.RawBytes));
         else if (change == "expired")
-            await missions.SaveAsync((await missions.GetAsync(mission.S256))! with { ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1) });
+            await missions.SaveAsync((await missions.GetAsync(Ps, mission.S256))! with { ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1) });
         else
-            await missions.SetStateAsync(mission.S256, MissionState.Terminated);
+            await missions.TerminateAsync(Ps, mission.S256, AAuthConstants.MissionTerminationReasons.Revoked);
         await host.Services.GetRequiredService<IDeferredConsentStore>().ResolveAsync(
             parked.Headers.Location!.ToString().Split('/').Last(), true);
         using var rejected = await client.GetAsync(location);
         // §Mission Status Errors: a foreign mission is indistinguishable from a missing one.
         Assert.Equal(changedOwner ? HttpStatusCode.NotFound : HttpStatusCode.Forbidden, rejected.StatusCode);
-        Assert.Equal(changedOwner ? "mission_not_found" : "mission_terminated", (string?)(await ReadJson(rejected))?["error"]);
+        var rejectedBody = await ReadJson(rejected);
+        Assert.Equal(changedOwner ? "mission_not_found" : "mission_terminated", (string?)rejectedBody?["error"]);
+        if (!changedOwner)
+            Assert.Equal(change == "expired" ? "expired" : "revoked", (string?)rejectedBody?["termination_reason"]);
         Assert.Empty(await host.Services.GetRequiredService<IMissionLog>().ReadAsync(mission.S256));
         using var replay = await client.GetAsync(location);
         Assert.Equal(HttpStatusCode.Gone, replay.StatusCode);
@@ -643,7 +646,7 @@ public class GovernanceDeferredConsentMapperTests
         // The mission stays active while the user reviews.
         using var pendingPoll = await client.GetAsync("https://localhost" + location);
         Assert.Equal(HttpStatusCode.Accepted, pendingPoll.StatusCode);
-        Assert.Equal(MissionState.Active, (await missionStore.GetAsync(s256))!.State);
+        Assert.Equal(MissionState.Active, (await missionStore.GetAsync(Ps, s256))!.State);
 
         // The user accepts the summary; the poll terminates the mission.
         var id = location[(location.LastIndexOf('/') + 1)..];
@@ -654,7 +657,10 @@ public class GovernanceDeferredConsentMapperTests
         Assert.Equal(HttpStatusCode.OK, done.StatusCode);
         var json = await ReadJson(done);
         Assert.Equal("terminated", (string?)json?["mission_status"]);
-        Assert.Equal(MissionState.Terminated, (await missionStore.GetAsync(s256))!.State);
+        Assert.Equal("completed", (string?)json?["termination_reason"]);
+        var completed = await missionStore.GetAsync(Ps, s256);
+        Assert.Equal(MissionState.Terminated, completed!.State);
+        Assert.Equal("completed", completed.TerminationReason);
 
         await host.StopAsync();
     }
@@ -688,7 +694,7 @@ public class GovernanceDeferredConsentMapperTests
         Assert.Equal(HttpStatusCode.OK, done.StatusCode);
         var json = await ReadJson(done);
         Assert.Equal("active", (string?)json?["mission_status"]);
-        Assert.Equal(MissionState.Active, (await missionStore.GetAsync(s256))!.State);
+        Assert.Equal(MissionState.Active, (await missionStore.GetAsync(Ps, s256))!.State);
 
         await host.StopAsync();
     }
@@ -714,7 +720,10 @@ public class GovernanceDeferredConsentMapperTests
         Assert.Null(response.Headers.Location);
         var json = await ReadJson(response);
         Assert.Equal("terminated", (string?)json?["mission_status"]);
-        Assert.Equal(MissionState.Terminated, (await missionStore.GetAsync(s256))!.State);
+        Assert.Equal("completed", (string?)json?["termination_reason"]);
+        var completed = await missionStore.GetAsync(Ps, s256);
+        Assert.Equal(MissionState.Terminated, completed!.State);
+        Assert.Equal("completed", completed.TerminationReason);
 
         await host.StopAsync();
     }
@@ -735,7 +744,7 @@ public class GovernanceDeferredConsentMapperTests
         }));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal(MissionState.Active, (await missionStore.GetAsync(s256))!.State);
+        Assert.Equal(MissionState.Active, (await missionStore.GetAsync(Ps, s256))!.State);
         await host.StopAsync();
     }
 

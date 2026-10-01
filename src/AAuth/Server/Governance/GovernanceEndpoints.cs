@@ -59,6 +59,43 @@ public static class GovernanceEndpoints
             ? MissionTerminated(AAuthConstants.MissionTerminationReasons.Expired) : null;
     }
 
+    internal static async Task<(StoredMission? Mission, IResult? Failure)> AuthorizeMissionAsync(
+        HttpContext context,
+        string? missionS256,
+        IMissionStore missions,
+        string expectedPersonServer,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(missions);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedPersonServer);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+
+        var verified = context.GetAAuthVerification();
+        if (verified is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true, Agent: not null })
+        {
+            return (null, AAuthProblemDetails.Create("invalid_request",
+                "Governance endpoints require an agent token.", statusCode: StatusCodes.Status403Forbidden));
+        }
+        if (!string.Equals(verified.AgentPersonServer, expectedPersonServer, StringComparison.Ordinal))
+        {
+            return (null, AAuthProblemDetails.Create("invalid_request",
+                "Governance endpoints require an agent token whose ps claim names this Person Server.",
+                statusCode: StatusCodes.Status403Forbidden));
+        }
+        if (missionS256 is null) return (null, null);
+
+        var evaluation = await MissionStatusEvaluator.EvaluateAsync(missions, expectedPersonServer,
+            missionS256, verified.Agent, timeProvider, cancellationToken).ConfigureAwait(false);
+        return evaluation.Kind switch
+        {
+            MissionStatusEvaluationKind.Active => (evaluation.Mission, null),
+            MissionStatusEvaluationKind.Terminated => (evaluation.Mission, MissionTerminated(evaluation.TerminationReason)),
+            _ => (null, AAuthProblemDetails.Create("mission_not_found", statusCode: StatusCodes.Status404NotFound)),
+        };
+    }
+
     private static string? ReadMission(JsonObject body)
     {
         try { return MissionReference.Read(body); }

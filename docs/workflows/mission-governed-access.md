@@ -146,8 +146,9 @@ completion proposal with a deferred `202` + poll `Location` (§Deferred Consent)
 the agent's `MissionClient` polls until the user accepts or declines — the same
 park-and-poll mechanics used for deferred permission consent.
 
-After termination, any further governed request returns `403 mission_terminated`,
-surfaced to the agent as `AAuthMissionTerminatedException` (see
+After termination, any further governed request returns `403 mission_terminated`
+with the stored `termination_reason`, surfaced to the agent as
+`AAuthMissionTerminatedException` (see
 [Error Handling](../advanced/error-handling.md#mission-termination)).
 
 ## The binding chain

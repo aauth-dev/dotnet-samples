@@ -961,17 +961,12 @@ public static class AAuthPersonServerEndpoints
 
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
+                if (entry.MissionS256 is { } pendingMission && await PendingMissionFailureAsync(entry, pendingMission) is { } missionFailure)
+                    return missionFailure;
                 if (entry.ExpiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
                     return AuthTokenResponse.Expired();
                 if (await PendingSourceFailureAsync(entry, ctx.RequestAborted) is { } sourceFailure)
                     return sourceFailure;
-                if (entry.MissionS256 is { } pendingMission
-                    && await app.Services.GetRequiredService<IMissionStore>().GetAsync(pendingMission)
-                        is { State: MissionState.Terminated })
-                {
-                    entry.FederationCancellation.Cancel();
-                    return GovernanceEndpoints.MissionTerminated();
-                }
                 if (await WithdrawnResourceAsync(entry.ResourceToken, ctx.RequestAborted) is { } withdrawn)
                 {
                     entry.FederationCancellation.Cancel();
@@ -1033,7 +1028,8 @@ public static class AAuthPersonServerEndpoints
                     default:
                         return Pending202(ctx, entry, options, interactionUrl);
                 }
-            });
+            }, beforeExpiry: async () => entry.MissionS256 is { } pendingMission
+                ? await PendingMissionFailureAsync(entry, pendingMission) : null);
         });
 
         // POST {PendingPathPrefix}/{id} — the agent answers a clarification
@@ -1164,19 +1160,30 @@ public static class AAuthPersonServerEndpoints
         // mission the verified upstream token carries under this PS.
         async Task<StoredMission> ValidateMissionAsync(string missionS256, string consentAgentId, UpstreamTokenValidationResult? upstream)
         {
-            var stored = await app.Services.GetRequiredService<IMissionStore>().GetAsync(missionS256);
-            var authorized = stored is not null && stored.PersonServer == issuer
-                && (stored.Agent == consentAgentId
-                    || upstream is { IsValid: true } && upstream.MissionS256 == missionS256);
-            if (!authorized)
+            var evaluation = await MissionStatusEvaluator.EvaluateAsync(
+                app.Services.GetRequiredService<IMissionStore>(),
+                issuer,
+                missionS256,
+                consentAgentId,
+                options.TimeProvider,
+                upstreamMissionS256: upstream is { IsValid: true } ? upstream.MissionS256 : null);
+            if (evaluation.Kind == MissionStatusEvaluationKind.NotFound)
                 throw new AAuthTokenExchangeException("mission_not_found", null, StatusCodes.Status404NotFound, true);
-            if (stored!.State == MissionState.Terminated)
-                throw new AAuthTokenExchangeException("mission_terminated", null, StatusCodes.Status403Forbidden, true);
-            // The detail carries the termination_reason ExchangeFailure reports.
-            if (stored.ExpiresAt is { } expiresAt && expiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
-                throw new AAuthTokenExchangeException("mission_terminated", AAuthConstants.MissionTerminationReasons.Expired,
+            if (evaluation.Kind == MissionStatusEvaluationKind.Terminated)
+                throw new AAuthTokenExchangeException("mission_terminated", evaluation.TerminationReason,
                     StatusCodes.Status403Forbidden, true);
-            return stored;
+            return evaluation.Mission!;
+        }
+
+        async Task<IResult?> PendingMissionFailureAsync(PersonPendingEntry entry, string missionS256)
+        {
+            try { await ValidateMissionAsync(missionS256, entry.ConsentAgentId, entry.UpstreamAuthorization); }
+            catch (AAuthTokenExchangeException ex)
+            {
+                entry.FederationCancellation.Cancel();
+                return ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode);
+            }
+            return null;
         }
 
         async Task<(MissionTokenConsentDecision Decision, string Detail)> ReviewMissionAsync(MissionTokenConsentContext context)
@@ -1641,9 +1648,10 @@ public static class AAuthPersonServerEndpoints
 
             async Task ThrowIfMissionTerminatedAsync()
             {
-                if (entry.MissionS256 is { } current
-                    && await app.Services.GetRequiredService<IMissionStore>().GetAsync(current) is { State: MissionState.Terminated })
-                    throw new AAuthTokenExchangeException("mission_terminated", null, 403, true);
+                if (entry.MissionS256 is { } current)
+                {
+                    await ValidateMissionAsync(current, entry.ConsentAgentId, entry.UpstreamAuthorization);
+                }
             }
 
             async Task ThrowIfSourceInvalidAsync(System.Threading.CancellationToken ct)

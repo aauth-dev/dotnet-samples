@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using AAuth;
 using AAuth.Agent;
 using AAuth.Server.Governance;
 using AAuth.Server.Verification;
@@ -161,10 +162,12 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
     {
         // Terminate the seeded mission, then request permission under it.
         var store = _host!.Services.GetRequiredService<IMissionStore>();
-        await store.SetStateAsync(_missionS256, MissionState.Terminated);
+        var (blob, s256) = BuildMission("aauth:assistant@agent.example", "WebSearch");
+        await store.SaveAsync(new StoredMission(s256, MissionPs, "aauth:assistant@agent.example", blob));
+        await store.TerminateAsync(MissionPs, s256, AAuthConstants.MissionTerminationReasons.Revoked);
 
         using var client = Client();
-        var body = new JsonObject { ["action"] = "WebSearch", ["mission_s256"] = _missionS256 };
+        var body = new JsonObject { ["action"] = "WebSearch", ["mission_s256"] = s256 };
 
         var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -172,11 +175,9 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         var json = await ReadJson(response);
         Assert.Equal("mission_terminated", (string?)json?["error"]);
         Assert.Equal("terminated", (string?)json?["mission_status"]);
+        Assert.Equal("revoked", (string?)json?["termination_reason"]);
         Assert.False(json!.ContainsKey("detail"));
         Assert.False(response.Headers.Contains("Signature-Error"));
-
-        // Restore active state so test ordering does not affect other cases.
-        await store.SetStateAsync(_missionS256, MissionState.Active);
     }
 
     [Theory]
@@ -225,9 +226,9 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         if (scenario == "anonymous") client.DefaultRequestHeaders.Add("Test-No-Identity", "true");
         var store = _host!.Services.GetRequiredService<IMissionStore>();
         if (scenario == "terminated")
-            await store.SetStateAsync(_missionS256, MissionState.Terminated);
+            await store.TerminateAsync(MissionPs, _missionS256, AAuthConstants.MissionTerminationReasons.Revoked);
         if (scenario == "expired")
-            await store.SaveAsync((await store.GetAsync(_missionS256))! with { ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1) });
+            await store.SaveAsync((await store.GetAsync(MissionPs, _missionS256))! with { ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1) });
         var body = new JsonObject
         {
             ["mission_s256"] = _missionS256, ["action"] = endpoint == "mission-action" ? "update" : "WebSearch",
@@ -244,10 +245,61 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         if (scenario is "terminated" or "expired")
         {
             Assert.Equal("terminated", (string?)rejected?["mission_status"]);
-            Assert.Equal(scenario == "expired" ? "expired" : null, (string?)rejected?["termination_reason"]);
+            Assert.Equal(scenario == "expired" ? "expired" : "revoked", (string?)rejected?["termination_reason"]);
         }
         Assert.False(response.Headers.Contains("Signature-Error"));
         Assert.Empty(await _host!.Services.GetRequiredService<IMissionLog>().ReadAsync(_missionS256));
+    }
+
+    [Fact(DisplayName = "§Mission Endpoint Errors — absent, foreign-agent and foreign-PS missions are indistinguishable")]
+    public async Task MissionNotFound_ResponsesAreIdentical_AndNoS256Preload()
+    {
+        var spy = new SpyMissionStore();
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddAAuthGovernance();
+        builder.Services.AddSingleton<IMissionStore>(spy);
+        builder.Services.AddRouting();
+        var app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            context.Features.Set(new AAuthVerificationResult
+            {
+                Level = AAuthLevel.Identified, Scheme = "jwt", IssuerVerified = true,
+                TokenType = AAuthTokenType.AgentToken,
+                Agent = "aauth:assistant@agent.example",
+                AgentPersonServer = Ps,
+                CoveredComponents = new HashSet<string> { "@method", "@authority", "@path", "signature-key", "content-type", "content-digest" },
+            });
+            await next();
+        });
+        app.MapAAuthGovernance(options => options.PersonServer = Ps);
+        await app.StartAsync();
+        await using var _ = app;
+        using var client = app.GetTestServer().CreateClient();
+        var absentS256 = Mission.ComputeS256(Encoding.UTF8.GetBytes("absent"));
+        var foreignAgentS256 = Mission.ComputeS256(Encoding.UTF8.GetBytes("foreign-agent"));
+        var foreignPsS256 = Mission.ComputeS256(Encoding.UTF8.GetBytes("foreign-ps"));
+        await spy.SaveAsync(new StoredMission(foreignAgentS256, Ps, "aauth:other@agent.example", ReadOnlyMemory<byte>.Empty));
+        await spy.SaveAsync(new StoredMission(foreignPsS256, "https://other-ps.example", "aauth:assistant@agent.example", ReadOnlyMemory<byte>.Empty));
+
+        var absent = await CaptureNotFoundAsync(client, absentS256);
+        var foreignAgent = await CaptureNotFoundAsync(client, foreignAgentS256);
+        var foreignPs = await CaptureNotFoundAsync(client, foreignPsS256);
+
+        Assert.Equal(absent, foreignAgent);
+        Assert.Equal(absent, foreignPs);
+        Assert.Equal(0, spy.S256OnlyLookups);
+    }
+
+    private static async Task<(HttpStatusCode Status, string? ContentType, string Body, string Headers)> CaptureNotFoundAsync(
+        HttpClient client, string s256)
+    {
+        using var response = await client.PostAsync("https://localhost/permission",
+            JsonContent(new JsonObject { ["action"] = "WebSearch", ["mission_s256"] = s256 }));
+        return (response.StatusCode, response.Content.Headers.ContentType?.MediaType,
+            await response.Content.ReadAsStringAsync(),
+            string.Join("\n", response.Headers.Select(h => h.Key + ":" + string.Join(",", h.Value)).Order(StringComparer.Ordinal)));
     }
 
     private static (byte[] Blob, string S256) BuildMission(string agent, params string[] approvedTools)
@@ -273,4 +325,28 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
 
     private static async Task<JsonObject?> ReadJson(HttpResponseMessage response)
         => JsonNode.Parse(await response.Content.ReadAsStringAsync()) as JsonObject;
+
+    private sealed class SpyMissionStore : IMissionStore
+    {
+        private readonly InMemoryMissionStore _inner = new();
+        public int S256OnlyLookups { get; private set; }
+
+        public Task SaveAsync(StoredMission mission, CancellationToken ct = default)
+            => _inner.SaveAsync(mission, ct);
+
+        public Task<StoredMission?> GetAsync(string personServer, string s256, CancellationToken ct = default)
+            => _inner.GetAsync(personServer, s256, ct);
+
+        public Task TerminateAsync(string personServer, string s256, string terminationReason, CancellationToken ct = default)
+            => _inner.TerminateAsync(personServer, s256, terminationReason, ct);
+
+        public Task<StoredMission?> GetAsync(string s256, CancellationToken ct = default)
+        {
+            S256OnlyLookups++;
+            return _inner.GetAsync(s256, ct);
+        }
+
+        public Task SetStateAsync(string s256, MissionState state, CancellationToken ct = default)
+            => _inner.SetStateAsync(s256, state, ct);
+    }
 }

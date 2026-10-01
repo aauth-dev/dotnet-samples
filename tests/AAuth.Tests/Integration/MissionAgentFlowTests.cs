@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using AAuth;
 using AAuth.Agent;
 using AAuth.Agent.Governance;
 using AAuth.Crypto;
@@ -318,7 +319,8 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         var before = (await ReadLogAsync(mission)).Count;
         var caller = scenario == "foreign" ? await NewAgentAsync("aauth:foreign@ap.example") : owner;
         if (scenario == "terminated")
-            await _factory.Services.GetRequiredService<IMissionStore>().SetStateAsync(mission.S256, MissionState.Terminated);
+            await _factory.Services.GetRequiredService<IMissionStore>().TerminateAsync(
+                mission.PersonServer, mission.S256, AAuthConstants.MissionTerminationReasons.Revoked);
         var s256 = scenario == "unknown" ? Mission.ComputeS256("unknown"u8.ToArray()) : mission.S256;
         var body = endpoint == "mission"
             ? new JsonObject { ["action"] = "completion", ["summary"] = "Complete" }
@@ -337,7 +339,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         Assert.False(response.Headers.Contains("Signature-Error"));
         Assert.Equal(before, (await ReadLogAsync(mission)).Count);
         Assert.Equal(scenario == "terminated" ? MissionState.Terminated : MissionState.Active,
-            (await _factory.Services.GetRequiredService<IMissionStore>().GetAsync(mission.S256))!.State);
+            (await _factory.Services.GetRequiredService<IMissionStore>().GetAsync(mission.PersonServer, mission.S256))!.State);
     }
 
     [Fact]
@@ -352,12 +354,14 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
             ["action"] = "SendEmail", ["mission_s256"] = mission.S256,
         });
         Assert.Equal(System.Net.HttpStatusCode.Accepted, initial.StatusCode);
-        await _factory.Services.GetRequiredService<IMissionStore>().SetStateAsync(mission.S256, MissionState.Terminated);
+        await _factory.Services.GetRequiredService<IMissionStore>().TerminateAsync(
+            mission.PersonServer, mission.S256, AAuthConstants.MissionTerminationReasons.Revoked);
         var id = initial.Headers.Location!.ToString().Split('/').Last();
         Assert.True(_factory.Services.GetRequiredService<MockPersonServer.MissionPendingStore>().Get(id)!.Decide(true));
         using var response = await owner.Signed.GetAsync(initial.Headers.Location);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Equal("mission_terminated", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())?["error"]);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("mission_terminated", (string?)body?["error"]);
         Assert.DoesNotContain(await ReadLogAsync(mission), entry => entry.Kind == MissionLogEntryKind.Permission && entry.Granted == true);
     }
 

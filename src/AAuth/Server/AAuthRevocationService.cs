@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth;
 using AAuth.Agent;
 using AAuth.Discovery;
 using AAuth.Errors;
@@ -161,7 +162,8 @@ internal sealed class AAuthRevocationService : IAAuthRevocationService, IDisposa
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(s256);
         var mission = RevocationRecords.Mission(RequireIssuer(), s256);
-        if (_missions is not null) await _missions.SetStateAsync(s256, MissionState.Terminated, cancellationToken);
+        if (_missions is not null) await _missions.TerminateAsync(RequireIssuer(), s256,
+            AAuthConstants.MissionTerminationReasons.Revoked, cancellationToken);
         await Inventory.RevokeAsync(mission, RevocationRecords.ExpiresAt, cancellationToken);
         return await WalkAsync([new(mission, RevocationRecords.ExpiresAt, false)], [], cancellationToken);
     }

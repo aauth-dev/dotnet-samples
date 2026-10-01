@@ -960,7 +960,48 @@ Explicit-subject `IdentityAssertion.Assert` remains a host approval decision
 (C6): the SDK records the person/resource enrollment before minting, and docs
 now state that explicit subjects do not bypass enrollment.
 
+### [2026-09-30] [Phase 7] R09 — Missions
+
+RESOLVED.
+
+Implemented the R09 mission lifecycle cutover for SDK-14, A16-001, A16-003,
+A16-004, D04-002, D05-02 and D08-05. `StoredMission` now records
+`TerminationReason`; the default store keys missions by `(PersonServer, s256)`;
+`TerminateAsync(ps, s256, reason)` preserves the first reason and rejects blank
+reasons; and the shared `MissionStatusEvaluator` is used by person-token,
+auth-token, pending, federated and SDK-governance decision paths. Expired
+missions auto-terminate with `expired` before generic deferred expiry, and
+completion records `completed`.
+
+Negative controls cover pending, federated, person-token and governance expiry;
+completion reason persistence; first-reason preservation; `(PS, s256)` aliasing;
+and absent/foreign-agent/foreign-PS uniform `mission_not_found` responses with a
+spy store proving SDK governance paths do not pre-load by `s256` alone.
+
+Owner-edited `samples/MockPersonServer/MissionGovernance.cs` and `Program.cs`
+were not modified. To keep the solution compiling until the owner updates those
+files, `IMissionStore` retains the legacy `GetAsync(s256)` / `SetStateAsync`
+members while new SDK paths use `(personServer, s256)` and `TerminateAsync`.
+This is a temporary sample-compatibility trade-off against C1; the owner should
+replace sample `GetAsync(s256)` calls with `GetAsync(ps, s256)` and
+`SetStateAsync(..., Terminated)` calls with `TerminateAsync(ps, s256, reason)`,
+choosing `completed`, `revoked` or `administrative` as appropriate, after which
+the legacy members can be removed.
+
 ## Deviations from plan
+
+### [2026-09-30] [Phase 7] R09 owner-edited sample compatibility
+
+PROCEEDED. Q13 says `TerminateAsync(ps, s256, reason)` replaces
+`SetStateAsync`, with no compatibility shims. The owner-edited
+`samples/MockPersonServer/MissionGovernance.cs` and `Program.cs` still call the
+old `IMissionStore.GetAsync(s256)` / `SetStateAsync(s256, state)` members and
+must not be modified in this slice. To keep `AAuth.slnx` compiling without
+touching those files, the interface temporarily retains those legacy members
+while all SDK decision paths and new tests use `(PersonServer, s256)` and
+reasoned `TerminateAsync`. Owner follow-up: update the sample calls to pass the
+PS and explicit reason (`completed`, `revoked` or `administrative`), then remove
+the legacy members.
 
 ### [2026-09-30] [Phase 7] R10 compatibility-limited enrollment strictness
 
@@ -1023,6 +1064,24 @@ limit". Binding inventory rows now include a generation. Revocation marks the
 current generation revoked for cascade and upstream-provenance checks; re-binding
 creates a later generation so a new association can be established without
 unrevoking grants chained to the old one.
+
+### [2026-09-30] [Phase 7] Legacy IMissionStore members kept for the owner-edited sample
+
+PROCEEDED. This is a temporary exception to C1.
+
+`IMissionStore.GetAsync(s256)` and `SetStateAsync(s256, state)` stay on the
+interface for one reason only: `samples/MockPersonServer/Program.cs` (an
+owner-edited file this plan must not touch) calls them at L395, L472, L503,
+L535, L558, L585 and L719. No SDK path uses them. Every SDK decision path goes
+through `(PersonServer, s256)` and the mission status evaluator.
+
+`InMemoryMissionStore.SetStateAsync(Terminated)` maps to
+`TerminateAsync(..., administrative)`. As a result, the sample's completion
+path (L558) records `administrative` instead of `completed`.
+
+Phase 11 removes both members once the owner's MockPersonServer edits are
+committed. The sample then moves to `GetAsync(ps, s256)` and
+`TerminateAsync(ps, s256, Completed | Revoked)`.
 
 ## Open questions / inputs needed
 

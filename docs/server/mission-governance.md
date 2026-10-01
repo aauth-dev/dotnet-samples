@@ -114,10 +114,11 @@ revokes them. A resource the asserter defers or denies is omitted; a deferred
 approval mints them when the owning agent polls. Governance hosted without a PS
 omits `person_tokens`.
 A request naming a `mission_s256` that does not exist or belongs to another
-agent is `404 mission_not_found` — the two cases are indistinguishable — and a
-terminated or expired mission is `403 mission_terminated` (§Mission Endpoint
-Errors). Reach for the manual mapping below only when an endpoint needs behavior
-the seams do not express.
+agent, or to another PS sharing the same durable store, is `404
+mission_not_found` — the cases are indistinguishable — and a terminated or
+expired mission is `403 mission_terminated` (§Mission Endpoint Errors). Expiry
+auto-terminates the stored mission with reason `expired`. Reach for the manual
+mapping below only when an endpoint needs behavior the seams do not express.
 
 > **Carrier-type guard.** The governed endpoints require the request to carry the
 > expected token type. When the wrong carrier is presented (e.g. an auth token
@@ -176,20 +177,22 @@ The parsers throw `FormatException` on a missing required field or a malformed
 
 A mission is stored as its verbatim blob bytes plus its lifecycle state, so the
 `s256` stays verifiable. The second positional member names the approving PS
-(the blob itself carries no PS).
+(the blob itself carries no PS), and the store key is the pair
+`(PersonServer, s256)`.
 
 ```csharp
 public sealed record StoredMission(string S256, string PersonServer, string Agent, ReadOnlyMemory<byte> Blob)
 {
     public MissionState State { get; init; } = MissionState.Active;
     public DateTimeOffset? ExpiresAt { get; init; } // the blob's expires_at; terminated after it
+    public string? TerminationReason { get; init; } // e.g. "completed", "revoked", "expired"
 }
 
 public interface IMissionStore
 {
     Task SaveAsync(StoredMission mission, CancellationToken ct = default);
-    Task<StoredMission?> GetAsync(string s256, CancellationToken ct = default);
-    Task SetStateAsync(string s256, MissionState state, CancellationToken ct = default); // e.g. on completion/revocation
+    Task<StoredMission?> GetAsync(string personServer, string s256, CancellationToken ct = default);
+    Task TerminateAsync(string personServer, string s256, string terminationReason, CancellationToken ct = default);
 }
 ```
 
@@ -315,15 +318,18 @@ public interface IInteractionRelay
 ## Terminating a mission
 
 When a mission is terminated, the PS moves it to `MissionState.Terminated` and
-answers governed requests with the canonical error (§Mission Status Errors). The
-agent's governance clients surface this as `AAuthMissionTerminatedException`.
-A terminated mission never returns to active; the agent proposes a new one.
+records the first non-empty reason alongside the immutable blob. Reasons are
+open strings; the SDK exposes the spec-defined values in
+`AAuthConstants.MissionTerminationReasons`. Governed requests then receive the
+canonical error (§Mission Status Errors). The agent's governance clients surface
+this as `AAuthMissionTerminatedException`. A terminated mission never returns to
+active; the agent proposes a new one.
 
 ```csharp
-await store.SetStateAsync(s256, MissionState.Terminated);
+await store.TerminateAsync(personServer, s256, AAuthConstants.MissionTerminationReasons.Revoked);
 
-// Canonical 403 response body: { "error": "mission_terminated", "mission_status": "terminated" }
-return GovernanceEndpoints.MissionTerminated();
+// Canonical 403 body includes the stored reason when known.
+return GovernanceEndpoints.MissionTerminated(AAuthConstants.MissionTerminationReasons.Revoked);
 ```
 
 ## Further reading

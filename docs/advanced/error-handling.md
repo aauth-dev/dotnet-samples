@@ -337,8 +337,10 @@ catch (AAuthMissionTerminatedException ex)
 On the PS side, emit the canonical `application/problem+json` body with
 `GovernanceEndpoints.MissionTerminated()`, or
 `GovernanceEndpoints.MissionTerminated("expired")` to add a
-`termination_reason`. The SDK's own endpoints report `expired` when a
-mission's `expires_at` has passed and omit the reason otherwise. See
+`termination_reason`. The SDK's own endpoints report the stored reason
+(`completed`, `revoked`, `expired`, `superseded`, `administrative`, or a local
+opaque value). A mission whose `expires_at` has passed auto-terminates with
+reason `expired`, including on pending and federated poll paths. See
 [Mission Governance (Server)](../server/mission-governance.md#terminating-a-mission).
 
 ## Clarification Exceptions

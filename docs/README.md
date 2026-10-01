@@ -190,7 +190,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | Type | Purpose |
 |------|---------|
 | `GovernanceEndpoints` | Parse governance request bodies + emit `mission_terminated` |
-| `IMissionStore` / `InMemoryMissionStore` | Persist missions (verbatim blob + state) |
+| `IMissionStore` / `InMemoryMissionStore` | Persist missions keyed by PS + `s256` (verbatim blob + state + termination reason) |
 | `IMissionLog` / `InMemoryMissionLog` | Ordered mission log + prior-consent lookup |
 | `IPermissionDecider` | PS policy seam for the permission endpoint |
 | `IAuditSink` | PS sink for audit records |

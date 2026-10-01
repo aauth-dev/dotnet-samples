@@ -19,7 +19,8 @@ public sealed class DeferredState
     public void Cancel() => Cancelled = true;
 
     public async Task<IResult> ExecuteAsync(HttpContext context, DateTimeOffset expiry,
-        TimeProvider timeProvider, Func<Task<IResult>> operation)
+        TimeProvider timeProvider, Func<Task<IResult>> operation,
+        Func<Task<IResult?>>? beforeExpiry = null)
     {
         await Gate.WaitAsync(context.RequestAborted);
         try
@@ -27,6 +28,8 @@ public sealed class DeferredState
             context.Response.Headers.CacheControl = "no-store";
             if (Delivered || Cancelled)
                 return AAuthProblemDetails.Polling(PollingErrorCode.InvalidCode);
+            if (beforeExpiry is not null && await beforeExpiry().ConfigureAwait(false) is { } preExpiry)
+                return Complete(context, preExpiry);
             if (expiry <= timeProvider.GetUtcNow())
             {
                 Delivered = true;
@@ -58,14 +61,19 @@ public sealed class DeferredState
             {
                 result = AAuthProblemDetails.Polling(PollingErrorCode.ServerError);
             }
-            var status = (result as IStatusCodeHttpResult)?.StatusCode ?? StatusCodes.Status200OK;
-                if (status is not (StatusCodes.Status202Accepted
-                    or StatusCodes.Status429TooManyRequests or StatusCodes.Status503ServiceUnavailable)
-                    && !(status == StatusCodes.Status204NoContent && HttpMethods.IsPost(context.Request.Method))
-                && (HttpMethods.IsGet(context.Request.Method) || status is 200 or 402 or 403 or 408 || status >= 500))
-                Delivered = true;
-            return result;
+            return Complete(context, result);
         }
         finally { Gate.Release(); }
+    }
+
+    private IResult Complete(HttpContext context, IResult result)
+    {
+        var status = (result as IStatusCodeHttpResult)?.StatusCode ?? StatusCodes.Status200OK;
+        if (status is not (StatusCodes.Status202Accepted
+                or StatusCodes.Status429TooManyRequests or StatusCodes.Status503ServiceUnavailable)
+            && !(status == StatusCodes.Status204NoContent && HttpMethods.IsPost(context.Request.Method))
+            && (HttpMethods.IsGet(context.Request.Method) || status is 200 or 402 or 403 or 408 || status >= 500))
+            Delivered = true;
+        return result;
     }
 }

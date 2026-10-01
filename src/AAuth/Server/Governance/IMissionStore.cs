@@ -29,6 +29,13 @@ public sealed record StoredMission(
     /// longer active once it passes.
     /// </summary>
     public DateTimeOffset? ExpiresAt { get; init; }
+
+    /// <summary>
+    /// Opaque §Mission Management reason recorded when <see cref="State"/> is
+    /// <see cref="MissionState.Terminated"/>. SDK stores use
+    /// <see cref="AAuthConstants.MissionTerminationReasons"/> values.
+    /// </summary>
+    public string? TerminationReason { get; init; }
 }
 
 /// <summary>
@@ -44,6 +51,22 @@ public interface IMissionStore
     /// extend a stored <see cref="StoredMission.ExpiresAt"/> (§Mission Management).
     /// </summary>
     Task SaveAsync(StoredMission mission, CancellationToken ct = default);
+
+    /// <summary>
+    /// Look up a mission by the spec identity pair <c>(PersonServer, s256)</c>.
+    /// Returns <see langword="null"/> when absent. Stores MUST make absent,
+    /// wrong-agent and wrong-PS lookup paths observably equivalent for SDK
+    /// endpoint callers (§Mission Endpoint Errors).
+    /// </summary>
+    Task<StoredMission?> GetAsync(string personServer, string s256, CancellationToken ct = default);
+
+    /// <summary>
+    /// Permanently terminate a mission with <paramref name="terminationReason"/>.
+    /// No-op when absent; idempotent when already terminated; preserves the first
+    /// non-empty reason and never revives a terminated mission (§Mission
+    /// Management).
+    /// </summary>
+    Task TerminateAsync(string personServer, string s256, string terminationReason, CancellationToken ct = default);
 
     /// <summary>Look up a mission by its <c>s256</c>. Returns <see langword="null"/> when absent.</summary>
     Task<StoredMission?> GetAsync(string s256, CancellationToken ct = default);

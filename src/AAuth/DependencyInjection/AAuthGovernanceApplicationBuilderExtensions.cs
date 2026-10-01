@@ -174,13 +174,10 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
-        StoredMission? stored = null;
         IReadOnlyList<MissionLogEntry> history = [];
-        if (request.MissionS256 is not null)
-        {
-            stored = await missions.GetAsync(request.MissionS256).ConfigureAwait(false);
-        }
-        if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, stored, ResolvePersonServer(ctx, options)) is { } denied) return denied;
+        var (stored, permissionFailure) = await GovernanceEndpoints.AuthorizeMissionAsync(ctx, request.MissionS256,
+            missions, ResolvePersonServer(ctx, options), options.TimeProvider, ctx.RequestAborted).ConfigureAwait(false);
+        if (permissionFailure is not null) return permissionFailure;
         if (request.MissionS256 is not null)
         {
             history = await log.ReadAsync(request.MissionS256).ConfigureAwait(false);
@@ -252,8 +249,9 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
-        var stored = await missions.GetAsync(record.MissionS256).ConfigureAwait(false);
-        if (GovernanceEndpoints.Authorize(ctx, record.MissionS256, stored, ResolvePersonServer(ctx, options)) is { } denied) return denied;
+        var (_, auditFailure) = await GovernanceEndpoints.AuthorizeMissionAsync(ctx, record.MissionS256,
+            missions, ResolvePersonServer(ctx, options), options.TimeProvider, ctx.RequestAborted).ConfigureAwait(false);
+        if (auditFailure is not null) return auditFailure;
 
         await sink.RecordAsync(record, ctx.RequestAborted).ConfigureAwait(false);
         return Results.StatusCode(StatusCodes.Status201Created);
@@ -283,9 +281,9 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
-        var stored = request.MissionS256 is null ? null
-            : await missions.GetAsync(request.MissionS256).ConfigureAwait(false);
-        if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, stored, ResolvePersonServer(ctx, options)) is { } denied) return denied;
+        var (_, interactionFailure) = await GovernanceEndpoints.AuthorizeMissionAsync(ctx, request.MissionS256,
+            missions, ResolvePersonServer(ctx, options), options.TimeProvider, ctx.RequestAborted).ConfigureAwait(false);
+        if (interactionFailure is not null) return interactionFailure;
 
         var result = await relay.RelayAsync(request, ctx.RequestAborted).ConfigureAwait(false);
 
@@ -367,7 +365,8 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         {
             return AAuth.Server.AAuthProblemDetails.Polling(AAuth.Errors.PollingErrorCode.InvalidCode);
         }
-        return await entry.Lifecycle.ExecuteAsync(ctx, entry.ExpiresAt, TimeProvider.System, async () =>
+        var expectedPersonServer = ResolvePersonServer(ctx, options);
+        return await entry.Lifecycle.ExecuteAsync(ctx, entry.ExpiresAt, options.TimeProvider, async () =>
         {
             if (HttpMethods.IsDelete(ctx.Request.Method))
             {
@@ -375,9 +374,16 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                 return Results.NoContent();
             }
             var reference = entry.Permission?.MissionS256 ?? entry.Interaction?.MissionS256;
-            var mission = reference is null ? null : await missions.GetAsync(reference, ctx.RequestAborted);
-            if (GovernanceEndpoints.Authorize(ctx, reference, mission, ResolvePersonServer(ctx, options)) is { } denied) return denied;
+            var (_, pendingFailure) = await GovernanceEndpoints.AuthorizeMissionAsync(ctx, reference,
+                missions, expectedPersonServer, options.TimeProvider, ctx.RequestAborted).ConfigureAwait(false);
+            if (pendingFailure is not null) return pendingFailure;
             return await CompletePendingAsync(ctx, entry, options, missions, log);
+        }, beforeExpiry: async () =>
+        {
+            var reference = entry.Permission?.MissionS256 ?? entry.Interaction?.MissionS256;
+            var (_, pendingFailure) = await GovernanceEndpoints.AuthorizeMissionAsync(ctx, reference,
+                missions, expectedPersonServer, options.TimeProvider, ctx.RequestAborted).ConfigureAwait(false);
+            return pendingFailure;
         });
     }
 
@@ -424,8 +430,9 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             var completionMission = entry.Interaction?.MissionS256;
             if (accepted && completionMission is not null)
             {
-                await missions.SetStateAsync(completionMission, MissionState.Terminated).ConfigureAwait(false);
-                return Results.Json(new { mission_status = "terminated" });
+                await missions.TerminateAsync(entry.PersonServer, completionMission,
+                    AAuthConstants.MissionTerminationReasons.Completed, ctx.RequestAborted).ConfigureAwait(false);
+                return Results.Json(new { mission_status = "terminated", termination_reason = AAuthConstants.MissionTerminationReasons.Completed });
             }
             return Results.Json(new { mission_status = "active" });
         }
@@ -488,8 +495,9 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         var action = (string?)(body?["action"] as JsonValue);
         if (body is null || !AAuth.Tokens.MissionReference.IsValid(missionS256) || action is not ("update" or "completion"))
             return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
-        var stored = await missions.GetAsync(missionS256).ConfigureAwait(false);
-        if (GovernanceEndpoints.Authorize(ctx, missionS256, stored, ResolvePersonServer(ctx, options)) is { } denied) return denied;
+        var (stored, missionFailure) = await GovernanceEndpoints.AuthorizeMissionAsync(ctx, missionS256,
+            missions, ResolvePersonServer(ctx, options), options.TimeProvider, ctx.RequestAborted).ConfigureAwait(false);
+        if (missionFailure is not null) return missionFailure;
 
         if (action == "update")
         {
@@ -532,8 +540,9 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         }
         if (result.Accepted == true)
         {
-            await missions.SetStateAsync(missionS256, MissionState.Terminated).ConfigureAwait(false);
-            return Results.Json(new { mission_status = "terminated" });
+            await missions.TerminateAsync(ResolvePersonServer(ctx, options), missionS256,
+                AAuthConstants.MissionTerminationReasons.Completed, ctx.RequestAborted).ConfigureAwait(false);
+            return Results.Json(new { mission_status = "terminated", termination_reason = AAuthConstants.MissionTerminationReasons.Completed });
         }
         return Results.Json(new { mission_status = "active" });
     }

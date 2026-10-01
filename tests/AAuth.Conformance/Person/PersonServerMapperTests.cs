@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
@@ -1132,7 +1133,7 @@ public class PersonServerMapperTests
         var missions = host.Services.GetRequiredService<IMissionStore>();
         await missions.SaveAsync(new StoredMission(s256, PsIssuer, AgentId, new byte[] { 1, 2, 3 })
             { ExpiresAt = expired ? DateTimeOffset.UtcNow.AddSeconds(-1) : null });
-        if (!expired) await missions.SetStateAsync(s256, MissionState.Terminated);
+        if (!expired) await missions.TerminateAsync(PsIssuer, s256, AAuthConstants.MissionTerminationReasons.Revoked);
 
         using var response = await http.PostAsJsonAsync(path, path == "/token"
             ? await TokenRequestAsync(agentKey, missionS256: s256)
@@ -1143,7 +1144,34 @@ public class PersonServerMapperTests
         Assert.Equal("mission_terminated", (string?)body!["error"]);
         // mission_status is always "terminated"; expiry is the termination_reason.
         Assert.Equal("terminated", (string?)body["mission_status"]);
-        Assert.Equal(expired ? "expired" : null, (string?)body["termination_reason"]);
+        Assert.Equal(expired ? "expired" : "revoked", (string?)body["termination_reason"]);
+        Assert.Equal(expired ? "expired" : "revoked", (await missions.GetAsync(PsIssuer, s256))!.TerminationReason);
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Mission Status Errors — mission expiry beats pending /person expiry")]
+    public async Task PendingPersonMissionExpiry_ReturnsMissionTerminated()
+    {
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        var agentKey = AAuthKey.Generate();
+        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.NeedsConsent()));
+        var missions = host.Services.GetRequiredService<IMissionStore>();
+        await missions.SaveAsync(new StoredMission(s256, PsIssuer, AgentId, new byte[] { 1, 2, 3 }));
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        using var initial = await http.PostAsJsonAsync("/person",
+            new JsonObject { ["resource"] = ResourceUrl, ["mission_s256"] = s256 });
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        await missions.SaveAsync((await missions.GetAsync(PsIssuer, s256))! with { ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1) });
+        var id = initial.Headers.Location!.ToString().Split('/').Last();
+        host.Services.GetRequiredService<IPersonPendingStore>().MarkAllowed(id, new AAuthPersonKey("user"), "user");
+
+        using var poll = await http.GetAsync(initial.Headers.Location);
+
+        Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
+        var body = await poll.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("mission_terminated", (string?)body!["error"]);
+        Assert.Equal("expired", (string?)body["termination_reason"]);
+        Assert.Equal("expired", (await missions.GetAsync(PsIssuer, s256))!.TerminationReason);
         await host.StopAsync();
     }
 

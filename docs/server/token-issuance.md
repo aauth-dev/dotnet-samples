@@ -166,6 +166,10 @@ PS, AS, and R3 pending state retains the original verified ceilings. A fresh pol
 carrier does not extend them. Consent that finishes after expiry cannot mint a
 new token. Success responses calculate `expires_in` from the issued token's
 remaining Unix seconds, including after deferred delivery.
+When a pending or federated decision is tied to a mission, the PS evaluates the
+mission before generic deferred expiry. A mission whose `expires_at` has passed
+auto-terminates with `termination_reason:"expired"` and the poll returns
+`403 mission_terminated`.
 
 `AdditionalClaims` accepts identity extensions such as `email`, but rejects
 `iss`, `dwk`, `aud`, `jti`, `ps`, `cnf`, `iat`, `exp`, `nbf`, `sub`, `scope`,
