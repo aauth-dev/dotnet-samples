@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Errors;
+using AAuth.Protocol;
 
 namespace AAuth.HttpSig;
 
@@ -125,7 +126,15 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// <c>AAuth-Capabilities</c> header (§AAuth-Capabilities). When set, the header is
     /// emitted on every signed request.
     /// </summary>
-    public IReadOnlyList<string>? Capabilities { get; init; }
+    public IReadOnlyList<string>? Capabilities
+    {
+        get => _capabilities;
+        init => _capabilities = value is null
+            ? null
+            : AAuthProtocolInput.ValidateCapabilities(value, nameof(Capabilities));
+    }
+
+    private readonly IReadOnlyList<string>? _capabilities;
 
     /// <summary>Create a signing handler with a strategy-based key provider.</summary>
     /// <param name="key">The agent's signing key (must have private component).</param>
@@ -333,7 +342,9 @@ public sealed class AAuthSigningHandler : DelegatingHandler
 
         // Emit capabilities header if configured
         IReadOnlyList<string>? capabilities = request.Options.TryGetValue(RequestCapabilitiesKey, out var added)
-            ? (Capabilities ?? []).Concat(added).Distinct(StringComparer.Ordinal).ToArray()
+            ? (Capabilities ?? [])
+                .Concat(AAuthProtocolInput.ValidateCapabilities(added, nameof(RequestCapabilitiesKey)))
+                .Distinct(StringComparer.Ordinal).ToArray()
             : Capabilities;
         if (capabilities is { Count: > 0 })
         {

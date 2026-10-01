@@ -87,7 +87,7 @@ and [Events](workflows/events.md) for runnable rejection/recovery paths.
 | `Signature` | Request | The actual signature | `AAuthSigningHandler` |
 | `Signature-Error` | Response | Machine-readable verification error | `SignatureError` |
 | `AAuth-Requirement` | Response | What the resource needs (auth-token, interaction) | `AAuthRequirementHeader` |
-| `AAuth-Capabilities` | Request | Agent declares supported flows | `AAuthCapabilitiesHeader` |
+| `AAuth-Capabilities` | Request | Agent declares supported flows | `AAuthCapabilitiesHeader`, `AAuthConstants.Capabilities` |
 
 ## Further Reading
 

@@ -42,7 +42,7 @@ public sealed class AccessServerRequest
 
     public string? SubagentToken { get; init; }
 
-    public required DateTimeOffset AuthorizationExpiresAt { get; init; }
+    public required DateTimeOffset AuthorizationExpiresAt { get; set; }
 
     /// <summary>
     /// Optional upstream person or auth token for call-chaining scenarios, passed

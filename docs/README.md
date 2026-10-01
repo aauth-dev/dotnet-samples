@@ -133,7 +133,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `InteractionRequest` / `InteractionResult` | Interaction request + typed terminal result |
 | `GovernanceOptions` | Deferral callbacks shared by the governance clients |
 | `ClarificationExchange` / `ClarificationResponse` | Drive a clarification chat; respond / update / cancel |
-| `AAuthCapabilitiesHeader` | Helpers for the `AAuth-Capabilities` request header |
+| `AAuthCapabilitiesHeader` / `AAuthConstants.Capabilities` | Helpers for the `AAuth-Capabilities` request header and known capability tokens |
 | `IInteractionPresenter` | Surface interaction URLs to the user |
 | `IPlatformAttestor` / `NoopAttestor` | Platform attestation hook + built-in no-op implementation |
 | `ITokenRefresher` | Pluggable agent-token refresh strategy |

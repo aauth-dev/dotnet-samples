@@ -8,6 +8,7 @@ using AAuth.Agent.Governance;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
+using AAuth.Protocol;
 using AAuth.Server;
 using AAuth.Server.CallChaining;
 using Microsoft.AspNetCore.Http;
@@ -252,7 +253,7 @@ public sealed class AAuthClientBuilder
     /// <summary>Declare AAuth-Capabilities on every signed request.</summary>
     public AAuthClientBuilder WithCapabilities(params string[] capabilities)
     {
-        _capabilities = capabilities;
+        _capabilities = AAuthProtocolInput.ValidateCapabilities(capabilities, nameof(capabilities));
         return this;
     }
 

@@ -988,6 +988,46 @@ replace sample `GetAsync(s256)` calls with `GetAsync(ps, s256)` and
 choosing `completed`, `revoked` or `administrative` as appropriate, after which
 the legacy members can be removed.
 
+### [2026-09-30] [Phase 7] R08 — Clarification, updated_request and input validation
+
+RESOLVED.
+
+Implemented the R08 clarification and input-validation cutover for SDK-06,
+A12-02, A12-03, A12-04, A13-02, A13-03 and A13-05. `updated_request` handling
+now shares one replacement helper for normal pending POSTs and federated
+replacements, verifies the replacement pair, recomputes active lifetime/source
+dependencies from the replacement `resource_token`/`presented_token`, and keeps
+shorter-lived, longer-lived and revoked replacements bounded by the active pair
+plus agent/mission/upstream ceilings. Clarification round consumption is central
+and includes local federated triage.
+
+A shared protocol-input validator now serves agent producers and PS consumers for
+vendored platform values, printable Unicode `device`, and strict capability-token
+arrays; capability constants live in `AAuthConstants.Capabilities`, and the old
+`AAuthCapabilitiesHeader.Capabilities` aliases were removed. Agent-side
+clarification callbacks honor `timeout` by cancelling the per-round token and not
+posting late answers, and local `updated_request` pre-validation rejects
+mismatched replacement pairs before any POST.
+
+Negative controls cover shorter/longer/revoked replacements, triage round caps,
+invalid `platform`/`device`/`capabilities`, late clarification suppression, and
+local replacement-pair mismatch suppression.
+
+### [2026-09-30] [Phase 7] Gates and wrap-up
+
+RESOLVED. R10, R09 and R08 landed; see the entries above.
+
+Gates:
+
+- The build is clean.
+- Tests: AAuth.Tests 1825, Conformance 1389, R3 339, Events 89.
+- The docs gates pass.
+- e2e: the first full run had one timeout, "federated revocation cascades and
+  recovery needs a fresh grant" (12.8 minutes; the Run-all button never
+  re-enabled). It passed when run on its own, and the full suite then passed
+  on a rerun: 78 passed, 1 skipped. Recorded as a flaky, slow run.
+- Keycloak profile: `federated-deferred` 1 passed; container removed.
+
 ## Deviations from plan
 
 ### [2026-09-30] [Phase 7] R09 owner-edited sample compatibility
@@ -1109,3 +1149,28 @@ It asks for one of three changes, in order of preference:
    tuple.
 
 Record the reply here when it arrives.
+
+**Update (2026-10-01).** The spec author opened
+[dickhardt/AAuth#222](https://github.com/dickhardt/AAuth/issues/222). It is
+open, has no comments, and is not yet in a published draft. It proposes:
+
+- an OPTIONAL `nonce` signature parameter. An agent SHOULD send one when it
+  makes more than one request with the same method, authority and path
+  within a second. It MUST NOT repeat for the key within the window, and
+  verifiers MUST NOT require it.
+- adding `nonce` to the replay tuple:
+  `(thumbprint, created, nonce, @method, @authority, @path)`.
+
+Effect on this plan:
+
+- Q1 stands while the target is draft-11. A third-party draft-11 verifier
+  keys on the tuple without `nonce`, so sending one doesn't avoid its replay
+  rejection.
+- The SDK verifier is already forward-compatible. It accepts a string `nonce`
+  (`AAuthVerifier.cs:145`). Its replay key is SHA-256 of the signature base,
+  which includes `@signature-params` (`AAuthVerifier.cs:112`), so a different
+  `nonce` is already a different replay entry.
+- When a draft adopts #222, the producer change is small: on an exact-tuple
+  collision, add a random `nonce` instead of waiting, and drop the wait.
+
+Status: the reply was received and the issue is tracked; no change to Q1.

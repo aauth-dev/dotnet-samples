@@ -11,6 +11,7 @@ using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
+using AAuth.Protocol;
 using AAuth.Server;
 using AAuth.Server.Governance;
 using AAuth.Server.Metadata;
@@ -516,6 +517,82 @@ public static class AAuthPersonServerEndpoints
             catch (TokenVerificationException ex) { return (null, AAuthProblemDetails.SourceRevoked(ex)); }
         }
 
+        async Task<IReadOnlyList<TokenRegistration>> RegisterReplacementSourcesAsync(
+            PersonPendingEntry entry, TokenVerifier.VerifiedToken replacement,
+            TokenVerifier.VerifiedToken replacementPresented, System.Threading.CancellationToken ct)
+        {
+            var active = entry.SourceTokens
+                .Where(source => source.Credential is not (TokenCredential.Resource or TokenCredential.Presented))
+                .ToList();
+            active.Add(TokenRegistration.FromVerified(replacement, TokenCredential.Resource));
+            active.Add(TokenRegistration.FromVerified(replacementPresented, TokenCredential.Presented));
+            await TokenRegistration.RegisterAsync(inventory, active, ct);
+            return active;
+        }
+
+        async Task<DateTimeOffset> ActiveAuthorizationCeilingAsync(
+            PersonPendingEntry entry, TokenVerifier.VerifiedToken replacementPresented,
+            string? missionS256)
+        {
+            var ceiling = Earliest(entry.IssuanceExpiresAt, replacementPresented.ExpiresAt);
+            if (missionS256 is not null)
+            {
+                var mission = await ValidateMissionAsync(missionS256, entry.AgentId, entry.UpstreamAuthorization);
+                if (mission.ExpiresAt is { } missionExpiry)
+                {
+                    ceiling = Earliest(ceiling, missionExpiry);
+                }
+            }
+
+            return ceiling;
+        }
+
+        async Task ApplyUpdatedRequestAsync(
+            PersonPendingEntry entry,
+            string replacementResourceToken, string replacementPresentedToken,
+            string expectedAudience, string expectedAgentJkt, System.Threading.CancellationToken ct)
+        {
+            var (replacement, replacementPresented) = await VerifyPairAsync(
+                replacementResourceToken, replacementPresentedToken, expectedAudience, expectedAgentJkt, ct);
+            RequireSameRequest(entry.ResourceContext!, replacement.Payload);
+            if (!AccountBinding.Matches(entry.Account, replacement.Account))
+            {
+                throw new TokenVerificationException("Changing account requires a new authorization request.")
+                { Credential = TokenCredential.Resource };
+            }
+
+            var replacementInteraction = await PersonResourceInteraction.CreateAsync(
+                replacement.Payload, replacementResourceToken, options.EgressPolicy, ct);
+            var replacementSources = await RegisterReplacementSourcesAsync(entry, replacement, replacementPresented, ct);
+            var replacementCeiling = await ActiveAuthorizationCeilingAsync(entry, replacementPresented,
+                replacement.MissionS256);
+            entry.ReplaceActiveAuthorization(
+                replacementCeiling,
+                replacementSources,
+                replacementResourceToken,
+                replacementPresentedToken,
+                (JsonObject)replacement.Payload.DeepClone(),
+                (string?)replacement.Payload["scope"] ?? options.DefaultScope,
+                replacementInteraction);
+            if (replacementInteraction is not null)
+            {
+                entry.InteractionUrl = interactionUrl + "/resource";
+            }
+        }
+
+        IResult? ConsumeClarificationRound(PersonPendingEntry entry)
+        {
+            if (entry.ClarificationRounds >= ClarificationExchange.DefaultMaxRounds)
+            {
+                entry.Status = PersonPendingStatus.Denied;
+                entry.DenyReason = "Clarification round limit reached.";
+                return AAuthProblemDetails.Create("denied", entry.DenyReason, statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            entry.ClarificationRounds++;
+            return null;
+        }
+
         // #revocation-cascade Records: what the PS issues to an agent is found again by its sub and mission.
         void AddCascadeIndexes(List<TokenRegistration> registrations, string agentIssuer, string agentId, string? missionS256)
         {
@@ -779,9 +856,14 @@ public static class AAuthPersonServerEndpoints
             var ceiling = missionExpiresAt is { } missionExpiry ? Earliest(issuance!.ExpiresAt, missionExpiry) : issuance!.ExpiresAt;
 
             var prompt = StringMember(body, "prompt");
-            var capabilities = ParseStringArray(body["capabilities"] as JsonArray);
+            IReadOnlyList<string>? capabilities;
+            try { capabilities = AAuthProtocolInput.ReadCapabilities(body!, out _); }
+            catch (ArgumentException ex)
+            {
+                return AAuthProblemDetails.Create("invalid_request", ex.Message, statusCode: StatusCodes.Status400BadRequest);
+            }
             if (!TryReadAgentAsserted(body, out var agentAsserted))
-                return AAuthProblemDetails.Create("invalid_request", "justification, platform and device must be strings", statusCode: StatusCodes.Status400BadRequest);
+                return AAuthProblemDetails.Create("invalid_request", "justification, platform and device must be valid strings", statusCode: StatusCodes.Status400BadRequest);
             var assertion = await asserter.AssertAsync(new IdentityAssertionRequest
             {
                 PersonTokenRequest = true,
@@ -842,6 +924,7 @@ public static class AAuthPersonServerEndpoints
                         if (metadataFailure is not null) return metadataFailure;
                         var firstEnrollmentEntry = pending.Add(resource, string.Empty, issuance.AgentId, issuance.ConfirmationKey,
                             issuance.AgentTokenExpiresAt, missionS256, ceiling);
+                        firstEnrollmentEntry.IssuanceExpiresAt = issuance.ExpiresAt;
                         firstEnrollmentEntry.PersonToken = true;
                         firstEnrollmentEntry.PersonKey = personKey;
                         firstEnrollmentEntry.Subject = subject;
@@ -893,6 +976,7 @@ public static class AAuthPersonServerEndpoints
                     }
                     var entry = pending.Add(resource, string.Empty, issuance.AgentId, issuance.ConfirmationKey,
                         issuance.AgentTokenExpiresAt, missionS256, ceiling);
+                    entry.IssuanceExpiresAt = issuance.ExpiresAt;
                     entry.PersonToken = true;
                     entry.PersonKey = assertion.PersonKey;
                     entry.ResourceMetadata = pendingMetadata;
@@ -924,9 +1008,14 @@ public static class AAuthPersonServerEndpoints
             // §Auth Token Request: optional consent-shaping params. Both are tolerant —
             // unknown values flow to the asserter, which MAY honor or ignore them.
             var prompt = StringMember(body, "prompt");
-            var capabilities = ParseStringArray(body!["capabilities"] as JsonArray);
+            IReadOnlyList<string>? capabilities;
+            try { capabilities = AAuthProtocolInput.ReadCapabilities(body!, out _); }
+            catch (ArgumentException ex)
+            {
+                return AAuthProblemDetails.Create("invalid_request", ex.Message, statusCode: StatusCodes.Status400BadRequest);
+            }
             if (!TryReadAgentAsserted(body, out var agentAsserted))
-                return AAuthProblemDetails.Create("invalid_request", "justification, platform and device must be strings", statusCode: StatusCodes.Status400BadRequest);
+                return AAuthProblemDetails.Create("invalid_request", "justification, platform and device must be valid strings", statusCode: StatusCodes.Status400BadRequest);
 
             // Route on the resource token's `aud` (peeked, not trusted; both
             // branches fully verify the token afterwards). `aud == this PS` →
@@ -940,7 +1029,7 @@ public static class AAuthPersonServerEndpoints
             if (resourceAudience is not null
                 && !string.Equals(resourceAudience, issuer, StringComparison.Ordinal))
             {
-                return await HandleFederatedAsync(ctx, issuance!, resourceTokenJwt, presentedTokenJwt, body,
+                return await HandleFederatedAsync(ctx, issuance!, resourceTokenJwt, presentedTokenJwt, body!,
                     resourceAudience, prompt, capabilities, agentAsserted);
             }
 
@@ -1073,36 +1162,24 @@ public static class AAuthPersonServerEndpoints
                 {
                     return AAuthProblemDetails.Create("invalid_request", "Expected a matching clarification action and payload on an awaiting clarification request.", statusCode: StatusCodes.Status400BadRequest);
                 }
-                if (entry.ClarificationRounds >= ClarificationExchange.DefaultMaxRounds)
-                {
-                    entry.Status = PersonPendingStatus.Denied;
-                    return AAuthProblemDetails.Create("denied", "Clarification round limit reached.", statusCode: StatusCodes.Status403Forbidden);
-                }
                 if (action == "updated_request")
                 {
                     try
                     {
-                        var (replacement, _) = await VerifyPairAsync(updatedResourceToken!, updatedPresentedToken!,
-                            entry.ResourceAudience!, entry.ResourceKeyThumbprint!, ctx.RequestAborted);
-                        RequireSameRequest(entry.ResourceContext!, replacement.Payload);
-                        if (!AccountBinding.Matches(entry.Account, replacement.Account))
-                            throw new TokenVerificationException("Changing account requires a new authorization request.")
-                            { Credential = TokenCredential.Resource };
-                        var replacementInteraction = await PersonResourceInteraction.CreateAsync(replacement.Payload,
-                            updatedResourceToken!, options.EgressPolicy, ctx.RequestAborted);
-                        entry.Scope = (string?)replacement.Payload["scope"] ?? options.DefaultScope;
-                        entry.ResourceToken = updatedResourceToken;
-                        entry.PresentedToken = updatedPresentedToken;
-                        entry.ResourceContext = (JsonObject)replacement.Payload.DeepClone();
-                        entry.ResourceInteraction = replacementInteraction;
-                        if (replacementInteraction is not null) entry.InteractionUrl = interactionUrl + "/resource";
+                        await ApplyUpdatedRequestAsync(entry,
+                            updatedResourceToken!, updatedPresentedToken!, entry.ResourceAudience!,
+                            entry.ResourceKeyThumbprint!, ctx.RequestAborted);
                     }
                     catch (TokenVerificationException ex)
                     {
                         return AAuthProblemDetails.TokenFailure(ex, TokenCredential.Resource);
                     }
+                    catch (AAuthTokenExchangeException ex)
+                    {
+                        return ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode);
+                    }
                 }
-                entry.ClarificationRounds++;
+                if (ConsumeClarificationRound(entry) is { } roundLimit) return roundLimit;
                 if (StringMember(body, "justification") is { } justification)
                     entry.ClarificationAnswers.Add(justification);
                 if (answer is not null)
@@ -1405,6 +1482,7 @@ public static class AAuthPersonServerEndpoints
             {
                 var entry = resumed ?? pending.Add(audience, requestedScope, issuance.AgentId, issuance.ConfirmationKey,
                     issuance.AgentTokenExpiresAt, missionS256, ceiling);
+                entry.IssuanceExpiresAt = issuance.ExpiresAt;
                 BindOwner(ctx, entry);
                 BindResource(entry, resourceTokenJwt, issuer, issuance.ConfirmationKey);
                 entry.PresentedToken = presentedTokenJwt;
@@ -1626,6 +1704,7 @@ public static class AAuthPersonServerEndpoints
                 throw new InvalidOperationException("Four-party federation requires AddAAuthPersonServer(...).WithFederation()."));
             var entry = pending.Add(resourceUrl, federatedScope, issuance.AgentId, agentConfirmationKey: null,
                 issuance.AgentTokenExpiresAt, federatedMission, ceiling);
+            entry.IssuanceExpiresAt = issuance.ExpiresAt;
             entry.ResourceContext = federatedContext;
             entry.UpstreamAuthorization = issuance.Upstream;
             entry.SourceTokens = sourceTokens;
@@ -1765,20 +1844,11 @@ public static class AAuthPersonServerEndpoints
                 System.Threading.CancellationToken ct)
             {
                 await ThrowIfSourceInvalidAsync(ct);
-                var (replacement, replacementPresented) = await VerifyPairAsync(replacementResourceToken, replacementPresentedToken,
+                await ApplyUpdatedRequestAsync(entry, replacementResourceToken, replacementPresentedToken,
                     resourceAudience, entry.ResourceKeyThumbprint!, ct);
-                RequireSameRequest(entry.ResourceContext!, replacement.Payload);
-                if (!AccountBinding.Matches(entry.Account, replacement.Account))
-                    throw new TokenVerificationException("Changing account requires a new authorization request.");
-                var replacementInteraction = await PersonResourceInteraction.CreateAsync(replacement.Payload,
-                    replacementResourceToken, options.EgressPolicy, ct);
-                entry.Scope = (string?)replacement.Payload["scope"] ?? options.DefaultScope;
-                entry.ResourceToken = replacementResourceToken;
-                entry.PresentedToken = replacementPresentedToken;
-                entry.ResourceContext = (JsonObject)replacement.Payload.DeepClone();
-                entry.ResourceInteraction = replacementInteraction;
-                if (replacementInteraction is not null) entry.InteractionUrl = interactionUrl + "/resource";
-                fedRequest.PresentedTokenExpiresAt = replacementPresented.ExpiresAt;
+                fedRequest.PresentedTokenExpiresAt = DateTimeOffset.FromUnixTimeSeconds(
+                    (long)TokenVerifier.DecodeJsonSegment(replacementPresentedToken.Split('.')[1], "payload")["exp"]!);
+                fedRequest.AuthorizationExpiresAt = entry.ExpiresAt;
             }
 
             var agentTokenJwt = ctx.GetAAuthParsedKey()?.Jwt
@@ -1805,11 +1875,18 @@ public static class AAuthPersonServerEndpoints
                         ? await triage(entry, question, ct) : null;
                     if (localAnswer is not null)
                     {
-                        if (localAnswer.Action == ClarificationResponse.Kind.Update)
+                        await entry.Lifecycle.Gate.WaitAsync(ct);
+                        try
                         {
-                            await ApplyReplacementAsync(localAnswer.ResourceToken!, localAnswer.PresentedToken!, ct);
-                            fedRequest.RequestedScope = entry.Scope;
+                            if (ConsumeClarificationRound(entry) is { } roundLimit)
+                                throw new AAuthInteractionDeniedException("Clarification round limit reached.");
+                            if (localAnswer.Action == ClarificationResponse.Kind.Update)
+                            {
+                                await ApplyReplacementAsync(localAnswer.ResourceToken!, localAnswer.PresentedToken!, ct);
+                                fedRequest.RequestedScope = entry.Scope;
+                            }
                         }
+                        finally { entry.Lifecycle.Gate.Release(); }
                         if (entry.ResourceToken != consentedResourceToken) await RequireConsentAsync(null, ct);
                         return localAnswer;
                     }
@@ -1830,9 +1907,12 @@ public static class AAuthPersonServerEndpoints
                     finally { entry.Lifecycle.Gate.Release(); }
                     var result = await answer.WaitAsync(ct);
                     if (result.Action == ClarificationResponse.Kind.Update && result.PresentedToken is { } updatedPresented)
+                    {
                         fedRequest.PresentedTokenExpiresAt = DateTimeOffset.FromUnixTimeSeconds(
                             (long)TokenVerifier.DecodeJsonSegment(updatedPresented.Split('.')[1], "payload")["exp"]!);
+                    }
                     fedRequest.RequestedScope = entry.Scope;
+                    fedRequest.AuthorizationExpiresAt = entry.ExpiresAt;
                     if (entry.ResourceToken != consentedResourceToken) await RequireConsentAsync(null, ct);
                     return result;
                 },
@@ -2043,13 +2123,31 @@ public static class AAuthPersonServerEndpoints
     private static bool TryReadAgentAsserted(JsonObject? body, out AgentAssertedContent? content)
     {
         content = null;
-        string?[] values = [StringMember(body, "justification"), StringMember(body, "platform"), StringMember(body, "device")];
-        if ((body?.ContainsKey("justification") == true && values[0] is null)
-            || (body?.ContainsKey("platform") == true && values[1] is null)
-            || (body?.ContainsKey("device") == true && values[2] is null))
+        var justification = StringMember(body, "justification");
+        var platform = StringMember(body, "platform");
+        var device = StringMember(body, "device");
+        if ((body?.ContainsKey("justification") == true && justification is null)
+            || (body?.ContainsKey("platform") == true && platform is null)
+            || (body?.ContainsKey("device") == true && device is null))
+        {
             return false;
-        if (values.Any(value => value is not null))
-            content = new AgentAssertedContent { Justification = values[0], Platform = values[1], Device = values[2] };
+        }
+
+        try
+        {
+            platform = AAuthProtocolInput.ValidatePlatform(platform, "platform");
+            device = AAuthProtocolInput.ValidateDevice(device, "device");
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+
+        if (justification is not null || platform is not null || device is not null)
+        {
+            content = new AgentAssertedContent { Justification = justification, Platform = platform, Device = device };
+        }
+
         return true;
     }
 
@@ -2152,23 +2250,4 @@ public static class AAuthPersonServerEndpoints
     private static string? PeekJwtAudience(string jwt, TokenVerifier verifier) =>
         (string?)verifier.ReadStructure(jwt, ResourceTokenBuilder.TokenType).Payload["aud"];
 
-    // Parse a JSON array of strings (e.g. the `capabilities` body parameter) into
-    // a list, skipping non-string entries. Returns null when absent/empty so the
-    // asserter can distinguish "not declared" from "declared empty".
-    private static IReadOnlyList<string>? ParseStringArray(JsonArray? array)
-    {
-        if (array is null || array.Count == 0)
-        {
-            return null;
-        }
-        var list = new List<string>(array.Count);
-        foreach (var node in array)
-        {
-            if (node is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrEmpty(s))
-            {
-                list.Add(s);
-            }
-        }
-        return list.Count > 0 ? list : null;
-    }
 }

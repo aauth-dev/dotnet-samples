@@ -619,7 +619,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         var (signedClient, plainHttp, _) = await BuildSignedAgentClientAsync(agentKey, "aauth:browser@ap.example");
         var request = await PersonTokenFlow.TokenRequestAsync(signedClient, agentKey);
         request["justification"] = "Trust me <script>alert(1)</script>";
-        request["platform"] = "ios";
+        request["platform"] = AAuthConstants.Platforms.Mobile;
         request["device"] = "Pixel 8 (App)";
         using var initial = await signedClient.PostAsJsonAsync("/token", request);
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
@@ -637,7 +637,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         var agentSection = html[agent..html.IndexOf("</section>", agent, StringComparison.Ordinal)];
         Assert.Contains("The agent says (not verified)", agentSection);
         Assert.Contains("Trust me &lt;script&gt;alert(1)&lt;/script&gt;", agentSection);
-        Assert.Contains("ios", agentSection);
+        Assert.Contains(AAuthConstants.Platforms.Mobile, agentSection);
         Assert.Contains("Pixel 8 (App)", agentSection);
         Assert.DoesNotContain("<script>", html);
         var resourceSection = html[resource..html.IndexOf("</section>", resource, StringComparison.Ordinal)];

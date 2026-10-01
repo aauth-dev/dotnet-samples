@@ -173,7 +173,8 @@ public class PersonServerMapperTests
     }
 
     // A person token this PS issued to the agent for the resource (§Person Token Structure).
-    private static ValueTask<string> PersonTokenAsync(AAuthKey agentKey, string? missionS256 = null, string subject = "user-42")
+    private static ValueTask<string> PersonTokenAsync(
+        AAuthKey agentKey, string? missionS256 = null, string subject = "user-42", TimeSpan? lifetime = null)
         => new PersonTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
@@ -181,7 +182,7 @@ public class PersonServerMapperTests
             Audience = ResourceUrl,
             Subject = subject,
             ConfirmationKey = agentKey,
-            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.Add(lifetime ?? TimeSpan.FromHours(1)),
             Key = PsKey,
             KeyId = PsKid,
             MissionS256 = missionS256,
@@ -612,7 +613,7 @@ public class PersonServerMapperTests
 
         var request = await TokenRequestAsync(agentKey);
         request["prompt"] = "consent";
-        request["capabilities"] = new JsonArray("interaction", "payment");
+        request["capabilities"] = new JsonArray(AAuthConstants.Capabilities.Interaction, AAuthConstants.Capabilities.Payment);
         using var response = await http.PostAsJsonAsync("/token", request);
 
         Assert.True(response.IsSuccessStatusCode,
@@ -620,8 +621,8 @@ public class PersonServerMapperTests
         Assert.NotNull(asserter.Last);
         Assert.Equal("consent", asserter.Last!.Prompt);
         Assert.NotNull(asserter.Last.Capabilities);
-        Assert.Contains("interaction", asserter.Last.Capabilities!);
-        Assert.Contains("payment", asserter.Last.Capabilities!);
+        Assert.Contains(AAuthConstants.Capabilities.Interaction, asserter.Last.Capabilities!);
+        Assert.Contains(AAuthConstants.Capabilities.Payment, asserter.Last.Capabilities!);
 
         await host.StopAsync();
     }
@@ -636,13 +637,13 @@ public class PersonServerMapperTests
         using var response = await http.PostAsJsonAsync("/person", new JsonObject
         {
             ["resource"] = ResourceUrl, ["login_hint"] = "alice@example.com",
-            ["capabilities"] = new JsonArray("interaction", "payment"),
+            ["capabilities"] = new JsonArray(AAuthConstants.Capabilities.Interaction, AAuthConstants.Capabilities.Payment),
         });
 
         Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
         Assert.True(asserter.Last!.PersonTokenRequest);
         Assert.Equal("alice@example.com", asserter.Last.LoginHint);
-        Assert.Equal(["interaction", "payment"], asserter.Last.Capabilities!);
+        Assert.Equal([AAuthConstants.Capabilities.Interaction, AAuthConstants.Capabilities.Payment], asserter.Last.Capabilities!);
         await host.StopAsync();
     }
 
@@ -850,13 +851,13 @@ public class PersonServerMapperTests
         using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
         var body = path == "/token" ? await TokenRequestAsync(agentKey) : new JsonObject { ["resource"] = ResourceUrl };
         body["justification"] = "# Booking your trip";
-        body["platform"] = "ios";
+        body["platform"] = AAuthConstants.Platforms.Mobile;
         body["device"] = "Pixel 8 (App)";
 
         using var response = await http.PostAsJsonAsync(path, body);
 
         Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
-        Assert.Equal(new AgentAssertedContent { Justification = "# Booking your trip", Platform = "ios", Device = "Pixel 8 (App)" },
+        Assert.Equal(new AgentAssertedContent { Justification = "# Booking your trip", Platform = AAuthConstants.Platforms.Mobile, Device = "Pixel 8 (App)" },
             asserter.Last!.AgentAsserted);
         if (path == "/token")
         {
@@ -884,6 +885,69 @@ public class PersonServerMapperTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
         Assert.Null(asserter.Last);
+        await host.StopAsync();
+    }
+
+    [Theory(DisplayName = "§Agent Token Request — invalid platform/device are invalid_request before the asserter")]
+    [InlineData("/token", "platform", "evil-os")]
+    [InlineData("/person", "platform", "evil-os")]
+    [InlineData("/token", "device", "line\nbreak")]
+    [InlineData("/person", "device", "line\nbreak")]
+    public async Task AgentAssertedContent_InvalidPlatformOrDevice_Rejected(string path, string member, string value)
+    {
+        var agentKey = AAuthKey.Generate();
+        var asserter = new CapturingAsserter();
+        using var host = await BuildHostAsync(asserter);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var body = path == "/token" ? await TokenRequestAsync(agentKey) : new JsonObject { ["resource"] = ResourceUrl };
+        body[member] = value;
+
+        using var response = await http.PostAsJsonAsync(path, body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Null(asserter.Last);
+        await host.StopAsync();
+    }
+
+    [Theory(DisplayName = "§Agent Token Request — present malformed capabilities are invalid_request before the asserter")]
+    [InlineData("/token", "\"x\"")]
+    [InlineData("/person", "\"x\"")]
+    [InlineData("/token", "[\"interaction\",7]")]
+    [InlineData("/person", "[\"\"]")]
+    [InlineData("/token", "[\"bad space\"]")]
+    public async Task Capabilities_Malformed_Rejected(string path, string json)
+    {
+        var agentKey = AAuthKey.Generate();
+        var asserter = new CapturingAsserter();
+        using var host = await BuildHostAsync(asserter);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var body = path == "/token" ? await TokenRequestAsync(agentKey) : new JsonObject { ["resource"] = ResourceUrl };
+        body["capabilities"] = JsonNode.Parse(json);
+
+        using var response = await http.PostAsJsonAsync(path, body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Null(asserter.Last);
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Agent Token Request — capabilities empty array is distinct from omission")]
+    public async Task Capabilities_EmptyArray_ReachesAsserter()
+    {
+        var agentKey = AAuthKey.Generate();
+        var asserter = new CapturingAsserter();
+        using var host = await BuildHostAsync(asserter);
+        using var http = await SignedAgentClientAsync(host, agentKey, AgentId);
+        var body = await TokenRequestAsync(agentKey);
+        body["capabilities"] = new JsonArray();
+
+        using var response = await http.PostAsJsonAsync("/token", body);
+
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        Assert.NotNull(asserter.Last!.Capabilities);
+        Assert.Empty(asserter.Last.Capabilities);
         await host.StopAsync();
     }
 
@@ -1097,6 +1161,81 @@ public class PersonServerMapperTests
             Assert.Equal(HttpStatusCode.Gone, again.StatusCode);
         }
         else Assert.Equal(HttpStatusCode.Accepted, poll.StatusCode);
+    }
+
+    [Theory(DisplayName = "§Updated Request — replacement presented token recomputes the grant ceiling")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Clarification_ReplacementRecomputesGrantCeiling(bool longerLivedReplacement)
+    {
+        var key = AAuthKey.Generate();
+        using var host = await BuildHostAsync(consent: new StubMissionConsent(context =>
+            context.Scope == "read" ? MissionTokenConsentDecision.Grant() : MissionTokenConsentDecision.Clarify("Narrow scope?")));
+        using var client = await SignedAgentClientAsync(host, key, AgentId);
+        var originalPerson = await PersonTokenAsync(key, S256, lifetime: longerLivedReplacement ? TimeSpan.FromMinutes(5) : TimeSpan.FromMinutes(45));
+        var original = new JsonObject
+        {
+            ["resource_token"] = await ResourceTokenAsync(key, originalPerson, PsIssuer, "read write"),
+            ["presented_token"] = originalPerson,
+        };
+        using var initial = await client.PostAsJsonAsync("/token", original);
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+
+        var replacementPerson = await PersonTokenAsync(key, S256, lifetime: longerLivedReplacement ? TimeSpan.FromMinutes(45) : TimeSpan.FromMinutes(5));
+        using var update = await client.PostAsJsonAsync(initial.Headers.Location, new JsonObject
+        {
+            ["action"] = "updated_request",
+            ["resource_token"] = await ResourceTokenAsync(key, replacementPerson, PsIssuer, "read"),
+            ["presented_token"] = replacementPerson,
+        });
+        Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
+
+        using var poll = await client.GetAsync(initial.Headers.Location);
+        Assert.Equal(HttpStatusCode.OK, poll.StatusCode);
+        var auth = DecodePayload((await poll.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]!.GetValue<string>());
+        var authExp = (long)auth["exp"]!;
+        var originalExp = (long)DecodePayload(originalPerson)["exp"]!;
+        var replacementExp = (long)DecodePayload(replacementPerson)["exp"]!;
+        Assert.True(authExp <= replacementExp);
+        if (longerLivedReplacement)
+        {
+            Assert.True(authExp > originalExp + 60, "A longer-lived replacement may grow the active ceiling.");
+        }
+        else
+        {
+            Assert.True(authExp < originalExp - 60, "A shorter-lived replacement must shrink the active ceiling.");
+        }
+    }
+
+    [Fact(DisplayName = "§Updated Request — revoking the replacement presented token denies the pending grant")]
+    public async Task Clarification_ReplacementPresentedRevocationDeniesGrant()
+    {
+        var key = AAuthKey.Generate();
+        var inventory = new InMemoryJtiStore();
+        using var host = await BuildHostAsync(inventory: inventory, consent: new StubMissionConsent(context =>
+            context.Scope == "read" ? MissionTokenConsentDecision.Grant() : MissionTokenConsentDecision.Clarify("Narrow scope?")));
+        using var client = await SignedAgentClientAsync(host, key, AgentId);
+        using var initial = await client.PostAsJsonAsync("/token", await TokenRequestAsync(key, scope: "read write", missionS256: S256));
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        var replacementPerson = await PersonTokenAsync(key, S256);
+        using var update = await client.PostAsJsonAsync(initial.Headers.Location, new JsonObject
+        {
+            ["action"] = "updated_request",
+            ["resource_token"] = await ResourceTokenAsync(key, replacementPerson, PsIssuer, "read"),
+            ["presented_token"] = replacementPerson,
+        });
+        Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
+
+        var replacement = DecodePayload(replacementPerson);
+        await inventory.RevokeAsync(
+            new TokenKey(PsIssuer, replacement["jti"]!.GetValue<string>()),
+            DateTimeOffset.FromUnixTimeSeconds(replacement["exp"]!.GetValue<long>()));
+
+        using var poll = await client.GetAsync(initial.Headers.Location);
+        Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
+        var problem = (await poll.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("revoked", (string?)problem["error"]);
+        Assert.Contains("presented", (string?)problem["detail"], StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

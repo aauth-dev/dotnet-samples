@@ -1259,6 +1259,17 @@ public class DeferredFederationTests
     }
 
     [Fact]
+    public async Task PsLocalTriageCountsTowardClarificationRoundLimit()
+    {
+        await using var fixture = await Fixture.CreateAsync("local-repeat");
+        using var result = await fixture.Agent.PostAsJsonAsync("/token", await fixture.BodyAsync());
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        Assert.Equal(ClarificationExchange.DefaultMaxRounds, fixture.AsEntry.ClarificationRounds);
+        Assert.Equal("denied", (string?)(await result.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Equal(ClarificationExchange.DefaultMaxRounds, fixture.Policy.Last!.ClarificationHistory.Count);
+    }
+
+    [Fact]
     public async Task ClarificationDeadlineTerminatesBothPendingRequests()
     {
         await using var fixture = await Fixture.CreateAsync("timeout");
@@ -1303,7 +1314,7 @@ public class DeferredFederationTests
             if (outcome == "reconsent") return Task.FromResult(request.InteractionId is not null && request.ClarificationHistory.Count == 0
                 ? AccessDecision.NeedsClarification("Review the request", 30) : AccessDecision.NeedsInteraction());
             if (outcome == "interaction") return Task.FromResult(AccessDecision.NeedsInteraction());
-            if (outcome == "repeat" || (request.ClarificationHistory.Count == 0 && request.Scope != "read"))
+            if (outcome is "repeat" or "local-repeat" || (request.ClarificationHistory.Count == 0 && request.Scope != "read"))
                 return Task.FromResult(AccessDecision.NeedsClarification("Why this scope?", outcome == "timeout" ? 1 : 30));
             if (outcome == "deny") return Task.FromResult(AccessDecision.Deny("declined"));
             // §Claims Required: `sub` is never pushed; ask for identity claims until the PS pushes them.
@@ -1537,7 +1548,7 @@ public class DeferredFederationTests
                 o.Issuer = PsIssuer;
                 o.ResourceInteractionSessions = new BrowserConsentSessions("resource-consent-tests", "test-person", isolatedDemoAccess: _ => true);
                 o.SigningKeys = new AAuthSigningKeySet { ["key"] = psKey };
-                o.TriageClarificationAsync = outcome == "local"
+                o.TriageClarificationAsync = outcome is "local" or "local-repeat"
                     ? (_, _, _) => Task.FromResult<ClarificationResponse?>(ClarificationResponse.Respond("mission context answers this")) : null;
             }).UseTokenInventory(inventory);
             var person = personBuilder.Build();

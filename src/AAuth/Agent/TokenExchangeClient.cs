@@ -88,6 +88,18 @@ public sealed class TokenExchangeClient
             if (!AccountBinding.Matches(options.Account, AccountBinding.Read(payload)))
                 throw new TokenVerificationException("Resource token account differs from the requested account.");
         }
+        IAAuthSigner? signingKey = null;
+        string? signedAgentToken = null;
+        void ValidateClarificationUpdate(ClarificationResponse answer)
+        {
+            if (answer.Action != ClarificationResponse.Kind.Update)
+            {
+                return;
+            }
+
+            ValidateUpdatedRequestPair(resourceToken, answer.ResourceToken!, answer.PresentedToken!, signingKey);
+            ValidateResourceAccount(answer.ResourceToken!);
+        }
         ValidateResourceAccount(resourceToken);
 
         var onInteractionRequired = options.OnInteractionRequired;
@@ -112,7 +124,7 @@ public sealed class TokenExchangeClient
                 var answer = await clarify(question, ct);
                 if (answer.Action == ClarificationResponse.Kind.Update)
                 {
-                    ValidateResourceAccount(answer.ResourceToken!);
+                    ValidateClarificationUpdate(answer);
                     effectiveResourceToken = answer.ResourceToken!;
                     effectivePresentedToken = answer.PresentedToken!;
                 }
@@ -135,8 +147,6 @@ public sealed class TokenExchangeClient
             },
         };
 
-        IAAuthSigner? signingKey = null;
-        string? signedAgentToken = null;
         var response = await _exchange.PostAsync(
             tokenEndpointUri, body, exchangeOptions, cancellationToken, request =>
             {
@@ -249,7 +259,7 @@ public sealed class TokenExchangeClient
         DeferredExchange.AddIfPresent(body, "upstream_token", options.UpstreamToken);
         DeferredExchange.AddIfPresent(body, "subagent_token", options.SubagentToken);
         var capabilities = options.Capabilities ?? InferCapabilities(options.OnInteractionRequired, options.OnClarificationRequired);
-        if (capabilities.Count > 0)
+        if (options.Capabilities is not null || capabilities.Count > 0)
         {
             var caps = new JsonArray();
             foreach (var capability in capabilities)
@@ -278,13 +288,55 @@ public sealed class TokenExchangeClient
         var capabilities = new List<string>();
         if (onInteractionRequired is not null)
         {
-            capabilities.Add("interaction");
+            capabilities.Add(AAuthConstants.Capabilities.Interaction);
         }
         if (onClarificationRequired is not null)
         {
-            capabilities.Add("clarification");
+            capabilities.Add(AAuthConstants.Capabilities.Clarification);
         }
         return capabilities;
+    }
+
+    private static void ValidateUpdatedRequestPair(
+        string originalResourceToken,
+        string replacementResourceToken,
+        string replacementPresentedToken,
+        IAAuthKey? signingKey)
+    {
+        var original = Payload(originalResourceToken);
+        var replacement = Payload(replacementResourceToken);
+        var presented = Payload(replacementPresentedToken);
+        TokenVerifier.RequireSameResourceRequest(original, replacement);
+
+        if (!string.Equals((string?)replacement["presented_jti"], (string?)presented["jti"], StringComparison.Ordinal))
+        {
+            throw new TokenVerificationException("Replacement resource token 'presented_jti' does not match the replacement presented token.");
+        }
+
+        foreach (var claim in new[] { "sub", "mission_s256", "tenant" })
+        {
+            if (!JsonNode.DeepEquals(replacement[claim], presented[claim]))
+            {
+                throw new TokenVerificationException($"Replacement presented token changes '{claim}'.");
+            }
+        }
+
+        if (signingKey is not null
+            && !string.Equals((string?)replacement["agent_jkt"], signingKey.ComputeJwkThumbprint(), StringComparison.Ordinal))
+        {
+            throw new TokenVerificationException("Replacement resource token 'agent_jkt' does not match the signing key.");
+        }
+
+        static JsonObject Payload(string jwt)
+        {
+            var segments = jwt.Split('.');
+            if (segments.Length != 3)
+            {
+                throw new TokenVerificationException("Replacement tokens must be compact JWS values.");
+            }
+
+            return TokenVerifier.DecodeJsonSegment(segments[1], "payload");
+        }
     }
 
     private static async Task<bool> IsDeniedAsync(

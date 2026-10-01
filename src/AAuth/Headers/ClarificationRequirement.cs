@@ -70,6 +70,10 @@ public sealed record ClarificationRequirement(
         if (body?[TimeoutField] is JsonValue timeoutValue
             && timeoutValue.TryGetValue(out int seconds))
         {
+            if (seconds <= 0)
+            {
+                throw new FormatException("clarification timeout must be a positive number of seconds.");
+            }
             timeout = seconds;
         }
 

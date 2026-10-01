@@ -188,6 +188,11 @@ builder.Services.AddAAuthAgent("calendar", builder.Configuration.GetSection("AAu
 }
 ```
 
+In code, use `AAuthConstants.Capabilities.Interaction`,
+`AAuthConstants.Capabilities.Clarification` and
+`AAuthConstants.Capabilities.Payment` instead of duplicating these protocol
+strings.
+
 A self-issued agent binds `"SelfIssued": { "Issuer": "…", "Subject": "…" }`
 instead of `AgentProvider`. Scalars bind; delegate and instance members are
 code-only: `Signer`, `AgentTokenFactory`, `TokenRefresher`, `SignatureKeyProvider`,

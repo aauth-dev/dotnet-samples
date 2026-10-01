@@ -75,6 +75,38 @@ public static class AAuthConstants
         public const string PerCall = "per-call";
     }
 
+    /// <summary>Values from the AAuth Platform Value Registry.</summary>
+    public static class Platforms
+    {
+        /// <summary>Browser-hosted web application.</summary>
+        public const string Web = "web";
+
+        /// <summary>Native mobile application.</summary>
+        public const string Mobile = "mobile";
+
+        /// <summary>Native desktop application.</summary>
+        public const string Desktop = "desktop";
+
+        /// <summary>Headless server-class workload.</summary>
+        public const string Workload = "workload";
+
+        /// <summary>User-controlled deployment under a domain the user controls.</summary>
+        public const string SelfHosted = "self-hosted";
+    }
+
+    /// <summary>Known AAuth capability tokens.</summary>
+    public static class Capabilities
+    {
+        /// <summary>Agent can handle interaction flows.</summary>
+        public const string Interaction = "interaction";
+
+        /// <summary>Agent can engage in clarification chat.</summary>
+        public const string Clarification = "clarification";
+
+        /// <summary>Agent can handle payment flows.</summary>
+        public const string Payment = "payment";
+    }
+
     /// <summary>Metadata member names defined by the AAuth protocol.</summary>
     public static class MetadataFields
     {

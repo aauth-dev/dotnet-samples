@@ -163,9 +163,26 @@ internal sealed class DeferredExchange
 
                     clarificationExchange ??= new ClarificationExchange(
                         _signedClient, pendingUrl, options.MaxClarificationRounds);
-                    var decision = await options.OnClarificationRequired(clarification!, cancellationToken).WaitAsync(cancellationToken)
-                        .ConfigureAwait(false);
-                    await clarificationExchange.ApplyAsync(decision, cancellationToken).ConfigureAwait(false);
+                    using var roundDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    if (clarification!.TimeoutSeconds is int timeoutSeconds)
+                    {
+                        roundDeadline.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+                    }
+
+                    ClarificationResponse decision;
+                    try
+                    {
+                        decision = await options.OnClarificationRequired(clarification, roundDeadline.Token)
+                            .WaitAsync(roundDeadline.Token).ConfigureAwait(false);
+                        roundDeadline.Token.ThrowIfCancellationRequested();
+                        await clarificationExchange.ApplyAsync(decision, roundDeadline.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException exception)
+                        when (!cancellationToken.IsCancellationRequested && roundDeadline.IsCancellationRequested)
+                    {
+                        throw new AAuthInteractionTimeoutException(
+                            "Clarification response exceeded the server deadline.", exception);
+                    }
 
                     // After answering, the PS may escalate to a user-interaction
                     // gate (§Clarification Chat then §User Interaction). Stop the

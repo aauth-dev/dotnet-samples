@@ -513,7 +513,12 @@ distinction. Treat agent-asserted content as untrusted: sanitize the Markdown
 resource-asserted content covers the same operation. MockPersonServer's consent
 page renders it in a separate "The agent says (not verified)" panel. A request
 whose `justification`, `platform` or `device` isn't a string gets `400
-invalid_request`.
+invalid_request`. `platform`, when present, must be one of the vendored registry
+values `web`, `mobile`, `desktop`, `workload` or `self-hosted`; `device` must be
+printable Unicode and at most 64 scalar values; and a present malformed
+`capabilities` value (non-array, non-string member, empty string, or invalid
+HTTP token) is also `400 invalid_request`. `capabilities: []` is a deliberate
+empty declaration, distinct from omitting `capabilities`.
 
 The shipped [`DefaultIdentityClaimsAsserter`](../../samples/MockPersonServer/)
 asserts a fixed directed `sub` with no prompt (a non-interactive demo PS); a

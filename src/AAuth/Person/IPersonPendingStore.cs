@@ -152,13 +152,39 @@ public sealed class PersonPendingEntry
 
     public required DateTimeOffset AgentTokenExpiresAt { get; init; }
 
-    public DateTimeOffset? AuthorizationExpiresAt { get; init; }
+    internal DateTimeOffset IssuanceExpiresAt { get; set; }
+
+    private DateTimeOffset? _authorizationExpiresAt;
+
+    public DateTimeOffset? AuthorizationExpiresAt
+    {
+        get => _authorizationExpiresAt;
+        init => _authorizationExpiresAt = value;
+    }
 
     public DateTimeOffset ExpiresAt => AuthorizationExpiresAt is { } expiry && expiry < AgentTokenExpiresAt
         ? expiry : AgentTokenExpiresAt;
 
     public DateTimeOffset PendingExpiresAt => new[] { ExpiresAt, CreatedAt.AddMinutes(10),
         ClarificationDeadline ?? ExpiresAt }.Min();
+
+    internal void ReplaceActiveAuthorization(
+        DateTimeOffset authorizationExpiresAt,
+        IReadOnlyList<AAuth.Server.TokenRegistration> sourceTokens,
+        string resourceToken,
+        string presentedToken,
+        JsonObject resourceContext,
+        string scope,
+        PersonResourceInteraction? resourceInteraction)
+    {
+        _authorizationExpiresAt = authorizationExpiresAt;
+        SourceTokens = sourceTokens;
+        ResourceToken = resourceToken;
+        PresentedToken = presentedToken;
+        ResourceContext = resourceContext;
+        Scope = scope;
+        ResourceInteraction = resourceInteraction;
+    }
 
     /// <summary>
     /// The agent's confirmation key (<c>cnf.jwk</c> binding) — set for the
@@ -315,6 +341,7 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
             Scope = scope,
             AgentId = agentId,
             AgentTokenExpiresAt = agentTokenExpiresAt,
+            IssuanceExpiresAt = agentTokenExpiresAt,
             AuthorizationExpiresAt = authorizationExpiresAt,
             AgentConfirmationKey = agentConfirmationKey,
             MissionS256 = missionS256,

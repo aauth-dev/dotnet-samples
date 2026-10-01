@@ -61,7 +61,9 @@ public sealed class ClarificationResponse
   reduced scope) and the `presented_token` the agent presented to obtain it, plus
   an optional (RECOMMENDED) justification. The replacement must keep the original
   resource token's `iss`, `ps`, `sub`, `agent_jkt`, `mission_s256`, and `tenant`;
-  only `presented_jti` may differ.
+  only `presented_jti` may differ. The agent pre-validates those structural
+  claims before posting the update; the PS still verifies the signed replacement
+  pair and recomputes the active lifetime/source-token ceiling from it.
 - `Cancel` withdraws the request entirely.
 
 ## Driving the chat: `ClarificationExchange`
@@ -120,6 +122,8 @@ var request = new TokenExchangeRequest
     OnClarificationRequired = async (requirement, ct) =>
     {
         // requirement.Clarification is untrusted — sanitize before display.
+        // The cancellation token is bounded by the server's optional timeout;
+        // do not ignore it while waiting on UI, tools, or model calls.
         string question = WebUtility.HtmlEncode(requirement.Clarification);
 
         if (requirement.Options is { Count: > 0 } options)
@@ -157,6 +161,9 @@ var session = await governance.ProposeMissionAsync(
 
 When the callback is `null` and the server asks for clarification, the request
 fails rather than blocking.
+If the server includes `timeout`, the callback token is cancelled at that
+deadline and the SDK does not POST a late `clarification_response` or
+`updated_request`.
 
 ## Server side: emitting a clarification
 

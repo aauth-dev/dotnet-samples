@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Discovery;
 using AAuth.Headers;
+using Microsoft.IdentityModel.Tokens;
 using Xunit;
 
 namespace AAuth.Conformance.Missions;
@@ -21,7 +22,7 @@ public class ClarificationChatTests
 {
     private const string Ps = "http://localhost:5555";
     private const string Presented = "presented.person.token";
-    private const string UpdatedPresented = "updated.person.token";
+    private static readonly string UpdatedPresented = PresentedToken("person-token-1", "person-1");
     private static readonly DeferredPollerOptions ImmediatePolling = new()
     {
         DefaultPollInterval = TimeSpan.Zero,
@@ -33,6 +34,18 @@ public class ClarificationChatTests
         var http = new InProcessHttpClient(handler) { BaseAddress = new Uri(Ps) };
         var metadata = new MetadataClient(new InProcessHttpClient(handler));
         return new TokenExchangeClient(http, metadata);
+    }
+
+    private static string PresentedToken(string jti, string subject)
+    {
+        var payload = new JsonObject
+        {
+            ["iss"] = "https://ps.test",
+            ["jti"] = jti,
+            ["sub"] = subject,
+            ["exp"] = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+        };
+        return Base64UrlEncoder.Encode("{}") + "." + Base64UrlEncoder.Encode(payload.ToJsonString()) + ".x";
     }
 
     [Fact(DisplayName = "§Clarification Required — requirement=clarification parsed into a typed model")]
@@ -169,6 +182,51 @@ public class ClarificationChatTests
         Assert.Contains("clarification", handler.DeclaredCapabilities);
     }
 
+    [Fact(DisplayName = "§Clarification Required — late answers are not posted after timeout")]
+    public async Task Clarification_LateAnswer_NotPosted()
+    {
+        var handler = new ClarificationHandler { TimeoutSeconds = 1 };
+        var client = BuildClient(handler);
+
+        await Assert.ThrowsAsync<AAuthInteractionTimeoutException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
+        {
+            PresentedToken = Presented,
+            PollerOptions = ImmediatePolling,
+            OnClarificationRequired = async (_, _) =>
+            {
+                await Task.Delay(1500);
+                return ClarificationResponse.Respond("too late");
+            },
+        }));
+
+        Assert.Equal(0, handler.PendingPosts);
+        Assert.Null(handler.LastClarificationResponse);
+        Assert.False(handler.DeleteCalled);
+    }
+
+    [Theory(DisplayName = "§Updated Request — mismatched replacement pairs are rejected locally")]
+    [InlineData("presented_jti")]
+    [InlineData("sub")]
+    public async Task Clarification_UpdateMismatch_NotPosted(string variant)
+    {
+        var handler = new ClarificationHandler();
+        var client = BuildClient(handler);
+        var replacementPresented = variant == "presented_jti"
+            ? PresentedToken("other-jti", "person-1")
+            : PresentedToken("person-token-1", "someone-else");
+
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
+        {
+            PresentedToken = Presented,
+            PollerOptions = ImmediatePolling,
+            OnClarificationRequired = (_, _) =>
+                Task.FromResult(ClarificationResponse.Update(TestTokens.UpdatedResource, replacementPresented)),
+        }));
+
+        Assert.Equal(0, handler.PendingPosts);
+        Assert.Null(handler.LastUpdatedResourceToken);
+    }
+
     /// <summary>
     /// Stateful PS mock: first POST /token returns a clarification 202; after the
     /// agent answers on the pending URL, a GET returns the auth token. With
@@ -177,11 +235,13 @@ public class ClarificationChatTests
     private sealed class ClarificationHandler : HttpMessageHandler
     {
         public bool AlwaysClarify { get; init; }
+        public int TimeoutSeconds { get; init; } = 120;
         public string? LastClarificationResponse { get; private set; }
         public string? LastUpdatedResourceToken { get; private set; }
         public string? LastUpdatedPresentedToken { get; private set; }
         public string? LastUpdatedJustification { get; private set; }
         public bool DeleteCalled { get; private set; }
+        public int PendingPosts { get; private set; }
         public List<string> DeclaredCapabilities { get; } = new();
 
         private bool _answered;
@@ -217,11 +277,12 @@ public class ClarificationChatTests
                         if (v is not null) { DeclaredCapabilities.Add(v); }
                     }
                 }
-                return Clarify();
+                return Clarify(TimeoutSeconds);
             }
 
             if (path == "/pending/abc" && request.Method == HttpMethod.Post)
             {
+                PendingPosts++;
                 var body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))?.AsObject();
                 if (body?["clarification_response"] is { } cr)
                 {
@@ -241,23 +302,23 @@ public class ClarificationChatTests
             {
                 if (AlwaysClarify)
                 {
-                    return Clarify();
+                    return Clarify(TimeoutSeconds);
                 }
                 return _answered
                     ? Json(HttpStatusCode.OK, new JsonObject { ["auth_token"] = "fake-auth-token" })
-                    : Clarify();
+                    : Clarify(TimeoutSeconds);
             }
 
             return new HttpResponseMessage(HttpStatusCode.NotFound);
         }
 
-        private static HttpResponseMessage Clarify()
+        private static HttpResponseMessage Clarify(int timeoutSeconds)
         {
             var response = Json(HttpStatusCode.Accepted, new JsonObject
             {
                 ["status"] = "pending",
                 ["clarification"] = "Why do you need write access?",
-                ["timeout"] = 120,
+                ["timeout"] = timeoutSeconds,
             });
             response.Headers.Location = new Uri(Ps + "/pending/abc");
             response.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, "requirement=clarification");

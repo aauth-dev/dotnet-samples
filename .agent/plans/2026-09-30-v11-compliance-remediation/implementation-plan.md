@@ -401,13 +401,13 @@ one critical-section design (RT-3 conflict 3).
 - [x] Completion records `completed`.
 - [x] Absent, foreign-agent and foreign-PS missions produce identical
       responses (spy-store contract test).
-- [ ] An `updated_request` with a shorter-lived or revoked replacement bounds
+- [x] An `updated_request` with a shorter-lived or revoked replacement bounds
       or denies the grant. A longer-lived replacement recomputes the ceiling.
-- [ ] Triage rounds count toward the cap.
-- [ ] `platform:"evil-os"`, a control character in `device`, and
+- [x] Triage rounds count toward the cap.
+- [x] `platform:"evil-os"`, a control character in `device`, and
       `capabilities:"x"` all get 400.
-- [ ] The agent suppresses a late clarification POST.
-- [ ] The gates, including Keycloak, are green.
+- [x] The agent suppresses a late clarification POST.
+- [x] The gates, including Keycloak, are green.
 
 ## Phase 8 — Governance endpoints (R12)
 

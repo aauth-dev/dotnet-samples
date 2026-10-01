@@ -664,7 +664,7 @@ public class ChallengeHandlerTests
 
         var caps = body!["capabilities"]!.AsArray();
         Assert.Single(caps);
-        Assert.Equal("interaction", (string)caps[0]!);
+        Assert.Equal(AAuthConstants.Capabilities.Interaction, (string)caps[0]!);
     }
 
     [Fact(DisplayName = "TokenExchangeClient — omits capabilities when no callback and none specified")]
@@ -680,22 +680,23 @@ public class ChallengeHandlerTests
     {
         var body = await CaptureExchangeBodyAsync(
             onInteractionRequired: (_, _) => Task.CompletedTask,
-            capabilities: new[] { "interaction", "payment" });
+            capabilities: new[] { AAuthConstants.Capabilities.Interaction, AAuthConstants.Capabilities.Payment });
 
         var caps = body!["capabilities"]!.AsArray();
         Assert.Equal(2, caps.Count);
-        Assert.Equal("interaction", (string)caps[0]!);
-        Assert.Equal("payment", (string)caps[1]!);
+        Assert.Equal(AAuthConstants.Capabilities.Interaction, (string)caps[0]!);
+        Assert.Equal(AAuthConstants.Capabilities.Payment, (string)caps[1]!);
     }
 
-    [Fact(DisplayName = "TokenExchangeClient — empty capabilities list suppresses the field")]
-    public async Task ExchangeBody_EmptyCapabilities_Suppresses()
+    [Fact(DisplayName = "TokenExchangeClient — empty capabilities list sends an empty field")]
+    public async Task ExchangeBody_EmptyCapabilities_SendsEmpty()
     {
         var body = await CaptureExchangeBodyAsync(
             onInteractionRequired: (_, _) => Task.CompletedTask,
             capabilities: Array.Empty<string>());
 
-        Assert.False(body!.ContainsKey("capabilities"));
+        Assert.True(body!.ContainsKey("capabilities"));
+        Assert.Empty(body["capabilities"]!.AsArray());
     }
 
     [Fact(DisplayName = "TokenExchangeClient — sends prompt when supplied")]

@@ -747,8 +747,8 @@ public sealed partial class TourSession
     {
         _capCycle = cycle;
         var endpoint = _tokenEndpoint ?? $"{PersonServerUrl}/token";
-        var capabilities = new JsonArray("interaction");
-        if (clarification) capabilities.Add("clarification");
+        var capabilities = new JsonArray(AAuthConstants.Capabilities.Interaction);
+        if (clarification) capabilities.Add(AAuthConstants.Capabilities.Clarification);
         var body = new JsonObject
         {
             ["resource_token"] = _resourceToken,

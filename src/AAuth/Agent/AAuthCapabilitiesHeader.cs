@@ -1,37 +1,25 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using AAuth.Protocol;
 
 namespace AAuth.Agent;
 
 /// <summary>
 /// Models the <c>AAuth-Capabilities</c> header that agents send on outbound
 /// requests to declare what flows they support (§AAuth-Capabilities Request
-/// Header). The spec defines exactly three capability values.
+/// Header).
 /// </summary>
 public static class AAuthCapabilitiesHeader
 {
     /// <summary>The HTTP header name.</summary>
     public const string Name = "AAuth-Capabilities";
 
-    /// <summary>Known capability values.</summary>
-    public static class Capabilities
-    {
-        /// <summary>Agent can handle interaction flows (redirect to URL + code).</summary>
-        public const string Interaction = "interaction";
-
-        /// <summary>Agent can handle clarification requirements.</summary>
-        public const string Clarification = "clarification";
-
-        /// <summary>Agent can handle payment-required flows (402).</summary>
-        public const string Payment = "payment";
-    }
-
     /// <summary>Format the header value from a set of capabilities.</summary>
     public static string Format(IEnumerable<string> capabilities)
     {
         ArgumentNullException.ThrowIfNull(capabilities);
-        return string.Join(", ", capabilities);
+        return string.Join(", ", AAuthProtocolInput.ValidateCapabilities(capabilities, nameof(capabilities)));
     }
 
     /// <summary>Format the header value from individual capabilities.</summary>
@@ -42,7 +30,9 @@ public static class AAuthCapabilitiesHeader
     {
         if (string.IsNullOrWhiteSpace(headerValue))
             return Array.Empty<string>();
-        return headerValue.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return AAuthProtocolInput.ValidateCapabilities(
+            headerValue.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries),
+            nameof(headerValue));
     }
 
     /// <summary>
@@ -65,9 +55,7 @@ public static class AAuthCapabilitiesHeader
                 return;
             foreach (var capability in source)
             {
-                if (string.IsNullOrWhiteSpace(capability))
-                    continue;
-                var trimmed = capability.Trim();
+                var trimmed = AAuthProtocolInput.ValidateCapability(capability, nameof(capability));
                 if (seen.Add(trimmed))
                     result.Add(trimmed);
             }

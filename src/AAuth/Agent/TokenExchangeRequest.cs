@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Headers;
+using AAuth.Protocol;
 
 namespace AAuth.Agent;
 
@@ -59,7 +60,13 @@ public sealed class TokenExchangeRequest
     /// flow: <c>"interaction"</c> is sent when <see cref="OnInteractionRequired"/>
     /// is non-null. An explicit (possibly empty) list overrides inference.
     /// </summary>
-    public IReadOnlyList<string>? Capabilities { get; init; }
+    public IReadOnlyList<string>? Capabilities
+    {
+        get => _capabilities;
+        init => _capabilities = value is null
+            ? null
+            : AAuthProtocolInput.ValidateCapabilities(value, nameof(Capabilities));
+    }
 
     /// <summary>
     /// Optional OIDC <c>prompt</c> value (e.g. <c>"consent"</c>, <c>"login"</c>,
@@ -98,7 +105,11 @@ public sealed class TokenExchangeRequest
     /// MUST be a value from the AAuth Platform Value Registry; used for display
     /// at the PS consent screen / connected-agents dashboard (§Agent Token Request).
     /// </summary>
-    public string? Platform { get; init; }
+    public string? Platform
+    {
+        get => _platform;
+        init => _platform = AAuthProtocolInput.ValidatePlatform(value, nameof(Platform));
+    }
 
     /// <summary>
     /// Optional <c>device</c> string identifying the device/browser for display
@@ -108,39 +119,12 @@ public sealed class TokenExchangeRequest
     public string? Device
     {
         get => _device;
-        init => _device = ValidateDevice(value);
+        init => _device = AAuthProtocolInput.ValidateDevice(value, nameof(Device));
     }
 
+    private readonly IReadOnlyList<string>? _capabilities;
+    private readonly string? _platform;
     private readonly string? _device;
-
-    // §Agent Token Request: `device` MUST be printable (no control characters) and
-    // ≤ 64 characters. Reject anything outside printable ASCII (32–126) so display
-    // surfaces never receive control characters; allow null/empty (the field is optional).
-    private static string? ValidateDevice(string? value)
-    {
-        if (value is null)
-        {
-            return null;
-        }
-
-        if (value.Length > 64)
-        {
-            throw new ArgumentException(
-                $"device must be at most 64 characters (was {value.Length}).", nameof(Device));
-        }
-
-        foreach (var ch in value)
-        {
-            if (ch < ' ' || ch > '~')
-            {
-                throw new ArgumentException(
-                    "device must contain only printable ASCII characters (no control characters).",
-                    nameof(Device));
-            }
-        }
-
-        return value;
-    }
 
     /// <summary>
     /// Invoked when the PS returns <c>202</c> with

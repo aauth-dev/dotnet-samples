@@ -312,12 +312,13 @@ value. The provider does not supply the private key. The constructor also accept
 an optional `TimeProvider` for deterministic tests.
 
 Configure `Label` (default `"sig"`) to match the provider's signature label,
-`Capabilities` to declare outbound capabilities, and `OnSignatureBase` to inspect
-the canonical signed input. Per-request `AdditionalComponentsKey` selects extra
-covered components. The handler validates that the provider's `Signature-Key`
-member uses the same label as `Label`; mismatches fail locally instead of
-emitting invalid wire output. Prefer `AAuthClientBuilder` for ordinary client
-composition.
+`Capabilities` to declare outbound capabilities (for code, prefer
+`AAuthConstants.Capabilities.Interaction`, `.Clarification` and `.Payment`), and
+`OnSignatureBase` to inspect the canonical signed input. Per-request
+`AdditionalComponentsKey` selects extra covered components. The handler validates
+that the provider's `Signature-Key` member uses the same label as `Label`;
+mismatches fail locally instead of emitting invalid wire output. Prefer
+`AAuthClientBuilder` for ordinary client composition.
 
 The signer never future-dates the RFC 9421 `created` parameter. To avoid a
 duplicate replay tuple, a second request with the same signing key, method,
@@ -366,7 +367,7 @@ delegates or instances; every other member binds from configuration, such as
 | `Challenge` | `ChallengeHandlingOptions` | No | PS interaction/clarification callbacks and polling |
 | `HandleInteractions` | `bool?` | No | Override the interaction-handling default (on when an `Interaction` callback is set) |
 | `Interaction` | `InteractionHandlingOptions` | No | Resource `202` interaction/approval callbacks and polling |
-| `Capabilities` | `string[]?` | No | `AAuth-Capabilities` on every signed request |
+| `Capabilities` | `string[]?` | No | `AAuth-Capabilities` on every signed request; entries must be HTTP tokens |
 | `Mission` | `Mission?` | No | *Code-only.* The agent's approved mission |
 | `UpstreamTokenProvider` | `Func<string?>?` | No | *Code-only.* Upstream auth token to chain |
 | `ChainFromHttpContext` | `bool` | No | Chain the current request's verified upstream auth token |
