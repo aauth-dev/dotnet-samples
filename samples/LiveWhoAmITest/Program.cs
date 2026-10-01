@@ -8,7 +8,7 @@
 //
 // Mode 1:  No signature        → 401 + Accept-Signature-Scheme / Accept-Signature-Alg headers
 // Mode 2a: aa-agent+jwt (no scope) → 200 + agent identity (sub echoed back)
-// Mode 2b: aa-agent+jwt (scope)    → 401 + AAuth-Requirement (resource token)
+// Mode 2b: aa-agent+jwt (scope)    → 401 + AAuth-Requirement: requirement=person-token
 // Mode 3:  Full 3-party flow       → 200 + identity claims (via PS exchange)
 //
 // Architecture:
@@ -43,6 +43,12 @@ const string WhoAmIUrl = "https://whoami.aauth.dev/";
 const string PersonServer = "https://person.hello.coop";
 const string Subject = "aauth:live-test@dotnet-samples";
 const int LocalPort = 5199;
+
+// person.hello.coop publishes its jwks_uri on issuer.hello.coop; cross-origin
+// JWKS must be admitted explicitly per (metadata issuer, JWKS origin) pair.
+var liveEgress = new AAuth.Discovery.AAuthEgressPolicy(
+    crossOriginJwks: [(PersonServer, "https://issuer.hello.coop")],
+    requestTimeout: TimeSpan.FromSeconds(45));
 
 Console.WriteLine("╔══════════════════════════════════════════════════════════════╗");
 Console.WriteLine("║   Live WhoAmI Test — All 3 Protocol Modes                   ║");
@@ -176,7 +182,7 @@ Console.WriteLine("━━━━━━━━━━━━━━━━━━━━�
 Console.WriteLine();
 
 // Build a client without challenge handling — unscoped requests get 200 directly
-using var mode2aClient = AAuthClientBuilder.SelfIssuing(agentKey).WithEgressPolicy(SampleEgress.Policy)
+using var mode2aClient = AAuthClientBuilder.SelfIssuing(agentKey).WithEgressPolicy(liveEgress)
     .As(tunnelUrl!, Subject)
     .WithKid(agentKid)
     .WithPersonServer(PersonServer)
@@ -212,7 +218,7 @@ Console.WriteLine("━━━━━━━━━━━━━━━━━━━━�
 Console.WriteLine();
 
 // Build a client WITHOUT challenge handling so we see the raw 401 + resource_token
-using var mode2bClient = AAuthClientBuilder.SelfIssuing(agentKey).WithEgressPolicy(SampleEgress.Policy)
+using var mode2bClient = AAuthClientBuilder.SelfIssuing(agentKey).WithEgressPolicy(liveEgress)
     .As(tunnelUrl!, Subject)
     .WithKid(agentKid)
     .WithPersonServer(PersonServer)
@@ -239,19 +245,18 @@ if (mode2bResp.Headers.TryGetValues("AAuth-Requirement", out var reqValues))
 var mode2bBody = await mode2bResp.Content.ReadAsStringAsync();
 Console.WriteLine($"  Body: {mode2bBody}");
 Console.WriteLine();
-var mode2bPassed = LiveInteropValidation.IsAuthTokenChallenge(mode2bResp.StatusCode, mode2bRequirement);
+var mode2bPassed = LiveInteropValidation.IsPersonTokenChallenge(mode2bResp.StatusCode, mode2bRequirement);
 if (mode2bPassed)
 {
-    Console.WriteLine("  → Resource verified our agent token via our tunneled JWKS,");
-    Console.WriteLine("    read the 'ps' claim (person.hello.coop), and minted a resource_token");
-    Console.WriteLine("    audienced to the PS. Agent takes this to the PS to get an auth_token.");
+    Console.WriteLine("  → Resource verified our agent token via our tunneled JWKS and asked for a");
+    Console.WriteLine("    person token. The agent gets one from the PS (person.hello.coop) and");
+    Console.WriteLine("    presents it; the resource then issues the resource_token (see Mode 3).");
 }
 else
 {
-    Console.WriteLine("  ✗ Draft-11 auth-token challenge was not returned.");
-    Console.WriteLine("    Expected: requirement=auth-token; resource-token=\"<aa-resource+jwt>\"");
+    Console.WriteLine("  ✗ Draft-11 person-token challenge was not returned.");
+    Console.WriteLine("    Expected: requirement=person-token");
     Console.WriteLine($"    Received: requirement={mode2bRequirement?.Requirement ?? "(missing or malformed)"}");
-    Console.WriteLine("    The client leaves this unsupported requirement unsatisfied and does not contact the PS.");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -262,11 +267,12 @@ Console.WriteLine("━━━━━━━━━━━━━━━━━━━━�
 Console.WriteLine("MODE 3: aa-auth+jwt — full 3-party flow (automated)");
 Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 Console.WriteLine();
-Console.WriteLine("  Flow: agent_token → 401/resource_token → PS exchange → auth_token → 200");
+Console.WriteLine("  Flow: agent_token → 401/person-token → PS person_token → 401/resource_token");
+Console.WriteLine("        → PS exchange → auth_token → 200");
 Console.WriteLine("  Using live PS at person.hello.coop (may require user consent)");
 Console.WriteLine();
 
-using var mode3Client = AAuthClientBuilder.SelfIssuing(agentKey).WithEgressPolicy(SampleEgress.Policy)
+using var mode3Client = AAuthClientBuilder.SelfIssuing(agentKey).WithEgressPolicy(liveEgress)
     .As(tunnelUrl!, Subject)
     .WithKid(agentKid)
     .WithPersonServer(PersonServer)
@@ -301,7 +307,7 @@ HttpResponseMessage? mode3Resp = null;
 string? mode3Body = null;
 if (!mode2bPassed)
 {
-    Console.WriteLine("  SKIPPED: The resource did not issue the draft-11 resource token required for PS exchange.");
+    Console.WriteLine("  SKIPPED: The resource did not issue the draft-11 person-token challenge.");
 }
 else try
 {
@@ -324,6 +330,13 @@ catch (AAuthTokenExchangeException ex)
     Console.WriteLine("  To complete Mode 3, you need a Hellō account linked to");
     Console.WriteLine("  person.hello.coop. The PS would then send you a push/redirect");
     Console.WriteLine("  for consent, and return an auth_token with your identity claims.");
+}
+catch (AAuth.Tokens.TokenVerificationException ex)
+{
+    Console.WriteLine();
+    Console.WriteLine($"  Token verification error: {ex.Message}");
+    Console.WriteLine("  The agent rejected a token the resource or PS returned as non-conformant");
+    Console.WriteLine("  with draft-11, so it did not continue the exchange.");
 }
 catch (HttpRequestException ex)
 {
