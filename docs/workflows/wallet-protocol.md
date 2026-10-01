@@ -59,7 +59,7 @@ sequenceDiagram
     Agent->>PS: Signed pending GET
     PS-->>Agent: AS-issued auth_token
     Agent->>Wallet: Review with auth_token
-    Wallet-->>Agent: 200; charge with same scope is rejected
+    Wallet-->>Agent: 200, charge with same scope is rejected
 ```
 
 ## Chaining an AS-Issued Grant
@@ -96,7 +96,7 @@ sequenceDiagram
     Concierge->>PS: resource_token, presented_token, upstream_token
     PS->>AS: Signed federation, agent_token (Concierge), presented_token, upstream_token
     AS->>AS: Validate upstream audience and PS, presented token, scope
-    AS-->>PS: Downstream auth_token (ps, sub; no agent or act claim)
+    AS-->>PS: Downstream auth_token (ps, sub, no agent or act claim)
     PS-->>Concierge: Downstream auth_token
     Concierge->>Wallet: Retry with downstream auth_token
     Wallet-->>Concierge: 200

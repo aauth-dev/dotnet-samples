@@ -38,7 +38,7 @@ sequenceDiagram
     participant User
     Note over Agent: Setup complete: self-issued or AP-enrolled agent JWT
     Agent->>Resource: GET /data (jwt + HTTP proof)
-    Resource-->>Agent: 202 + Location + requirement=interaction; url; code
+    Resource-->>Agent: 202 + Location + requirement=interaction, url, code
     Note over Agent: Start signed polling immediately
     User->>Resource: Completes interaction at resource's page
     Agent->>Resource: GET /pending/<id> (poll)

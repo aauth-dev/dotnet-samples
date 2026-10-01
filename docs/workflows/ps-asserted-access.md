@@ -23,7 +23,7 @@ sequenceDiagram
     Agent->>PS: POST /person (signed, resource in body)
     PS-->>Agent: 200 + person token (aa-person+jwt)
     Agent->>Resource: GET /data (signed, sig=jwt with person token)
-    Resource-->>Agent: 401 requirement=auth-token + resource token (aud=PS; presented_jti)
+    Resource-->>Agent: 401 requirement=auth-token + resource token (aud=PS, presented_jti)
     Agent->>PS: POST /token (signed, resource_token + presented_token)
     PS-->>Agent: 200 + auth token (aa-auth+jwt)
     Agent->>Resource: GET /data (signed, sig=jwt with auth token)

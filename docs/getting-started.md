@@ -173,15 +173,15 @@ sequenceDiagram
     Resource->>Resource: Verify agent token and key proof
     Resource-->>Agent: 401 + requirement=person-token
 
-    Agent->>PS: POST /person (signed; resource=https://resource.example)
+    Agent->>PS: POST /person (signed, resource=https://resource.example)
     PS->>PS: Validate agent token, mission/context and person selection
     PS-->>Agent: person_token (aa-person+jwt)
 
     Agent->>Resource: GET /data (Signature-Key: sig=jwt, person token)
     Resource->>Resource: Verify person token, copy ps/sub and set presented_jti
-    Resource-->>Agent: 401 + requirement=auth-token; resource-token=...
+    Resource-->>Agent: 401 + requirement=auth-token, resource-token=...
 
-    Agent->>PS: POST /token (signed; resource_token + presented_token)
+    Agent->>PS: POST /token (signed, resource_token + presented_token)
     PS->>PS: Verify resource token and the named presented token
     PS->>User: Consent prompt (scope, justification)
     User-->>PS: Grant consent
