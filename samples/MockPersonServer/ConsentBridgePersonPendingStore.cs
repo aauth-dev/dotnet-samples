@@ -19,11 +19,11 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
     private readonly InMemoryPersonPendingStore _inner = new();
     private readonly ConsentStore _consent;
     private readonly ConsentRegistry _registry;
-    private readonly IReadOnlyList<string> _demoRoles;
-    private readonly IReadOnlyList<string> _demoGroups;
+    private readonly IReadOnlyList<string>? _demoRoles;
+    private readonly IReadOnlyList<string>? _demoGroups;
 
     public ConsentBridgePersonPendingStore(
-        ConsentStore consent, ConsentRegistry registry, IReadOnlyList<string> demoRoles, IReadOnlyList<string> demoGroups)
+        ConsentStore consent, ConsentRegistry registry, IReadOnlyList<string>? demoRoles, IReadOnlyList<string>? demoGroups)
     {
         _consent = consent;
         _registry = registry;
@@ -53,13 +53,11 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
                 && entry.PendingExpiresAt > DateTimeOffset.UtcNow
                 && _consent.IsConsented(entry.ConsentAgentId, entry.ResourceUrl, entry.Scope, entry.Account, entry.ResourceKeyThumbprint))
             {
-                var isAdmin = entry.OwnerIssuer is not null
-                    && SampleIdentityClaimsAsserter.IsAdminAgent(entry.OwnerIssuer, entry.ConsentAgentId);
                 entry.PersonKey = SampleIdentityClaimsAsserter.DemoPersonKey;
                 entry.Subject = SampleIdentityClaimsAsserter.DirectedSubject(entry.ResourceUrl);
                 entry.Tenant = null;
-                entry.Roles = isAdmin ? _demoRoles : null;
-                entry.Groups = isAdmin ? _demoGroups : null;
+                entry.Roles = _demoRoles;
+                entry.Groups = _demoGroups;
                 entry.AdditionalClaims = null;
                 entry.Status = PersonPendingStatus.Allowed;
                 _registry.MarkDecided(entry.Id, ConsentDecider.Admin);

@@ -36,26 +36,21 @@ public sealed class LiveInteropValidationTests
             "https://agent.example", "aauth:test@agent.example", "https://ps.example"));
 
     [Theory]
-    [InlineData("requirement=person-token")]
     [InlineData("requirement=auth-token")]
-    [InlineData("requirement=auth-token; resource-token=\"\"")]
-    [InlineData("requirement=auth-token; resource-token=\"a.b\"")]
-    [InlineData("requirement=auth-token; resource-token=\"a..c\"")]
-    [InlineData("requirement=auth-token; resource-token=\"a.b.$\"")]
-    [InlineData("requirement=auth-token; resource-token=\"a.b.*\"")]
-    [InlineData("requirement=auth-token; resource-token=\"a.a.a\"")]
-    public void AuthTokenChallengeRejectsLegacyMissingOrMalformedTokens(string header)
-        => Assert.False(LiveInteropValidation.IsAuthTokenChallenge(HttpStatusCode.Unauthorized,
+    [InlineData("requirement=auth-token; resource-token=\"eyJ9.e30.c2ln\"")]
+    [InlineData("requirement=agent-token")]
+    public void PersonTokenChallengeRejectsOtherRequirements(string header)
+        => Assert.False(LiveInteropValidation.IsPersonTokenChallenge(HttpStatusCode.Unauthorized,
             AAuthRequirementHeader.Parse(header)));
 
     [Fact]
-    public void AuthTokenChallengeRequiresUnauthorizedAndCompactJws()
+    public void PersonTokenChallengeRequiresUnauthorized()
     {
-        var requirement = AAuthRequirementHeader.Parse(
-            "requirement=auth-token; resource-token=\"eyJ9.e30.c2ln\"");
+        var requirement = AAuthRequirementHeader.Parse("requirement=person-token");
 
-        Assert.True(LiveInteropValidation.IsAuthTokenChallenge(HttpStatusCode.Unauthorized, requirement));
-        Assert.False(LiveInteropValidation.IsAuthTokenChallenge(HttpStatusCode.OK, requirement));
+        Assert.True(LiveInteropValidation.IsPersonTokenChallenge(HttpStatusCode.Unauthorized, requirement));
+        Assert.False(LiveInteropValidation.IsPersonTokenChallenge(HttpStatusCode.OK, requirement));
+        Assert.False(LiveInteropValidation.IsPersonTokenChallenge(HttpStatusCode.Unauthorized, null));
     }
 
     [Theory]

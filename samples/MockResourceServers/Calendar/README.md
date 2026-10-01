@@ -24,9 +24,10 @@ Port: `http://localhost:5001`. Trusts the Person Server at
 `/events/admin` enforces a role the PS asserts in the auth token's `roles`
 claim. If the PS issues a token **without** that role, the policy returns an
 unrecoverable **403**. Scope shortfalls on `/events/write` step up with a new
-auth-token challenge; role shortfalls do not. The mock PS asserts
-`calendar.owner` only for `aauth:demo@…` agents, so a non-admin agent
-deliberately exercises the 403 path.
+auth-token challenge; role shortfalls do not. Roles describe the person, not
+the agent: the mock PS asserts `calendar.owner` for its demo person whichever
+agent asks. Start the PS with `MockPersonServer:GuestPerson=true` to act for a
+guest person without the role and exercise the 403 path.
 
 ## Running
 
@@ -45,7 +46,8 @@ dotnet run --project samples/AgentConsole -- http://localhost:5001/events \
 dotnet run --project samples/AgentConsole -- http://localhost:5001/events/write \
   --ap http://localhost:5301 --ps http://localhost:5100 --sub aauth:demo@ap.example
 
-# RBAC (role calendar.owner) — demo agent succeeds; a guest agent gets 403
+# RBAC (role calendar.owner) — the demo person succeeds; a guest person
+# (PS started with MockPersonServer:GuestPerson=true) gets 403
 dotnet run --project samples/AgentConsole -- http://localhost:5001/events/admin \
   --ap http://localhost:5301 --ps http://localhost:5100 --sub aauth:demo@ap.example
 ```

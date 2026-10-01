@@ -72,10 +72,13 @@ var response = await client.SendAsync(request);</code></pre>
 <div class="col-md-6">
 <h5>Concierge Handler (interaction chaining)</h5>
 <pre><code class="language-csharp">// The Concierge is BOTH a resource AND an agent,
-// but has NO user — so its downstream client CHAINS
-// the interaction instead of relaying it: the callback
-// THROWS, unwinding the exchange before it blocks.
-async Task&lt;IResult&gt; RunChainAsync(HttpContext ctx, string upstream)
+// but has NO user — so it CHAINS a downstream consent
+// back to the caller. AAuthChainedOperation keeps the
+// downstream exchange alive: it records the interaction
+// and the SDK keeps polling the PS pending URL with GET
+// (§Polling with GET) while the Concierge answers 202.
+async Task&lt;IResult&gt; RunChainAsync(string upstream,
+    IAAuthInteractionHandler interactions, CancellationToken ct)
 {
     using var downstream = AAuthClientBuilder
         .SelfIssuing(conciergeKey)
@@ -85,15 +88,13 @@ async Task&lt;IResult&gt; RunChainAsync(HttpContext ctx, string upstream)
         .WithCallChaining(upstream)   // sends upstream_token to the PS it
                                       // names (a mission_s256 would travel
                                       // on; omitted here)
-        .WithChallengeHandling(opts =&gt;
-        {
-            opts.OnInteractionRequired = (i, _) =&gt;
-                throw new AAuthInteractionChainedException(i);
-            opts.Capabilities = Array.Empty&lt;string&gt;();
-        })
+        .WithChallengeHandling(opts =&gt; opts.Capabilities = [])
         .Build();
 
-    var r = await downstream.GetAsync($"{calendarUrl}/events");
+    using var request = new HttpRequestMessage(
+        HttpMethod.Get, $"{calendarUrl}/events");
+    request.Options.Set(AAuthRequestOptions.InteractionHandler, interactions);
+    var r = await downstream.SendAsync(request, ct);
     return Results.Ok(/* combined chain result */);
 }
 
@@ -101,20 +102,20 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
 {
     var upstream = ctx.Features
         .Get&lt;UpstreamAuthTokenFeature&gt;()!.Token;
-    try
-    {
-        return await RunChainAsync(ctx, upstream);
-    }
-    catch (AAuthInteractionChainedException ex)
-    {
-        // Downstream needs consent. Park it and
-        // re-emit our OWN code, URL and poll Location.
-        var chained = AAuthChainedInteractions.Park(
-            conciergeUrl, "/pending", "/chain-interaction", ex,
-            "calendar.events", new JsonObject(), DateTimeOffset.UtcNow.AddMinutes(10));
-        var e = pending.Add(upstream, chained);
-        return ReEmitChainedInteraction(ctx, e);
-    }
+    var op = await AAuthChainedOperation&lt;IResult&gt;.StartAsync(
+        (interactions, ct) =&gt; RunChainAsync(upstream, interactions, ct),
+        DateTimeOffset.UtcNow.AddMinutes(10));
+    if (op.Completion.IsCompleted) return await op.Completion;
+
+    // Downstream needs consent and is being polled. Park it
+    // and re-emit our OWN code, URL and poll Location. Polls
+    // of /pending/{id} read op.Completion; nothing is re-sent.
+    var chained = AAuthChainedInteractions.Park(
+        conciergeUrl, "/pending", "/chain-interaction",
+        op.Interaction!.Downstream, "calendar.events",
+        new JsonObject(), DateTimeOffset.UtcNow.AddMinutes(10));
+    var e = pending.Add(upstream, chained, "/pending", op);
+    return ReEmitChainedInteraction(ctx, e);
 });</code></pre>
 </div>
 </div>

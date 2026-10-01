@@ -162,7 +162,8 @@ public sealed class ChallengeHandler : DelegatingHandler
 
         if (!request.Options.TryGetValue(MissionForwardingHandler.UpstreamAuthorization, out var upstreamToken))
         {
-            upstreamToken = _upstreamTokenProvider?.Invoke();
+            upstreamToken = request.Options.TryGetValue(AAuthRequestOptions.UpstreamToken, out var explicitToken)
+                ? explicitToken : _upstreamTokenProvider?.Invoke();
             request.Options.Set(MissionForwardingHandler.UpstreamAuthorization, upstreamToken);
         }
         var response = await SendWithAdaptiveSigningAsync(request, cancellationToken)

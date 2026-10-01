@@ -31,6 +31,27 @@ public class DeferredExchangeTests
         Assert.Equal(new[] { "GET", "POST", "GET" }, handler.Methods);
     }
 
+    [Theory]
+    [InlineData("{\"error\":\"denied\",\"detail\":\"scope 'wallet.charge' requires the 'wallet.payer' role\"}",
+        "The AAuth request was denied: scope 'wallet.charge' requires the 'wallet.payer' role")]
+    [InlineData("{\"error\":\"denied\"}", "The user denied the AAuth interaction request.")]
+    public async Task TokenExchange_DeniedPoll_KeepsServerDetail(string body, string message)
+    {
+        using var handler = new SequenceHandler(
+            _ => Json(HttpStatusCode.OK, "{\"issuer\":\"https://ps.example\",\"auth_token_endpoint\":\"https://ps.example/token\"}"),
+            _ => Pending("requirement=approval"),
+            _ => Json(HttpStatusCode.Forbidden, body));
+        using var http = new InProcessHttpClient(handler);
+        var client = new TokenExchangeClient(http, new MetadataClient(http));
+        var denied = await Assert.ThrowsAsync<AAuthInteractionDeniedException>(() => client.ExchangeAsync(
+            "https://ps.example", TestTokens.Resource, new TokenExchangeRequest
+            {
+                PresentedToken = "presented",
+                PollerOptions = new DeferredPollerOptions { MinPollInterval = TimeSpan.Zero },
+            }));
+        Assert.Equal(message, denied.Message);
+    }
+
     [Fact]
     public async Task ApprovalThenNewInteractions_DispatchesEveryChangedUrlAndCode()
     {

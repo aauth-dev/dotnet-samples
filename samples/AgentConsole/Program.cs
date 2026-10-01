@@ -159,6 +159,8 @@ localKeyHandle = result.LocalKeyHandle;
 agentTokenKid = result.AgentTokenKid;
 agentJwksUri = result.JwksUri;
 Console.WriteLine($"Enrolled successfully. Local key handle: {localKeyHandle}");
+// Consent is recorded for the AP-assigned identity, not the --sub cache label.
+Console.WriteLine($"Agent ID (AP-assigned): {result.AgentId}");
 
 // Persist only metadata — key lives in the keystore, token is short-lived
 Directory.CreateDirectory(Path.GetDirectoryName(enrollCacheFile)!);
@@ -211,9 +213,14 @@ if (signingMode is "jwt")
         if (upstreamToken is not null) options.UpstreamTokenProvider = () => upstreamToken;
         if (resourceManaged)
         {
-            // Resource-managed (two-party) opaque-token flow: capture/replay AAuth-Access
-            // and drive the resource's own consent handshake.
+            // Resource-managed (two-party) opaque-token flow: capture/replay AAuth-Access.
             options.EnableResourceManagedAccess = true;
+        }
+        if (resourceManaged || personServer is not null)
+        {
+            // A resource may itself defer with 202 + requirement=interaction: its own
+            // consent (resource-managed Inbox) or a downstream hop's consent relayed
+            // by an intermediary (the Concierge call chain).
             options.HandleInteractions = true;
             options.Interaction.MinPollInterval = TimeSpan.FromMilliseconds(200);
             options.Interaction.OnInteractionRequired = (interaction, ct) =>
@@ -264,10 +271,12 @@ if (upstreamToken is not null)
     Console.WriteLine("Upstream token provided for call chaining.");
 }
 
-// If the target URL has no path (or just "/"), append the signing-mode-specific
-// path. The identity-based modes target the Aria Profile server, whose paths
-// describe the *outcome* the resource concludes (not the scheme name); the
-// default jwt mode targets the Calendar's three-party `/events` endpoint.
+// If the target URL has no path at all, append the signing-mode-specific
+// path. An explicit trailing "/" (e.g. http://localhost:5200/ for the
+// Concierge chain) targets the root instead. The identity-based modes target
+// the Aria Profile server, whose paths describe the *outcome* the resource
+// concludes (not the scheme name); the default jwt mode targets the
+// Calendar's three-party `/events` endpoint.
 //
 //   SIGNING MODE   PROFILE PATH      MEANING
 //   hwk        →   /pseudonymous     key thumbprint only (pseudonym)
@@ -275,7 +284,8 @@ if (upstreamToken is not null)
 //   jkt-jwt    →   /anchored         ephemeral key anchored to a durable key
 //   jwt        →   /events           three-party Calendar read (calendar.read)
 var targetUrl = url;
-if (url.AbsolutePath is "/" or "")
+var typedPath = args[0][(args[0].IndexOf("://", StringComparison.Ordinal) + 3)..];
+if (url.AbsolutePath == "/" && !typedPath.Contains('/'))
 {
     targetUrl = resourceManaged
         ? new Uri(url, "/messages") // resource-managed two-party (Inbox)

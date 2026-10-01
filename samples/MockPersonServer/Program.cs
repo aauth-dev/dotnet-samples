@@ -43,17 +43,18 @@ var builder = WebApplication.CreateBuilder(args);
 const string PsKid = "ps-1";
 const string PsScope = "calendar.read";
 // Demo identity claims the mock PS asserts about the user. A production PS
-// would resolve these from the signed-in user's directory entry. These let
-// the Calendar `/events/admin` (RBAC) endpoint succeed end-to-end.
+// would resolve these from the signed-in user's directory entry.
 //
-// Roles/groups are asserted ONLY for recognized "admin" demo agents: the AP
-// issuer and agent id must exactly match the configured demo binding. Any other
-// agent receives an auth token without the role, so role-based DENIAL is
-// exercised end-to-end (a guest agent calling `/events/admin` gets a 403).
-// A production PS would resolve the principal's directory membership instead
-// of a hard-coded demo binding.
-string[] demoRoles = ["calendar.owner"];
-string[] demoGroups = ["demo-users"];
+// `roles` and `groups` are identity claims about the person (RFC 9068 / SCIM),
+// so they belong to the demo person, not to whichever agent asks: every auth
+// token the PS issues for that person carries them, and the PS releases them
+// to an Access Server through the §Claims Required push. `calendar.owner`
+// opens Calendar `/events/admin` (RBAC); `wallet.payer` lets the stub AS grant
+// `wallet.charge`. Set `MockPersonServer:GuestPerson=true` to act for a guest
+// person with no roles or groups, which exercises role-based DENIAL end-to-end.
+var guestPerson = builder.Configuration.GetValue<bool>("MockPersonServer:GuestPerson");
+string[]? demoRoles = guestPerson ? null : ["calendar.owner", "wallet.payer"];
+string[]? demoGroups = guestPerson ? null : ["demo-users"];
 // Identity claims the PS can release for the bound principal when an Access
 // Server asks for them via the §Claims Required push. A production PS would
 // resolve these from its identity store keyed by the authenticated principal.
@@ -894,7 +895,8 @@ app.MapMethods("/interaction", ["GET", "POST"], async (HttpContext ctx,
         // shown apart, and the agent's words are attributed to the agent.
         + "<section class=resource-asserted><h2>From the resource</h2>"
         + $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.ResourceUrl)}</code></div>"
-        + $"<div class=row><b>Scope:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code></div>"
+        + (ConsentDisplay.Scope(entry) is not { } shownScope ? "" : $"<div class=row><b>Scope:</b> <code>{System.Net.WebUtility.HtmlEncode(shownScope)}</code></div>")
+        + (ConsentDisplay.R3Uri(entry) is not { } r3Uri ? "" : $"<div class=row><b>R3 request:</b> <code>{System.Net.WebUtility.HtmlEncode(r3Uri)}</code></div>")
         + (entry.Account is null ? "" : $"<div class=row><b>Account:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Account)}</code></div>")
         + "</section>"
         + (entry.AgentAsserted is not { } agentSays ? "" :
@@ -972,8 +974,11 @@ app.MapPost("/interaction/approve", async (HttpContext ctx,
             + "<div class=badge><span class=dot></span>Person Server</div>"
             + "<h1>Approved</h1>"
             + $"<p>You granted <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code> access to "
-            + $"<code>{System.Net.WebUtility.HtmlEncode(entry.ResourceUrl)}</code> with scope "
-            + $"<code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code> at the <b>Person Server</b>.</p>"
+            + $"<code>{System.Net.WebUtility.HtmlEncode(entry.ResourceUrl)}</code> "
+            + (ConsentDisplay.Scope(entry) is { } grantedScope
+                ? $"with scope <code>{System.Net.WebUtility.HtmlEncode(grantedScope)}</code>"
+                : $"for the R3 request <code>{System.Net.WebUtility.HtmlEncode(ConsentDisplay.R3Uri(entry))}</code>")
+            + " at the <b>Person Server</b>.</p>"
             + "<p>You can close this tab — the agent will receive its auth token on its next poll.</p>",
             contentType: "text/html");
     });

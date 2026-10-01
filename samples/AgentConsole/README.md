@@ -34,8 +34,10 @@ dotnet run --project samples/AgentConsole -- <url> --ap <agent-provider-url> [op
 
 ## Signing-mode → path mapping
 
-When the target URL has no path (or just `/`), AgentConsole appends the path
-that routes to the matching verification pipeline. The pseudonymous and
+When the target URL has no path at all (for example `http://localhost:5001`),
+AgentConsole appends the path that routes to the matching verification
+pipeline. An explicit trailing `/` (for example `http://localhost:5200/`)
+targets the root instead. The pseudonymous and
 agent-identity modes target the **Profile** server (port 5000); the default
 three-party `jwt` mode targets the **Calendar** server (port 5001); the
 `--resource-managed` flag targets the **Inbox** server (port 5004):
@@ -84,12 +86,12 @@ dotnet run --project samples/AgentConsole -- \
   http://localhost:5001/events/write --ap http://localhost:5301 \
   --ps http://localhost:5100 --signing-mode jwt
 
-# Three-party, RBAC — PS asserts roles ["calendar.owner"], groups ["demo-users"]
+# Three-party, RBAC — PS asserts its demo person's roles ["calendar.owner", "wallet.payer"], groups ["demo-users"]
 dotnet run --project samples/AgentConsole -- \
   http://localhost:5001/events/admin --ap http://localhost:5301 \
   --ps http://localhost:5100 --signing-mode jwt
 
-# Four-party payment — scope "wallet.charge" (Access Server requires the wallet.payer role)
+# Four-party payment — scope "wallet.charge" (the Access Server asks the PS for the person's roles and requires wallet.payer)
 dotnet run --project samples/AgentConsole -- \
   http://localhost:5003/wallet/charge --ap http://localhost:5301 \
   --ps http://localhost:5100 --signing-mode jwt
@@ -97,23 +99,41 @@ dotnet run --project samples/AgentConsole -- \
 
 ## Granting consent
 
-The isolated demo admin endpoint can pre-grant consent for the AP-assigned
-agent, resource and scope. Replace the illustrative `agent` values below with
-the assigned ID printed by enrollment, not the `--sub` local cache label. These are local demo operations,
-not production authorization APIs. Normal browser consent binds authenticated
-person/session/key/account context; the code alone is not approval.
+`make demo` runs the PS with `RequireConsent=true`, so each new
+agent/resource/scope prints an interaction URL and a PS dashboard link.
+Approve either in a browser and the agent's poll completes.
+
+To pre-grant instead, use the isolated demo admin endpoint. The PS records
+consent for the exact agent, resource, scope and agent key, so copy the two
+values AgentConsole prints at startup:
+
+```text
+Agent ID (AP-assigned): aauth:agent-1b98…@localhost
+Public JWK thumbprint: Mhbryez6sAJLSDE-pAonOXX1KsaLjjAIinII_G2AaSU
+```
+
+Use the AP-assigned agent ID, not the `--sub` local cache label. These are
+local demo operations, not production authorization APIs. Normal browser
+consent binds authenticated person/session/key/account context; the code alone
+is not approval.
 
 ```bash
+AGENT='<Agent ID (AP-assigned)>'
+KEY='<Public JWK thumbprint>'
+
 # Baseline / RBAC endpoints use scope "calendar.read"
 curl -X POST http://localhost:5100/admin/consent \
   -H 'content-type: application/json' \
-  -d '{"agent":"aauth:demo@ap.example","resource":"http://localhost:5001","scope":"calendar.read"}'
+  -d "{\"agent\":\"$AGENT\",\"resource\":\"http://localhost:5001\",\"scope\":\"calendar.read\",\"key\":\"$KEY\"}"
 
 # The /events/write endpoint requires the elevated scope
 curl -X POST http://localhost:5100/admin/consent \
   -H 'content-type: application/json' \
-  -d '{"agent":"aauth:demo@ap.example","resource":"http://localhost:5001","scope":"calendar.write"}'
+  -d "{\"agent\":\"$AGENT\",\"resource\":\"http://localhost:5001\",\"scope\":\"calendar.write\",\"key\":\"$KEY\"}"
 ```
+
+A cached enrollment keeps the same agent ID and key across runs. Clearing it
+(`make agent-reset`) creates a new identity that needs fresh consent.
 
 ## Enrollment lifetime
 

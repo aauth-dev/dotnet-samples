@@ -164,7 +164,7 @@ public sealed class TokenExchangeClient
                     && await IsDeniedAsync(resp, ct).ConfigureAwait(false))
                 {
                     throw new AAuthInteractionDeniedException(
-                        "The user denied the AAuth interaction request.");
+                        InteractionDenial.Message(await InteractionDenial.ReadDetailAsync(resp, ct).ConfigureAwait(false)));
                 }
             },
         };
@@ -268,7 +268,8 @@ public sealed class TokenExchangeClient
             OnPolledResponse = async (resp, ct) =>
             {
                 if (resp.StatusCode == HttpStatusCode.Forbidden && await IsDeniedAsync(resp, ct).ConfigureAwait(false))
-                    throw new AAuthInteractionDeniedException("The user denied the AAuth interaction request.");
+                    throw new AAuthInteractionDeniedException(
+                        InteractionDenial.Message(await InteractionDenial.ReadDetailAsync(resp, ct).ConfigureAwait(false)));
             },
         }, cancellationToken, request =>
         {

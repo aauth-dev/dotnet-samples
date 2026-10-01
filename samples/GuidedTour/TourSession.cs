@@ -455,7 +455,7 @@ public sealed partial class TourSession : IAsyncDisposable
         new(11, "Retry Concierge → 202 (hop 2 chained)", "Concierge calls Calendar; that hop needs consent too, so it re-emits its OWN 202 (interaction chaining).", Actor.Agent, Actor.Concierge),
         new(12, "Direct user to interaction URL (hop 2)", "Agent relays the Concierge's chained interaction URL to approve Concierge → Calendar.", Actor.Agent, Actor.Agent),
         new(13, "User approves hop 2 at the PS", "User approves Concierge → Calendar at the PS; PS records consent for the chained hop.", Actor.PersonServer, Actor.PersonServer),
-        new(14, "Poll Concierge pending → 200", "Signed GETs to the Concierge's pending URL until it re-drives the chain and returns 200.", Actor.Agent, Actor.Concierge),
+        new(14, "Poll Concierge pending → 200", "Signed GETs to the Concierge's pending URL until its downstream poll resolves and it returns 200.", Actor.Agent, Actor.Concierge),
         new(15, "Inspect multi-agent result", "Review the combined response showing the full Agent → Concierge → Calendar chain.", Actor.Agent, Actor.Agent),
     };
 
@@ -3302,8 +3302,9 @@ public sealed partial class TourSession : IAsyncDisposable
                 Narrative =
                     "With the second approval recorded, the agent polls the " +
                     "Concierge's pending URL (signed with the Concierge-audience " +
-                    "auth_token). The Concierge re-drives its downstream exchange: the " +
-                    "PS now mints a Calendar auth_token for the **same person** — same " +
+                    "auth_token). Meanwhile the Concierge has kept polling the PS pending " +
+                    "URL of its downstream exchange with GET (it never re-sends the token " +
+                    "request): the PS now mints a Calendar auth_token for the **same person** — same " +
                     "`ps`, but a `sub` directed at Calendar rather than the Concierge's. " +
                     "There is no `act` chain; the Concierge authenticates with its own " +
                     "agent token and the PS records the upstream token it was given. " +

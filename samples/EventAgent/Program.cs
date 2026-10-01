@@ -10,9 +10,12 @@ using var session = new EventDemoSession(services.GetRequiredService<IAAuthAgent
     Protected = args.Contains("--protected", StringComparer.Ordinal),
     Account = args.Contains("--work", StringComparer.Ordinal) ? "work" : "personal"
 };
+string? shownConsent = null;
 session.Changed = () =>
 {
-    Console.WriteLine("Consent: " + session.ConsentUrl);
+    // Changed also fires when the consent clears; only announce a new URL.
+    if (session.ConsentUrl is { } url && url != shownConsent) Console.WriteLine("Consent: " + url);
+    shownConsent = session.ConsentUrl;
     return Task.CompletedTask;
 };
 Console.WriteLine("Events single-shot demo; AP polling and event trigger are local sample APIs.");

@@ -72,11 +72,24 @@ public sealed class AAuthTokenHolder
         Func<System.Threading.CancellationToken, Task<string>> acquire, System.Threading.CancellationToken cancellationToken)
     {
         request.Options.TryGetValue(SourceToken, out var agentToken);
-        var token = agentToken is not null
+        var key = agentToken is not null
             && request.Options.TryGetValue(AAuth.HttpSig.AAuthSigningHandler.SigningKeyContext, out var signingKey)
-            && Key(request, agentToken, signingKey.ComputeJwkThumbprint()) is { } key
+                ? Key(request, agentToken, signingKey.ComputeJwkThumbprint()) : null;
+        string token;
+        if (key is not null && request.Options.TryGetValue(AAuthRequestOptions.InteractionHandler, out _))
+        {
+            // A per-request interaction handler owns this request's consent. Another request's
+            // in-flight acquisition would never call it, so reuse only a finished token.
+            token = _cache.Get(key) is { } cached && cached != presented
+                ? cached : await acquire(cancellationToken).ConfigureAwait(false);
+            _cache.Set(key, token, ExpiresAt(token));
+        }
+        else
+        {
+            token = key is not null
                 ? await _cache.AcquireAsync(key, presented, acquire, cancellationToken).ConfigureAwait(false)
                 : await acquire(cancellationToken).ConfigureAwait(false);
+        }
         if (!IsUsable(token))
         {
             token = await acquire(cancellationToken).ConfigureAwait(false);

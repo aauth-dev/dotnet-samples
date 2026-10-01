@@ -18,7 +18,9 @@ namespace MockAccessServer.Policy;
 /// <list type="bullet">
 ///   <item>any verified agent may obtain the base <c>wallet.read</c> scope;</item>
 ///   <item>the elevated <c>wallet.charge</c> scope is granted only when the
-///   PS-asserted claims carry the <c>wallet.payer</c> role.</item>
+///   person carries the <c>wallet.payer</c> role. Roles are identity claims
+///   about the person, so the AS asks the PS for them (§Claims Required,
+///   <c>requirement=claims</c>) rather than inferring them from the agent.</item>
 /// </list>
 ///
 /// When <c>requireConsent</c> is set (from <c>AccessServer:RequireConsent</c>)
@@ -63,17 +65,27 @@ public sealed class StubAccessPolicy : IAccessPolicy
         AccessPolicyRequest request, CancellationToken cancellationToken = default)
     {
         if (_walletRules?.Evaluate(request) is { } walletDecision) return Task.FromResult(walletDecision);
-        // §Claims Required: if the AS is configured to need identity claims it
-        // does not yet hold, ask the PS to push them before deciding.
+        var elevated = IsElevatedScope(request.Scope);
+
+        // §Claims Required: before the PS has pushed anything, ask for every claim
+        // the decision needs: the configured ones, plus `roles` for the elevated scope.
+        if (request.Claims is null)
+        {
+            var needed = elevated ? _requiredClaims.Append("roles").Distinct(StringComparer.Ordinal).ToList() : _requiredClaims;
+            if (needed.Count > 0) return Task.FromResult(AccessDecision.NeedsClaims(needed));
+        }
+
+        // A push that still lacks a configured claim is asked again.
         var missing = MissingClaims(request.Claims);
         if (missing.Count > 0)
         {
             return Task.FromResult(AccessDecision.NeedsClaims(missing));
         }
 
-        // An elevated scope requires the payer role; the base scope is
-        // open to any verified agent.
-        if (IsElevatedScope(request.Scope) && !HasRole(request.Claims, AdminRole))
+        // An elevated scope requires the payer role among the claims the PS
+        // provided; a person without it (or without any roles) is denied rather
+        // than asked again. The base scope is open to any verified agent.
+        if (elevated && !HasRole(request.Claims, AdminRole))
         {
             return Task.FromResult(AccessDecision.Deny(
                 $"scope '{request.Scope}' requires the '{AdminRole}' role"));

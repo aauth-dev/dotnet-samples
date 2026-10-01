@@ -279,8 +279,7 @@ internal sealed class DeferredExchange
             // §Polling Error Codes: `denied` (403) is an explicit user/approver
             // denial. Surface the semantic interaction-denied exception so callers
             // can distinguish it from a transport-level polling failure.
-            throw new AAuthInteractionDeniedException(
-                "The user denied the AAuth interaction request.", ex);
+            throw new AAuthInteractionDeniedException(InteractionDenial.Message(ex.Detail), ex);
         }
         catch (TimeoutException ex)
         {

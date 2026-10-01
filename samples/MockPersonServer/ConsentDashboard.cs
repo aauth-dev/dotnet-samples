@@ -195,6 +195,7 @@ public static class ConsentDashboard
             ["agent"] = record.AgentId,
             ["resource"] = record.Resource,
             ["scope"] = record.Scope,
+            ["r3"] = record.R3Uri,
             ["account"] = record.Account,
             ["action"] = record.Action,
             ["mission_s256"] = record.MissionS256,
@@ -321,7 +322,7 @@ public static class ConsentDashboard
           if (r.status !== 'Pending') title.append(' ', el('span', 'pill s-' + r.status, statusLabels[r.status] || r.status));
           body.append(title);
           const dl = el('dl', 'meta');
-          row(dl, 'Agent', r.agent, true); row(dl, 'Resource', r.resource, true); row(dl, 'Scope', r.scope, true);
+          row(dl, 'Agent', r.agent, true); row(dl, 'Resource', r.resource, true); row(dl, 'Scope', r.scope, true); row(dl, 'R3 request', r.r3, true);
           row(dl, 'Account', r.account, true); row(dl, 'Tool', r.action, true); if (group !== 'mission') row(dl, 'Mission', r.mission); row(dl, 'Tools', r.tools, true);
           if (r.mission_s256 && group !== 'mission') row(dl, 'Mission s256', r.mission_s256, true);
           row(dl, 'Requested', when(r.created_at));

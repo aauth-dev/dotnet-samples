@@ -116,3 +116,33 @@ public sealed class AAuthClarificationLimitException : Exception
         MaxRounds = maxRounds;
     }
 }
+
+/// <summary>
+/// Builds the <see cref="AAuthInteractionDeniedException"/> message for a
+/// §Polling Error Codes <c>denied</c> response, keeping the server's
+/// <c>detail</c> (for example an Access Server policy reason) when present.
+/// </summary>
+internal static class InteractionDenial
+{
+    public const string DefaultMessage = "The user denied the AAuth interaction request.";
+
+    public static string Message(string? detail)
+        => string.IsNullOrWhiteSpace(detail) ? DefaultMessage : $"The AAuth request was denied: {detail}";
+
+    /// <summary>Reads <c>detail</c> from a buffered problem-details body.</summary>
+    public static async System.Threading.Tasks.Task<string?> ReadDetailAsync(
+        System.Net.Http.HttpResponseMessage response, System.Threading.CancellationToken cancellationToken)
+    {
+        var body = await DeferredExchange.BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return System.Text.Json.Nodes.JsonNode.Parse(body) is System.Text.Json.Nodes.JsonObject json
+                && json["detail"] is System.Text.Json.Nodes.JsonValue value && value.TryGetValue<string>(out var detail)
+                ? detail : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+}

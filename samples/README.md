@@ -291,14 +291,14 @@ dotnet run --project samples/AgentConsole -- http://localhost:5001/events/write 
   --ap http://localhost:5301 --ps http://localhost:5100 --signing-mode jwt
 ```
 
-**Three-party with RBAC (`/events/admin`)** — the PS asserts roles `calendar.owner` and groups `demo-users`:
+**Three-party with RBAC (`/events/admin`)** — the PS asserts its demo person's roles `calendar.owner` and `wallet.payer` and group `demo-users`:
 
 ```bash
 dotnet run --project samples/AgentConsole -- http://localhost:5001/events/admin \
   --ap http://localhost:5301 --ps http://localhost:5100 --signing-mode jwt
 ```
 
-**Four-party with payment (`/wallet/charge`)** — the Access Server requires the `wallet.payer` role (log in as `demo`):
+**Four-party with payment (`/wallet/charge`)** — the Access Server requires the person's `wallet.payer` role (stub AS: asked from the PS; Keycloak: log in as `demo`):
 
 ```bash
 dotnet run --project samples/AgentConsole -- http://localhost:5003/wallet/charge \
@@ -312,12 +312,12 @@ dotnet run --project samples/AgentConsole -- http://localhost:5003/wallet/charge
 > [interaction] Or decide on the PS dashboard: http://localhost:5100/dashboard?code=...
 > ```
 >
-> Open either URL in a browser and click **Approve**, or pre-approve programmatically:
+> Open either URL in a browser and click **Approve**, or pre-approve programmatically with the `Agent ID (AP-assigned)` and `Public JWK thumbprint` AgentConsole prints at startup (see [Granting consent](AgentConsole/README.md#granting-consent)):
 >
 > ```bash
 > curl -X POST http://localhost:5100/admin/consent \
 >   -H "Content-Type: application/json" \
->   -d '{"agent":"aauth:demo@ap.example","resource":"http://localhost:5001","scope":"calendar.read"}'
+>   -d '{"agent":"<agent id>","resource":"http://localhost:5001","scope":"calendar.read","key":"<key thumbprint>"}'
 > ```
 >
 > To skip consent entirely, start MockPersonServer separately without the flag: `dotnet run --project samples/MockPersonServer`
@@ -373,8 +373,8 @@ dotnet run --project samples/LiveWhoAmITest
 Live interop test that runs against the public reference servers (`whoami.aauth.dev` and `person.hello.coop`) instead of the local mocks. It generates an agent key, starts a local metadata + JWKS endpoint on port 5199, exposes it via a `cloudflared` quick tunnel, and exercises three public checks:
 
 - **Mode 1** — unsigned request returns `401` + `Accept-Signature-Scheme` / `Accept-Signature-Alg`.
-- **Mode 2** — `aa-agent+jwt` returns the agent identity (no scope) or a `401` + `AAuth-Requirement` resource token (scoped).
-- **Mode 3** — full three-party flow: agent token → resource token → PS exchange → auth token → identity claims.
+- **Mode 2** — `aa-agent+jwt` returns the agent identity (no scope) or a `401` + `AAuth-Requirement: requirement=person-token` (scoped).
+- **Mode 3** — full three-party flow: agent token → person token from the PS → resource token → PS exchange → auth token → identity claims.
 
 Requires `cloudflared` on the `PATH` (preinstalled in the dev container) and outbound network access. Mode 3 may prompt for user consent at `person.hello.coop`; the agent prints the interaction URL to approve in a browser.
 

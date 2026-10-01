@@ -15,6 +15,13 @@ public static class AAuthRequestOptions
     /// <summary>Per-request interaction handler; beats the agent's configured handler (for example, the current user's session).</summary>
     public static readonly HttpRequestOptionsKey<IAAuthInteractionHandler> InteractionHandler = new("AAuth.InteractionHandler");
 
+    /// <summary>
+    /// Per-request upstream token for call chaining (§Call Chaining); beats the agent's configured
+    /// provider, including <c>ChainFromHttpContext</c>. Set it when the downstream call can outlive the
+    /// inbound request, for example an interaction-chained operation that keeps polling.
+    /// </summary>
+    public static readonly HttpRequestOptionsKey<string> UpstreamToken = new("AAuth.UpstreamToken");
+
     /// <summary>Per-request clarification handler; beats the agent's configured handler.</summary>
     public static readonly HttpRequestOptionsKey<IAAuthClarificationHandler> ClarificationHandler = new("AAuth.ClarificationHandler");
 
