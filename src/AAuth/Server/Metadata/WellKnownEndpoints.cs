@@ -27,7 +27,8 @@ public static class WellKnownEndpoints
 
         endpoints.MapGet("/.well-known/aauth-resource.json", () => Results.Json(
             BuildResourceMetadata(options),
-            contentType: "application/json"));
+            contentType: "application/json"))
+            .WithMetadata(PublicDiscoveryEndpoint.Instance);
 
         // draft-02: publish a JWKS endpoint only when the resource has keys to
         // serve. An identity-only resource omits both keys and jwks_uri.
@@ -309,9 +310,21 @@ public static class WellKnownEndpoints
                     AAuthSigningKeySet[] sets;
                     lock (state) sets = [.. state.KeySets];
                     return Results.Json(BuildJwks(sets), contentType: "application/json");
-                });
+                }).WithMetadata(PublicDiscoveryEndpoint.Instance);
             }
         }
+    }
+
+    /// <summary>
+    /// Marks the SDK's own public discovery endpoints so pipelines can exempt
+    /// exactly these handlers from signature verification. Matching on the
+    /// selected endpoint, not the path, keeps the exemption tied to the handler
+    /// that actually runs (for example when middleware rewrites the URL).
+    /// </summary>
+    internal sealed class PublicDiscoveryEndpoint
+    {
+        internal static readonly PublicDiscoveryEndpoint Instance = new();
+        private PublicDiscoveryEndpoint() { }
     }
 
     private static void ApplyMappedEventEndpoint(IEndpointRouteBuilder endpoints, AAuthAgentMetadataOptions options)

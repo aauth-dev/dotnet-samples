@@ -237,6 +237,16 @@ public static class AAuthApplicationBuilderExtensions
     /// Equivalent to calling <see cref="MapAAuthWellKnown"/>, <see cref="UseAAuthVerification"/>,
     /// and <see cref="UseAAuthChallenge"/> separately. For per-path customization, use the
     /// individual middleware methods instead.
+    /// <para>
+    /// Unsigned <c>GET</c> requests for the discovery documents it maps
+    /// (<c>/.well-known/aauth-resource.json</c>, and <c>/.well-known/jwks.json</c> when
+    /// signing keys are configured) skip verification and challenge, so agents and
+    /// verifiers can fetch them. Every other request, including app routes under
+    /// <c>/.well-known</c>, still requires a valid AAuth request. The exemption
+    /// applies to the endpoint routing selected, so it needs routing to run first:
+    /// the default for <see cref="WebApplication"/>. If the app calls
+    /// <c>UseRouting()</c> after this method, discovery requests are verified too.
+    /// </para>
     /// </remarks>
     /// <param name="app">The web application (both endpoint routing and middleware).</param>
     /// <param name="configure">Optional configuration for verification and challenge behavior.</param>
@@ -256,32 +266,45 @@ public static class AAuthApplicationBuilderExtensions
         // 1. Map well-known endpoints
         WellKnownEndpoints.MapAAuthResourceWellKnown(app, metadataOptions);
 
-        // 2. Verification middleware
-        app.UseAAuthVerificationCore(new AAuthVerificationOptions
-        {
-            EgressPolicy = metadataOptions.EgressPolicy,
-            ResourceIdentifier = metadataOptions.Issuer,
-            ExpectedAccount = pipelineOptions.AccountSelector,
-            ExpectedAuthTokenDwk = metadataOptions.AccessServer is null
-                ? AAuthConstants.DwkFiles.Person
-                : AAuthConstants.DwkFiles.Access,
-            Trust = pipelineOptions.Trust,
-        });
-
-        // 3. Challenge middleware (only if there's a signing key available)
-        if (metadataOptions.SigningKeys is { Count: > 0 } signingKeys)
-        {
-            app.UseAAuthChallengeCore(new ChallengeOptions
+        // 2–3. Verification and challenge middleware. Mapped endpoints run at the
+        //    end of the pipeline, so mapping the well-known endpoints first does
+        //    not exempt them. Agents and verifiers fetch the metadata and JWKS
+        //    with unsigned GETs (issue #48), so skip only when the endpoint routing
+        //    selected is one of the SDK's discovery handlers. Matching the selected
+        //    handler, not the path, means a later URL rewrite cannot carry the
+        //    exemption to another endpoint. If no endpoint has been selected yet,
+        //    the request is verified (fail closed).
+        app.UseWhen(
+            ctx => !HttpMethods.IsGet(ctx.Request.Method)
+                || ctx.GetEndpoint()?.Metadata.GetMetadata<WellKnownEndpoints.PublicDiscoveryEndpoint>() is null,
+            branch =>
             {
-                EgressPolicy = metadataOptions.EgressPolicy,
-                ResourceSigningKeys = signingKeys,
-                ResourceIdentifier = metadataOptions.Issuer,
-                AccessServer = metadataOptions.AccessServer,
-                RequestedAccount = pipelineOptions.AccountSelector,
-                AccessMode = pipelineOptions.AccessMode,
-                DefaultScopes = pipelineOptions.DefaultScopes,
+                branch.UseAAuthVerificationCore(new AAuthVerificationOptions
+                {
+                    EgressPolicy = metadataOptions.EgressPolicy,
+                    ResourceIdentifier = metadataOptions.Issuer,
+                    ExpectedAccount = pipelineOptions.AccountSelector,
+                    ExpectedAuthTokenDwk = metadataOptions.AccessServer is null
+                        ? AAuthConstants.DwkFiles.Person
+                        : AAuthConstants.DwkFiles.Access,
+                    Trust = pipelineOptions.Trust,
+                });
+
+                // Challenge middleware (only if there's a signing key available)
+                if (metadataOptions.SigningKeys is { Count: > 0 } signingKeys)
+                {
+                    branch.UseAAuthChallengeCore(new ChallengeOptions
+                    {
+                        EgressPolicy = metadataOptions.EgressPolicy,
+                        ResourceSigningKeys = signingKeys,
+                        ResourceIdentifier = metadataOptions.Issuer,
+                        AccessServer = metadataOptions.AccessServer,
+                        RequestedAccount = pipelineOptions.AccountSelector,
+                        AccessMode = pipelineOptions.AccessMode,
+                        DefaultScopes = pipelineOptions.DefaultScopes,
+                    });
+                }
             });
-        }
 
         return app;
     }
